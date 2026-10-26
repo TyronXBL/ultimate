@@ -106,7 +106,7 @@ function Switcher() {
     conversations.find((conversation) => conversation.id === preview.conversationId)?.title
   const local = projects.data?.projects ?? []
   const remotes = projects.data?.remotes ?? []
-  const startable = local.some((project) => !project.url && project.root)
+  const startable = local.some((project) => !project.current && !project.url && project.root)
   const begin = async (root: string) => {
     setStarting({ root })
     const error = await start(root)
@@ -139,7 +139,7 @@ function Switcher() {
           onSelect={select}
           title={project.root && shortenPath(project.root, { home: system?.machine.home })}
         >
-          <Dot state={project.url ? (off ? 'off' : 'running') : 'stopped'} />
+          <Dot state={project.current || project.url ? (off ? 'off' : 'running') : 'stopped'} />
           <span className={cn('min-w-0 flex-1 truncate text-[13px]', here && 'text-brand')}>
             {project.name}
           </span>
