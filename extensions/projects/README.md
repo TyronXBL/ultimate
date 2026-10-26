@@ -11,8 +11,9 @@ own address for the current project, else `https://<dns>:<port>` from the port i
 setting (`lib/remote.ts`), `{ machine, name, url }[]`.
 
 `start { root }` → `LocalProject`. `root` is an absolute folder, or `~/` for the user's home. It resolves at once for
-a project that already runs, and otherwise starts Ultimate there and resolves once `list` reports it running (and,
-with the host's tailscale ready, once its tailnet address is registered), polling every 500 ms for up to 60 seconds.
+a project that already runs, and otherwise starts Ultimate there and resolves once `list` reports it running,
+polling every 500 ms for up to 60 seconds. With the host's tailscale ready it waits up to 15 seconds more for the
+project's tailnet address, then resolves without one.
 A start that fails reports the tail of the child's log, kept in a file in the system temporary directory. Two starts
 of one folder share the first: the in-flight ones live in `host.resource('projects.starts')`.
 
@@ -30,9 +31,10 @@ here, so stopping the service stops every project it started; start them from a 
 
 The title bar's project chip becomes one menu:
 
-- **Projects** lists this machine's projects with this one highlighted. A running one opens in this window: in the
-  frame at its port when this page is on loopback, or at its tailnet address on a page opened from elsewhere. One
-  reachable neither way is disabled with the reason. A stopped one shows **Start**, which starts it and then opens it.
-- **Open folder…** takes a path and starts Ultimate there.
+- **Projects** lists this machine's projects with this one highlighted. A running one opens in this window: at its
+  port on this page's host when the page is on loopback, or at its tailnet address on a page opened from elsewhere.
+  One reachable neither way is disabled with the reason. A stopped one shows **Start**, which starts it and then opens
+  it; a quiet line says that starting resumes its unfinished work and automations.
+- **Open folder…** (also in ⌘K) takes a path and starts Ultimate there, then opens it.
 - **Previews** lists the `instance` previews of this host, on loopback pages only, and shows one in the frame as before.
 - **Other machines** opens the `remotes` in a new tab.

@@ -14,8 +14,12 @@ import { TailscaleApi } from '../tailscale/api.ts'
 import { ListAction, StartAction } from './refs.ts'
 import type { LocalProject } from './refs.ts'
 
-/** How long a start waits for the child to report its project running, and how often it looks. */
+/**
+ * How long a start waits for the child to report its project running, how much longer for its tailnet address while
+ * this server publishes one, and how often it looks.
+ */
 const START_DEADLINE = 60_000
+const TAILNET_GRACE = 15_000
 const POLL = 500
 
 type ListHost = Pick<ExtensionHost, 'want' | 'userHome' | 'projects'>
@@ -159,14 +163,20 @@ async function launch(host: StartHost, root: string): Promise<LocalProject> {
     ended.reason ??= String(error)
   })
   const deadline = Date.now() + START_DEADLINE
+  let ran: number | undefined
   while (Date.now() < deadline) {
     if (ended.reason)
       throw new Error(
         `Ultimate in ${root} ${ended.reason} before it started:\n${await logTail(log)}`,
       )
     const started = (await host.projects()).find((project) => project.root === root)
-    if (started?.running && (!addresses.published || addresses.byRoot.has(root)))
-      return listed(started, addresses)
+    if (started?.running) {
+      ran ??= Date.now()
+      // A new folder registers its tailnet port a moment after it runs; without one it still opens on this machine.
+      const now = await tailnets(host)
+      if (!now.published || now.byRoot.has(root) || Date.now() - ran > TAILNET_GRACE)
+        return listed(started, now)
+    }
     await sleep(POLL)
   }
   throw new Error(
