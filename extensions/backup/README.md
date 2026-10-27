@@ -12,4 +12,4 @@ Run a conversation on the next backup model of its agent definition when its mod
 
 ## API
 
-`BackupApi.fallBack(conversationId, message, entryId)` (`api.ts`) makes the same switch for a failure something outside reports, such as a watchdog retry, and returns whether the conversation runs on a backup because of it. It is one at a time across reloads and once per failed entry, so the failure reaching it twice leaves one card.
+`BackupApi.fallBack(conversationId, message, entryId)` (`api.ts`) makes the same switch for a failure another extension sees first: `pause` asks it before pausing for a rate limit, and returns whether the conversation runs on a backup because of it. It is one at a time across reloads and once per failed entry, so the failure reaching it twice leaves one card.

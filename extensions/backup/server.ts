@@ -120,6 +120,8 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       // A switch made after this response was asked for: the conversation already left the model that failed here.
       if (failed !== name(current))
         return (state.tried ?? []).includes(failed) ? { earlier: true as const } : undefined
+      // A model picked since the last switch starts afresh: it is the primary now, and nothing was tried from it.
+      if (state.to && name(state.to) !== failed) clear(state)
       const definition = await host.want(Pin)?.definition(tx, id)
       const used = new Set([...(state.tried ?? []), failed])
       const to = definition?.fallback?.find(
@@ -128,7 +130,7 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       if (!to) return undefined
       // The first switch keeps the primary; the next one keeps the primary the conversation came from.
       const primary = state.primary ?? current
-      const thinking = state.thinking ?? agent.thinkingLevel
+      const thinking = state.primary ? state.thinking : agent.thinkingLevel
       const level = to.thinking ?? thinking
       agent.model = model(to)
       const runtime = host.modelRuntime.getModel(to.provider, to.modelId)

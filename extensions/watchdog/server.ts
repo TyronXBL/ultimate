@@ -23,6 +23,7 @@ import type {
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { limited, rateLimited } from '../../lib/rate-limit.ts'
 import { Messages } from '../messages/api.ts'
+import { Pin } from '../models/api.ts'
 import { Standing, Subagents } from '../subagents/api.ts'
 import { idleNote } from './idle.ts'
 import { WatchdogApi } from './api.ts'
@@ -208,7 +209,10 @@ export default function watchdog(host: ExtensionHost) {
   >({
     name: 'watchdog.failure',
     version: 1,
-    initial: (input) => ({ phase: input.temporary && !input.retried ? 'wait' : 'report' }),
+    // A limit a backup may take continues again after a retry: each continuation needs a switch to an untried backup.
+    initial: (input) => ({
+      phase: input.temporary && (!input.retried || input.backup) ? 'wait' : 'report',
+    }),
     phases: {
       wait: (task, runtime, ctx) => runtime.sleepUntil(task.input.until, { phase: 'retry' }, ctx),
       retry: async (task, runtime, ctx) => {
@@ -347,10 +351,17 @@ export default function watchdog(host: ExtensionHost) {
       const { hint, temporary } = diagnose(error, info.assistant)
       // A limit Pi did not retry ended the run on the model that answered it, and the commit that recorded that answer may
       // have switched the conversation to a backup model of its definition: only a new input continues it there. `retry`
-      // waits for that commit and reads the model the conversation runs on then.
+      // waits for that commit and reads the model the conversation runs on then. Without a backup to switch to, the
+      // failure reports at once, as before.
+      const refused = info.assistant && `${info.assistant.provider}/${info.assistant.model}`
       const backup =
-        limited(error) && !temporary && info.assistant
-          ? { model: `${info.assistant.provider}/${info.assistant.model}` }
+        refused &&
+        limited(error) &&
+        !temporary &&
+        (await host.want(Pin)?.definition(tx, child.id))?.fallback?.some(
+          (entry) => `${entry.provider}/${entry.modelId}` !== refused,
+        )
+          ? { model: refused }
           : undefined
       await tx.createTask(
         Watchdog,

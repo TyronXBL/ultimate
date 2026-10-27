@@ -533,10 +533,7 @@ it('reports a quota limit no backup took, and starts no retry', async () => {
   )
   const branch = await f.conversation('No backup')
   await (await f.submit(branch, 'fail')).wait(context)
-  // Its definition has no backup model here, so nothing took the limit and the run is reported as it always was.
-  const sleeping = await f.sleeping()
-  expect(sleeping.state).toMatchObject({ status: 'sleeping', until: 1_005_000 })
-  f.advance(5_000)
+  // Its definition has no backup model here, so the run is reported at once, as it always was.
   await until(async () => (await f.entries()).length === 1)
   await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
   expect((await f.entries())[0]).toMatchObject({

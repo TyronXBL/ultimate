@@ -382,8 +382,8 @@ type Limited = {
  * The rate-limited answers of one commit. A conversation whose agent definition has a backup model for that limit takes
  * it in `BackupApi.fallBack`, and Pi's retry goes on on the backup, so nothing pauses for that answer. A limit no backup
  * took pauses the host (`limited`), as it always has. The caller holds the scheduler already, in the commit's
- * publication, before Pi's retry backoff can fire; the hold goes once every limit of the commit is decided, unless a
- * pause stands: one of this commit's, another limit's, or the user's.
+ * publication, before Pi's retry backoff can fire; the hold goes once every limit of every such commit is decided,
+ * unless a pause stands: one of this commit's, another limit's, or the user's.
  */
 async function limits(host: Host, hits: Limited[]) {
   try {
@@ -403,10 +403,16 @@ async function limits(host: Host, hits: Limited[]) {
       )
     }
   } finally {
-    // The hold is only this commit's: a pause that stands keeps it.
-    if (!flag(host).paused) host.harness().release()
+    // The hold is boolean: it goes only once no commit's limits wait for a decision and no pause stands.
+    const pending = deciding(host)
+    pending.count--
+    if (pending.count === 0 && !flag(host).paused) host.harness().release()
   }
 }
+
+/** Commits whose rate limits hold the scheduler until `limits` decides them; shared across reloads. */
+const deciding = (host: Pick<ExtensionHost, 'resource'>) =>
+  host.resource('pause.deciding', () => ({ count: 0 }))
 
 /**
  * Whether Play notes conversation `id`: its run recorded at the pause continues (the same task, or the run it handed
@@ -542,6 +548,7 @@ export default function pauseExtension(host: Host) {
       // Held at once, here in the publication, before Pi's own retry timer can fire; `limits` decides the pause, since a
       // backup model of the conversation's definition may take the limit and continue the retry instead.
       host.harness().hold()
+      deciding(host).count++
       serial(host, () => limits(host, hits)).catch((error: unknown) => {
         console.error('pause: handling a rate limit failed:', error)
       })
