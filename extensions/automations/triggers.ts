@@ -270,7 +270,8 @@ export function triggers(
     // A close while the first check ran ends here: no timer outlives it.
     if (closed) return
     clearInterval(timer)
-    timer = setInterval(idleTick, IDLE_TICK)
+    // idleTick's queue reports its own failures; the timer only starts the next check.
+    timer = setInterval(() => void idleTick(), IDLE_TICK)
   }
   let timer: ReturnType<typeof setInterval> | undefined
   async function close() {

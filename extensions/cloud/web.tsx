@@ -30,7 +30,8 @@ function poll<T>(
     } catch {
       // Aborted, restarting or unreachable: keep what was loaded, and the next poll tries again.
     }
-    if (current === generation && listeners.size) timer = setTimeout(tick, every(value))
+    if (current === generation && listeners.size)
+      timer = setTimeout(() => void tick(), every(value))
   }
   return {
     subscribe: (listener: () => void) => {

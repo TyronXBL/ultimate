@@ -240,7 +240,8 @@ export async function loadExtensions(
         const reactor = log.reactor(`${name}/${reactorName}`, tokens, handler, options)
         facetHost.onOpen(reactor.start)
         facetHost.onRelease(reactor.stop)
-        stops.add(reactor.stop)
+        // Disposal only unsubscribes: a drain already running finishes on its own and catches its failures.
+        stops.add(() => void reactor.stop())
       },
     } satisfies ExtensionHost
     provided.set(facetHost, new Map())

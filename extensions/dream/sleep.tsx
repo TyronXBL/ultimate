@@ -145,7 +145,7 @@ function Ready({ prepared, failed }: { prepared: Prepared; failed?: Sleep }) {
               maxLength={40}
               onChange={(event) => setName(event.target.value.toLowerCase().replaceAll(' ', '-'))}
               onKeyDown={(event) =>
-                event.key === 'Enter' && !invalid && !taken && !blocked && !starting && start()
+                event.key === 'Enter' && !invalid && !taken && !blocked && !starting && void start()
               }
               placeholder="two-or-three-words"
               spellCheck={false}

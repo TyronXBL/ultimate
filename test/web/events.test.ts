@@ -20,6 +20,7 @@ it('delivers to independent subscribers, isolates sync and async errors, and uns
     }),
   )
   stops.push(
+    // oxlint-disable-next-line typescript/no-misused-promises -- Pi's void handler type; the bus catches async failures, which this checks.
     events.on('test:message', async () => {
       throw error
     }),

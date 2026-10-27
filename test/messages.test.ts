@@ -1603,13 +1603,15 @@ it('reaches Paused · safe while a delivery waits for its held recipient to answ
 /** Another Ultimate on this machine, as an HTTP server that records the actions posted to it and answers `answer`. */
 async function otherUltimate(answer: (path: string, body: JsonValue) => [number, unknown]) {
   const posted: { path: string; body: JsonValue }[] = []
-  const server = createServer(async (request, response) => {
+  const server = createServer((request, response) => {
     let raw = ''
-    for await (const chunk of request) raw += String(chunk)
-    const body = (JSON.parse(raw) as { args: JsonValue }).args
-    posted.push({ path: request.url ?? '', body })
-    const [status, json] = answer(request.url ?? '', body)
-    response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
+    request.on('data', (chunk) => (raw += String(chunk)))
+    request.on('end', () => {
+      const body = (JSON.parse(raw) as { args: JsonValue }).args
+      posted.push({ path: request.url ?? '', body })
+      const [status, json] = answer(request.url ?? '', body)
+      response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
+    })
   })
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
   servers.push(server)

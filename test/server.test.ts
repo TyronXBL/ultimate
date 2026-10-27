@@ -109,6 +109,7 @@ export const actions = { ping: async () => 'pong', revoke: async () => { remove(
       'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
       'sec-websocket-protocol': 'vite-hmr',
     }
+    // oxlint-disable-next-line typescript/no-deprecated -- Vite has no replacement; the HMR upgrade needs its real token.
     const wsPath = '/?token=' + server.vite.config.webSocketToken
     for (const forwarded of ['x-forwarded-for', 'x-forwarded-host', 'forwarded']) {
       for (const login of [null, 'other', 'owner']) {
@@ -195,6 +196,7 @@ finish: async () => { remove(); resolve({login:'owner'}); return true }
       await post(server, '/api/extensions/deferred/actions/arm', { args: null })
       const pending = new Promise<number>((resolve, reject) => {
         const req = request(
+          // oxlint-disable-next-line typescript/no-deprecated -- Vite has no replacement; the HMR upgrade needs its real token.
           server.url + (upgrade ? '/?token=' + server.vite.config.webSocketToken : '/api/models'),
           {
             headers: {

@@ -72,7 +72,7 @@ export class ExtensionBoundary extends Component<
   },
   { error?: string; version: number }
 > {
-  state: { error?: string; version: number } = { version: this.props.version }
+  override state: { error?: string; version: number } = { version: this.props.version }
   static getDerivedStateFromError(error: unknown) {
     return { error: errorMessage(error) }
   }
@@ -82,10 +82,10 @@ export class ExtensionBoundary extends Component<
   ) {
     return props.version === state.version ? null : { error: undefined, version: props.version }
   }
-  componentDidCatch(error: unknown, info: ErrorInfo) {
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
     console.error(`[extension ${this.props.extension}]`, error, info.componentStack)
   }
-  render() {
+  override render() {
     if (this.state.error === undefined)
       return (
         <ExtensionNameContext.Provider value={this.props.extension}>

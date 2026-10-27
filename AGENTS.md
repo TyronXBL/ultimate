@@ -100,7 +100,7 @@ See [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 - Plain TypeScript, ESM, Node 26 runs `.ts` directly: erasable syntax only (no enums, namespaces, or parameter
   properties), relative imports end in `.ts`.
 - Core server/web contracts live in `shared/protocol.ts`; extension-local types live with their extension.
-- Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental.
+- Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental. `pnpm deps` fails on a loose pin.
 - Checks: `pnpm check` (format, lint, types) and the tests covering your change must pass before a commit; the lander runs every suite. Keep `pnpm test` fast: no real-time waits, no spawned processes (those go to `test/e2e`), and fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this with `ultimate/no-test-timeout` and `ultimate/no-real-wait-in-fast-tests` (`test/e2e` is exempt); justified exceptions need a `fast-test-reason:` comment. Use the real-deadline `until` from `test/helpers.ts` (`ultimate/no-local-test-polling`). `ultimate/no-retired-ui` keeps retired UI labels and surfaces out of extensions and web code.
 - Every user-visible result is designed, not dumped: status and outcomes (a subagent report, a landing, a failure) get a
   renderer that matches the existing cards (see `extensions/subagents/messages.tsx`, `extensions/workspaces/log.tsx`),
@@ -110,7 +110,9 @@ See [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 ## Review quality
 
 Rules about how agents behave live in prompts and agent definitions, not in code. Code checks protect only safety and
-invalid states: data loss, security, impossible states. Lint enforces only what the user explicitly asked for.
+invalid states: data loss, security, impossible states. Lint enforces only rules the user explicitly approved. Where a
+convention can be checked cheaply and with little noise, propose a check for it; once the user approves the rule,
+`pnpm check` enforces it mechanically instead of a prompt asking for it.
 
 A swallowed error needs a reason comment explaining why ignoring it is correct; `ultimate/no-silent-catch` enforces this for empty catch blocks and empty or `undefined`-returning `.catch` handlers.
 

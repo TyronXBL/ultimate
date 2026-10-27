@@ -10,6 +10,7 @@
     "types": ["vite-plus/client"],
     "jsx": "react-jsx",
     "strict": true,
+    "noImplicitOverride": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
