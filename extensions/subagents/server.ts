@@ -569,8 +569,8 @@ export default function subagents(
     }, ctx)
   }
   // The definition a conversation runs as: children and standing agents record it, branches and the lander carry it
-  // as a label. Its pin and backup models, read fresh, are what a conversation on a model that lost its login falls
-  // back to.
+  // as a label. Read fresh: its pin is what a conversation whose model lost its login switches to first, its backup
+  // models what one whose model hit a limit switches to (extensions/backup).
   host.implement(Pin, {
     async definition(tx, id) {
       const name = (await tx.doc(Profile, id)).definition ?? (await tx.doc(host.metadata, id)).label

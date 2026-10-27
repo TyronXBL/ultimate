@@ -463,7 +463,7 @@ export interface DefinitionFields {
 
 /** A flow list of names; in a flow list, commas and brackets end an item too. */
 const flowList = (values: string[]) =>
-  `[${values.map((value) => (/^[\w./-]+(?::[\w.-]+)?$/.test(value) ? value : JSON.stringify(value))).join(', ')}]`
+  `[${values.map((value) => (/^[\w./-]+(?::[\w.-]+)?$/.test(value) ? scalar(value) : JSON.stringify(value))).join(', ')}]`
 
 /** A model as a definition writes it: `provider/id[:thinking]`. */
 const modelName = ({ provider, modelId, thinking }: FallbackModel) =>
