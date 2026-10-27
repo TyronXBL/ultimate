@@ -188,8 +188,13 @@ async function launch(host: StartHost, root: string): Promise<LocalProject> {
   // A new folder publishes on the tailnet a moment after it runs; without that it still opens on this machine.
   const grace = Date.now() + TAILNET_GRACE
   for (;;) {
+    const live = (await host.projects()).find((project) => project.root === root && project.running)
+    if (ended.reason || !live)
+      throw new Error(
+        `Ultimate in ${root} ${ended.reason ?? 'stopped'} right after it started:\n${await logTail(log)}`,
+      )
     const now = await tailnets(host)
-    if (!now.published || now.byRoot.has(root) || Date.now() >= grace) return listed(started, now)
+    if (!now.published || now.byRoot.has(root) || Date.now() >= grace) return listed(live, now)
     await sleep(POLL)
   }
 }
