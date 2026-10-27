@@ -11,6 +11,8 @@ import type { OpenHost } from '../server/harness.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import backupExtension, { docs } from '../extensions/backup/server.ts'
 import { BackupApi } from '../extensions/backup/api.ts'
+import pauseExtension from '../extensions/pause/server.ts'
+import { PauseApi } from '../extensions/pause/api.ts'
 import { Pin } from '../extensions/models/api.ts'
 import { Standing } from '../extensions/subagents/api.ts'
 import { apis, removeTemps, temp, until } from './helpers.ts'
@@ -66,6 +68,7 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
     onOpen: (callback: () => Promise<void>) => void openers.push(callback),
     onClose: () => {},
     onRelease: () => {},
+    conversations: () => [],
   } as unknown as ExtensionHost
   services.implement(Pin, {
     definition: async () => ({
@@ -76,6 +79,7 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
     }),
   })
   prepared.registry.install(backupExtension(host))
+  prepared.registry.install(pauseExtension(host))
   /** Open as the server does: the openers settle first, then scheduling resumes. */
   const open = async () => {
     opened = await prepared.open(false)
@@ -92,6 +96,7 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
       return opened!
     },
     backup: () => services.want(BackupApi)!,
+    paused: () => services.want(PauseApi)!.paused(),
   }
 }
 
@@ -198,6 +203,28 @@ it('takes the next backup on a second limit, keeping the first primary', async (
   // No backup after the last one: the run fails on it and the record stands for the next one.
   expect(responses).toBe(2)
   expect((await second.wait(context)).status).toBe('unanswered')
+})
+
+it('leaves the host running for a rate limit a backup model takes', async () => {
+  const f = await fixture()
+  f.prepared.faux!.setResponses([
+    (_context, _options, _state, model) => limitedBy(model.id, rateLimit),
+    (_context, _options, _state, model) => fauxAssistantMessage([fauxText(`done on ${model.id}`)]),
+  ])
+  const { root, harness } = await f.open()
+  const ultimate = await harness.createConversation({ ownership: { kind: 'ownerless' } }, context)
+  await harness.commit(async (tx) => {
+    ;(await tx.doc(Standing, ROOT_CONVERSATION_ID)).ultimate = ultimate.id
+  }, context)
+
+  const submission = await root.submit({ type: 'input', content: 'go' }, context)
+  expect((await submission.wait(context)).status).toBe('done')
+  await until(async () => (await cards(harness, root.id)).length === 1)
+  // The failed answer was the only one on the primary: Pi's retry ran on the backup, and nothing paused the host.
+  expect(f.paused()).toBe(false)
+  expect((await harness.inspect(context)).scheduling).toBe('running')
+  expect(await dividers(harness, ultimate.id, 'pause.limit')).toEqual([])
+  expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-2' })
 })
 
 it('stays on its model when the answer failed for another reason', async () => {

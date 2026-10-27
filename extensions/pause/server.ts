@@ -1,9 +1,11 @@
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
+import type { AssistantMessage } from '@earendil-works/pi-ai'
 import { defineDoc, LiveDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
-import type { ConversationId, Cursor, SubmissionId } from '@earendil-works/pi-durable'
+import type { ConversationId, Cursor, EntryId, SubmissionId } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { rateLimited } from '../../lib/rate-limit.ts'
+import { BackupApi } from '../backup/api.ts'
 import { Gate } from '../messages/api.ts'
 import { Standing } from '../subagents/api.ts'
 import { PauseApi } from './api.ts'
@@ -31,7 +33,14 @@ export const docs = [State]
 
 type Host = Pick<
   ExtensionHost,
-  'harness' | 'resource' | 'onOpen' | 'onClose' | 'onRelease' | 'implement' | 'conversations'
+  | 'harness'
+  | 'resource'
+  | 'onOpen'
+  | 'onClose'
+  | 'onRelease'
+  | 'implement'
+  | 'conversations'
+  | 'want'
 >
 
 /** The flag timers read synchronously; shared across reloads, set from the doc each time the harness opens. */
@@ -361,6 +370,44 @@ async function card(host: Host, doc: PauseDocState) {
   )
 }
 
+/** One rate-limited answer of a commit: the conversation it failed in, the entry it was recorded in, and the pause it asks for. */
+type Limited = {
+  conversation: ConversationId
+  entry: EntryId
+  message: AssistantMessage
+  limit: RateLimit
+}
+
+/**
+ * The rate-limited answers of one commit. A conversation whose agent definition has a backup model for that limit takes
+ * it in `BackupApi.fallBack`, and Pi's retry goes on on the backup, so nothing pauses for that answer. A limit no backup
+ * took pauses the host (`limited`), as it always has. The caller holds the scheduler already, in the commit's
+ * publication, before Pi's retry backoff can fire; the hold goes once every limit of the commit is decided, unless a
+ * pause stands: one of this commit's, another limit's, or the user's.
+ */
+async function limits(host: Host, hits: Limited[]) {
+  try {
+    for (const hit of hits) {
+      let backed = false
+      try {
+        backed =
+          (await host.want(BackupApi)?.fallBack(hit.conversation, hit.message, hit.entry)) ?? false
+      } catch (error) {
+        // The failed answer stands; pause for the limit as if the conversation had no backup.
+        console.error('pause: switching to a backup model failed:', error)
+      }
+      if (backed) continue
+      // A failed pause released its hold (limited); a failed card leaves the pause standing in the status line.
+      await limited(host, hit.limit).catch((error: unknown) =>
+        console.error('pause: pausing for a rate limit failed:', error),
+      )
+    }
+  } finally {
+    // The hold is only this commit's: a pause that stands keeps it.
+    if (!flag(host).paused) host.harness().release()
+  }
+}
+
 /**
  * Whether Play notes conversation `id`: its run recorded at the pause continues (the same task, or the run it handed
  * over to, which keeps its inputs), or it completed during the drain. A run stopped meanwhile, or a new one, gets none.
@@ -468,10 +515,9 @@ export default function pauseExtension(host: Host) {
     })
     // Every model answer Pi records lands in a commit; the first rate-limited one pauses.
     unsubscribe = host.harness().subscribeCommits((publication) => {
+      const hits: Limited[] = []
       for (const change of publication.changes) {
         const message = change.type === 'entry' ? change.value.model?.[0] : undefined
-        // A host already paused stays paused: requests in flight that hit the limit park the same way, and only the
-        // first limit is recorded, into a pause the user started too.
         if (
           change.type !== 'entry' ||
           message?.role !== 'assistant' ||
@@ -479,20 +525,26 @@ export default function pauseExtension(host: Host) {
           !rateLimited(message.errorMessage ?? '')
         )
           continue
-        const limit: RateLimit = {
-          provider: message.provider,
-          model: message.model,
-          error: message.errorMessage!,
-          at: message.timestamp,
-          conversationId: change.value.conversationId,
-        }
-        flag(host).paused = true
-        host.harness().hold()
-        serial(host, () => limited(host, limit)).catch((error: unknown) => {
-          // A failed pause released its hold (limited); a failed card leaves the pause standing in the status line.
-          console.error('pause: pausing for a rate limit failed:', error)
+        hits.push({
+          conversation: change.value.conversationId,
+          entry: change.value.id,
+          message,
+          limit: {
+            provider: message.provider,
+            model: message.model,
+            error: message.errorMessage!,
+            at: message.timestamp,
+            conversationId: change.value.conversationId,
+          },
         })
       }
+      if (hits.length === 0) return
+      // Held at once, here in the publication, before Pi's own retry timer can fire; `limits` decides the pause, since a
+      // backup model of the conversation's definition may take the limit and continue the retry instead.
+      host.harness().hold()
+      serial(host, () => limits(host, hits)).catch((error: unknown) => {
+        console.error('pause: handling a rate limit failed:', error)
+      })
     })
   })
   return { name: 'pause' }
