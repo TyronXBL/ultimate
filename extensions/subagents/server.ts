@@ -622,6 +622,8 @@ export default function subagents(
         // A new conversation starts on the default model; an existing one keeps the model and thinking level chosen
         // in it, so a refresh changes them only where the definition pins them.
         let base = { ...main, model: hostDefaultModel(host) }
+        // One running on a backup model of its definition (extensions/backup) stays on it: backup returns it later.
+        let backup: Parameters<typeof definitionAgent>[3]
         if (id !== undefined && (await tx.conversation(id))) {
           const own = await tx.doc(AgentDoc, id)
           base = {
@@ -629,12 +631,20 @@ export default function subagents(
             model: own.model ?? base.model,
             thinkingLevel: own.thinkingLevel ?? main.thinkingLevel,
           }
+          const model = own.model
+          if (
+            model &&
+            definition.fallback?.some(
+              (entry) => entry.provider === model.provider && entry.modelId === model.modelId,
+            )
+          )
+            backup = { model, ...(own.thinkingLevel ? { thinking: own.thinkingLevel } : {}) }
         } else {
           created = await tx.createConversation({ ownership: { kind: 'ownerless' } })
           id = created.id
           index[name] = id
         }
-        const change = definitionAgent(definition, base, host.modelRuntime)
+        const change = definitionAgent(definition, base, host.modelRuntime, backup)
         await configure(tx, id, { ...change, cwd: host.projectRoot })
         Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
         // A standing agent keeps its `@name`: no automatic title, summary or reply activity.

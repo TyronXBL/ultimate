@@ -171,17 +171,9 @@ export async function fallBack(
     error: short(message.errorMessage ?? ''),
     cooldown: COOLDOWN_MINUTES,
   }
-  const switchEntry: EntryDraft = {
-    kind: 'backup.switch',
-    data,
-    model: [
-      {
-        role: 'user',
-        content: `Model ${data.from} answered with a ${data.reason} error; this conversation now runs on ${data.to} and returns to ${data.from} at its first run ${COOLDOWN_MINUTES} minutes from now.`,
-        timestamp: Date.now(),
-      },
-    ],
-  }
+  // Only kind and data, so Pi appends it at once beside the failed answer while the run retries; a model line would wait
+  // for the run to end and land after the backup's answer.
+  const switchEntry: EntryDraft = { kind: 'backup.switch', data }
   await (
     await harness.conversation(id, context)
   )?.submit({ type: 'write', requestId: `backup.switch:${entry}`, entry: switchEntry }, context)

@@ -241,6 +241,23 @@ it('keeps a model chosen in the standing conversation across refreshes unless th
   })
 })
 
+it('keeps a standing conversation on a backup model of its pinned definition across refreshes', async () => {
+  const { service, host, file } = await fixture()
+  await writeFile(
+    file,
+    definition('Pinned', 'model: faux/faux-pinned\nthinking: minimal\nfallback: [faux/faux-1]\n'),
+  )
+  const id = await service.standing('x', ctx)
+  const conversation = (await host.harness.conversation(id, ctx))!
+  // As extensions/backup switches it after a limit; a refresh (a delivery, an automation) used to undo that.
+  const backup = { provider: 'faux', modelId: 'faux-1' }
+  await host.harness.commit(async (tx) => {
+    await configure(tx, id, { model: backup, thinkingLevel: 'low' })
+  }, ctx)
+  await service.standing('x', ctx)
+  expect(await conversation.agent(ctx)).toMatchObject({ model: backup, thinkingLevel: 'low' })
+})
+
 it('offers deferred tools only when named by the definition, and removes them on refresh', async () => {
   const { service, host, file } = await fixture()
   expect((await host.root.agent(ctx)).tools.map((tool) => tool.name)).not.toContain('t')
