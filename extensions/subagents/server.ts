@@ -428,6 +428,7 @@ export const actions = {
       description,
       model,
       thinking,
+      fallback,
       tools,
       denyTools,
       isolate,
@@ -440,6 +441,13 @@ export const actions = {
     if (model !== undefined && typeof model !== 'string') throw new Error('model must be a string')
     if (thinking !== undefined && typeof thinking !== 'string')
       throw new Error('thinking must be a string')
+    if (
+      fallback !== undefined &&
+      (!Array.isArray(fallback) ||
+        !fallback.every((entry) => typeof entry === 'string') ||
+        fallback.some((entry) => !entry.trim()))
+    )
+      throw new Error('fallback must be a list of models')
     if (
       tools !== undefined &&
       (!Array.isArray(tools) || !tools.every((tool) => typeof tool === 'string'))
@@ -471,6 +479,8 @@ export const actions = {
       description,
       ...(model ? { model } : {}),
       ...(thinking ? { thinking } : {}),
+      // An overlay save without one clears the base's list, as the form shows it empty.
+      ...(fallback?.length ? { fallback } : {}),
       ...(tools ? { tools } : {}),
       ...(denyTools?.length ? { denyTools } : {}),
       ...(isolate ? { isolate } : {}),

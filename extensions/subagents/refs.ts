@@ -19,6 +19,8 @@ export type Definition = {
   source: Source
   model?: ModelRef
   thinking?: string
+  /** Backup models, in the order a rate-limited, overloaded or out-of-quota conversation tries them. */
+  fallback?: (ModelRef & { thinking?: string })[]
   tools?: string[]
   denyTools?: string[]
   isolate?: 'none' | 'worktree'
@@ -52,11 +54,12 @@ export type Shown = {
   /** The scopes with a file of this name, in the order they apply. */
   files: Source[]
 }
-/** The frontmatter `saveDefinition` writes; `model` is `provider/modelId`. */
+/** The frontmatter `saveDefinition` writes; `model` and each `fallback` entry are `provider/modelId[:thinking]`. */
 export type DefinitionFields = {
   description: string
   model?: string
   thinking?: string
+  fallback?: string[]
   tools?: string[]
   denyTools?: string[]
   isolate?: 'none' | 'worktree'

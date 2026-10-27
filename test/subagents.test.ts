@@ -1957,6 +1957,19 @@ describe('subagents', () => {
       'An overlay cannot change the instructions it starts with',
     )
     expect(await readFile(overlay, 'utf8')).toBe(written)
+    // The form sends the backups it shows; saving it without them clears the list.
+    const form = { model: 'faux/faux-1', tools: ['read', 'bash', 'write', 'edit'] }
+    const instructions = 'Original instructions\n\n## User additions\n\nMore.\nEven more.'
+    await expect(save({ ...form, fallback: [' '] }, instructions)).rejects.toThrow(
+      'fallback must be a list of models',
+    )
+    await save({ ...form, fallback: ['faux/faux-1'] }, instructions)
+    expect(await readFile(overlay, 'utf8')).toContain('\nfallback: [faux/faux-1]\n')
+    expect(await actions.definition({ name: 'scout' }, ctx)).toMatchObject({
+      definition: { fallback: [{ provider: 'faux', modelId: 'faux-1' }] },
+    })
+    await save(form, instructions)
+    expect(await readFile(overlay, 'utf8')).toBe(written)
   })
   it('keeps the tools an overlay adds to a base that inherits every tool when its form is saved', async () => {
     const { prepared, opened, userHome, ultimateRoot } = await fixture()
