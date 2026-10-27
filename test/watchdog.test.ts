@@ -14,6 +14,7 @@ import {
   defineExtension,
   defineTask,
   defineTool,
+  AgentDoc,
   Harness,
   LiveDoc,
   MemoryStorage,
@@ -28,6 +29,9 @@ import type {
 } from '@earendil-works/pi-durable'
 import { afterEach, expect, it } from 'vitest'
 import watchdog, { diagnose } from '../extensions/watchdog/server.ts'
+import { WatchdogApi } from '../extensions/watchdog/api.ts'
+import backupExtension from '../extensions/backup/server.ts'
+import { Pin } from '../extensions/models/api.ts'
 import { idleNote } from '../extensions/watchdog/idle.ts'
 import type { WatchdogService } from '../extensions/watchdog/api.ts'
 import { Messages } from '../extensions/messages/api.ts'
@@ -47,8 +51,9 @@ afterEach(async () => {
 const error = (text = 'invalid model configuration') =>
   fauxAssistantMessage('', { stopReason: 'error', errorMessage: text })
 const overloaded = 'Our servers are currently overloaded. Please try again later.'
+const quota = '429 You exceeded your current quota (insufficient_quota).'
 const rateHint =
-  'Still rate limited after Pi’s retries, so Ultimate is paused; once the limit resets (or the agent has another model), press Play and resume this conversation with a message'
+  'Still rate limited after Pi’s retries, so Ultimate is paused; once the limit resets (or the agent definition has a backup model in its `fallback`), press Play and resume this conversation with a message'
 const model = { provider: 'faux', modelId: 'faux-1' }
 const Anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'watchdog-test.anchor',
@@ -77,7 +82,13 @@ async function fixture(
   let now = 1_000_000
   const registry = createRegistry()
   const models = createModels()
-  const faux = fauxProvider()
+  const faux = fauxProvider({
+    models: [
+      { id: 'faux-1', reasoning: true },
+      { id: 'faux-2', reasoning: true },
+      { id: 'faux-3', reasoning: true },
+    ],
+  })
   models.setProvider(faux.provider)
   const route: FauxResponseFactory = (...args) => {
     faux.appendResponses([route])
@@ -92,11 +103,26 @@ async function fixture(
   const onOpen: (() => Promise<void>)[] = []
   const onClose: (() => Promise<void>)[] = []
   const notices: string[] = []
-  let service: WatchdogService | undefined
+  const services = new Map<string, unknown>()
+  const resources = new Map<string, unknown>()
+  let fallback: { provider: string; modelId: string }[] = []
   const host = {
-    implement: (_api: unknown, implementation: WatchdogService) => {
-      service = implementation
+    implement: (api: { name: string }, implementation: unknown) =>
+      void services.set(api.name, implementation),
+    need: (api: { name: string }) =>
+      api.name === 'conversations' ? { concludedIn } : { doc: Workspaces },
+    want: (api: { name: string }) =>
+      api.name === Pin.name ? { definition: async () => ({ fallback }) } : services.get(api.name),
+    resource: <T>(key: string, create: () => T) => {
+      if (!resources.has(key)) resources.set(key, create())
+      return resources.get(key) as T
     },
+    // Only the backup extension reads these: every faux model has a login, and a conversation pins its own model.
+    modelRuntime: {
+      getAvailableSnapshot: () => faux.models.map(({ provider, id }) => ({ provider, id })),
+      getModel: (provider: string, id: string) => models.getModel(provider, id),
+    },
+    settings: { getDefaultProvider: () => 'faux', getDefaultModel: () => 'faux-1' },
     harness: () => harness,
     metadata: Metadata,
     notice: (text: string) => notices.push(text),
@@ -105,8 +131,6 @@ async function fixture(
     onRelease: () => {},
     scanSubmissions: (...args: Parameters<MemoryStorage['scanSubmissions']>) =>
       storage.scanSubmissions(...args),
-    need: (api: { name: string }) =>
-      api.name === 'conversations' ? { concludedIn } : { doc: Workspaces },
   } as unknown as ExtensionHost
   const original = watchdog(host)
   const backend = {
@@ -241,7 +265,8 @@ async function fixture(
     root,
     registry,
     host,
-    failures: (since: number) => service!.failures(since),
+    failures: (since: number) =>
+      (services.get(WatchdogApi.name) as WatchdogService).failures(since),
     ultimate,
     notices,
     conversation,
@@ -250,6 +275,14 @@ async function fixture(
     submit,
     held: () => entered,
     release: hold.resolve,
+    /** Install the backup extension with a definition whose backup models are `refs` (none by default). */
+    backup: (refs?: string[]) => {
+      fallback = (refs ?? []).map((ref) => {
+        const [provider, modelId] = ref.split('/')
+        return { provider, modelId }
+      })
+      registry.install(backupExtension(host))
+    },
     stop: async (id: ConversationId, parent: ConversationId) => {
       const backendForStop = subagents({
         ...host,
@@ -492,6 +525,49 @@ it.each([false, true])('waits 60 s, retries once; retry failure: %s', async (ret
   await f.harness.waitForIdle(context)
   expect(seen).toHaveLength(2)
   expect(await f.entries()).toHaveLength(retryFails ? 1 : 0)
+})
+
+it('reports a quota limit no backup took, and starts no retry', async () => {
+  const f = await fixture((transcript) =>
+    inputText(transcript) === 'fail' ? error(quota) : fauxAssistantMessage('ok'),
+  )
+  const branch = await f.conversation('No backup')
+  await (await f.submit(branch, 'fail')).wait(context)
+  // Its definition has no backup model here, so the run is reported at once, as it always was.
+  await until(async () => (await f.entries()).length === 1)
+  await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
+  expect((await f.entries())[0]).toMatchObject({
+    data: { conversation: branch, error: quota, retried: false },
+  })
+  const inputs = (await f.host.scanSubmissions({ conversationId: branch }, 100, undefined, context))
+    .items
+  expect(inputs.some((input) => input.requestId?.startsWith('watchdog-retry:'))).toBe(false)
+})
+
+it('continues on a backup model after a quota limit, and reports nothing', async () => {
+  const answered: string[] = []
+  const f = await fixture((transcript, _options, _state, answeredBy) => {
+    if (inputText(transcript) === 'fail') return error(quota)
+    answered.push(answeredBy.id)
+    return fauxAssistantMessage('recovered')
+  }, false)
+  f.backup(['faux/faux-2', 'faux/faux-3'])
+  await f.install()
+  const branch = await f.conversation('Quota')
+  await (await f.submit(branch, 'fail')).wait(context)
+  // The switch lands in the commit that recorded the failed answer, so the watchdog waits only for that.
+  const sleeping = await f.sleeping()
+  expect(sleeping.state).toMatchObject({ status: 'sleeping', until: 1_005_000 })
+  expect((await f.harness.snapshot(AgentDoc, branch, context))!.model).toEqual({
+    provider: 'faux',
+    modelId: 'faux-2',
+  })
+  f.advance(5_000)
+  await until(async () => answered.length === 1)
+  await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
+  expect(answered).toEqual(['faux-2'])
+  expect(await f.entries()).toEqual([])
+  expect(f.notices).toEqual([])
 })
 
 it.each(['retry', 'report'] as const)(

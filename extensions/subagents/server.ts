@@ -428,6 +428,7 @@ export const actions = {
       description,
       model,
       thinking,
+      fallback,
       tools,
       denyTools,
       isolate,
@@ -440,6 +441,13 @@ export const actions = {
     if (model !== undefined && typeof model !== 'string') throw new Error('model must be a string')
     if (thinking !== undefined && typeof thinking !== 'string')
       throw new Error('thinking must be a string')
+    if (
+      fallback !== undefined &&
+      (!Array.isArray(fallback) ||
+        !fallback.every((entry) => typeof entry === 'string') ||
+        fallback.some((entry) => !entry.trim()))
+    )
+      throw new Error('fallback must be a list of models')
     if (
       tools !== undefined &&
       (!Array.isArray(tools) || !tools.every((tool) => typeof tool === 'string'))
@@ -471,6 +479,8 @@ export const actions = {
       description,
       ...(model ? { model } : {}),
       ...(thinking ? { thinking } : {}),
+      // An overlay save without one clears the base's list, as the form shows it empty.
+      ...(fallback?.length ? { fallback } : {}),
       ...(tools ? { tools } : {}),
       ...(denyTools?.length ? { denyTools } : {}),
       ...(isolate ? { isolate } : {}),
@@ -569,9 +579,10 @@ export default function subagents(
     }, ctx)
   }
   // The definition a conversation runs as: children and standing agents record it, branches and the lander carry it
-  // as a label. Its pin, read fresh, is what a conversation whose model lost its login switches to first.
+  // as a label. Read fresh: its pin is what a conversation whose model lost its login switches to first, its backup
+  // models what one whose model hit a limit switches to (extensions/backup).
   host.implement(Pin, {
-    async pin(tx, id) {
+    async definition(tx, id) {
       const name = (await tx.doc(Profile, id)).definition ?? (await tx.doc(host.metadata, id)).label
       if (!name) return undefined
       const { definitions } = await discoverAgents(
@@ -580,7 +591,8 @@ export default function subagents(
         host.userHome,
         host.modelRuntime,
       )
-      return definitions.find((definition) => definition.name === name)?.model
+      const found = definitions.find((definition) => definition.name === name)
+      return found && { model: found.model, fallback: found.fallback }
     },
   })
   host.implement(SubagentsApi, {
@@ -610,6 +622,8 @@ export default function subagents(
         // A new conversation starts on the default model; an existing one keeps the model and thinking level chosen
         // in it, so a refresh changes them only where the definition pins them.
         let base = { ...main, model: hostDefaultModel(host) }
+        // One running on a backup model of its definition (extensions/backup) stays on it: backup returns it later.
+        let backup: Parameters<typeof definitionAgent>[3]
         if (id !== undefined && (await tx.conversation(id))) {
           const own = await tx.doc(AgentDoc, id)
           base = {
@@ -617,12 +631,20 @@ export default function subagents(
             model: own.model ?? base.model,
             thinkingLevel: own.thinkingLevel ?? main.thinkingLevel,
           }
+          const model = own.model
+          if (
+            model &&
+            definition.fallback?.some(
+              (entry) => entry.provider === model.provider && entry.modelId === model.modelId,
+            )
+          )
+            backup = { model, ...(own.thinkingLevel ? { thinking: own.thinkingLevel } : {}) }
         } else {
           created = await tx.createConversation({ ownership: { kind: 'ownerless' } })
           id = created.id
           index[name] = id
         }
-        const change = definitionAgent(definition, base, host.modelRuntime)
+        const change = definitionAgent(definition, base, host.modelRuntime, backup)
         await configure(tx, id, { ...change, cwd: host.projectRoot })
         Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
         // A standing agent keeps its `@name`: no automatic title, summary or reply activity.

@@ -17,6 +17,7 @@ import {
   useUltimate,
 } from '@/sdk'
 import {
+  BackupModelsField,
   Field,
   InstructionsEditor,
   inputClass,
@@ -27,6 +28,7 @@ import {
   SummariesField,
   thinkingLevels,
 } from './fields.tsx'
+import type { BackupModel } from './fields.tsx'
 import { Heading, Tag, useRefresh } from './parts.tsx'
 import {
   DefinitionAction,
@@ -100,6 +102,8 @@ export function Definitions() {
           title={[
             definition.path,
             definition.model && `model: ${definition.model.provider}/${definition.model.modelId}`,
+            definition.fallback?.length &&
+              `backup: ${definition.fallback.map((model) => model.modelId).join(', ')}`,
             `tools: ${definition.tools?.join(', ') ?? 'inherited'}`,
           ]
             .filter(Boolean)
@@ -115,6 +119,9 @@ export function Definitions() {
             <span className="ml-auto truncate pl-2 text-[10.5px] text-muted-foreground/70">
               {definition.model?.modelId ?? 'inherits model'}
               {definition.thinking && ` · ${definition.thinking}`}
+              {definition.fallback?.length
+                ? ` · +${definition.fallback.length} backup${definition.fallback.length > 1 ? 's' : ''}`
+                : ''}
             </span>
           </div>
           <p className="line-clamp-2 pl-5 font-sans text-[12px] leading-snug text-muted-foreground">
@@ -222,6 +229,7 @@ interface Draft {
   description: string
   model: ModelRef | null
   thinking: string | null
+  fallback: BackupModel[]
   tools: string[] | null
   /** Kept as read: the form has no control for it, and a save must not drop it. */
   denyTools: string[]
@@ -237,6 +245,7 @@ const draftOf = (definition?: Shown['definition'], name = ''): Draft => ({
   description: definition?.description ?? '',
   model: definition?.model ?? null,
   thinking: definition?.thinking ?? null,
+  fallback: definition?.fallback ?? [],
   tools: definition?.tools ?? null,
   denyTools: definition?.denyTools ?? [],
   resident: definition?.resident ?? false,
@@ -329,6 +338,14 @@ function Form({
           description: draft.description,
           ...(draft.model ? { model: `${draft.model.provider}/${draft.model.modelId}` } : {}),
           ...(draft.thinking ? { thinking: draft.thinking } : {}),
+          ...(draft.fallback.length
+            ? {
+                fallback: draft.fallback.map(
+                  ({ provider, modelId, thinking }) =>
+                    `${provider}/${modelId}${thinking ? `:${thinking}` : ''}`,
+                ),
+              }
+            : {}),
           ...(draft.tools ? { tools: draft.tools } : {}),
           ...(draft.denyTools.length ? { denyTools: draft.denyTools } : {}),
           resident: draft.resident,
@@ -474,6 +491,10 @@ function Form({
               value={draft.thinking ?? 'inherit'}
             />
           </Field>
+          <BackupModelsField
+            onChange={(backups) => set({ fallback: backups })}
+            value={draft.fallback}
+          />
           <StandingField value={draft.resident} onChange={(resident) => set({ resident })} />
           <SummariesField value={draft.summaries} onChange={(summaries) => set({ summaries })} />
           <Field

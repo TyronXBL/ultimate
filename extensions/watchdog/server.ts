@@ -3,6 +3,7 @@ import type { JsonValue } from '@earendil-works/chord'
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry'
 import {
+  AgentDoc,
   defineDoc,
   defineExtension,
   defineTask,
@@ -20,8 +21,9 @@ import type {
   Tx,
 } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { rateLimited } from '../../lib/rate-limit.ts'
+import { limited, rateLimited } from '../../lib/rate-limit.ts'
 import { Messages } from '../messages/api.ts'
+import { Pin } from '../models/api.ts'
 import { Standing, Subagents } from '../subagents/api.ts'
 import { idleNote } from './idle.ts'
 import { WatchdogApi } from './api.ts'
@@ -30,6 +32,11 @@ import type { Failure } from './refs.ts'
 
 /** How long after a temporary failure its one retry starts. */
 const RETRY_AFTER = 60_000
+/**
+ * How long after a limit that switched the conversation to a backup model its continuation starts: the switch is made,
+ * so only the commit that records it is waited for.
+ */
+const BACKUP_RETRY_AFTER = 5_000
 /** Reported failures kept for `failures()`; older ones drop off. */
 export const FAILURE_LIMIT = 20
 
@@ -112,7 +119,7 @@ async function boundary(tx: Tx, task: Generation, next?: Generation) {
 export function diagnose(error: string, assistant?: AssistantMessage) {
   if (rateLimited(error))
     return {
-      hint: 'Still rate limited after Pi’s retries, so Ultimate is paused; once the limit resets (or the agent has another model), press Play and resume this conversation with a message',
+      hint: 'Still rate limited after Pi’s retries, so Ultimate is paused; once the limit resets (or the agent definition has a backup model in its `fallback`), press Play and resume this conversation with a message',
       temporary: false,
     }
   if (/not logged in/i.test(error))
@@ -189,25 +196,43 @@ async function details(tx: Tx, metadata: ExtensionHost['metadata'], task: Genera
 
 export default function watchdog(host: ExtensionHost) {
   const Watchdog = defineTask<
-    Failure & { failedTask: number; recipient: ConversationId; temporary: boolean; until: number },
+    Failure & {
+      failedTask: number
+      recipient: ConversationId
+      temporary: boolean
+      until: number
+      /** The model the failed run answered on, when the error is a limit a backup model may take. */
+      backup?: { model: string }
+    },
     { phase: 'wait' } | { phase: 'retry' } | { phase: 'report' },
     null
   >({
     name: 'watchdog.failure',
     version: 1,
-    initial: (input) => ({ phase: input.temporary && !input.retried ? 'wait' : 'report' }),
+    // A limit a backup may take continues again after a retry: each continuation needs a switch to an untried backup.
+    initial: (input) => ({
+      phase: input.temporary && (!input.retried || input.backup) ? 'wait' : 'report',
+    }),
     phases: {
       wait: (task, runtime, ctx) => runtime.sleepUntil(task.input.until, { phase: 'retry' }, ctx),
       retry: async (task, runtime, ctx) => {
-        const { conversation, failedTask, error } = task.input
+        const { conversation, failedTask, error, backup } = task.input
         const child = (await runtime.conversation(conversation as ConversationId, ctx))!
         // A replay after submit must finish, not mistake its own retry for someone else's recovery.
         let submitted = false
         let busy = false
+        // A backup model takes the failed model's place only if the definition has one for this limit; without that
+        // switch the conversation still runs on the model that refused, so there is nothing to continue on.
+        let switched = true
         await runtime.commit(async (tx) => {
           submitted = !!(await tx.submissionByRequest(child.id, `watchdog-retry:${failedTask}`))
           busy = (await tx.doc(LiveDoc, child.id)).run !== undefined
+          if (!backup) return
+          const model = (await tx.doc(AgentDoc, child.id)).model
+          switched = model !== undefined && `${model.provider}/${model.modelId}` !== backup.model
         }, ctx)
+        if (!switched && !submitted && !busy)
+          return runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'report' } }), ctx)
         if (!submitted && !busy)
           await child.submit(
             {
@@ -251,7 +276,10 @@ export default function watchdog(host: ExtensionHost) {
         await runtime.commit(async (tx) => {
           const reported = await tx.doc(Reported, ROOT_CONVERSATION_ID)
           // Newest first by when the run failed: reports of older failures can finish later.
-          reported.failures.push({ ...data, at: task.input.until - RETRY_AFTER })
+          reported.failures.push({
+            ...data,
+            at: task.input.until - (task.input.backup ? BACKUP_RETRY_AFTER : RETRY_AFTER),
+          })
           reported.failures.sort((a, b) => b.at - a.at)
           reported.failures.splice(FAILURE_LIMIT)
           // Reporting ends the watchdog's hold on a subagent's provider failure: its action has given up.
@@ -321,6 +349,20 @@ export default function watchdog(host: ExtensionHost) {
       if (task.state.status !== 'terminal' || task.state.outcome.status !== 'failed') return
       const error = task.state.outcome.error.message
       const { hint, temporary } = diagnose(error, info.assistant)
+      // A limit Pi did not retry ended the run on the model that answered it, and the commit that recorded that answer may
+      // have switched the conversation to a backup model of its definition: only a new input continues it there. `retry`
+      // waits for that commit and reads the model the conversation runs on then. Without a backup to switch to, the
+      // failure reports at once, as before.
+      const refused = info.assistant && `${info.assistant.provider}/${info.assistant.model}`
+      const backup =
+        refused &&
+        limited(error) &&
+        !temporary &&
+        (await host.want(Pin)?.definition(tx, child.id))?.fallback?.some(
+          (entry) => `${entry.provider}/${entry.modelId}` !== refused,
+        )
+          ? { model: refused }
+          : undefined
       await tx.createTask(
         Watchdog,
         {
@@ -332,8 +374,9 @@ export default function watchdog(host: ExtensionHost) {
           step: info.step,
           ...(hint ? { hint } : {}),
           retried: runInputs.some((input) => input.requestId?.startsWith('watchdog-retry:')),
-          temporary,
-          until: (task.endedAt ?? Date.now()) + RETRY_AFTER,
+          ...(backup ? { backup } : {}),
+          temporary: temporary || backup !== undefined,
+          until: (task.endedAt ?? Date.now()) + (backup ? BACKUP_RETRY_AFTER : RETRY_AFTER),
         },
         { conversationId: recipient, ownership: { kind: 'conversation' }, background: true },
       )
