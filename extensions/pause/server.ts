@@ -345,7 +345,7 @@ async function limited(host: Host, limit: RateLimit) {
     // The commit recorded nothing, so nothing shows the pause or offers Play: let the work go on rather than hold it
     // unseen. Pi's retry and the watchdog's report still stand.
     flag(host).paused = false
-    host.harness().release()
+    release(host)
     throw error
   }
   await card(host, await read(host))
@@ -403,16 +403,23 @@ async function limits(host: Host, hits: Limited[]) {
       )
     }
   } finally {
-    // The hold is boolean: it goes only once no commit's limits wait for a decision and no pause stands.
-    const pending = deciding(host)
-    pending.count--
-    if (pending.count === 0 && !flag(host).paused) host.harness().release()
+    deciding(host).count--
+    // A pause that stands keeps the hold.
+    if (!flag(host).paused) release(host)
   }
 }
 
 /** Commits whose rate limits hold the scheduler until `limits` decides them; shared across reloads. */
 const deciding = (host: Pick<ExtensionHost, 'resource'>) =>
   host.resource('pause.deciding', () => ({ count: 0 }))
+
+/**
+ * Release the scheduler, unless a commit's rate limits still wait for `limits` to decide them: the hold is boolean, so
+ * Play or a failed pause must not lift the hold such a commit took. Its decision releases it.
+ */
+function release(host: Host) {
+  if (deciding(host).count === 0) host.harness().release()
+}
 
 /**
  * Whether Play notes conversation `id`: its run recorded at the pause continues (the same task, or the run it handed
@@ -487,7 +494,7 @@ async function play(host: Host, auto = false) {
   }, context)
   arm(host, await read(host))
   flag(host).paused = false
-  harness.release()
+  release(host)
   // Gated work waiting for Play starts now.
   for (const resume of gate(host).waiters) resume()
   return state(host)
