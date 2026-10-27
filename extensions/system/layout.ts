@@ -83,7 +83,7 @@ export type TreeRow =
   | { kind: 'fold'; parent: number; count: number; depth: number; last: true; through: boolean[] }
 
 /** Children folded behind a "+N finished" row once a parent has more than this many finished ones. */
-export const FOLD = 3
+const FOLD = 3
 
 const startOf = (lane: Lane) =>
   lane.spawn ? Date.parse(lane.spawn.at) : lane.runs[0] ? Date.parse(lane.runs[0].start) : 0
@@ -176,7 +176,7 @@ export function chain(lanes: readonly Lane[], conversation: number) {
 }
 
 /** A dotted link in pixels: its SVG path and the dot at its start. */
-export type LinkPath = { from: number; to: number; d: string; dot: [number, number] }
+type LinkPath = { from: number; to: number; d: string; dot: [number, number] }
 
 /** Where things sit on the timeline overlay: a row's vertical centre by conversation, and the overlay's width. */
 export type Frame = { y: ReadonlyMap<number, number>; width: number; since: number; now: number }

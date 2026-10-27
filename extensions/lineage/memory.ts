@@ -49,7 +49,7 @@ export const Memorized = defineDocFamily<{ task?: number }, null>({
   initial: () => ({}),
 })
 
-export type MemoryOp =
+type MemoryOp =
   | {
       op: 'add'
       slug: string
@@ -256,7 +256,7 @@ export async function memoryBrief(tx: Tx, root: ConversationId) {
   return { text, tip }
 }
 
-export const MEMORIZE_SYSTEM = `You keep a software project's memory: durable decisions, facts and lessons that a future branch of work needs before it starts. You read one landing (merged work) and the current memory, and answer only JSON: {"ops":[...]} with these op shapes:
+const MEMORIZE_SYSTEM = `You keep a software project's memory: durable decisions, facts and lessons that a future branch of work needs before it starts. You read one landing (merged work) and the current memory, and answer only JSON: {"ops":[...]} with these op shapes:
 {"op":"add","slug":"kebab-slug","kind":"decision"|"fact"|"lesson","line":"one-line summary","body":"the full memory","source":"#<conversation>/<entry>"}
 {"op":"update","slug":"existing-slug","kind"?,"line"?,"body"?,"source"?}
 {"op":"delete","slug":"existing-slug"}

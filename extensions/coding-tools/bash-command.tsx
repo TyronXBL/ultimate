@@ -1,7 +1,7 @@
 import { parse } from 'unbash'
 import type { AndOr, Command, PipelineNode, Statement, Word } from 'unbash'
 
-export interface Heredoc {
+interface Heredoc {
   body: string
   /** The closing delimiter line as written. */
   closing: string

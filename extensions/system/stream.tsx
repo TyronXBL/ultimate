@@ -9,7 +9,7 @@ import type { SystemFilter, SystemRow } from './refs.ts'
 import { clock, KindIcon, TraceTree } from './tree.tsx'
 
 /** The stream's source chips: each a filter of the `stream` action. */
-export const sources = {
+const sources = {
   all: {},
   events: { sources: ['event'] },
   tools: { kinds: ['tool'] },
@@ -18,13 +18,13 @@ export const sources = {
   services: { kinds: ['service'] },
   reactors: { kinds: ['reactor'] },
 } satisfies Record<string, SystemFilter>
-export type Source = keyof typeof sources
+type Source = keyof typeof sources
 
 /** What the user filters the stream by; kept in UI state so it survives reloads. */
 export type StreamView = { source: Source; errors: boolean; conversation?: number; text: string }
 
 /** This surface's own polls, which would otherwise fill the stream it shows. */
-export const ownPoll = (row: SystemRow) =>
+const ownPoll = (row: SystemRow) =>
   row.kind === 'action' &&
   (row.name === 'system/stream' || row.name === 'system/lanes') &&
   row.summary.startsWith('ui →')

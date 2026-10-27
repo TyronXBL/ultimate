@@ -33,7 +33,7 @@ export function until(at: number, now: number) {
 }
 
 /** `now`, `12s ago`, `5m ago`, `3h ago`, `2d ago`, then a short date. */
-export function ago(at: number, now: number) {
+function ago(at: number, now: number) {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
   if (seconds < 2) return 'now'
   if (seconds < 60) return `${seconds}s ago`

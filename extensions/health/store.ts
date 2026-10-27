@@ -17,7 +17,7 @@ export interface HealthEntry {
   transient?: number[]
 }
 
-export type HealthFile = { providers: Record<string, HealthEntry> }
+type HealthFile = { providers: Record<string, HealthEntry> }
 
 /** The machine's health file, shared by every Ultimate home of the user. */
 export const healthPath = (userHome: string) => join(userHome, '.ultimate/health.json')
@@ -25,9 +25,9 @@ export const healthPath = (userHome: string) => join(userHome, '.ultimate/health
 const STAMPS = ['lastOk', 'lastFail', 'lastUsed', 'lastAuth'] as const
 
 /** Transient failures in a row that turn a provider failing. */
-export const STREAK = 3
+const STREAK = 3
 /** A transient failure this long after the first of its streak, with no success between, turns it failing too. */
-export const STREAK_WINDOW = 5 * 60_000
+const STREAK_WINDOW = 5 * 60_000
 
 /**
  * The only words an error summary may contain: provider and OAuth error codes, network errors and a few plain words.
@@ -145,7 +145,7 @@ export function state(entry: HealthEntry): ProviderHealth['state'] {
  * `transient`, a capacity one only `lastFail` and `error`. A success clears nothing: `state` counts only failures newer
  * than `lastOk`, so writes arriving out of order still count right.
  */
-export function apply(before: HealthEntry, update: HealthEntry): HealthEntry {
+function apply(before: HealthEntry, update: HealthEntry): HealthEntry {
   const failed = update.lastFail
   if (failed === undefined) return merge(before, update)
   const kind = failureKind(update.error ?? '')
@@ -180,7 +180,7 @@ const stamp = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined
 
 /** The stored file; a missing or unreadable one is empty. */
-export async function readFileHealth(userHome: string): Promise<HealthFile> {
+async function readFileHealth(userHome: string): Promise<HealthFile> {
   const text = await readFile(healthPath(userHome), 'utf8').catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
@@ -216,7 +216,7 @@ export async function readFileHealth(userHome: string): Promise<HealthFile> {
   return { providers }
 }
 
-export const toHealth = (file: HealthFile): ProviderHealth[] =>
+const toHealth = (file: HealthFile): ProviderHealth[] =>
   Object.entries(file.providers)
     .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([provider, entry]) => {

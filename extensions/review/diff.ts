@@ -8,7 +8,7 @@ import type { ReviewDiff, ReviewFile, ReviewKind } from './refs.ts'
 /** Patches over this many bytes per file are listed without their hunks. */
 export const FILE_CAP = 400 * 1024
 /** Past this many patch bytes in total, the remaining files are listed without their hunks. */
-export const TOTAL_CAP = 8 * 1024 * 1024
+const TOTAL_CAP = 8 * 1024 * 1024
 /** Git's output may be this big before a diff is given up as too large. */
 const BUFFER = 16 * 1024 * 1024
 // Fixed `a/` and `b/` prefixes: work-tree and `--no-index` diffs would use mnemonic ones (`w/`, `1/`) the parser rejects.

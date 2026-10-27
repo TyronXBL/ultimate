@@ -28,7 +28,7 @@ export type RememberOp = {
 }
 
 /** The well-formed ops of a `remember` call's arguments, in order. */
-export function rememberOps(ops: unknown): RememberOp[] {
+function rememberOps(ops: unknown): RememberOp[] {
   if (!Array.isArray(ops)) return []
   return ops.flatMap((raw) => {
     if (!raw || typeof raw !== 'object') return []
@@ -51,7 +51,7 @@ export function rememberOps(ops: unknown): RememberOp[] {
 const verbs = { add: 'added', update: 'updated', delete: 'deleted' } as const
 
 /** What a batch did: `updated fleet-failure-modes` for one op, `added 2 · updated 1 · deleted 1` for more. */
-export function rememberSummary(ops: readonly RememberOp[]) {
+function rememberSummary(ops: readonly RememberOp[]) {
   if (ops.length === 1) return `${verbs[ops[0].op]} ${ops[0].slug}`
   return (['add', 'update', 'delete'] as const)
     .map((op) => [op, ops.filter((item) => item.op === op).length] as const)

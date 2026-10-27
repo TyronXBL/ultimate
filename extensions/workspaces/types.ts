@@ -39,7 +39,7 @@ export type Landed = {
   flaky: string[]
 }
 /** A check's result; a passed or flaky one carries its last output line as `summary`. */
-export type LanderCheck = {
+type LanderCheck = {
   command: string
   result: 'passed' | 'failed' | 'flaky'
   summary?: string

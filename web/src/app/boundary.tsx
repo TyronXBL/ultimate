@@ -8,7 +8,7 @@ import { provisionOf, provisionsOf, slotItems } from '../sdk/registry.ts'
 import type { Point, SlotName } from '../sdk/types.ts'
 
 /** A compact card naming the extension that failed. `inline` fits a status line or toolbar. */
-export function ErrorCard({
+function ErrorCard({
   extension,
   error,
   variant = 'block',

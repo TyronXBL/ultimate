@@ -167,7 +167,7 @@ function shorten(text: string, size = 2400) {
 }
 
 /** Only visible user/assistant text, each message capped. */
-export function transcriptText(messages: readonly Message[]) {
+function transcriptText(messages: readonly Message[]) {
   return messages
     .flatMap((message) => {
       if (message.role !== 'user' && message.role !== 'assistant') return []

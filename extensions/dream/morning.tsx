@@ -31,7 +31,7 @@ import { BusyBlocker, chapterLabel, Refusal, switchChapter, useBusyElsewhere } f
 import type { Seed } from './types.ts'
 
 /** `dream.chapter` entry data; `learned` and `carried` came later, so older entries lack them. */
-export type ChapterEntry = {
+type ChapterEntry = {
   from: { name: string; number: number }
   number: number
   name: string
@@ -40,7 +40,7 @@ export type ChapterEntry = {
 }
 
 /** The first input of the wake-up side chat: the four things a colleague back from leave should know. */
-export const AWAKE_PROMPT = [
+const AWAKE_PROMPT = [
   "Check that you're awake in this new chapter. Answer from what you actually know now, briefly, one short section each:",
   '1. What is this project?',
   "2. What's open: to-dos, questions, work in flight?",

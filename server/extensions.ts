@@ -796,7 +796,7 @@ export async function loadExtensions(
     },
   }
 }
-export function validateSecrets(
+function validateSecrets(
   value: unknown,
 ): NonNullable<NonNullable<ExtensionInfo['server']>['secrets']> {
   if (!Array.isArray(value)) throw new Error('secrets must be an array of declarations')

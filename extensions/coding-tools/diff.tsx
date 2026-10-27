@@ -70,7 +70,7 @@ const tone = {
 const sign = { add: '+', del: '−', context: ' ', hunk: '', gap: '' } as const
 
 /** The soft block cursor at the end of text that is still arriving. */
-export const Caret = () => (
+const Caret = () => (
   <span className="ml-px inline-block h-3.5 w-1.5 animate-pulse-dot bg-brand align-middle" />
 )
 

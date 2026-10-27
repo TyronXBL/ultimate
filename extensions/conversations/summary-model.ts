@@ -37,7 +37,7 @@ export async function summaryModelSetting(
 }
 
 /** Cheap models known to write good summaries, tried in order when the default has no login here. */
-export const FALLBACK_SUMMARY_MODELS = [
+const FALLBACK_SUMMARY_MODELS = [
   'openai-codex/gpt-6-luna',
   'anthropic/claude-haiku-5-5',
   'openrouter/anthropic/claude-haiku-5.5',

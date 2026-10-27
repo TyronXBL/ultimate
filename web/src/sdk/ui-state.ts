@@ -163,4 +163,3 @@ export function createUiState(
     },
   }
 }
-export type UiState = ReturnType<typeof createUiState>

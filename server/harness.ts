@@ -61,7 +61,7 @@ export function reportMessage(error: unknown, info: ReportInfo): string {
  * entry in Pi's settings files replaces these field by field.
  */
 const large = { reserveTokens: 32768, keepRecentTokens: 60000, backgroundTokens: 131072 }
-export const compactionOverrides: Record<string, Partial<CompactionPolicy>> = {
+const compactionOverrides: Record<string, Partial<CompactionPolicy>> = {
   // 500k window, 128k answers: blocking at ~467k, background from ~400k.
   'openai-codex/gpt-6.1-sol': {
     reserveTokens: 32768,

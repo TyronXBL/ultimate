@@ -4,7 +4,7 @@ import { useProjectSetup } from './project-setup.ts'
 import { loadSkills, stripFrontmatter } from '@earendil-works/pi-coding-agent'
 import type { Skill } from '@earendil-works/pi-coding-agent'
 
-export type SkillScope = 'clone' | 'user' | 'project'
+type SkillScope = 'clone' | 'user' | 'project'
 
 /** A loaded skill with where it came from, and the paths of same-named skills it overrides in earlier scopes. */
 export type ScopedSkill = Skill & { scope: SkillScope; overrides: string[] }

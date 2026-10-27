@@ -18,7 +18,7 @@ import type {
 import type { EventContext } from '../shared/events.ts'
 
 export type TraceContext = EventContext & { traceId: string; parentCall: string }
-export type CallKind = 'service' | 'action' | 'reactor' | 'tool' | 'model'
+type CallKind = 'service' | 'action' | 'reactor' | 'tool' | 'model'
 /** What a traced call is; ids given here override those of the enclosing work. */
 export interface Call {
   kind: CallKind
