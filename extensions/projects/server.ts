@@ -111,12 +111,8 @@ async function folder(host: Pick<ExtensionHost, 'userHome'>, value: unknown) {
  * The child's environment: none of this process's `ULTIMATE_*` identity, which would make it reuse the host's home,
  * port or generation instead of the project's own.
  */
-export function startEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
-    ...Object.fromEntries(Object.entries(parent).filter(([key]) => !key.startsWith('ULTIMATE_'))),
-    ULTIMATE_NO_OPEN: '1',
-  }
-}
+const startEnv = (parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(parent).filter(([key]) => !key.startsWith('ULTIMATE_')))
 
 /** What a start that failed reported: the tail of its log. */
 async function logTail(path: string) {
