@@ -343,7 +343,8 @@ async function limited(host: Host, limit: RateLimit) {
     await hold(host, limit)
   } catch (error) {
     // The commit recorded nothing, so nothing shows the pause or offers Play: let the work go on rather than hold it
-    // unseen. Pi's retry and the watchdog's report still stand.
+    // unseen. Pi's retry and the watchdog's report still stand. Called from `limits`, whose finally releases the hold
+    // once its decision is done; `release` waits for that.
     flag(host).paused = false
     release(host)
     throw error
