@@ -217,6 +217,7 @@ export function BackupModelsField({
           {value.map((model, index) => (
             <li
               className="group/backup flex items-center gap-1"
+              // oxlint-disable-next-line react/no-array-index-key -- An ordered list that may repeat a model.
               key={`${index}:${model.provider}/${model.modelId}`}
             >
               <span className="w-3.5 shrink-0 font-mono text-[11px] text-muted-foreground/60 tabular-nums">
