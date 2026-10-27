@@ -7,7 +7,7 @@ export interface ParallelWarning {
   detail?: Record<string, unknown> | null
 }
 
-export interface ParallelUsageItem {
+interface ParallelUsageItem {
   name: string
   count: number
 }
@@ -27,11 +27,11 @@ export interface SearchResponse {
   usage?: ParallelUsageItem[] | null
 }
 
-export interface ExtractResultItem extends ParallelResultItem {
+interface ExtractResultItem extends ParallelResultItem {
   full_content?: string | null
 }
 
-export interface ExtractError {
+interface ExtractError {
   url: string
   error_type: string
   http_status_code?: number | null

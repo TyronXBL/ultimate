@@ -11,7 +11,7 @@ export type Message = {
 }
 
 /** Whether a message to the user still waits on their answer or dismissal. */
-export const waitsOnUser = (message: Message) =>
+const waitsOnUser = (message: Message) =>
   message.to === 'user' && message.reply && message.state === 'delivered'
 
 /** The questions of a message while it still waits on the user's reply; none once it is answered or dismissed. */

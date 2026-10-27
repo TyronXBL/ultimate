@@ -9,7 +9,7 @@ import { acquireLock } from '../../server/lock.ts'
 import type { Layers, UpdateState } from './refs.ts'
 
 /** Origin is fetched when the last fetch of the clone, by any Ultimate on it, is older than this. */
-export const FETCH_EVERY = 60 * 60_000
+const FETCH_EVERY = 60 * 60_000
 
 /** Which layers `files` (paths from the repository root) touch. */
 export function layersOf(files: string[]): Layers {
@@ -29,7 +29,7 @@ export async function gitPath(git: Git, root: string, name: string) {
 }
 
 /** When origin was last fetched into the clone (`FETCH_HEAD`'s mtime), or undefined before the first fetch. */
-export async function fetchedAt(git: Git, root: string) {
+async function fetchedAt(git: Git, root: string) {
   return stat(await gitPath(git, root, 'FETCH_HEAD')).then(
     (info) => info.mtimeMs,
     () => undefined,
@@ -116,7 +116,7 @@ export async function cloneState(
 }
 
 /** What the summary model reads: the range's commit messages, never diffs, clipped. */
-export const SUMMARY_INPUT_CAP = 12_000
+const SUMMARY_INPUT_CAP = 12_000
 
 export const SUMMARY_SYSTEM = `You summarize an update to Ultimate, a coding agent app, for its user.
 You get the commit messages of the update, newest first. Answer with 2 to 4 lines, one per notable change, most

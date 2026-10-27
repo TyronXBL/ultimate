@@ -21,13 +21,13 @@ import type { Seed } from './types.ts'
 /** The built-in automation's name, shown in the Automations panel. */
 export const AUTOMATION_NAME = 'Dream before compaction'
 /** Its trigger as dream first makes it; the user may change the threshold. */
-export const CONDITION = { metric: 'context' as const, of: '@ultimate', above: 70 }
+const CONDITION = { metric: 'context' as const, of: '@ultimate', above: 70 }
 /**
  * The second built-in: after a long pause with @ultimate half full, dream while the user is away. At 8 hours keep-warm
  * has just renewed the prompt cache, so the dream's handoff reads it instead of rewriting it.
  */
 export const PAUSE_NAME = 'Dream after a pause'
-export const PAUSE_CONDITION = {
+const PAUSE_CONDITION = {
   metric: 'context' as const,
   of: '@ultimate',
   above: 50,
@@ -82,7 +82,7 @@ const BUILT_INS: BuiltIn[] = [
 ]
 
 /** A pause in whole hours, as the prompts say it: `9 h`. */
-export const hoursOf = (ms: number) => `${Math.round(ms / 3600_000)} h`
+const hoursOf = (ms: number) => `${Math.round(ms / 3600_000)} h`
 
 /** What @ultimate reads when a dream is asked for, by the user or a built-in automation. */
 export const DREAM_ASK =

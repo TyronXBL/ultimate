@@ -37,9 +37,9 @@ import type {
 } from './types.ts'
 
 /** One line of the lander conversation's log; it carries no model message, so no model ever sees it. */
-export const LanderLog = defineEntry<LanderEntry>('ultimate.lander')
+const LanderLog = defineEntry<LanderEntry>('ultimate.lander')
 /** The entry kind of the lander task's question to its model; the model reads the prompt. */
-export const LanderAskEntry = 'ultimate.lander-ask'
+const LanderAskEntry = 'ultimate.lander-ask'
 /** Outcomes kept in the index for submit cards; older ones live on in the lander conversation. */
 const kept = 50
 /** The lander's own detached checkout of `source`, also its conversation's cwd. */
@@ -190,7 +190,7 @@ const failedLine = /^\s*(FAIL|×|✗)\s/
 const seconds = (value: number) => (value < 60 ? `${value} s` : `${+(value / 60).toFixed(1)} min`)
 
 /** Where running checks record their process groups, so a host that crashed mid-check stops them on its next open. */
-export const checkPids = (home: string) => join(home, 'lander-checks')
+const checkPids = (home: string) => join(home, 'lander-checks')
 /**
  * Stop the checks a previous process left running. Pi resumes a lander task before extensions open, so files of
  * this process name live checks, never leftovers.
@@ -211,7 +211,7 @@ export const sweepChecks = async (home: string) => {
  * Where checks keep temporary files: on disk under the project home, not in `/tmp`, which is often a small tmpfs
  * that test suites fill (EDQUOT) when interrupted runs leave their directories behind.
  */
-export const checkTemp = (home: string) => join(home, 'lander-tmp')
+const checkTemp = (home: string) => join(home, 'lander-tmp')
 
 /**
  * Run `command` with bash in its own process group, recorded in `pids` while it runs, with `TMPDIR` set to a fresh

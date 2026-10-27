@@ -44,7 +44,7 @@ export function projectTitle(system: SystemInfo | undefined) {
  * The project as the title bar's chip says it beside the wordmark: another project's name, a branch checkout's
  * `#<worktree>`; nothing for Ultimate's own checkout, whose name the wordmark already says.
  */
-export function projectName(system: SystemInfo | undefined) {
+function projectName(system: SystemInfo | undefined) {
   if (!system) return ''
   const worktree = /\/\.ultimate\/projects\/(.+)-[\da-f]{8}\/worktrees\/(\d+)$/.exec(
     system.project.root,

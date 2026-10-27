@@ -217,7 +217,7 @@ async function firstInput(tx: Tx, id: ConversationId, forkedAt = 0) {
 export type Tree = { root: ConversationId; since: number; abstracts: Record<string, OpenAbstract> }
 
 /** Tokens the tally part of a catch-up may take. */
-export const TALLY_BUDGET = 6000
+const TALLY_BUDGET = 6000
 
 /** What one conversation of the tree did since the baseline, as model-visible in the tally now. */
 type Activity = {

@@ -11,7 +11,7 @@ import type { Message } from './refs.ts'
  * A conversation's open messages: answers it waits for, what it owes (an open question, or a branch's report it has not
  * messaged the branch about since), and messages still on their way.
  */
-export function openMessages(messages: readonly Message[], id: number) {
+function openMessages(messages: readonly Message[], id: number) {
   const reports = new Map<number | 'user' | 'remote', Message>()
   for (const m of messages)
     if (m.to === id && m.report) reports.set(m.from, m)

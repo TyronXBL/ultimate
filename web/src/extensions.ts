@@ -11,7 +11,7 @@ declare global {
 }
 
 /** Every extensions/<name>/web.tsx, imported lazily. Vite regenerates this map when a folder appears or goes. */
-export const loaders: Record<string, ExtensionLoader> = facets
+const loaders: Record<string, ExtensionLoader> = facets
 
 /** Errors Vite reported for a facet, which say more than a failed dynamic import. */
 const viteErrors = new Map<string, string>()

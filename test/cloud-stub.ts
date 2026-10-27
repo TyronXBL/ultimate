@@ -11,7 +11,7 @@ const json = (status: number, body: unknown) =>
   })
 
 /** The stub's origin; requests to any other origin go to the real `fetch`. */
-export const CLOUD = 'http://127.0.0.1:8787'
+const CLOUD = 'http://127.0.0.1:8787'
 const realFetch = globalThis.fetch
 
 /** A Worker with token `token`: snapshot objects, the backup commit with its parent rule, and the register. */

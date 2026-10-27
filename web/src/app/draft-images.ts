@@ -4,7 +4,7 @@ import type { PastedImage } from '@/components/image-paste'
  * Largest share of localStorage one draft's images may take, in base64 characters (about 1.5 MiB of image). Browsers
  * give an origin about 5 M characters, which every draft's text shares; bigger pastes stay in memory only.
  */
-export const maxStoredImageChars = 2_000_000
+const maxStoredImageChars = 2_000_000
 
 /** The images draft `key` kept across a reload. */
 export function storedImages(key: string): PastedImage[] {

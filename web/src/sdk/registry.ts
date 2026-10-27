@@ -322,7 +322,6 @@ export function createRegistry() {
     },
   }
 }
-export type Registry = ReturnType<typeof createRegistry>
 
 function normalize(value: Contribution | readonly Contribution[] | undefined) {
   if (!value) return []

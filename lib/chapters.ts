@@ -13,7 +13,7 @@ export const CHAPTERS_FILE = 'chapters.json'
 export const PENDING_CHAPTER = 'pending-chapter.json'
 const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
 
-export interface Chapter {
+interface Chapter {
   name: string
   /** When the chapter was created by a switch; the first chapter has none. */
   createdAt?: number

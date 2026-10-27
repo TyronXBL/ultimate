@@ -6,7 +6,7 @@ import type { ReviewComment } from './comments.ts'
 const strip = (line: string | undefined) => (line ?? '').replace(/\r?\n$/, '')
 
 /** Each side's lines the patch shows, by line number, without their line endings. */
-export function linesOf(diff: FileDiffMetadata) {
+function linesOf(diff: FileDiffMetadata) {
   const old = new Map<number, string>()
   const next = new Map<number, string>()
   for (const hunk of diff.hunks) {
