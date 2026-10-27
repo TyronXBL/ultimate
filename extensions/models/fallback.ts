@@ -21,8 +21,8 @@ export async function fallback(
   const available = host.modelRuntime.getAvailableSnapshot()
   // Nothing has a login yet (an empty snapshot says nothing about this model), or this one still has one.
   if (!agent.model || !available.length || hasLogin(available, agent.model)) return undefined
-  const pin = await host.want(Pin)?.pin(tx, conversationId)
-  const usable = hasLogin(available, pin) ? pin : undefined
+  const definition = await host.want(Pin)?.definition(tx, conversationId)
+  const usable = hasLogin(available, definition?.model) ? definition?.model : undefined
   const to = usable ?? defaultModel(available, host.settings)
   if (!to) return undefined
   const from = name(agent.model)

@@ -13,6 +13,13 @@ import { projectDecision, useProjectSetup } from '../server/project-setup.ts'
 // oxlint-disable-next-line no-restricted-imports -- extension-owned definitions follow the same enabled folders as their facets
 import { discoverExtensions } from '../server/discovery.ts'
 
+/** One of a definition's backup models; `provider/id[:thinking]` as its `model` is written. */
+export interface FallbackModel {
+  provider: string
+  modelId: string
+  thinking?: ModelThinkingLevel
+}
+
 export interface AgentDefinition {
   name: string
   description: string
@@ -20,6 +27,8 @@ export interface AgentDefinition {
   instructions: string
   model?: { provider: string; modelId: string }
   thinking?: ModelThinkingLevel
+  /** Ordered backup models a conversation switches to when its model hits a rate limit, capacity or quota error. */
+  fallback?: FallbackModel[]
   tools?: string[]
   /** Tools overlays added to a definition without a `tools` list: it has every tool already, and deferred ones load. */
   addTools?: string[]
@@ -153,6 +162,7 @@ const fields = new Set([
   'description',
   'model',
   'thinking',
+  'fallback',
   'tools',
   'denyTools',
   'isolate',
@@ -177,11 +187,24 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
   >
 > & {
   model?: string
+  fallback?: string[]
 } {
-  const { description, model, thinking, isolate, resident, onFailure, fast, summaries, denyTools } =
-    frontmatter
+  const {
+    description,
+    model,
+    thinking,
+    fallback,
+    isolate,
+    resident,
+    onFailure,
+    fast,
+    summaries,
+    denyTools,
+  } = frontmatter
   if (denyTools !== undefined && !isTools(denyTools))
     throw new Error('denyTools must be a list of tool names')
+  if (fallback !== undefined && !isFallback(fallback))
+    throw new Error('fallback must be a model or a list of models')
   if (description !== undefined && (typeof description !== 'string' || !description.trim()))
     throw new Error('description is required')
   if (thinking !== undefined && (typeof thinking !== 'string' || !Object.hasOwn(levels, thinking)))
@@ -201,6 +224,9 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     ...(description !== undefined ? { description: description.trim() } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(thinking ? { thinking: thinking as ModelThinkingLevel } : {}),
+    ...(fallback !== undefined
+      ? { fallback: typeof fallback === 'string' ? [fallback] : fallback }
+      : {}),
     ...(isolate ? { isolate: isolate } : {}),
     ...(resident !== undefined ? { resident: resident } : {}),
     ...(onFailure ? { onFailure: onFailure } : {}),
@@ -213,11 +239,17 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
 const isTools = (tools: unknown): tools is string[] =>
   Array.isArray(tools) && tools.every((tool) => typeof tool === 'string')
 
+/** `provider/id[:thinking]` entries, one alone or a list; an empty list means no fallback. */
+const isFallback = (fallback: unknown): fallback is string | string[] =>
+  typeof fallback === 'string'
+    ? !!fallback.trim()
+    : isTools(fallback) && fallback.every((model) => !!model.trim())
+
 /** A definition file: Pi's YAML frontmatter with Ultimate's fields, and the instructions as its body. */
 export function parseDefinition(
   text: string,
   path: string,
-): Omit<AgentDefinition, 'model'> & { model?: string } {
+): Omit<AgentDefinition, 'model' | 'fallback'> & { model?: string; fallback?: string[] } {
   const { frontmatter, body } = parseFrontmatter(text)
   // Without a frontmatter block Pi returns no fields; YAML may also parse to a list or a scalar.
   if (
@@ -250,16 +282,29 @@ function resolveModel(
   cliModel: string | undefined,
   cliThinking: ModelThinkingLevel | undefined,
   modelRuntime: ModelRuntime,
+  field = 'model',
 ) {
   const resolved = resolveCliModel({ cliModel, cliThinking, modelRuntime })
   if (resolved.error || resolved.warning)
-    throw new Error(`model: ${resolved.error || resolved.warning}`)
+    throw new Error(`${field}: ${resolved.error || resolved.warning}`)
   const thinking = cliThinking ?? resolved.thinkingLevel
   return {
     ...(resolved.model
       ? { model: { provider: resolved.model.provider, modelId: resolved.model.id } }
       : {}),
     ...(thinking ? { thinking } : {}),
+  }
+}
+
+/** A definition's `fallback` list, each entry resolved as `model` is; an unknown one fails the definition. */
+function resolveFallback(entries: string[] | undefined, modelRuntime: ModelRuntime) {
+  if (!entries) return {}
+  return {
+    fallback: entries.map((entry): FallbackModel => {
+      const { model, thinking } = resolveModel(entry, undefined, modelRuntime, 'fallback')
+      if (!model) throw new Error(`fallback: ${entry} is not a model`)
+      return { ...model, ...(thinking ? { thinking } : {}) }
+    }),
   }
 }
 
@@ -277,12 +322,16 @@ export function parseOverlay(text: string, path: string, modelRuntime: ModelRunt
   if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(name))
     throw new Error('name must be a nonempty identifier')
   if (!isTools(addTools)) throw new Error('addTools must be a list of tool names')
-  const { model, thinking, ...settings } = parseSettings(frontmatter)
+  const { model, thinking, fallback, ...settings } = parseSettings(frontmatter)
   return {
     name,
     path,
     addTools,
-    settings: { ...settings, ...resolveModel(model, thinking, modelRuntime) },
+    settings: {
+      ...settings,
+      ...resolveModel(model, thinking, modelRuntime),
+      ...resolveFallback(fallback, modelRuntime),
+    },
     instructions: body.trim(),
   }
 }
@@ -294,8 +343,12 @@ const isOverlay = (text: string) => {
 
 /** A definition file read and its model resolved, as discovery and saving accept it. */
 function readDefinition(text: string, path: string, modelRuntime: ModelRuntime): AgentDefinition {
-  const { model, thinking, ...definition } = parseDefinition(text, path)
-  return { ...definition, ...resolveModel(model, thinking, modelRuntime) }
+  const { model, thinking, fallback, ...definition } = parseDefinition(text, path)
+  return {
+    ...definition,
+    ...resolveModel(model, thinking, modelRuntime),
+    ...resolveFallback(fallback, modelRuntime),
+  }
 }
 
 /** Enabled extensions' definitions are built-ins, before user/project definitions and overlays. */
@@ -390,11 +443,15 @@ export async function discoverAgents(
   }
 }
 
-/** The fields a definition file's frontmatter may carry besides its name; `model` is `provider/id`. */
+/**
+ * The fields a definition file's frontmatter may carry besides its name; `model` and each `fallback` entry are
+ * `provider/id[:thinking]`.
+ */
 export interface DefinitionFields {
   description: string
   model?: string
   thinking?: string
+  fallback?: string[]
   tools?: string[]
   denyTools?: string[]
   isolate?: 'none' | 'worktree'
@@ -404,9 +461,13 @@ export interface DefinitionFields {
   summaries?: boolean
 }
 
-/** A flow list of tool names; in a flow list, commas and brackets end an item too. */
-const toolList = (tools: string[]) =>
-  `[${tools.map((tool) => (/^[\w.-]+$/.test(tool) ? scalar(tool) : JSON.stringify(tool))).join(', ')}]`
+/** A flow list of names; in a flow list, commas and brackets end an item too. */
+const flowList = (values: string[]) =>
+  `[${values.map((value) => (/^[\w./-]+(?::[\w.-]+)?$/.test(value) ? value : JSON.stringify(value))).join(', ')}]`
+
+/** A model as a definition writes it: `provider/id[:thinking]`. */
+const modelName = ({ provider, modelId, thinking }: FallbackModel) =>
+  `${provider}/${modelId}${thinking ? `:${thinking}` : ''}`
 
 /** A YAML scalar: plain when it reads back as the same string, else JSON, which YAML reads as a quoted string. */
 function scalar(value: string) {
@@ -429,8 +490,9 @@ export function serializeDefinition(
     `description: ${scalar(frontmatter.description.trim())}`,
     ...(frontmatter.model ? [`model: ${scalar(frontmatter.model)}`] : []),
     ...(frontmatter.thinking ? [`thinking: ${scalar(frontmatter.thinking)}`] : []),
-    ...(frontmatter.tools ? [`tools: ${toolList(frontmatter.tools)}`] : []),
-    ...(frontmatter.denyTools?.length ? [`denyTools: ${toolList(frontmatter.denyTools)}`] : []),
+    ...(frontmatter.fallback ? [`fallback: ${flowList(frontmatter.fallback)}`] : []),
+    ...(frontmatter.tools ? [`tools: ${flowList(frontmatter.tools)}`] : []),
+    ...(frontmatter.denyTools?.length ? [`denyTools: ${flowList(frontmatter.denyTools)}`] : []),
     ...(frontmatter.isolate === 'worktree' ? ['isolate: worktree'] : []),
     ...(frontmatter.resident !== undefined ? [`resident: ${frontmatter.resident}`] : []),
     ...(frontmatter.onFailure ? [`onFailure: ${frontmatter.onFailure}`] : []),
@@ -516,6 +578,9 @@ export async function saveOverlay(
     if (!form.thinking) throw cannot('clear thinking')
     settings.push(`thinking: ${scalar(form.thinking)}`)
   }
+  const fallback = (form.fallback ?? []).join(', ')
+  if (fallback !== (base.fallback ?? []).map(modelName).join(', '))
+    settings.push(`fallback: ${flowList(form.fallback ?? [])}`)
   if ((form.isolate ?? 'none') !== (base.isolate ?? 'none'))
     settings.push(`isolate: ${form.isolate ?? 'none'}`)
   if ((form.resident ?? false) !== (base.resident ?? false))
@@ -549,7 +614,7 @@ export async function saveOverlay(
   const undenied = baseDeny.filter((tool) => !form.denyTools?.includes(tool))
   if (undenied.length) throw cannot(`allow ${undenied.join(', ')} again`)
   const denyTools = (form.denyTools ?? []).filter((tool) => !baseDeny.includes(tool))
-  if (denyTools.length) settings.push(`denyTools: ${toolList(denyTools)}`)
+  if (denyTools.length) settings.push(`denyTools: ${flowList(denyTools)}`)
 
   const start = base.instructions.trim()
   const text = instructions.trim()
@@ -558,7 +623,7 @@ export async function saveOverlay(
   let body = text.slice(start.length).trim()
   if (body.startsWith(heading)) body = body.slice(heading.length).trim()
 
-  const overlay = `---\n${[`name: ${scalar(name)}`, `addTools: ${toolList(addTools)}`, ...settings].join('\n')}\n---\n${body ? `\n${body}\n` : ''}`
+  const overlay = `---\n${[`name: ${scalar(name)}`, `addTools: ${flowList(addTools)}`, ...settings].join('\n')}\n---\n${body ? `\n${body}\n` : ''}`
   // Reading it back resolves the model, so an unknown one writes nothing.
   parseOverlay(overlay, path, modelRuntime)
   await writeTextAtomically(path, overlay)

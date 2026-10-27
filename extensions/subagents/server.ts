@@ -569,9 +569,10 @@ export default function subagents(
     }, ctx)
   }
   // The definition a conversation runs as: children and standing agents record it, branches and the lander carry it
-  // as a label. Its pin, read fresh, is what a conversation whose model lost its login switches to first.
+  // as a label. Its pin and backup models, read fresh, are what a conversation on a model that lost its login falls
+  // back to.
   host.implement(Pin, {
-    async pin(tx, id) {
+    async definition(tx, id) {
       const name = (await tx.doc(Profile, id)).definition ?? (await tx.doc(host.metadata, id)).label
       if (!name) return undefined
       const { definitions } = await discoverAgents(
@@ -580,7 +581,8 @@ export default function subagents(
         host.userHome,
         host.modelRuntime,
       )
-      return definitions.find((definition) => definition.name === name)?.model
+      const found = definitions.find((definition) => definition.name === name)
+      return found && { model: found.model, fallback: found.fallback }
     },
   })
   host.implement(SubagentsApi, {
