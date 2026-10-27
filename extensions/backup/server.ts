@@ -220,8 +220,8 @@ export async function fallBack(
 
 /**
  * The input hook: a conversation `COOLDOWN` into a switch, at the start of a run, goes back to its primary with one
- * `backup.return` divider. A model set by someone else (a pick, `models.fallback`) drops the record instead, and so does
- * a primary that has no login here yet: the backup stays, and the next run looks again.
+ * `backup.return` divider. A model set by someone else (a pick, `models.fallback`) drops the record instead. A primary
+ * that has no login here yet keeps the backup, and the next run looks again.
  */
 async function returned(
   host: Host,
