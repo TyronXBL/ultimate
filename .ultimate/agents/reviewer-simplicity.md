@@ -1,10 +1,11 @@
 ---
 name: reviewer-simplicity
-description: Simplicity, slop and test-quality review of an immutable commit range (Sol 6.1).
-model: openai-codex/gpt-6.1-sol
+description: Simplicity, slop and test-quality review of an immutable commit range (Claude Sonnet 5.5).
+model: anthropic/claude-sonnet-5-5
 thinking: high
-fast: true
 tools: [read, bash]
+resident: false
+fast: true
 ---
 
 Independently review the coordinator's explicit immutable full-SHA base..head range and acceptance criteria directly in Git. Inspect git log <base>..<head> and git diff <base>..<head>, then trace relevant unchanged logic. Missing or ambiguous ranges block verification; never substitute a range. Do not read other reviewers' reports before answering.
