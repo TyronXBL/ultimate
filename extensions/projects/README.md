@@ -7,7 +7,8 @@ from `host.projects()`: every home in `~/.ultimate/projects/` plus this one, wit
 there, `current` for this server, `url` (`http://127.0.0.1:<port>`) while its supervisor runs, `activeAt` the latest
 write to one of its top-level conversations, and `tailnet` while it runs and publishes itself there: this server's
 own address for the current project, else `https://<dns>:<port>` from the port its project registered in
-`~/.ultimate/tailscale.json`. The current project comes first, then the rest by name. `remotes` is the `remotes` user
+`~/.ultimate/tailscale.json`, while the server whose pid starts that entry's owner token runs (the registry keeps a
+project's port after it stops). The current project comes first, then the rest by name. `remotes` is the `remotes` user
 setting (`lib/remote.ts`), `{ machine, name, url }[]`.
 
 `start { root }` → `LocalProject`. `root` is an absolute folder, or `~/` for the user's home. It resolves at once for

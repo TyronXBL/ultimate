@@ -25,14 +25,27 @@ const POLL = 500
 type ListHost = Pick<ExtensionHost, 'want' | 'userHome' | 'projects'>
 type StartHost = ListHost & Pick<ExtensionHost, 'projectRoot' | 'ultimateRoot' | 'resource'>
 
+/** Whether the process `pid` still runs. */
+function alive(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM: it runs under another user; anything else (ESRCH) means it is gone.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
 /**
  * Where the tailnet reaches each project root: this server's publication when its tailscale is ready, and the HTTPS
- * port that each project's own `tailscale` extension registered for its folder.
+ * port that each project's own `tailscale` extension registered for its folder while the server that claimed it (the
+ * pid that starts its owner token) runs. The registry keeps a project's port after it stops, so a reserved port alone
+ * says nothing about whether it is served now.
  */
 async function tailnets(host: Pick<ExtensionHost, 'want' | 'userHome'>) {
   const published = host.want(TailscaleApi)?.status().url
   if (!published) return { byRoot: new Map<string, string>() }
-  let registry: { ports?: Record<string, { port: number }> }
+  let registry: { ports?: Record<string, { port: number; owner: string }> }
   try {
     registry = JSON.parse(await readFile(join(host.userHome, '.ultimate/tailscale.json'), 'utf8'))
   } catch {
@@ -43,10 +56,9 @@ async function tailnets(host: Pick<ExtensionHost, 'want' | 'userHome'>) {
   return {
     published,
     byRoot: new Map(
-      Object.entries(registry.ports ?? {}).map(([root, { port }]) => [
-        root,
-        `https://${hostname}:${port}`,
-      ]),
+      Object.entries(registry.ports ?? {})
+        .filter(([, { owner }]) => alive(Number(owner.split(':')[0])))
+        .map(([root, { port }]) => [root, `https://${hostname}:${port}`]),
     ),
   }
 }
@@ -148,9 +160,7 @@ async function launch(host: StartHost, root: string): Promise<LocalProject> {
     await output.close()
     throw new Error(`Cannot start Ultimate in ${root}: ${String(error)}`, { cause: error })
   }
-  await output.close()
-  // The supervisor outlives this call and this server; its own log is in the project home once it runs.
-  child.unref()
+  // Listen before yielding: an asynchronous spawn error without a listener would crash this server.
   const ended: { reason?: string } = {}
   child.on('exit', (code, signal) => {
     ended.reason ??= signal ?? `exited with code ${code}`
@@ -158,26 +168,30 @@ async function launch(host: StartHost, root: string): Promise<LocalProject> {
   child.on('error', (error) => {
     ended.reason ??= String(error)
   })
+  // The supervisor outlives this call and this server; its own log is in the project home once it runs.
+  child.unref()
+  await output.close()
   const deadline = Date.now() + START_DEADLINE
-  let ran: number | undefined
-  while (Date.now() < deadline) {
+  let started: ProjectInfo | undefined
+  while (!started) {
     if (ended.reason)
       throw new Error(
         `Ultimate in ${root} ${ended.reason} before it started:\n${await logTail(log)}`,
       )
-    const started = (await host.projects()).find((project) => project.root === root)
-    if (started?.running) {
-      ran ??= Date.now()
-      // A new folder registers its tailnet port a moment after it runs; without one it still opens on this machine.
-      const now = await tailnets(host)
-      if (!now.published || now.byRoot.has(root) || Date.now() - ran > TAILNET_GRACE)
-        return listed(started, now)
-    }
+    if (Date.now() >= deadline)
+      throw new Error(
+        `Ultimate in ${root} did not start within ${START_DEADLINE / 1000} seconds:\n${await logTail(log)}`,
+      )
+    started = (await host.projects()).find((project) => project.root === root && project.running)
+    if (!started) await sleep(POLL)
+  }
+  // A new folder publishes on the tailnet a moment after it runs; without that it still opens on this machine.
+  const grace = Date.now() + TAILNET_GRACE
+  for (;;) {
+    const now = await tailnets(host)
+    if (!now.published || now.byRoot.has(root) || Date.now() >= grace) return listed(started, now)
     await sleep(POLL)
   }
-  throw new Error(
-    `Ultimate in ${root} did not start within ${START_DEADLINE / 1000} seconds:\n${await logTail(log)}`,
-  )
 }
 
 /** Start Ultimate in `root` (`~/` is the user's home), sharing a start already in flight for the same folder. */
