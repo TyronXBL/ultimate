@@ -27,4 +27,6 @@ Residual risks:
 - None | nonblocking risks.
 ```
 
+Check every test the range adds or changes against the "Authoring gate: when and how to write a test" section of the `test-audit` skill (`.ultimate/skills/test-audit/SKILL.md`). Report a test that fails the gate as a finding. Don't audit tests the range doesn't touch.
+
 Use NEEDS CHANGES for blocking findings or blocked verification. APPROVED means this independent review found no blockers, not final team acceptance. Never imply checks you did not run.
