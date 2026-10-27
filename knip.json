@@ -2,24 +2,16 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "bin/*.ts",
-    "server/main.ts",
     "scripts/*.ts",
     ".ultimate/skills/**/*.ts",
-    "skills/**/*.ts",
-    "lint/ultimate.ts",
     "extensions/*/{server,api,refs}.ts",
     "extensions/*/{web,ui}.tsx",
     ".ultimate/extensions/*/{server,api,refs}.ts",
     ".ultimate/extensions/*/{web,ui}.tsx",
-    "web/src/main.tsx",
     "web/src/sdk/index.ts",
-    "test/**/*.test.ts",
-    "test/sweep-temp.ts",
-    "test/setup.ts",
-    "test/e2e/vitest.config.ts"
+    "test/**/*.test.ts"
   ],
-  "project": ["**/*.{ts,tsx}"],
-  "ignoreDependencies": ["@fontsource-variable/inter", "tailwindcss"],
+  "project": ["**/*.{ts,tsx,css}"],
   "ignoreBinaries": ["loginctl"],
   "ignore": ["web/src/lib/utils.ts"]
 }

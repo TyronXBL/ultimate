@@ -96,7 +96,8 @@ See [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
   upstream attributions and real repo URLs are exempt.
 - `pnpm check` enforces import boundaries; see `lint/ultimate.ts` and `vite.config.ts`. It also runs `pnpm deps`,
   which prints the dependency graph between extensions (imports plus `need`/`want`) and fails on a cycle or on a
-  core-tier extension that depends on an optional one.
+  core-tier extension that depends on an optional one, and `knip`, which fails on unused files, exports and
+  dependencies: drop an `export` nothing imports, and add a new convention-loaded entry file to `knip.json`.
 - Plain TypeScript, ESM, Node 26 runs `.ts` directly: erasable syntax only (no enums, namespaces, or parameter
   properties), relative imports end in `.ts`.
 - Core server/web contracts live in `shared/protocol.ts`; extension-local types live with their extension.

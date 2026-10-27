@@ -9,7 +9,7 @@
     "dev": "node server/main.ts",
     "start": "node bin/ultimate.ts",
     "cli": "node bin/cli.ts",
-    "check": "vp check && node scripts/deps.ts && knip --no-progress",
+    "check": "vp check && node scripts/deps.ts && knip --no-progress --no-config-hints",
     "deps": "node scripts/deps.ts",
     "test": "MIMALLOC_ALLOW_THP=0 MIMALLOC_PURGE_DELAY=0 vp test",
     "test:e2e": "MIMALLOC_ALLOW_THP=0 MIMALLOC_PURGE_DELAY=0 vitest run --config test/e2e/vitest.config.ts",
