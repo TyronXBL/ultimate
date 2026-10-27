@@ -2,6 +2,13 @@ import type { AssistantMessage } from '@earendil-works/pi-ai'
 import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry'
 
 /**
+ * Whether a model error is a provider's per-user cap on concurrent requests ("Concurrency limit exceeded for user,
+ * please retry later", bare or inside a 429 body). It frees itself as the user's other runs end, so it is retried: it
+ * neither pauses Ultimate nor switches to a backup model.
+ */
+export const concurrencyCapped = (error: string) => /concurrency limit exceeded/i.test(error)
+
+/**
  * Whether a model error is a rate limit Pi retries: HTTP 429, "rate limit", "too many requests". Retrying sooner only
  * hits the limit again, so Ultimate pauses until the user presses Play, and the held run continues through Pi's retry.
  * Quota, usage-limit and billing errors are on Pi's no-retry list: they end the run at once and fail as usual.
@@ -9,6 +16,7 @@ import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry'
  */
 export const rateLimited = (error: string) =>
   /(?<![a-z0-9])429(?![a-z0-9])|rate.?limit|too many requests/i.test(error) &&
+  !concurrencyCapped(error) &&
   isRetryableAssistantError({ stopReason: 'error', errorMessage: error } as AssistantMessage)
 
 /**

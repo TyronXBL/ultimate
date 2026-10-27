@@ -896,6 +896,9 @@ it.each([
     undefined,
   ],
   ['Overloaded (529)', true, undefined],
+  // A per-user concurrency cap frees itself: retried, not paused as a rate limit (fork LeeTony1988, 2026-10-26).
+  ['Concurrency limit exceeded for user, please retry later', true, undefined],
+  ['429: {"message":"Concurrency limit exceeded for user, please retry later"}', true, undefined],
   // A conversation pinned to a provider whose login was removed (rog, 2026-10-25).
   [
     'Provider is not configured: openrouter',
