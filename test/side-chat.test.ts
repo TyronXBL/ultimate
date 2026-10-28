@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -21,7 +21,7 @@ import { Branch } from '../extensions/lineage/api.ts'
 import { Automations } from '../extensions/automations/server.ts'
 import { Index, Side, tracksEffect } from '../extensions/side-chat/server.ts'
 import type { endTask } from '../extensions/side-chat/server.ts'
-import { fauxServer, post, sourceCopy, temp, until } from './helpers.ts'
+import { fauxServer, post, sourceCopy, temp, unusedExtensions, until } from './helpers.ts'
 
 let ultimateRoot: string
 const servers: Awaited<ReturnType<typeof fauxServer>>[] = []
@@ -45,6 +45,18 @@ const textOf = (content: unknown): string =>
 
 async function fixture() {
   const home = await temp('ultimate-sidechat-')
+  // Only the extensions side chats use beyond the core tier, in user settings: tests rewrite the project's.
+  const disable = await unusedExtensions(ultimateRoot, [
+    'side-chat',
+    'automations',
+    'codemode',
+    'todos',
+  ])
+  await mkdir(join(home, '.ultimate'), { recursive: true })
+  await writeFile(
+    join(home, '.ultimate/settings.json'),
+    JSON.stringify({ extensions: { disable } }),
+  )
   const server = await fauxServer({ ultimateRoot, home, userHome: home })
   servers.push(server)
   const standing = await post(server, '/api/extensions/subagents/actions/standing', {
@@ -52,12 +64,6 @@ async function fixture() {
   })
   expect(standing.status).toBe(200)
   const main = standing.data.result as ConversationId
-  // Dream makes both built-ins once @ultimate exists; they join its prompt, so wait before the first turn.
-  await until(async () =>
-    (
-      await post(server, '/api/extensions/automations/actions/list', { args: null })
-    ).data.result.some(({ name }: { name: string }) => name === 'Dream after a pause'),
-  )
   const hold = Promise.withResolvers<void>()
   const gate = { afterTool: false, entered: false, summaryFailure: undefined as string | undefined }
   const requests: { system: string; text: string; messages: string }[] = []
