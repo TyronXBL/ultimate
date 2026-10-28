@@ -4,6 +4,7 @@
     "bin/*.ts",
     "scripts/*.ts",
     ".ultimate/skills/**/*.ts",
+    ".ultimate/scripts/*.ts",
     "extensions/*/{server,api,refs}.ts",
     "extensions/*/{web,ui}.tsx",
     ".ultimate/extensions/*/{server,api,refs}.ts",

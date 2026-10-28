@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # ci/<sha> is the lander's gate (.ultimate/scripts/ci-gate.ts): every submission's merged commit runs here first.
+    branches: [main, 'ci/**']
   pull_request:
 
 permissions:

@@ -13,8 +13,7 @@
   "lander": {
     "checks": [
       { "command": "pnpm check", "timeout": 120 },
-      { "command": "pnpm test", "timeout": 600 },
-      { "command": "pnpm test:e2e", "timeout": 600 }
+      { "command": "node .ultimate/scripts/ci-gate.ts fork", "timeout": 1800 }
     ],
     "push": "fork"
   }
