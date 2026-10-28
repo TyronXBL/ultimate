@@ -150,9 +150,14 @@ export function triggers(
    */
   async function check(changed?: Map<number, ContextUsage>, idle = false) {
     const state = await host.harness().snapshot(Automations, BACKGROUND_CONTEXT)
+    // Looked up, not resolved: resolving refreshes the standing agent's definition, on every measured response.
+    const standing = await host
+      .harness()
+      .snapshot(Standing, ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT)
     for (const a of Object.values(state?.automations ?? {})) {
       if (closed || !a.enabled || !a.condition || (idle && !a.condition.idleFor)) continue
-      const target = await resolve(a.condition.of)
+      const of = a.condition.of
+      const target = STANDING.test(of) ? standing?.[of.slice(1)] : Number(of.slice(1))
       if (!target || (changed && !changed.has(target))) continue
       await host.harness().commit(async (tx) => {
         const current = (await tx.doc(Automations)).automations[a.id]
