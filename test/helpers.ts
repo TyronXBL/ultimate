@@ -135,14 +135,35 @@ export async function copyApis(root: string) {
       await cp(contract, join(root, 'extensions', name, file))
     }
 }
+/**
+ * The extensions of `ultimateRoot` outside the core tier and `used`: a test that needs few extensions disables or
+ * removes these, since each one adds to every boot.
+ */
+export async function unusedExtensions(ultimateRoot: string, used: string[]) {
+  const names: string[] = []
+  for (const entry of await readdir(join(ultimateRoot, 'extensions'), { withFileTypes: true })) {
+    if (!entry.isDirectory() || used.includes(entry.name)) continue
+    const core = await readFile(
+      join(ultimateRoot, 'extensions', entry.name, 'api.ts'),
+      'utf8',
+    ).then(
+      (source) => source.includes("tier = 'core'"),
+      // Without an api.ts an extension is never core tier.
+      () => false,
+    )
+    if (!core) names.push(entry.name)
+  }
+  return names
+}
 export async function sourceCopy(parent: string) {
   await mkdir(parent, { recursive: true })
   const root = await temp('source-', parent)
-  await cp(resolve('.'), root, {
-    recursive: true,
-    filter: (path) =>
-      !['.git', 'node_modules'].includes(path.slice(resolve('.').length + 1).split('/')[0]),
-  })
+  // One cp per top-level entry: a `filter` makes Node walk the tree in JS, more than ten times slower.
+  await Promise.all(
+    (await readdir(resolve('.')))
+      .filter((name) => name !== '.git' && name !== 'node_modules')
+      .map((name) => cp(resolve(name), join(root, name), { recursive: true })),
+  )
   await linkDependencies(root)
   const config = join(root, 'vite.config.ts')
   // Optimize on page requests, not fixture boot; React's plugin otherwise eagerly includes deps.

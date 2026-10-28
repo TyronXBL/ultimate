@@ -125,7 +125,7 @@ const run = async (server: Server, name: string, args: object, caller: number) =
   return textOf(result.output)
 }
 
-it.concurrent('applies memory ops atomically and holds the cap', async () => {
+it('applies memory ops atomically and holds the cap', async () => {
   const { server } = await fixture()
   expect(await apply(server, [add('pnpm'), add('node')])).toBe("Added pnpm, node in #1's memory.")
   expect(
@@ -172,7 +172,7 @@ it.concurrent('applies memory ops atomically and holds the cap', async () => {
   expect(after['m-0']).toBeUndefined()
 })
 
-it.concurrent('starts a branch from the memory brief, and without memories from the tally', async () => {
+it('starts a branch from the memory brief, and without memories from the tally', async () => {
   const { server } = await fixture()
   // Without memories a branch inherits the tally, as before.
   const plain = await branch(server, 'Plain branch')
@@ -295,7 +295,7 @@ it('normalises what a landing writes: long lines and bodies are cut, slugs kebab
   expect(normalizeMemoryOp('nope')).toBe('nope')
 })
 
-it.concurrent('forks of a briefed branch inherit the tally tip its brief covers', async () => {
+it('forks of a briefed branch inherit the tally tip its brief covers', async () => {
   const { server } = await fixture()
   const older = (await server.harness.commit(
     async (tx) => (await tx.scanEntries({ conversationId: ROOT_CONVERSATION_ID }, 1)).items[0].id,
@@ -320,7 +320,7 @@ it.concurrent('forks of a briefed branch inherit the tally tip its brief covers'
   expect((await server.harness.snapshot(Seen, c.id, context))?.tally).toBeGreaterThan(briefTip)
 })
 
-it.concurrent('reads memories with memory; only @ultimate writes them with remember', async () => {
+it('reads memories with memory; only @ultimate writes them with remember', async () => {
   const { server } = await fixture()
   const { id } = await branch(server, 'Reader')
   expect(await run(server, 'memory', {}, id)).toBe('#1 has no memories yet.')
@@ -416,7 +416,7 @@ const settledTasks = async (server: Server, count: number) => {
     expect(task.state).toMatchObject({ outcome: { status: 'completed' } })
 }
 
-it.concurrent('distils each landing into memory once and writes nothing from a refused answer', async () => {
+it('distils each landing into memory once and writes nothing from a refused answer', async () => {
   const { server, state } = await fixture()
   const { id } = await branch(server, 'Land me')
   await server.harness.commit((tx) => abstract(tx, id, { text: 'State: done.', at: 3 }), context)
@@ -543,7 +543,7 @@ it.concurrent('distils each landing into memory once and writes nothing from a r
   expect(await memorizeTasks(server)).toHaveLength(107)
 })
 
-it.concurrent('a fresh memorize reactor skips landings from before it and distils new ones', async () => {
+it('a fresh memorize reactor skips landings from before it and distils new ones', async () => {
   const { server, state } = await fixture()
   const { id } = await branch(server, 'Land me')
   state.memorize = JSON.stringify({ ops: [add('fresh')] })
@@ -566,7 +566,7 @@ it.concurrent('a fresh memorize reactor skips landings from before it and distil
   expect(Object.keys(await memories(server))).toEqual(['fresh'])
 })
 
-it.concurrent('ends a compaction of @ultimate with its project memory', async () => {
+it('ends a compaction of @ultimate with its project memory', async () => {
   const { server, state } = await fixture()
   await apply(server, [add('kept-fact', 'The project keeps this fact')])
   const ultimate = await server.harness.createConversation(
@@ -597,7 +597,7 @@ it.concurrent('ends a compaction of @ultimate with its project memory', async ()
   )
 })
 
-it.concurrent('wakes @ultimate once after its manual compaction, never after an automatic one', async () => {
+it('wakes @ultimate once after its manual compaction, never after an automatic one', async () => {
   const { server, state } = await fixture()
   const ultimate = await server.harness.createConversation(
     { ownership: { kind: 'ownerless' } },
@@ -678,7 +678,7 @@ it.concurrent('wakes @ultimate once after its manual compaction, never after an 
   expect(await kinds()).toEqual(['pi.reset'])
 })
 
-it.concurrent('lets any conversation compact itself with the tool and wakes it to continue', async () => {
+it('lets any conversation compact itself with the tool and wakes it to continue', async () => {
   const { server } = await fixture()
   const other = await server.harness.createConversation(
     { ownership: { kind: 'ownerless' } },
@@ -718,7 +718,7 @@ it.concurrent('lets any conversation compact itself with the tool and wakes it t
   await expect(run(server, 'compact', {}, child)).rejects.toThrow('A subagent does not compact')
 })
 
-it.concurrent('completes a landing task without asking when no summary model runs', async () => {
+it('completes a landing task without asking when no summary model runs', async () => {
   const { server, state } = await fixture({ summaryModel: 'not a model' })
   const { id } = await branch(server, 'Land me')
   state.memorize = JSON.stringify({ ops: [add('never')] })
