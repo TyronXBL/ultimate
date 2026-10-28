@@ -82,7 +82,7 @@ import type { Automation, AutomationListItem, Run, Schedule } from './refs.ts'
  * document itself is not streamed, so this is how fires show up between polls. A next run left in the past means a
  * fire went unseen, such as a skipped one, so it refetches every two seconds until the time moves on.
  */
-export function useLive(overdue: boolean, now: number) {
+function useLive(overdue: boolean, now: number) {
   const graph = useTasks()
   const conversations = useConversations()
   const signature = [

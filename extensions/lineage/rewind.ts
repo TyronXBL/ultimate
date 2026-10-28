@@ -61,7 +61,7 @@ const SUMMARY_SYSTEM =
   'Summarize the part of a coding conversation the user set aside by going back to an earlier point. The agent will continue from that earlier point and reads this summary instead. In short Markdown bullets: what was tried, decided and achieved, what is unfinished. Preserve exact file paths, names and errors. Do not continue the conversation; output only the summary.'
 
 /** Why conversation `id` cannot go back to entry `at` now, inside `tx` before its first table write; undefined when it can. */
-export async function refusal(tx: Tx, id: ConversationId, at: number) {
+async function refusal(tx: Tx, id: ConversationId, at: number) {
   if (!(await tx.conversation(id))) return `No conversation #${id}`
   if ((await tx.doc(Roots, ROOT_CONVERSATION_ID)).roots.includes(id))
     return "Roots can't go back: a root's context is its tally."
@@ -89,7 +89,7 @@ const json = (messages: readonly Message[] | undefined) => JSON.stringify(messag
  * `steps` counts the entries set aside with messages other than system prompt changes: inputs, answers, tool calls and
  * results, notes.
  */
-export function rewindPlan(current: View, past: View, at: number) {
+function rewindPlan(current: View, past: View, at: number) {
   const before = new Map(past.entries.map((entry, index) => [entry.id, past.contributions[index]]))
   const edits: ContextEdit[] = []
   let steps = 0
@@ -125,12 +125,7 @@ function normalizeToolPath(path: string) {
  * The paths the edit and write calls among `messages` touched, resolved as those tools resolve them in `cwd` (`~`, a
  * leading `@`, `file://`): relative to `top` inside the checkout, absolute in `outside` otherwise.
  */
-export async function editedPaths(
-  messages: readonly Message[],
-  cwd: string,
-  top: string,
-  ctx: Context,
-) {
+async function editedPaths(messages: readonly Message[], cwd: string, top: string, ctx: Context) {
   const env = new NodeExecutionEnv({ cwd })
   const inside = new Set<string>()
   const outside = new Set<string>()
@@ -291,7 +286,7 @@ async function facts(host: ExtensionHost, id: ConversationId, at: number, ctx: C
 }
 
 /** The note the model reads after going back to `#id/at`. */
-export function noteText(id: number, at: number, found: Facts, summary?: string) {
+function noteText(id: number, at: number, found: Facts, summary?: string) {
   const lines = [
     `You went back to #${id}/${at}. What came after it is set aside: it is no longer in your context.`,
   ]

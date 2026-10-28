@@ -2,7 +2,7 @@ import { CompactionTask, LiveDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 
 /** Whether conversation `id` has a compaction that has not settled yet. */
-export async function compacting(tx: Tx, id: ConversationId) {
+async function compacting(tx: Tx, id: ConversationId) {
   for (const status of ['pending', 'running', 'waiting', 'completing'] as const)
     if (
       (await tx.scanTasks({ conversationId: id, kind: CompactionTask.definition.name, status }, 1))

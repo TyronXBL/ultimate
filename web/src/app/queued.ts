@@ -32,7 +32,7 @@ export function queuedInput(item: InboxItem): QueuedInput | undefined {
 }
 
 /** The one-line form of a queued text: `↵` marks each line break, so a merged steer shows its seams. */
-export const queuedLine = (text: string) => text.replace(/\s*\n\s*/g, ' ↵ ')
+const queuedLine = (text: string) => text.replace(/\s*\n\s*/g, ' ↵ ')
 
 /**
  * The queued line as a head that may truncate and a tail that always shows, so a long text keeps its start and its

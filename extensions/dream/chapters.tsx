@@ -85,7 +85,7 @@ const usePending = () =>
 const WAKE = 'ultimate.dream.wake'
 
 /** A request the restart cut off: the process exited before answering, which is how a switch succeeds. */
-export const cutOff = (error: unknown) => error instanceof ActionError && error.status === 0
+const cutOff = (error: unknown) => error instanceof ActionError && error.status === 0
 
 /** Restart into existing chapter `name`; resolves with the refusal, or never while the server switches. */
 export async function switchChapter(label: string, name: string, pid?: number) {

@@ -181,7 +181,7 @@ function Overlay({
  * The docked sidebar's width (18 rem); the title bar's left part takes it beyond a phone on every surface, so the
  * surface tabs stay put and start where Agent's sidebar ends. Change both together.
  */
-export const sidebarWidth = 'w-72'
+const sidebarWidth = 'w-72'
 export const sidebarWidthBeyondPhone = 'md:w-72'
 
 export function Sidebar() {

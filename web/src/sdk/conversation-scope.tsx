@@ -8,7 +8,7 @@ export const ConversationIdContext = createContext<number | undefined>(undefined
 export const TranscriptContext = createContext<readonly EntryRecord[] | undefined>(undefined)
 
 /** The DOM marker of a scope: shortcuts typed inside it run with its id as `context.conversationId`. */
-export const scopeAttribute = 'data-conversation-scope'
+const scopeAttribute = 'data-conversation-scope'
 
 /**
  * Give descendants their own live conversation without switching the shell's shown conversation.

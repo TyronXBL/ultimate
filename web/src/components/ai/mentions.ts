@@ -3,7 +3,7 @@
  * URL fragment or an HTML entity; ids under three digits stay text, since `#1 priority` or `#12` is usually not a
  * conversation.
  */
-export const mentionPattern = /(?<![\w/#&])#(\d{3,})(?:\/(\d+))?(?![\w/])/g
+const mentionPattern = /(?<![\w/#&])#(\d{3,})(?:\/(\d+))?(?![\w/])/g
 
 /**
  * The link a mention becomes in Markdown; the conversations extension's `link` renderer turns it into a chip. A bare

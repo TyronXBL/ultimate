@@ -5,7 +5,7 @@ import { NextChapter } from './sleep.tsx'
 import { DreamDoc } from './refs.ts'
 
 /** The dialog the pinned line opens: the Fall asleep card. */
-export const nextDialog = 'dream.next'
+const nextDialog = 'dream.next'
 
 /** The prepared next chapter while it waits for Fall asleep, or a sleep that failed or runs. */
 function usePinned() {

@@ -1,6 +1,6 @@
 import { ExternalLinkIcon, FolderOpenIcon, LoaderCircleIcon } from 'lucide-react'
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { Shimmer } from '@/components/ai/shimmer'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
@@ -300,7 +300,7 @@ function OpenFolderBody({ onClose }: { onClose: () => void }) {
   const [path, setPath] = useState('')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string>()
-  const submit = async (event: FormEvent) => {
+  const submit = async (event: SubmitEvent) => {
     event.preventDefault()
     if (!path.trim() || busy) return
     setBusy(true)

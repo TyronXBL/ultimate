@@ -112,7 +112,7 @@ function useTokenRates() {
         }
       } finally {
         clearTimeout(requestTimeout)
-        if (!cancelled) timer = setTimeout(poll, 1000)
+        if (!cancelled) timer = setTimeout(() => void poll(), 1000)
       }
     }
     // oxlint-disable-next-line typescript/no-floating-promises -- poll catches failures and clears the sample until the next poll.

@@ -31,7 +31,7 @@ import { workOf } from './work.ts'
 import type { Work } from './work.ts'
 
 /** When a branch last landed: its latest landed submission's last step. */
-export function landedAt(index: ReturnType<typeof useWorkspaceIndex>, id: number) {
+function landedAt(index: ReturnType<typeof useWorkspaceIndex>, id: number) {
   let at: number | undefined
   for (const result of Object.values(index.results))
     if (result.conversationId === id && result.outcome === 'landed')

@@ -9,7 +9,7 @@ export const foldKey = (conversation: number | undefined, card: string | number)
   `ultimate.fold.${conversation ?? 0}.${card}`
 
 /** Whether the reader opened a folded card; only that deviation from the folded default is stored. */
-export const readFold = (key: string) => localStorage.getItem(key) === 'open'
+const readFold = (key: string) => localStorage.getItem(key) === 'open'
 export function writeFold(key: string, open: boolean) {
   if (open) localStorage.setItem(key, 'open')
   else localStorage.removeItem(key)

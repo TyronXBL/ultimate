@@ -5,7 +5,7 @@ import { readFile, readdir, writeFile, rename } from 'node:fs/promises'
 import type { ConversationSummary } from '../shared/protocol.ts'
 import { alive, readOwner } from './lock.ts'
 
-export type ProjectConversation = Pick<
+type ProjectConversation = Pick<
   ConversationSummary,
   'id' | 'title' | 'label' | 'cwd' | 'inputAt' | 'answerAt'
 >
@@ -25,7 +25,7 @@ export async function writeProject(home: string, root: string) {
     JSON.stringify({ root, name: basename(root), openedAt: Date.now() }),
   )
 }
-export async function atomicJson(path: string, value: string) {
+async function atomicJson(path: string, value: string) {
   const temporary = `${path}.${process.pid}.tmp`
   await writeFile(temporary, value + '\n')
   await rename(temporary, path)

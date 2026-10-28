@@ -273,7 +273,7 @@ export function openMessages(
 }
 
 /** Whether a report is settled: its sender was concluded after sending it (or is concluded now). */
-export const settled = (message: Message, concludedSince: (id: number) => number | undefined) =>
+const settled = (message: Message, concludedSince: (id: number) => number | undefined) =>
   typeof message.from === 'number' && message.at <= (concludedSince(message.from) ?? -Infinity)
 
 /** A reply-enabled message still waiting for its answer. */

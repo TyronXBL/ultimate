@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
-import { extensionGraph, problems, render } from '../scripts/deps.ts'
+import { extensionGraph, loosePins, problems, render } from '../scripts/deps.ts'
 import { removeTemp, temp } from './helpers.ts'
 
 const roots: string[] = []
@@ -20,8 +21,27 @@ async function extensions(files: Record<string, string>) {
 }
 const core = "export const tier = 'core'\n"
 
-it('passes the built-in extensions', () => {
+it('passes the built-in extensions and their pins', () => {
   expect(problems(extensionGraph(resolve('extensions')))).toEqual([])
+  expect(loosePins(JSON.parse(readFileSync('package.json', 'utf8')))).toEqual([])
+})
+
+it('fails on an @earendil-works package without an exact version or commit', () => {
+  const commit = 'a'.repeat(40)
+  expect(
+    loosePins({
+      dependencies: {
+        '@earendil-works/pi-ai': '1.4.0',
+        '@earendil-works/pi-durable': '^1.4.0',
+        '@earendil-works/pi-claude-code': `github:earendil-works/pi-claude-code#${commit}`,
+        react: '^19.0.0',
+      },
+      devDependencies: { '@earendil-works/chord': 'github:earendil-works/chord#main' },
+    }),
+  ).toEqual([
+    '@earendil-works/pi-durable is pinned loosely (^1.4.0); pin an exact version or commit',
+    '@earendil-works/chord is pinned loosely (github:earendil-works/chord#main); pin an exact version or commit',
+  ])
 })
 
 it('reads runtime, type, re-export and dynamic imports and need/want of imported tokens', async () => {

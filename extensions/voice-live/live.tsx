@@ -15,7 +15,7 @@ import { startLive } from './session.ts'
 import type { LiveSession } from './session.ts'
 
 /** `paused`: in voice mode without a session, listening paused until an answer or a tap wakes it. */
-export type Phase = 'off' | 'starting' | 'live' | 'paused' | 'ending'
+type Phase = 'off' | 'starting' | 'live' | 'paused' | 'ending'
 export type VoiceMode = {
   phase: Phase
   /** When the current session went live: its billed time. */

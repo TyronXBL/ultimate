@@ -57,7 +57,7 @@ class SurfaceBoundary extends Component<
   { surface: SurfaceItem; fallback: ReactNode },
   { failed: boolean; version: number }
 > {
-  state = { failed: false, version: this.props.surface.version }
+  override state = { failed: false, version: this.props.surface.version }
   static getDerivedStateFromError() {
     return { failed: true }
   }
@@ -69,7 +69,7 @@ class SurfaceBoundary extends Component<
       ? null
       : { failed: false, version: props.surface.version }
   }
-  componentDidCatch(error: unknown, info: ErrorInfo) {
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
     const { surface } = this.props
     console.error(`[surface ${surface.id}]`, error, info.componentStack)
     const instead = surface.id === HOME ? 'a bare conversation shows' : 'Agent shows'
@@ -79,13 +79,13 @@ class SurfaceBoundary extends Component<
     })
   }
   // A failed boundary renders the next in line, which reports itself instead.
-  componentDidMount() {
+  override componentDidMount() {
     if (!this.state.failed) onScreen(this.props.surface)
   }
-  componentDidUpdate() {
+  override componentDidUpdate() {
     if (!this.state.failed) onScreen(this.props.surface)
   }
-  render() {
+  override render() {
     if (this.state.failed) return this.props.fallback
     const { surface } = this.props
     const Surface = surface.component

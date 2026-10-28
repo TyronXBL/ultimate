@@ -46,7 +46,7 @@ import type { Discovery, ModelRef, Scope, Shown, Source } from './refs.ts'
 const definitionDialog = 'subagents.definition'
 const shownKey = 'definition'
 
-export const sourceLabel: Record<Source, string> = {
+const sourceLabel: Record<Source, string> = {
   builtin: 'built-in',
   user: 'user',
   project: 'project',

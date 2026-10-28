@@ -236,6 +236,18 @@ function Tree({
       listed.find((candidate) => !subtree.has(candidate.id))
     if (next) actions.switchConversation(next.id)
   }
+  const concludeWarned = async () => {
+    if (!warning) return
+    setPending(true)
+    try {
+      await setConclude(warning.id, true)
+      setWarning(undefined)
+    } catch (failure) {
+      setError(errorMessage(failure))
+    } finally {
+      setPending(false)
+    }
+  }
   const requestConclude = async (id: number, conclude: boolean) => {
     if (conclude && workspacesEnabled) {
       setError(undefined)
@@ -502,22 +514,7 @@ function Tree({
             <Button onClick={() => setWarning(undefined)} size="sm" variant="ghost">
               Cancel
             </Button>
-            <Button
-              disabled={pending}
-              size="sm"
-              onClick={async () => {
-                if (!warning) return
-                setPending(true)
-                try {
-                  await setConclude(warning.id, true)
-                  setWarning(undefined)
-                } catch (failure) {
-                  setError(errorMessage(failure))
-                } finally {
-                  setPending(false)
-                }
-              }}
-            >
+            <Button disabled={pending} size="sm" onClick={() => void concludeWarned()}>
               {pending ? 'Concluding…' : 'Conclude'}
             </Button>
           </div>

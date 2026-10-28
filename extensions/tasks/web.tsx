@@ -318,21 +318,22 @@ export function TaskRow({ task, tree, ...place }: { task: TaskGraphNode; tree: T
 /** Runs a parked task again; the crash-loop guard parks it once more if it keeps crashing the process. */
 export function RetryButton({ id }: { id: number }) {
   const [busy, setBusy] = useState(false)
+  const retry = async () => {
+    setBusy(true)
+    try {
+      await api.action(RetryAction, { id })
+    } catch (error) {
+      store.notify({ level: 'error', message: errorMessage(error) })
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <button
       className="flex shrink-0 items-center gap-1 rounded-sm border border-border/80 px-1.5 py-0.5 font-sans text-[11px] text-foreground/85 transition-colors hover:bg-accent disabled:opacity-50"
       data-retry={id}
       disabled={busy}
-      onClick={async () => {
-        setBusy(true)
-        try {
-          await api.action(RetryAction, { id })
-        } catch (error) {
-          store.notify({ level: 'error', message: errorMessage(error) })
-        } finally {
-          setBusy(false)
-        }
-      }}
+      onClick={() => void retry()}
       title="Run this task again"
       type="button"
     >

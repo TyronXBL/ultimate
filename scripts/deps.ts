@@ -1,6 +1,7 @@
 // The dependency graph between built-in extensions: prints it and fails on a cycle or on a core-tier extension that
 // depends on an optional one. Edges come from every import between `extensions/<name>/` folders (runtime, type and
-// dynamic, in .ts and .tsx) and from `host.need`/`host.want` of a token another extension declares. Usage: pnpm deps.
+// dynamic, in .ts and .tsx) and from `host.need`/`host.want` of a token another extension declares. It also fails on an
+// `@earendil-works/*` package that is not pinned to an exact version or commit. Usage: pnpm deps.
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { parseSync } from 'vite-plus'
@@ -91,6 +92,16 @@ export function problems(graph: Graph) {
   ]
 }
 
+/** `@earendil-works/*` dependencies of `manifest` not pinned to an exact version or a full git commit. */
+export function loosePins(manifest: Record<string, unknown>) {
+  const exact = /^(\d+\.\d+\.\d+(-[\w.]+)?|github:[\w.-]+\/[\w.-]+#[0-9a-f]{40})$/
+  return ['dependencies', 'devDependencies', 'optionalDependencies'].flatMap((field) =>
+    Object.entries((manifest[field] ?? {}) as Record<string, string>)
+      .filter(([name, spec]) => name.startsWith('@earendil-works/') && !exact.test(spec))
+      .map(([name, spec]) => `${name} is pinned loosely (${spec}); pin an exact version or commit`),
+  )
+}
+
 /** One line per extension: `name*` (core tier) → each dependency, marked with how when it is not a runtime import. */
 export function render(graph: Graph) {
   const width = Math.max(...[...graph.keys()].map((name) => name.length)) + 1
@@ -108,7 +119,10 @@ export function render(graph: Graph) {
 
 if (import.meta.main) {
   const graph = extensionGraph(resolve(import.meta.dirname, '../extensions'))
-  const found = problems(graph)
+  const manifest = JSON.parse(
+    readFileSync(resolve(import.meta.dirname, '../package.json'), 'utf8'),
+  ) as Record<string, unknown>
+  const found = [...problems(graph), ...loosePins(manifest)]
   const edges = [...graph.values()].reduce((sum, { deps }) => sum + deps.size, 0)
   console.log(
     [

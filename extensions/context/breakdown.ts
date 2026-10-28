@@ -26,7 +26,7 @@ export interface Prompt {
   tools: Tool[]
 }
 /** What a context start put in front of the model before its prompt: a memory brief, a tally, a summary, a handoff. */
-export interface Injected {
+interface Injected {
   label: string
   entry?: EntryRecord
   content: string | readonly (TextContent | ImageContent)[]
@@ -44,14 +44,14 @@ export interface Breakdown {
   model?: { provider: string; model: string; thinking?: string }
   tokens: { prompt: number; tools: number; injected: number; total: number }
 }
-export interface SectionChange {
+interface SectionChange {
   key: string
   change: 'added' | 'changed' | 'removed'
   /** The new text, or the removed one. */
   text: string
   delta: number
 }
-export interface ToolChange {
+interface ToolChange {
   name: string
   change: 'added' | 'changed' | 'removed'
   tool: Tool
@@ -70,7 +70,7 @@ export const systemOf = (entry: EntryRecord | undefined): SystemMessage | undefi
 }
 
 /** A reset or compaction: the model's context starts again here. */
-export const startsContext = (entry: EntryRecord) =>
+const startsContext = (entry: EntryRecord) =>
   entry.kind === 'pi.reset' || entry.kind === 'pi.compaction'
 
 /** A patch removing every section, which Pi Durable writes right before re-adding them in a new order. */
@@ -79,7 +79,7 @@ export function removesAll(entry: EntryRecord | undefined) {
   return values.length > 0 && values.every((value) => value === null)
 }
 
-export const toolTokens = (tool: { name: string; description: string; parameters: unknown }) =>
+const toolTokens = (tool: { name: string; description: string; parameters: unknown }) =>
   estimateTextTokens(
     JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }),
   )

@@ -6,7 +6,7 @@ export type Phase =
   | 'fixing'
   | 'delegating'
   | 'wrapping_up'
-export type PhaseRow = {
+type PhaseRow = {
   /** The run's first input submission. */
   run?: number
   phase?: Phase

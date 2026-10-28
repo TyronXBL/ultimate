@@ -324,7 +324,7 @@ function JoinForm({ state, onJoined }: { state: JoinState; onJoined: () => void 
  * Join cloud backups: on a machine without cloud backups, the form; once joined, "Joined as <machine> · <host>" with a
  * Change link that opens the form again.
  */
-export function JoinCard() {
+function JoinCard() {
   const state = useAction(JoinStateAction)
   const [changing, setChanging] = useState(false)
   // The form stays mounted after its own join, to show the steps and the next block.

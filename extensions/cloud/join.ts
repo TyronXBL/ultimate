@@ -6,8 +6,8 @@ import { secretMetadata } from '../../lib/secrets.ts'
 import { readSettings, updateSettings, userSettingsPath } from '../../lib/settings.ts'
 import type { JoinResult, JoinState } from './refs.ts'
 
-export const TOKEN = 'ULTIMATE_CLOUD_TOKEN'
-export const SNAPSHOT_KEY = 'ULTIMATE_CLOUD_SNAPSHOT_KEY'
+const TOKEN = 'ULTIMATE_CLOUD_TOKEN'
+const SNAPSHOT_KEY = 'ULTIMATE_CLOUD_SNAPSHOT_KEY'
 const MACHINE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 

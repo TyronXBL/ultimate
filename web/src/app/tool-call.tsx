@@ -39,7 +39,7 @@ function summary(args: ToolCallView['args']): string {
 }
 
 /** Name, arguments, output, and diagnostics of any tool. */
-export function GenericToolCall({ call }: { call: ToolCallView }) {
+function GenericToolCall({ call }: { call: ToolCallView }) {
   const duration = useToolDuration(call)
   return (
     <Tool defaultOpen={call.status === 'error' || call.images.length > 0}>

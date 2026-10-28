@@ -24,14 +24,14 @@ SOFTWARE.
 import { EventEmitter } from 'node:events'
 import * as undici from 'undici'
 
-export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000
+const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000
 // Node's 250ms default can terminate valid connection attempts on high-latency routes.
 const DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 2_000
 
 const originalGlobalFetch = globalThis.fetch
 let installedGlobalFetch: typeof globalThis.fetch | undefined
 
-export function parseHttpIdleTimeoutMs(value: unknown): number | undefined {
+function parseHttpIdleTimeoutMs(value: unknown): number | undefined {
   if (typeof value === 'string') {
     const trimmed = value.trim()
     if (trimmed.toLowerCase() === 'disabled') {

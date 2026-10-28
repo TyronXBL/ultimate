@@ -17,6 +17,13 @@ export default defineConfig({
       'typescript/no-unsafe-type-assertion': 'off',
       'promise/always-return': 'off',
       'typescript/no-floating-promises': ['error', { ignoreVoid: false }],
+      'typescript/no-misused-promises': 'error',
+      // A `default` branch handles the rest on purpose; a switch without one must name every member.
+      'typescript/switch-exhaustiveness-check': [
+        'error',
+        { considerDefaultExhaustiveForUnions: true },
+      ],
+      'typescript/no-deprecated': 'error',
       'import/no-unassigned-import': ['error', { allow: ['**/*.css'] }],
       // Stylistic: asks to hoist local helpers out of the test or closure they serve; we keep them next to their use.
       'unicorn/consistent-function-scoping': 'off',

@@ -17,7 +17,7 @@ export function textOf(content: string | readonly (TextContent | ImageContent)[]
 }
 
 /** A `/skill:name args` input as the server expanded it (Pi's `<skill>` block): the skill, its body, and the request. */
-export function skillInput(text: string) {
+function skillInput(text: string) {
   const match =
     /^<skill name="([^"]+)" location="([^"]+)">\nReferences are relative to [^\n]*\n\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]*))?$/.exec(
       text,

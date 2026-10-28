@@ -77,7 +77,7 @@ export function describeTrigger(a: Automation): string {
 }
 
 /** A pause as people say it: `8h`, `90m`, `1.5h`. */
-export const hours = (ms: number) =>
+const hours = (ms: number) =>
   ms % 3600_000 === 0 || ms >= 10 * 3600_000
     ? `${Math.round((ms / 3600_000) * 10) / 10}h`
     : `${Math.round(ms / 60_000)}m`
@@ -270,7 +270,8 @@ export function triggers(
     // A close while the first check ran ends here: no timer outlives it.
     if (closed) return
     clearInterval(timer)
-    timer = setInterval(idleTick, IDLE_TICK)
+    // idleTick's queue reports its own failures; the timer only starts the next check.
+    timer = setInterval(() => void idleTick(), IDLE_TICK)
   }
   let timer: ReturnType<typeof setInterval> | undefined
   async function close() {

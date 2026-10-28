@@ -96,7 +96,7 @@ export interface ExtensionInfo {
     error?: string
   }
 }
-export interface BuildEntry {
+interface BuildEntry {
   id: string
   at: string
   generation: number

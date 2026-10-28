@@ -12,8 +12,8 @@ import { AutomationsApi } from '../automations/api.ts'
 import type { Automation } from '../automations/refs.ts'
 import type { Goal } from './refs.ts'
 
-export const SCHEDULE = 'every 30m'
-export const reminderName = (goal: number) => `Goal reminder · goal ${goal}`
+const SCHEDULE = 'every 30m'
+const reminderName = (goal: number) => `Goal reminder · goal ${goal}`
 /** Each goal's reminder has its own create key: a rerun gets it back, and no goal touches another's. */
 const reminderKey = (goal: number) => `goal.reminder:${goal}`
 

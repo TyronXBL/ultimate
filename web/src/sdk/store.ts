@@ -160,7 +160,8 @@ export function createStore(options: StoreOptions = {}) {
     if (state.connection.status !== status) set({ connection: { status, since: Date.now() } })
   }
 
-  function handle(name: keyof ServerEvents, data: unknown) {
+  /** Every event but `view`, which `receiveView` parses itself. */
+  function handle(name: Exclude<keyof ServerEvents, 'view'>, data: unknown) {
     switch (name) {
       case 'system': {
         const system = data as SystemInfo
