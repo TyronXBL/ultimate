@@ -1,6 +1,6 @@
 Search the public web through your own SearXNG instance with `web_search`, and read a public page as text with `web_fetch`. No API key. Off by default; turn it on for a machine with `"extensions": { "enable": ["searxng"] }` in `~/.ultimate/settings.json`.
 
-Enable only one of `searxng` or `parallel`: both provide `web_search` and `web_fetch`, and with both on, one silently replaces the other.
+Enable only one of `searxng` or `parallel`: both provide `web_search` and `web_fetch`, and with both on, the one that loads second fails with "web_search is already provided by …".
 
 ## Settings
 
