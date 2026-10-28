@@ -1,9 +1,9 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
-import { fauxServer, post, sourceCopy, temp, removeTemp, unusedExtensions } from './helpers.ts'
+import { fauxServer, post, temp, removeTemp, trimmedSourceCopy } from './helpers.ts'
 import { context } from '../server/harness.ts'
 import { git } from '../lib/git.ts'
 import { projectDecision } from '../server/project-setup.ts'
@@ -46,14 +46,7 @@ it('gates project resources, remembers choices, and applies onboarding settings 
     }),
   )
   // This test boots three times: its source copy keeps only the extensions it toggles besides the core tier.
-  const ultimateRoot = await sourceCopy(home)
-  for (const name of await unusedExtensions(ultimateRoot, [
-    'automations',
-    'splash',
-    'sounds',
-    'info',
-  ]))
-    await rm(join(ultimateRoot, 'extensions', name), { recursive: true })
+  const ultimateRoot = await trimmedSourceCopy(home, ['automations', 'splash', 'sounds', 'info'])
   const options = {
     ultimateRoot,
     projectRoot: project,

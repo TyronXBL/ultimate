@@ -11,11 +11,12 @@ import { Rewound } from '../extensions/lineage/refs.ts'
 import { Standing, Started } from '../extensions/subagents/api.ts'
 import { context } from '../server/harness.ts'
 import { emit } from '../server/events.ts'
-import { eventHost, fauxServer, post, sourceCopy, temp, until } from './helpers.ts'
+import { eventHost, fauxServer, post, temp, trimmedSourceCopy, until } from './helpers.ts'
 
 let ultimateRoot: string
 beforeAll(async () => {
-  ultimateRoot = await sourceCopy(await temp())
+  // Rewinding is lineage's, in the core tier: no other extension is needed.
+  ultimateRoot = await trimmedSourceCopy(await temp(), [])
   await writeFile(
     join(ultimateRoot, '.ultimate/settings.json'),
     // The default summary model is faux's own on a faux server.
