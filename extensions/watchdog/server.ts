@@ -21,7 +21,7 @@ import type {
   Tx,
 } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { limited, rateLimited } from '../../lib/rate-limit.ts'
+import { concurrencyCapped, limited, rateLimited } from '../../lib/rate-limit.ts'
 import { Messages } from '../messages/api.ts'
 import { Pin } from '../models/api.ts'
 import { Standing, Subagents } from '../subagents/api.ts'
@@ -112,9 +112,8 @@ async function boundary(tx: Tx, task: Generation, next?: Generation) {
 /**
  * What a failed run's error asks for: a broken login needs the user, so it reports at once with a hint to log in again;
  * a rate limit that outlasted Pi's retries paused Ultimate (the pause extension), so it reports once and never
- * re-prompts into the limit; an
- * incomplete Claude Code relay response (status 200 or unknown) is a dropped stream, so it retries like Pi's own
- * retryable errors.
+ * re-prompts into the limit; an incomplete Claude Code relay response (status 200 or unknown) is a dropped stream,
+ * and a provider's per-user concurrency cap frees itself, so both retry like Pi's own retryable errors.
  */
 export function diagnose(error: string, assistant?: AssistantMessage) {
   if (rateLimited(error))
@@ -141,6 +140,7 @@ export function diagnose(error: string, assistant?: AssistantMessage) {
     }
   return {
     temporary:
+      concurrencyCapped(error) ||
       /^Incomplete Claude Code upstream response \(status (200|unknown),/.test(error) ||
       !!(assistant && isRetryableAssistantError(assistant)),
   }
