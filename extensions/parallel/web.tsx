@@ -286,7 +286,8 @@ function Search({ call }: { call: ToolCallView }) {
       {results.length > 0 && (
         <ol aria-label="Search results" className="divide-y divide-border/60">
           {results.map((result, index) => {
-            const excerpt = result.excerpts.join(' … ').replace(/\s+/g, ' ').trim()
+            // `?? []`: a call made while `searxng` provided web_search has results without excerpts.
+            const excerpt = (result.excerpts ?? []).join(' … ').replace(/\s+/g, ' ').trim()
             return (
               <li className="flex gap-2.5 px-2.5 py-2" key={result.url}>
                 <span className="w-4 shrink-0 text-right text-muted-foreground/60 tabular-nums">
