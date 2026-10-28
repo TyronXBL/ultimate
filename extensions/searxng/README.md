@@ -4,7 +4,7 @@ Enable only one of `searxng` or `parallel`: both provide `web_search` and `web_f
 
 ## Settings
 
-`searxng.url` in `~/.ultimate/settings.json` (user settings only, so no repository can point your queries at another server), default `http://127.0.0.1:8888`, for example `{ "searxng": { "url": "http://127.0.0.1:8888" } }`. The instance must answer JSON (`json` in `search.formats` of its `settings.yml`); when it does not, the tool says so. `ULTIMATE_SEARXNG_TEST_URL` overrides the URL only for local fake-server tests; never set it in production.
+`searxng.url` in `~/.ultimate/settings.json` (user settings only, so no repository can point your queries at another server), default `http://127.0.0.1:8888`, for example `{ "searxng": { "url": "http://127.0.0.1:8888" } }`. The instance must answer JSON (`json` in `search.formats` of its `settings.yml`); when it does not, the tool says so.
 
 ## Run SearXNG without root
 
@@ -58,7 +58,7 @@ Then `systemctl --user daemon-reload && systemctl --user enable --now searxng`. 
 
 `web_fetch { url, max_chars? }` reads one page: HTML becomes markdown-like text (title, then only the main content when the page marks it with `<main>` or `role="main"`; headings, paragraphs, list items, absolute links, verbatim `pre`; scripts, styles, `nav`, `footer`, `role="navigation"` and hidden elements dropped), text and JSON come back as they are, other content types are refused. It follows up to 5 redirects, times out after 15 seconds and reads at most 5 MB.
 
-It reads public addresses only. It refuses non-http(s) URLs, credentials in URLs, and loopback, private, link-local, shared (100.64/10), multicast and reserved addresses, IPv4 and IPv6 (including IPv4-mapped). A host name is checked against every address it resolves to when the connection is made, so DNS rebinding cannot slip past the check, and each redirect target is checked again. For localhost, APIs or binary files, use curl.
+It reads public addresses only. It refuses non-http(s) URLs, credentials in URLs, and loopback, private, link-local, shared (100.64/10), documentation, multicast and reserved addresses, IPv4 and IPv6, and IPv6 forms that embed an IPv4 address (IPv4-mapped, NAT64, 6to4). A host name is checked against every address it resolves to when the connection is made, so DNS rebinding cannot slip past the check, and each redirect target is checked again. For localhost, APIs or binary files, use curl.
 
 Both tools are read-only and replay-safe, and cap text output at 50 KiB / 2000 lines. An unreachable or misconfigured instance produces a tool error naming the setting, plus one process-local notice.
 

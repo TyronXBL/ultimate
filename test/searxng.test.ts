@@ -1,18 +1,25 @@
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import searxng from '../extensions/searxng/server.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
+import { removeTemp, temp } from './helpers.ts'
 
 const cleanup: (() => Promise<void>)[] = []
 afterEach(async () => {
-  vi.unstubAllEnvs()
   for (const close of cleanup.splice(0)) await close()
 })
 
-function tools() {
+/** The tools over a temp user home whose settings point `searxng.url` at `url`. */
+async function tools(url = 'http://127.0.0.1:1') {
+  const userHome = await temp()
+  cleanup.push(() => removeTemp(userHome))
+  await mkdir(join(userHome, '.ultimate'))
+  await writeFile(join(userHome, '.ultimate/settings.json'), JSON.stringify({ searxng: { url } }))
   const host = {
-    userHome: '/nonexistent',
+    userHome,
     notice: () => {},
     resource: <T>(_key: string, create: () => T) => create(),
     onClose: (close: () => Promise<void>) => cleanup.push(close),
@@ -64,8 +71,7 @@ it('web_search asks SearXNG for JSON and returns its results with unresponsive e
       }),
     )
   })
-  vi.stubEnv('ULTIMATE_SEARXNG_TEST_URL', instance.base)
-  const result = await tools().search({ query: 'a b', time_range: 'week' })
+  const result = await (await tools(instance.base)).search({ query: 'a b', time_range: 'week' })
   expect(instance.requests).toEqual(['/search?q=a+b&format=json&time_range=week'])
   expect(result.isError).toBeUndefined()
   expect(result.text).toContain('1. A page\nURL: https://www.example.com/a\nAbout A')
@@ -88,7 +94,7 @@ it('web_search asks SearXNG for JSON and returns its results with unresponsive e
 
 it('web_fetch refuses loopback addresses by name and by IP without connecting', async () => {
   const local = await serve((_request, response) => response.end('<p>secret</p>'))
-  const { fetch } = tools()
+  const { fetch } = await tools()
   for (const url of [local.base, local.base.replace('127.0.0.1', 'localhost')]) {
     const result = await fetch({ url })
     expect(result.isError).toBe(true)

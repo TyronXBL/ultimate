@@ -21,7 +21,7 @@ const guidance = `Use web_search to discover pages, verify current facts, or loc
 Use web_fetch to read a public web page as text, for example a promising search result.
 web_fetch refuses localhost and private networks, and reads only HTML and text; use curl for raw files, binary downloads, APIs and local URLs.`
 
-export type SearchResult = {
+type SearchResult = {
   url: string
   title: string
   snippet: string
@@ -29,7 +29,7 @@ export type SearchResult = {
   domain: string
   engine: string | null
 }
-export type UnresponsiveEngine = { engine: string; message: string }
+type UnresponsiveEngine = { engine: string; message: string }
 
 /** A fault worth a clear tool error; `status` is the remote HTTP answer when there was one; `notify` marks the configuration and connectivity faults worth one process-local notice. */
 class WebError extends Error {
@@ -51,13 +51,8 @@ function prettyDomain(url: string) {
   }
 }
 
-/**
- * The instance URL, user settings only: a repository must not redirect the user's queries elsewhere.
- * `ULTIMATE_SEARXNG_TEST_URL` overrides it only for local fake-server tests.
- */
+/** The instance URL, user settings only: a repository must not redirect the user's queries elsewhere. */
 async function searxngUrl(host: ExtensionHost): Promise<string> {
-  const test = process.env.ULTIMATE_SEARXNG_TEST_URL
-  if (test) return validated(test, 'ULTIMATE_SEARXNG_TEST_URL')
   // Invalid settings read as unset (the default); the settings loader reports the file itself.
   const settings = await readSettings(userSettingsPath(host.userHome)).catch((): JsonObject => ({}))
   const group = settings.searxng
@@ -99,7 +94,7 @@ function parseResults(payload: unknown, base: string): SearchResult[] {
   for (const item of items) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue
     const record = item as Record<string, unknown>
-    if (typeof record.url !== 'string' || !record.url) continue
+    if (typeof record.url !== 'string' || !/^https?:\/\//i.test(record.url)) continue
     results.push({
       url: record.url,
       title: typeof record.title === 'string' ? record.title : '',
@@ -125,7 +120,7 @@ function parseUnresponsive(payload: unknown): UnresponsiveEngine[] {
 
 const nullable = (value: unknown) => (typeof value === 'string' && value ? value : null)
 
-/** Loopback, private, link-local, shared (CGNAT), multicast and reserved ranges; IPv4-mapped IPv6 matches the IPv4 rules. */
+/** Loopback, private, link-local, shared (CGNAT), documentation, multicast and reserved ranges, and the IPv6 forms that embed an IPv4 address (mapped, NAT64, 6to4). */
 const nonPublic = new BlockList()
 for (const [network, prefix] of [
   ['0.0.0.0', 8],
@@ -135,23 +130,31 @@ for (const [network, prefix] of [
   ['169.254.0.0', 16],
   ['172.16.0.0', 12],
   ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
   ['192.168.0.0', 16],
   ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
   ['224.0.0.0', 3],
 ] as const)
   nonPublic.addSubnet(network, prefix, 'ipv4')
 for (const [network, prefix] of [
   ['::', 128],
   ['::1', 128],
+  ['64:ff9b::', 96],
+  ['2002::', 16],
+  ['2001:db8::', 32],
   ['fc00::', 7],
   ['fe80::', 10],
   ['ff00::', 8],
 ] as const)
   nonPublic.addSubnet(network, prefix, 'ipv6')
 
+/** IPv4-mapped IPv6 is refused by its prefix: a BlockList subnet for it would match every IPv4 address too. */
 const isPublic = (address: string) => {
   const family = isIP(address)
-  return family !== 0 && !nonPublic.check(address, family === 4 ? 'ipv4' : 'ipv6')
+  if (family === 0 || (family === 6 && /^::ffff:/i.test(address))) return false
+  return !nonPublic.check(address, family === 4 ? 'ipv4' : 'ipv6')
 }
 
 /** Every address a name resolves to must be public; checked when connecting, so DNS rebinding cannot slip past it. */
@@ -289,7 +292,7 @@ function htmlToText(html: string, base: string): { title: string; text: string }
       const label = text.trim()
       const href = node.attrs?.find((attr) => attr.name === 'href')?.value
       const target = label && href && !href.startsWith('#') ? absolute(href, base) : undefined
-      return target ? text.replace(label, `[${label}](${target})`) : text
+      return target ? text.replace(label, () => `[${label}](${target})`) : text
     }
     return blocks.has(tag) ? `\n\n${text.trim()}\n\n` : text
   }
@@ -401,6 +404,16 @@ export default function searxng(host: ExtensionHost) {
     const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS)
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
     let url = fetchable(address)
+    /** A failed request or body read as the tool reports it: cancelled, timed out, refused or unreachable. */
+    const failed = (error: unknown) => {
+      if (signal?.aborted) return new WebError('web_fetch was cancelled.')
+      if (timeout.aborted)
+        return new WebError(`${url.host} did not answer within ${FETCH_TIMEOUT_MS / 1000} seconds.`)
+      return (
+        cause(error) ??
+        new WebError(`Could not fetch ${url.href}: ${String((error as Error).cause ?? error)}`)
+      )
+    }
     for (let hops = 0; ; hops++) {
       let response: Awaited<ReturnType<typeof fetch>>
       try {
@@ -414,15 +427,7 @@ export default function searxng(host: ExtensionHost) {
           },
         })
       } catch (error) {
-        if (signal?.aborted) throw new WebError('web_fetch was cancelled.')
-        if (timeout.aborted)
-          throw new WebError(
-            `${url.host} did not answer within ${FETCH_TIMEOUT_MS / 1000} seconds.`,
-          )
-        throw (
-          cause(error) ??
-          new WebError(`Could not fetch ${url.href}: ${String((error as Error).cause ?? error)}`)
-        )
+        throw failed(error)
       }
       const location = response.headers.get('location')
       if (response.status >= 300 && response.status < 400 && location) {
@@ -454,7 +459,9 @@ export default function searxng(host: ExtensionHost) {
           `web_fetch reads HTML and text; ${url.href} is ${mime}. Use curl for files like this.`,
         )
       }
-      const { text, cut } = await body(response, contentType)
+      const { text, cut } = await body(response, contentType).catch((error: unknown) => {
+        throw failed(error)
+      })
       const page = html ? htmlToText(text, url.href) : { title: '', text }
       return { ...page, finalUrl: url.href, contentType: mime, cut }
     }

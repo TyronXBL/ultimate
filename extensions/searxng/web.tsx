@@ -16,14 +16,13 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { defineWebExtension, formatBytes, plural, useToolDuration } from '@/sdk'
 import type { ToolCallView } from '@/sdk'
 
-/** One result in web_search's `details` (server.ts). */
+/** One result in web_search's `details` (server.ts); the optional fields are absent from parallel's results. */
 interface Result {
   url: string
-  title: string
-  snippet: string
-  publishedDate: string | null
-  domain: string
-  engine: string | null
+  title: string | null
+  snippet?: string
+  publishedDate?: string | null
+  domain?: string
 }
 interface Unresponsive {
   engine: string
@@ -31,7 +30,7 @@ interface Unresponsive {
 }
 type Failure = { status: 'error'; error: string; httpStatus: number | null }
 type SearchDetails =
-  | { status: 'success'; results: Result[]; unresponsive: Unresponsive[] }
+  | { status: 'success'; results?: Result[]; unresponsive?: Unresponsive[] }
   | Failure
 type FetchDetails =
   | {
@@ -51,9 +50,17 @@ const bare = (url: string) => url.replace(/^https?:\/\/(www\.)?/, '').replace(/\
 const day = (date: string) => (/^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : date)
 /** Fetched text must not load anything from the web: no images. */
 const offline = ['img', 'picture', 'source']
+function host(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    // Shown as given when no parser reads it.
+    return url
+  }
+}
 /** The first few distinct domains, in rank order. */
 function domains(results: readonly Result[], count = 3) {
-  const unique = [...new Set(results.map((result) => result.domain))]
+  const unique = [...new Set(results.map((result) => result.domain ?? host(result.url)))]
   return unique.length > count
     ? `${unique.slice(0, count).join(', ')} +${unique.length - count}`
     : unique.join(', ')
@@ -143,8 +150,9 @@ function Link({
 
 function Search({ call }: { call: ToolCallView }) {
   const details = call.details as SearchDetails | undefined
-  const results = details?.status === 'success' ? details.results : []
-  const unresponsive = details?.status === 'success' ? details.unresponsive : []
+  // `?? []`: a call made while `parallel` provided web_search has its own details shape.
+  const results = (details?.status === 'success' && details.results) || []
+  const unresponsive = (details?.status === 'success' && details.unresponsive) || []
   return (
     <Card
       call={call}
@@ -183,7 +191,7 @@ function Search({ call }: { call: ToolCallView }) {
                   {result.title || bare(result.url)}
                 </Link>
                 <div className="mt-0.5 flex min-w-0 gap-2 text-[11px] text-muted-foreground">
-                  <span className="truncate">{result.domain}</span>
+                  <span className="truncate">{result.domain ?? host(result.url)}</span>
                   {result.publishedDate && (
                     <span className="shrink-0 text-muted-foreground/70">
                       {day(result.publishedDate)}
@@ -222,7 +230,9 @@ function Search({ call }: { call: ToolCallView }) {
 
 function Fetch({ call }: { call: ToolCallView }) {
   const details = call.details as FetchDetails | undefined
-  const page = details?.status === 'success' ? details : undefined
+  // A call made while `parallel` provided web_fetch has no `finalUrl`: it shows the tool's text output instead.
+  const page =
+    details?.status === 'success' && typeof details.finalUrl === 'string' ? details : undefined
   const url = page?.finalUrl ?? text(call.args.url)
   const size = page ? new TextEncoder().encode(page.content).length : 0
   return (
@@ -240,6 +250,7 @@ function Fetch({ call }: { call: ToolCallView }) {
       running="reading the page…"
       title={<span className="text-foreground/90">{bare(url)}</span>}
     >
+      {!page && call.status !== 'running' && <ToolOutput output={call.output} />}
       {page && (
         <div className="px-2.5 py-2">
           <div className="truncate font-sans text-[13px] text-foreground">
