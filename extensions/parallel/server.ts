@@ -9,7 +9,7 @@ import type {
   ParallelResultItem,
   ParallelWarning,
 } from './client.ts'
-import { truncateToolOutput } from './output.ts'
+import { truncateToolOutput } from '../../lib/tool-output.ts'
 
 export const secrets = [
   {
