@@ -1,10 +1,19 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { LiveDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { Conversation, ConversationId } from '@earendil-works/pi-durable'
-import { afterAll, expect, it } from 'vitest'
-import { attach, fauxServer, held, post, prepareFauxServer, temp, until } from './helpers.ts'
+import { afterAll, beforeAll, expect, it } from 'vitest'
+import {
+  attach,
+  fauxServer,
+  held,
+  post,
+  prepareFauxServer,
+  temp,
+  trimmedSourceCopy,
+  until,
+} from './helpers.ts'
 import type { ConversationSummary } from '../shared/protocol.ts'
 import { context } from '../server/harness.ts'
 import { Metadata } from '../server/metadata.ts'
@@ -22,6 +31,12 @@ import { Branch } from '../extensions/lineage/api.ts'
 
 type Server = Awaited<ReturnType<typeof fauxServer>>
 const servers: Server[] = []
+// One source copy shared by every server here (no test writes to it), with the core tier and claude-code only: agents/designer.md pins
+// a Claude Code model, and a definition that fails to parse keeps every retired standing agent.
+let ultimateRoot: string
+beforeAll(async () => {
+  ultimateRoot = await trimmedSourceCopy(await temp(), ['claude-code'])
+})
 // Each test runs on its own server; close them all once the file is done.
 afterAll(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
@@ -40,7 +55,7 @@ async function launch() {
     }),
   )
   const server = await fauxServer({
-    ultimateRoot: resolve('.'),
+    ultimateRoot,
     projectRoot,
     userHome: home,
     home: join(home, 'state'),

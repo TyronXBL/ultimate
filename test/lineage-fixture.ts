@@ -8,12 +8,13 @@ import { defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { afterAll, beforeAll, expect } from 'vitest'
 import { context } from '../server/harness.ts'
-import { branchProbe, fauxServer, post, seedTally, sourceCopy, temp } from './helpers.ts'
+import { branchProbe, fauxServer, post, seedTally, temp, trimmedSourceCopy } from './helpers.ts'
 
 // Shared by the lineage test files: importing this registers their source fixture and server cleanup.
 let ultimateRoot: string
 beforeAll(async () => {
-  ultimateRoot = await sourceCopy(await temp())
+  // Lineage is core tier; beyond it these tests use only plan.
+  ultimateRoot = await trimmedSourceCopy(await temp(), ['plan'])
   await branchProbe(ultimateRoot)
   await writeFile(
     join(ultimateRoot, '.ultimate/settings.json'),

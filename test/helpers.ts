@@ -155,6 +155,13 @@ export async function unusedExtensions(ultimateRoot: string, used: string[]) {
   }
   return names
 }
+/** A `sourceCopy` with only the core tier and `used` among its extensions, for servers that need few of them. */
+export async function trimmedSourceCopy(parent: string, used: string[]) {
+  const root = await sourceCopy(parent)
+  for (const name of await unusedExtensions(root, used))
+    await rm(join(root, 'extensions', name), { recursive: true })
+  return root
+}
 export async function sourceCopy(parent: string) {
   await mkdir(parent, { recursive: true })
   const root = await temp('source-', parent)
