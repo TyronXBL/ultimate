@@ -158,7 +158,7 @@ export async function unusedExtensions(ultimateRoot: string, used: string[]) {
 export async function sourceCopy(parent: string) {
   await mkdir(parent, { recursive: true })
   const root = await temp('source-', parent)
-  // One cp per top-level entry: a `filter` would make Node walk the tree in JS, about 30 times slower.
+  // One cp per top-level entry: a `filter` makes Node walk the tree in JS, more than ten times slower.
   await Promise.all(
     (await readdir(resolve('.')))
       .filter((name) => name !== '.git' && name !== 'node_modules')
