@@ -52,7 +52,7 @@ const cursor = async (server: Server) =>
     'lineage/landing-notes'
   ] ?? 0
 
-it.concurrent('concludes a landed branch only when its report run answered, never after a Stop', async () => {
+it('concludes a landed branch only when its report run answered, never after a Stop', async () => {
   const { server } = await notifyFixture()
   const id = await branchFrom(server, { from: 1, prompt: 'Land me' })
   const branch = await settled(server, id)
@@ -74,7 +74,7 @@ it.concurrent('concludes a landed branch only when its report run answered, neve
   await land(server, landing('s2', id))
   await until(async () => (await concluded(server)).includes(id))
 })
-it.concurrent('notes a landing in its tree root once, across a failed attempt and a restart', async () => {
+it('notes a landing in its tree root once, across a failed attempt and a restart', async () => {
   const { server, home } = await fixture()
   const first = await branchFrom(server, { from: 1, prompt: 'Land me' })
   await settled(server, first)

@@ -19,7 +19,7 @@ import {
   textOf,
 } from './lineage-fixture.ts'
 
-it.concurrent('updates an open abstract in place and freezes it into a landing', async () => {
+it('updates an open abstract in place and freezes it into a landing', async () => {
   const { server } = await fixture()
   server.host.registry.install(defineExtension({ name: 'lineage-test', tasks: [anchor] }))
   const lineage = {
@@ -154,7 +154,7 @@ it.concurrent('updates an open abstract in place and freezes it into a landing',
   ).toHaveLength(4)
 })
 
-it.concurrent('places a landing in a tally in one transaction, so an abstract never opens before it', async () => {
+it('places a landing in a tally in one transaction, so an abstract never opens before it', async () => {
   const { server } = await fixture()
   const first = await branchFrom(server, { from: 1, prompt: 'Land me' })
   await settled(server, first)
@@ -201,7 +201,7 @@ it.concurrent('places a landing in a tally in one transaction, so an abstract ne
   expect(open.anchor).toBeGreaterThan(notes[0].id)
 })
 
-it.concurrent('summarizes a branch into its title and its abstract in the tree root', async () => {
+it('summarizes a branch into its title and its abstract in the tree root', async () => {
   const { server } = await fixture()
   const existing = server.host.registry.snapshot().extension('conversations')!
   server.host.registry.install(
@@ -260,7 +260,7 @@ it.concurrent('summarizes a branch into its title and its abstract in the tree r
   )
 })
 
-it.concurrent('sorts a new branch from the moment it was asked for, not by the history it inherited', async () => {
+it('sorts a new branch from the moment it was asked for, not by the history it inherited', async () => {
   const { server } = await fixture()
   await (
     await server.root.submit({ type: 'input', content: 'An old idea.' }, context)
@@ -278,7 +278,7 @@ it.concurrent('sorts a new branch from the moment it was asked for, not by the h
   expect(inputAt).toBeGreaterThan(inherited)
 })
 
-it.concurrent('leaves a note in an idle conversation without starting a run', async () => {
+it('leaves a note in an idle conversation without starting a run', async () => {
   const { server } = await fixture()
   const note = server.host.registry.snapshot().extension('lineage')!.tools![0]
   const other = await server.harness.createConversation(
@@ -306,7 +306,7 @@ it.concurrent('leaves a note in an idle conversation without starting a run', as
   expect(tasks).toEqual([])
 })
 
-it.concurrent('notifies with the branch’s own answer, never one it inherited', async () => {
+it('notifies with the branch’s own answer, never one it inherited', async () => {
   const { server } = await fixture()
   await (await server.root.submit({ type: 'input', content: 'An idea.' }, context)).wait(context)
   const id = await branchFrom(server, { from: 1, prompt: 'Fix the lost answers' })
@@ -322,7 +322,7 @@ it.concurrent('notifies with the branch’s own answer, never one it inherited',
   expect((finished.data as { text: string }).text).toBe('echo Fix the lost answers')
 })
 
-it.concurrent('compacts a top-level conversation with its lineage focus', async () => {
+it('compacts a top-level conversation with its lineage focus', async () => {
   const { server } = await fixture()
   await server.harness.commit(async (tx) => {
     for (let n = 0; n < 8; n++) {
@@ -339,7 +339,7 @@ it.concurrent('compacts a top-level conversation with its lineage focus', async 
   expect(textOf(marker.model?.[0]?.content)).toContain('LINEAGE SUMMARY of This is the tally')
 })
 
-it.concurrent('compacts a tally from its model view, then opens a new abstract after it', async () => {
+it('compacts a tally from its model view, then opens a new abstract after it', async () => {
   const { server, condensed } = await fixture()
   const first = await branchFrom(server, { from: 1, prompt: 'Abstract me' })
   await settled(server, first)
@@ -369,7 +369,7 @@ it.concurrent('compacts a tally from its model view, then opens a new abstract a
   )
 })
 
-it.concurrent('keeps an abstract written while the tally compacts: it opens a new anchor', async () => {
+it('keeps an abstract written while the tally compacts: it opens a new anchor', async () => {
   const { server, condensed, gate } = await fixture()
   const first = await branchFrom(server, { from: 1, prompt: 'Abstract me' })
   await settled(server, first)

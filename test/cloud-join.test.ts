@@ -206,7 +206,7 @@ it('names the step that failed when the secrets cannot be saved, and keeps setti
   expect(await settings()).toEqual({})
 })
 
-it.concurrent('runs cloud.join for the UI and refuses it to agents', async () => {
+it('runs cloud.join for the UI and refuses it to agents', async () => {
   const userHome = await temp('ultimate-join-server-')
   await mkdir(path(userHome, 'project'))
   await writeJson(path(userHome, '.ultimate/settings.json'), { extensions: { enable: ['cloud'] } })

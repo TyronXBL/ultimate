@@ -10,7 +10,7 @@ import { projectDecision } from '../server/project-setup.ts'
 import { updateSettings } from '../lib/settings.ts'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 
-it.concurrent('gates project resources, remembers choices, and applies onboarding settings actions live', async () => {
+it('gates project resources, remembers choices, and applies onboarding settings actions live', async () => {
   const home = await temp('ultimate-onboarding-')
   const project = join(home, 'project')
   const config = join(project, '.ultimate')
@@ -219,7 +219,7 @@ it.concurrent('gates project resources, remembers choices, and applies onboardin
   }
 })
 
-it.concurrent('offers setup only to named definitions, refuses inapplicable cards, and deduplicates user-only choices', async () => {
+it('offers setup only to named definitions, refuses inapplicable cards, and deduplicates user-only choices', async () => {
   const home = await temp('ultimate-setup-cards-')
   const project = join(home, 'project')
   await mkdir(join(project, '.ultimate'), { recursive: true })
@@ -403,7 +403,7 @@ it.concurrent('offers setup only to named definitions, refuses inapplicable card
   }
 })
 
-it.concurrent('does not inherit a parent project choice', async () => {
+it('does not inherit a parent project choice', async () => {
   const home = await temp('ultimate-trust-')
   try {
     const project = join(home, 'parent/child')
@@ -415,7 +415,7 @@ it.concurrent('does not inherit a parent project choice', async () => {
   }
 })
 
-it.concurrent('shares one choice between a checkout and its linked worktrees', async () => {
+it('shares one choice between a checkout and its linked worktrees', async () => {
   const home = await temp('ultimate-trust-worktree-')
   try {
     const main = join(home, 'main')
@@ -451,7 +451,7 @@ it.concurrent('shares one choice between a checkout and its linked worktrees', a
   }
 })
 
-it.concurrent('boots with corrupt trust, discloses project replacements, and recovers after repair', async () => {
+it('boots with corrupt trust, discloses project replacements, and recovers after repair', async () => {
   const home = await temp('ultimate-corrupt-trust-')
   const project = join(home, 'project')
   await mkdir(join(project, '.ultimate/extensions/codemode'), { recursive: true })
