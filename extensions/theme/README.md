@@ -16,4 +16,8 @@ Colour themes and fonts, one choice per machine, light or dark per device.
   the system light or dark setting".
 - **Painting**: an `overlay` component sets the resolved tokens, fonts and `theme-color` on `<html>` and caches both
   polarities in `localStorage` (`ultimate.theme.cache`), which `web/index.html` applies before the app loads, so a
-  reload paints the theme at once.
+  reload paints the theme at once. It paints nothing until the doc arrives, so the cached palette stays meanwhile.
+- **The picker** (`appearance.tsx`): ⌘K "Appearance…" or the status line's `theme` item (in its ⋯ menu on a
+  phone) opens a non-modal panel, a bottom sheet on a phone, with this device's mode, the preset tiles, the custom
+  controls with the readability adjustments the engine made, and the fonts (ones this device lacks are disabled).
+  Taps save at once; sliders and the colour well preview a draft on this page only and save on release.

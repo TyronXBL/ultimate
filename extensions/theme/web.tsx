@@ -1,8 +1,16 @@
 import { useEffect, useMemo } from 'react'
 import { defineWebExtension, getState, useDocOf, useStore } from '@/sdk'
+import {
+  AppearanceButton,
+  AppearanceDialog,
+  appearanceDialog,
+  settleDraft,
+  useDraft,
+} from './appearance.tsx'
 import { CODE_FONTS, fontCss, UI_FONTS } from './fonts.ts'
 import { DEFAULT_CHOICE, resolveTheme } from './palette.ts'
 import type { Polarity, Resolved } from './palette.ts'
+import type { ThemeChoice } from './refs.ts'
 import { ThemeDoc } from './refs.ts'
 
 /** What `web/index.html` paints before the app loads: both polarities, so the device's system setting picks. */
@@ -12,16 +20,11 @@ export type ThemeCache = Record<Polarity, Pick<Resolved, 'vars' | 'themeColor'>>
 }
 const CACHE = 'ultimate.theme.cache'
 
-/** The token vars this facet put on <html>, so a theme with fewer tokens leaves none of the last one behind. */
-let applied: string[] = []
-
-/** Paint the machine's theme choice in this device's polarity, and remember it for the next first paint. */
-function ApplyTheme() {
-  const choice = useDocOf(1, ThemeDoc)?.choice ?? DEFAULT_CHOICE
-  const polarity = useStore((state) => state.ui.theme)
+/** `choice` resolved for both polarities, memoized by its content. */
+function useResolved(choice: ThemeChoice) {
   const key = JSON.stringify(choice)
-  const cache = useMemo<ThemeCache>(() => {
-    const parsed = JSON.parse(key) as typeof choice
+  return useMemo<ThemeCache>(() => {
+    const parsed = JSON.parse(key) as ThemeChoice
     const pick = ({ vars, themeColor }: Resolved) => ({ vars, themeColor })
     return {
       dark: pick(resolveTheme(parsed, 'dark')),
@@ -30,23 +33,48 @@ function ApplyTheme() {
       mono: fontCss(CODE_FONTS, parsed.codeFont),
     }
   }, [key])
+}
+
+/**
+ * Paint the machine's theme choice in this device's polarity, and remember it for the next first paint. Until the
+ * doc arrives, the page keeps what `web/index.html` painted from the cache; a missing doc means the default.
+ */
+function ApplyTheme() {
+  const doc = useDocOf(1, ThemeDoc)
+  return doc === undefined ? null : <Paint saved={doc?.choice ?? DEFAULT_CHOICE} />
+}
+
+/** While the Appearance picker holds an unsaved draft, this page paints the draft; the cache keeps the saved choice. */
+function Paint({ saved }: { saved: ThemeChoice }) {
+  const draft = useDraft()
+  const polarity = useStore((state) => state.ui.theme)
+  const cache = useResolved(saved)
+  const shown = useResolved(draft ?? saved)
+  useEffect(() => settleDraft(saved), [saved, draft])
   useEffect(() => {
     const { style } = document.documentElement
-    const { vars, themeColor } = cache[polarity]
-    for (const name of applied) style.removeProperty(name)
-    applied = [...Object.keys(vars).map((name) => `--${name}`), '--font-sans', '--font-mono']
+    const { vars, themeColor } = shown[polarity]
     for (const [name, value] of Object.entries(vars)) style.setProperty(`--${name}`, value)
-    style.setProperty('--font-sans', cache.sans)
-    style.setProperty('--font-mono', cache.mono)
+    style.setProperty('--font-sans', shown.sans)
+    style.setProperty('--font-mono', shown.mono)
     document.querySelector('meta[name=theme-color]')?.setAttribute('content', themeColor)
-    localStorage.setItem(CACHE, JSON.stringify(cache))
-  }, [cache, polarity])
+  }, [shown, polarity])
+  useEffect(() => localStorage.setItem(CACHE, JSON.stringify(cache)), [cache])
   return null
 }
 
 export default defineWebExtension({
-  slots: { overlay: [ApplyTheme] },
+  slots: {
+    overlay: [ApplyTheme, AppearanceDialog],
+    'statusline.right': [{ component: AppearanceButton, order: -1 }],
+  },
   commands: [
+    {
+      id: 'theme.appearance',
+      title: 'Appearance…',
+      group: 'Ultimate',
+      run: (context) => context.open(appearanceDialog),
+    },
     {
       id: 'theme.toggle',
       title: 'Toggle light and dark theme',
