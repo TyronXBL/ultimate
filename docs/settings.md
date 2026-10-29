@@ -26,7 +26,7 @@ the "Summary model…" command, and it applies to the next request. `fastModels`
 user) runs those models on the priority tier through the `fast` extension, at a higher usage rate. `instance.model`
 (`"provider/id"`, project over user, default `openai-codex/gpt-6.1-sol`; `null` turns it off) is the one model every
 agent in a preview (`instance start`) runs on, fast tier included; see `extensions/instance/README.md`.
-`theme` (user settings only, written by the Appearance dialog; `extensions/theme/README.md`) is this machine's colour
+`theme` (user settings only, written by the `theme/set` action; `extensions/theme/README.md`) is this machine's colour
 theme and fonts, shared by every project and synced live to every browser.
 `remotes` (user settings only, `{ "<machine>": { "<project>": "<url>" } }`) names other machines' Ultimate instances,
 for example `{ "laptop": { "my-app": "https://laptop.tail1234.ts.net:4747" } }`: codemode's `{ project }` reads and

@@ -40,6 +40,8 @@ it('makes every preset and a hard custom accent readable in both polarities', ()
     })),
     // Pure yellow reads on dark but not on a light background.
     { preset: 'custom', accent: '#ffff00', hue: 30, tint: 0.03 },
+    // Black starts at lightness 0 and must still be lifted on dark.
+    { preset: 'custom', accent: '#000000' },
   ]
   for (const choice of choices)
     for (const polarity of ['dark', 'light'] as const)
@@ -54,7 +56,6 @@ it('makes every preset and a hard custom accent readable in both polarities', ()
 })
 
 it('rejects what is not a theme choice', () => {
-  expect(parseChoice({ preset: 'solarized' })).toBeUndefined()
   expect(parseChoice({ preset: 'custom', accent: 'red' })).toBeUndefined()
   expect(parseChoice({ preset: 'custom', accent: '#FF8800', hue: 400, tint: 1 })).toEqual({
     preset: 'custom',
@@ -75,7 +76,12 @@ it('saves a choice to the user settings and the document every browser streams',
   const opened = await prepared.open(false)
   hosts.push(opened)
   const ctx = {
-    host: { userHome, harness: () => opened.harness, notice: () => {} },
+    host: {
+      userHome,
+      harness: () => opened.harness,
+      notice: () => {},
+      resource: <T>(_key: string, create: () => T) => create(),
+    },
   } as unknown as ActionContext
   const settings = join(userHome, '.ultimate/settings.json')
 

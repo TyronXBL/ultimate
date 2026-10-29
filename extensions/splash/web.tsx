@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, defineWebExtension, errorMessage, resumed, useReady, useStore } from '@/sdk'
 import { store } from '@/sdk/client'
 import { StatusAction } from '../onboarding/ui.tsx'
+import { useBrand } from '../theme/ui.tsx'
 import { Electric } from './electric.tsx'
 
 /** The core's readiness deadline: not ready by then, the app opens anyway and the notice names what is missing. */
@@ -39,10 +40,10 @@ const charge = `data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.x} 0 ${view.width} ${view.height}" width="${view.width / 10}" height="${view.height / 10}"><path d="${letters.flat().join('')}" fill="#fff"/></svg>`,
 )}`
 
-/** The theme's brand colour as `#rrggbb`, `white` of the way to white (0 to 1). */
-function brand(white: number) {
+/** CSS colour `css` as `#rrggbb`, `white` of the way to white (0 to 1). */
+function hex(css: string, white: number) {
   const ink = document.createElement('canvas').getContext('2d')!
-  ink.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--brand')
+  ink.fillStyle = css
   ink.fillRect(0, 0, 1, 1)
   const rgb = Array.from(ink.getImageData(0, 0, 1, 1).data.slice(0, 3))
   return `#${rgb
@@ -60,9 +61,10 @@ function brand(white: number) {
  */
 function Lightning({ level }: { level: () => Level }) {
   const theme = useStore((state) => state.ui.theme)
+  const brand = useBrand()
   const [color, glowColor] = useMemo(
-    () => (theme === 'dark' ? [brand(0.55), brand(0)] : [brand(0), brand(0)]),
-    [theme],
+    () => [hex(brand, theme === 'dark' ? 0.55 : 0), hex(brand, 0)],
+    [brand, theme],
   )
   return (
     <Electric

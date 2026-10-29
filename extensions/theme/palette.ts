@@ -571,7 +571,7 @@ function settle(
       lch[text] = brandForeground(lch.brand)
       tokens[text] = oklchCss(lch[text])
     }
-    const color = lch[text]
+    let color = lch[text]
     // On the brand, the text moves away from it, whichever way that is.
     const away =
       text === 'brand-foreground' ? (luminance(color) > luminance(lch.brand) ? 0.01 : -0.01) : step
@@ -580,12 +580,14 @@ function settle(
       contrast(candidate, lch[background]) >= min &&
       others.every(([, b, m]) => contrast(candidate, lch[b]) >= m)
     let adjusted = false
+    // Each step is judged as the token will be written, rounded, until it passes or lightness runs out.
     if (!fixed)
-      while (!passes(color) && color[0] > 0 && color[0] < 1) {
-        color[0] = Math.min(1, Math.max(0, color[0] + away))
+      while (!passes(color) && color[0] + away >= 0 && color[0] + away <= 1) {
+        tokens[text] = oklchCss([color[0] + away, color[1], color[2]])
+        color = parse(tokens[text]).lch
+        lch[text] = color
         adjusted = true
       }
-    if (adjusted) tokens[text] = oklchCss(color)
     checks.push({
       pair: `${text}/${background}`,
       ratio: round(contrast(color, lch[background]), 2),

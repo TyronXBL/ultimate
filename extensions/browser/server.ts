@@ -333,7 +333,8 @@ export default function browserExtension(host: ExtensionHost) {
       isolated = await guard(
         browser.newContext({
           viewport: { width: args.width ?? 1440, height: args.height ?? 900 },
-          colorScheme: args.theme,
+          // Ultimate pages follow the system light or dark; dark unless the call asks for light.
+          colorScheme: args.theme ?? 'dark',
         }),
       )
       context.abortSignal?.addEventListener('abort', abort, { once: true })
@@ -350,13 +351,8 @@ export default function browserExtension(host: ExtensionHost) {
       await guard(page.addInitScript(() => sessionStorage.setItem('ultimate.driven', '1')))
       if (new URL(url).origin === new URL(host.system().process.url).origin) {
         // Own UI: this page is detached from the shared UI state (web/src/sdk/client.ts), so its `?conversation=`
-        // and clicks never move the user's tabs; the theme is this browser's preference.
-        await guard(
-          page.addInitScript((theme: string | undefined) => {
-            sessionStorage.setItem('ultimate.detached', '1')
-            if (theme) localStorage.setItem('ultimate.theme', theme)
-          }, args.theme),
-        )
+        // and clicks never move the user's tabs.
+        await guard(page.addInitScript(() => sessionStorage.setItem('ultimate.detached', '1')))
       }
       api.output(`Loading ${url}\n`)
       await guard(page.goto(url, { waitUntil: 'domcontentloaded' }))
