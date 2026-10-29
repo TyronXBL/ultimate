@@ -349,6 +349,11 @@ function PanelTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem 
  * sideways and brings the shown tab into view.
  */
 function PhoneTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem }) {
+  const shownTab = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(
+    () => shownTab.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }),
+    [active.id],
+  )
   return (
     <div className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/70 px-2 font-mono text-[12px] [scrollbar-width:none]">
       {panels.map((panel) => {
@@ -360,11 +365,7 @@ function PhoneTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem 
             className={cn(tab, tabButton, 'h-9 px-3', shown && 'bg-accent text-foreground')}
             key={key(panel)}
             onClick={() => actions.openPanel(panel.id)}
-            ref={
-              shown
-                ? (element) => element?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-                : undefined
-            }
+            ref={shown ? shownTab : undefined}
             type="button"
           >
             {Icon && <Icon className="size-3.5" />}
