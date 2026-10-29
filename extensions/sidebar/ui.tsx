@@ -5,8 +5,7 @@
 import type { ReactNode } from 'react'
 import { definePoint } from '@/sdk'
 
-export { inFlight, landedAt, useBranchState, useFlightWork } from './branch.tsx'
-export type { BranchTone } from './branch.tsx'
+export { inFlight, landedAt, tones, useBranchState, useFlightWork } from './branch.tsx'
 export { useLandings } from './landed.tsx'
 export type { Landing } from './landings.ts'
 

@@ -29,8 +29,7 @@ import {
 import { ConversationPhase, useOverview } from '../conversations/ui.tsx'
 import { MessageAnswers } from '../messages/ui.tsx'
 import type { Message } from '../messages/refs.ts'
-import { useBranchState } from '../sidebar/ui.tsx'
-import type { BranchTone } from '../sidebar/ui.tsx'
+import { tones as sidebarTones, useBranchState } from '../sidebar/ui.tsx'
 import { Review } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation } from '../workspaces/ui.tsx'
 import type { Row } from './data.tsx'
@@ -188,17 +187,8 @@ function StateWord({
   return <span className={cn('shrink-0', tones[state.tone])}>{state.label}</span>
 }
 
-/**
- * The branch states' colours on the board. Waiting on @ultimate stays quiet here: the waiting tone means the user.
- */
-const tones: Record<BranchTone, string> = {
-  failed: 'text-error',
-  success: 'text-success',
-  brand: 'text-brand',
-  waiting: 'text-foreground/70',
-  paused: 'text-warning',
-  quiet: 'text-muted-foreground/70',
-}
+/** The sidebar's branch colours, but waiting on @ultimate stays quiet here: the waiting tone means the user. */
+const tones = { ...sidebarTones, waiting: 'text-foreground/70' }
 
 /** "landed 1a2b3c4", opening Review of what it brought when it can. */
 function Landed({ sha, base }: { sha: string; base?: string }) {

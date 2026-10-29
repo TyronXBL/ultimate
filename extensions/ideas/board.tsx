@@ -16,7 +16,7 @@ import {
 } from '@/sdk'
 import { StandingDoc } from '../subagents/ui.tsx'
 import { IdeaCard } from './card.tsx'
-import { byUrgency, useBoard } from './data.tsx'
+import { byUrgency, byUrgencyAcross, useBoard } from './data.tsx'
 import type { Row } from './data.tsx'
 import { IdeaForm } from './form.tsx'
 import type { Fields } from './form.tsx'
@@ -120,7 +120,8 @@ function Columns({ rows, loading }: { rows: Row[]; loading: boolean }) {
   const now = useNow(60_000)
   const [parkedOpen, setParkedOpen] = useState(false)
   const of = (column: Column) => rows.filter((row) => row.column === column).toSorted(byUrgency)
-  const parked = of('parked')
+  // A parked idea whose branch still asks you something stays in view; the rest fold away.
+  const [asking, parked] = partition(of('parked'), (row) => row.asks.length > 0)
   const blank = !loading && rows.length === 0
   return (
     <main className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-x-auto px-4 pt-4" data-ideas-board>
@@ -133,7 +134,9 @@ function Columns({ rows, loading }: { rows: Row[]; loading: boolean }) {
               className={cn(
                 'flex min-h-0 w-0 min-w-52 flex-1 flex-col gap-2',
                 // A column holding a decision widens, so its answer card reads like it does in the chat.
-                items.some((row) => row.asks.length > 0) && 'min-w-72 flex-[1.75]',
+                (items.some((row) => row.asks.length > 0) ||
+                  (column.id === 'ideas' && asking.length > 0)) &&
+                  'min-w-72 flex-[1.75]',
               )}
               data-ideas-column={column.id}
               key={column.id}
@@ -150,6 +153,8 @@ function Columns({ rows, loading }: { rows: Row[]; loading: boolean }) {
                     {empty[column.id]}
                   </p>
                 )}
+                {column.id === 'ideas' &&
+                  asking.map((row) => <IdeaCard key={row.idea.id} now={now} row={row} />)}
                 {column.id === 'ideas' && parked.length > 0 && (
                   <Fold count={parked.length} open={parkedOpen} setOpen={setParkedOpen}>
                     {parked.map((row) => (
@@ -164,6 +169,9 @@ function Columns({ rows, loading }: { rows: Row[]; loading: boolean }) {
     </main>
   )
 }
+
+const partition = <T,>(items: T[], test: (item: T) => boolean) =>
+  [items.filter(test), items.filter((item) => !test(item))] as const
 
 /** Parked ideas, folded away: parked by you, or branches concluded without landing. */
 function Fold({
@@ -211,7 +219,7 @@ function Welcome() {
 type Filter = 'all' | 'needs' | Column
 
 /** The order of the phone's list under All: what needs you, then work under way, then ideas, then what landed. */
-const phoneOrder: Column[] = ['building', 'assessing', 'ideas', 'landed']
+const byPhoneOrder = byUrgencyAcross(['building', 'assessing', 'ideas', 'landed', 'parked'])
 
 /** The phone's board: filter pills with counts over one list, what needs you first, each card with its stage. */
 function PhoneList({ rows, loading }: { rows: Row[]; loading: boolean }) {
@@ -219,22 +227,15 @@ function PhoneList({ rows, loading }: { rows: Row[]; loading: boolean }) {
   const [filter, setFilter] = useState<Filter>('all')
   const needs = rows.filter((row) => row.asks.length > 0)
   const count = (column: Column) => rows.filter((row) => row.column === column).length
-  const listed = rows
-    .filter((row) =>
-      filter === 'all'
-        ? row.column !== 'parked'
-        : filter === 'needs'
-          ? row.asks.length > 0
-          : row.column === filter,
-    )
-    .toSorted(
-      (a, b) =>
-        Number(b.asks.length > 0) - Number(a.asks.length > 0) ||
-        phoneOrder.indexOf(a.column) - phoneOrder.indexOf(b.column) ||
-        b.at - a.at,
-    )
+  // All leaves parked ideas out, unless their branch still asks you something.
+  const all = rows.filter((row) => row.column !== 'parked' || row.asks.length > 0)
+  const listed = (
+    filter === 'all'
+      ? all
+      : rows.filter((row) => (filter === 'needs' ? row.asks.length > 0 : row.column === filter))
+  ).toSorted(byPhoneOrder)
   const pills: { id: Filter; label: string; count: number; tone?: string }[] = [
-    { id: 'all', label: 'All', count: rows.length - count('parked') },
+    { id: 'all', label: 'All', count: all.length },
     ...(needs.length ? [{ id: 'needs' as const, label: 'Needs you', count: needs.length }] : []),
     ...columns
       .map((column) => ({ id: column.id, label: column.label, count: count(column.id) }))
