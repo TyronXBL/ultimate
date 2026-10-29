@@ -8,7 +8,7 @@ import {
   PlayIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   DropdownMenu,
@@ -39,20 +39,34 @@ import { LaunchAction, ParkAction, RemoveAction, UpdateAction } from './refs.ts'
 import type { LaunchSize } from './refs.ts'
 import { columns } from './stage.ts'
 
-/** Runs a board action, reporting a failure on the card. */
+/** A card action under way, named as the card says it meanwhile: `parking`, `launching`. */
+type Run = (word: string, action: () => Promise<unknown>) => Promise<boolean>
+
+/**
+ * Runs one board action at a time on a card: `pending` names it while it runs (a write to the board can take a second
+ * or two), a second one is refused meanwhile, and a failure stays on the card as `error`.
+ */
 function useRun() {
   const [error, setError] = useState<string>()
-  const run = (action: Promise<unknown>) => {
+  const [pending, setPending] = useState<string>()
+  const busy = useRef(false)
+  const run: Run = async (word, action) => {
+    if (busy.current) return false
+    busy.current = true
     setError(undefined)
-    return action.then(
-      () => true,
-      (cause: unknown) => {
-        setError(errorMessage(cause))
-        return false
-      },
-    )
+    setPending(word)
+    try {
+      await action()
+      return true
+    } catch (cause) {
+      setError(errorMessage(cause))
+      return false
+    } finally {
+      busy.current = false
+      setPending(undefined)
+    }
   }
-  return { error, run }
+  return { error, pending, run }
 }
 
 /**
@@ -63,7 +77,7 @@ function useRun() {
 export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boolean }) {
   const { idea, branch, asks } = row
   const [editing, setEditing] = useState(false)
-  const { error, run } = useRun()
+  const { error, pending, run } = useRun()
   const needs = asks.length > 0
   if (editing)
     return (
@@ -71,7 +85,9 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
         idea={idea}
         onCancel={() => setEditing(false)}
         onSave={async (fields) => {
-          const saved = await run(api.action(UpdateAction, { id: idea.id, ...fields }))
+          const saved = await run('saving', () =>
+            api.action(UpdateAction, { id: idea.id, ...fields }),
+          )
           if (saved) setEditing(false)
           return saved
         }}
@@ -84,14 +100,21 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
         'group/idea min-w-0 rounded-md border border-border/70 bg-card px-3 py-2.5',
         needs && 'border-l-2 border-l-warning',
       )}
+      aria-busy={pending !== undefined}
       data-idea={idea.id}
+      data-idea-pending={pending}
       data-idea-stage={row.column}
     >
       <div className="flex min-w-0 items-start gap-2">
         <h3 className="min-w-0 flex-1 text-[13px] leading-snug font-medium break-words text-foreground">
           {idea.title}
         </h3>
-        <IdeaMenu onEdit={() => setEditing(true)} row={row} run={run} />
+        <IdeaMenu
+          disabled={pending !== undefined}
+          onEdit={() => setEditing(true)}
+          row={row}
+          run={run}
+        />
       </div>
       {idea.notes && (row.column === 'ideas' || row.column === 'parked') && (
         <p className="mt-1 line-clamp-3 text-[12px] leading-relaxed whitespace-pre-line text-muted-foreground">
@@ -101,7 +124,11 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
       {idea.images !== undefined && <Pictures entry={idea.images} />}
       <div className="mt-1.5 flex min-w-0 items-center gap-2 font-mono text-[10.5px] leading-4 text-muted-foreground">
         {pill && <StagePill row={row} />}
-        <Status row={row} />
+        {pending ? (
+          <span className="shrink-0 animate-pulse text-muted-foreground">{pending}…</span>
+        ) : (
+          <Status row={row} />
+        )}
         {branch && <BranchLink id={branch.id} />}
         <span className="min-w-0 flex-1 truncate text-muted-foreground/80">
           {[
@@ -112,7 +139,10 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
         <span className="shrink-0 text-muted-foreground/60">{formatAgo(row.at, now)}</span>
         {row.column === 'ideas' && (
           <LaunchMenu
-            launch={(size) => void run(api.action(LaunchAction, { id: idea.id, size }))}
+            disabled={pending !== undefined}
+            launch={(size) =>
+              void run('launching', () => api.action(LaunchAction, { id: idea.id, size }))
+            }
           />
         )}
       </div>
@@ -239,7 +269,13 @@ function BranchLink({ id }: { id: number }) {
 }
 
 /** The launch button: assess first by default, or build straight away. */
-function LaunchMenu({ launch }: { launch: (size: LaunchSize) => void }) {
+function LaunchMenu({
+  launch,
+  disabled,
+}: {
+  launch: (size: LaunchSize) => void
+  disabled: boolean
+}) {
   const option = (size: LaunchSize, label: string, detail: string) => (
     <DropdownMenuItem
       className="cursor-pointer flex-col items-start gap-0"
@@ -253,8 +289,9 @@ function LaunchMenu({ launch }: { launch: (size: LaunchSize) => void }) {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
-        className="-my-1 -mr-1.5 flex h-6 shrink-0 pointer-coarse:h-8 pointer-coarse:px-2.5 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[11px] text-brand outline-none hover:bg-brand/10 focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-brand/10"
+        className="-my-1 -mr-1.5 flex h-6 shrink-0 pointer-coarse:h-8 pointer-coarse:px-2.5 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[11px] text-brand outline-none hover:bg-brand/10 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 data-[state=open]:bg-brand/10"
         data-idea-launch-menu
+        disabled={disabled}
       >
         <PlayIcon className="size-3 fill-current" />
         Launch
@@ -273,10 +310,12 @@ function IdeaMenu({
   row,
   run,
   onEdit,
+  disabled,
 }: {
   row: Row
-  run: (action: Promise<unknown>) => Promise<boolean>
+  run: Run
   onEdit: () => void
+  disabled: boolean
 }) {
   const { idea } = row
   const item = (icon: ReactNode, label: string, select: () => void, danger = false) => (
@@ -294,7 +333,8 @@ function IdeaMenu({
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
         aria-label={`Actions for ${idea.title}`}
-        className="-mt-0.5 -mr-1 flex size-5 shrink-0 pointer-coarse:-my-1 pointer-coarse:size-7 cursor-pointer items-center justify-center rounded-sm text-muted-foreground opacity-0 outline-none group-focus-within/idea:opacity-100 group-hover/idea:opacity-100 pointer-coarse:opacity-100 hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-muted data-[state=open]:opacity-100"
+        className="-mt-0.5 -mr-1 flex size-5 shrink-0 pointer-coarse:-my-1 pointer-coarse:size-7 cursor-pointer items-center justify-center rounded-sm text-muted-foreground opacity-0 outline-none group-focus-within/idea:opacity-100 group-hover/idea:opacity-100 pointer-coarse:opacity-100 hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 data-[state=open]:bg-muted data-[state=open]:opacity-100"
+        disabled={disabled}
       >
         <EllipsisIcon className="size-3.5" />
       </DropdownMenuTrigger>
@@ -305,18 +345,22 @@ function IdeaMenu({
             ? item(
                 <ArchiveIcon />,
                 'Park',
-                () => void run(api.action(ParkAction, { id: idea.id, parked: true })),
+                () =>
+                  void run('parking', () => api.action(ParkAction, { id: idea.id, parked: true })),
               )
             : item(
                 <ArchiveRestoreIcon />,
                 'Back to the board',
-                () => void run(api.action(ParkAction, { id: idea.id, parked: false })),
+                () =>
+                  void run('bringing back', () =>
+                    api.action(ParkAction, { id: idea.id, parked: false }),
+                  ),
               ))}
         {!idea.launch &&
           item(
             <Trash2Icon />,
             'Remove',
-            () => void run(api.action(RemoveAction, { id: idea.id })),
+            () => void run('removing', () => api.action(RemoveAction, { id: idea.id })),
             true,
           )}
       </DropdownMenuContent>

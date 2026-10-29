@@ -223,7 +223,7 @@ export function IdeaForm({
               disabled={!title.trim() || saving}
               type="submit"
             >
-              {idea ? 'Save' : 'Add idea'}
+              {saving ? (idea ? 'Saving…' : 'Adding…') : idea ? 'Save' : 'Add idea'}
             </button>
           </div>
         </>
