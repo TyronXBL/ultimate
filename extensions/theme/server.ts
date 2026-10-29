@@ -30,45 +30,56 @@ export const reloadOnSettings = true
 type ThemeHost = Pick<ExtensionHost, 'userHome' | 'harness' | 'notice' | 'resource'>
 
 /**
- * Mirror the settings file's `theme` into the document; an invalid one is reported and counts as the default. Mirrors
- * run one at a time across facet reloads, each reading the file afresh, so the last one leaves the latest choice.
+ * Run `task` after every earlier one, across facet reloads, so the document always ends on the latest settings: a save
+ * and the mirror of the reload it causes never interleave.
  */
-function mirror(host: ThemeHost) {
-  const queue = host.resource('theme.mirror', () => ({ last: Promise.resolve() }))
-  const run = async () => {
-    const { theme } = await readSettings(userSettingsPath(host.userHome))
-    let choice = theme === undefined ? DEFAULT_CHOICE : parseChoice(theme)
-    if (!choice) {
-      host.notice(
-        `Invalid theme ${JSON.stringify(theme)} in ~/.ultimate/settings.json; using the default`,
-      )
-      choice = DEFAULT_CHOICE
-    }
-    const json = JSON.stringify(choice)
-    const same = (doc: { choice?: ThemeChoice } | undefined) =>
-      JSON.stringify(doc?.choice ?? DEFAULT_CHOICE) === json
-    if (same(await host.harness().snapshot(State, ROOT_CONVERSATION_ID, context))) return
-    await host.harness().commit(async (tx) => {
-      const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
-      if (!same(doc)) doc.choice = choice
-    }, context)
-  }
-  const next = queue.last.then(run, run)
+function serial(host: ThemeHost, task: () => Promise<void>) {
+  const queue = host.resource('theme.queue', () => ({ last: Promise.resolve() }))
+  const next = queue.last.then(task, task)
   queue.last = next.catch(() => {
-    // Its caller sees the failure; the queue only orders the next mirror after it.
+    // Its caller sees the failure; the queue only orders the next task after it.
   })
   return next
 }
 
+/** Put `choice` into the document unless it already holds it. */
+async function store(host: ThemeHost, choice: ThemeChoice) {
+  const json = JSON.stringify(choice)
+  const same = (doc: { choice?: ThemeChoice } | undefined) =>
+    JSON.stringify(doc?.choice ?? DEFAULT_CHOICE) === json
+  if (same(await host.harness().snapshot(State, ROOT_CONVERSATION_ID, context))) return
+  await host.harness().commit(async (tx) => {
+    const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
+    if (!same(doc)) doc.choice = choice
+  }, context)
+}
+
+/** Mirror the settings file's `theme` into the document; an invalid one is reported and counts as the default. */
+const mirror = (host: ThemeHost) =>
+  serial(host, async () => {
+    const { theme } = await readSettings(userSettingsPath(host.userHome))
+    const choice = theme === undefined ? DEFAULT_CHOICE : parseChoice(theme)
+    if (!choice)
+      host.notice(
+        `Invalid theme ${JSON.stringify(theme)} in ~/.ultimate/settings.json; using the default`,
+      )
+    await store(host, choice ?? DEFAULT_CHOICE)
+  })
+
 export const actions = {
-  /** `ThemeChoice` → the saved choice: written to the user's settings, then mirrored into the document. */
+  /**
+   * `ThemeChoice` → the saved choice: into the document first, so every browser repaints at once, then into the user's
+   * settings. Writing the file reinstalls every facet that reloads on settings, which holds commits for seconds.
+   */
   set: implementAction(SetAction, async (args, { host }) => {
     const choice = parseChoice(args)
     if (!choice) throw new Error(`Not a theme choice: ${JSON.stringify(args)}`)
-    await updateSettings(userSettingsPath(host.userHome), (settings) => {
-      settings.theme = choice
+    await serial(host, async () => {
+      await store(host, choice)
+      await updateSettings(userSettingsPath(host.userHome), (settings) => {
+        settings.theme = choice
+      })
     })
-    await mirror(host)
     return choice
   }),
 }
