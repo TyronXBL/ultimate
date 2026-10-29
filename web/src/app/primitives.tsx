@@ -21,7 +21,7 @@ import { actions, layout, shellKeys } from '../sdk/actions.ts'
 import { useConversation, useExtensions, useRegionOpen, useUiState } from '../sdk/hooks.ts'
 import { panelItems, shownPanels, slotItems } from '../sdk/registry.ts'
 import type { PanelItem } from '../sdk/registry.ts'
-import { overlays, useViewport } from '../sdk/viewport.ts'
+import { overlays, touchKeyboard, useViewport } from '../sdk/viewport.ts'
 import { ExtensionBoundary, Slot } from './boundary.tsx'
 import { Composer } from './composer.tsx'
 import { IconButton } from './header.tsx'
@@ -362,7 +362,7 @@ function PhoneTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem 
         return (
           <button
             aria-current={shown ? 'true' : undefined}
-            className={cn(tab, tabButton, 'h-9 px-3', shown && 'bg-accent text-foreground')}
+            className={cn(tab, tabButton, shown && 'bg-accent text-foreground')}
             key={key(panel)}
             onClick={() => actions.openPanel(panel.id)}
             ref={shown ? shownTab : undefined}
@@ -392,7 +392,7 @@ export function Panels() {
   const Panel = active.component
   const content = (
     <>
-      {viewport === 'phone' ? (
+      {viewport === 'phone' && touchKeyboard() ? (
         <PhoneTabs active={active} panels={tabs} />
       ) : (
         <PanelTabs active={active} panels={tabs} />

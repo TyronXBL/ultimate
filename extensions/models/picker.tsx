@@ -193,7 +193,7 @@ export function ModelPicker() {
               >
                 <LogInIcon className="size-3.5" />
                 Log in to a provider…
-                <span className="ml-auto truncate text-[11px] text-muted-foreground max-sm:hidden">
+                <span className="ml-auto truncate text-[11px] text-muted-foreground max-sm:pointer-coarse:hidden">
                   subscriptions and API keys, shared with pi
                 </span>
               </CommandItem>

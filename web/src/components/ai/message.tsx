@@ -15,7 +15,7 @@ import {
 } from 'streamdown'
 import type { CustomRendererProps, ExtraProps } from 'streamdown'
 import { ExtensionBoundary } from '../../app/boundary.tsx'
-import { store } from '../../sdk/client.ts'
+import { setCodeWrap } from '../../sdk/client.ts'
 import { useExtensions, useStore } from '../../sdk/hooks.ts'
 import { codeBlockLanguages, codeBlockRenderers, linkRenderers } from '../../sdk/registry.ts'
 import { codePlugin } from './code-block.tsx'
@@ -102,7 +102,7 @@ function CodeWrapButton() {
         wrap ? 'bg-muted text-foreground' : 'text-muted-foreground',
       )}
       data-streamdown="code-block-wrap-button"
-      onClick={() => store.setUi({ codeWrap: !wrap })}
+      onClick={() => setCodeWrap(!wrap)}
       title="Wrap lines"
       type="button"
     >
@@ -114,7 +114,8 @@ function CodeWrapButton() {
 const CoreCode = defaultComponents.code
 /**
  * Streamdown's code; a fenced block (Streamdown's `pre` marks it `data-block`) gets the wrap button beside copy, unless
- * `codeBlocks` renderers own its language: Streamdown's code hands those to `ExtensionCodeBlock`.
+ * `codeBlocks` renderers own its language: Streamdown's code hands those to `ExtensionCodeBlock`. It renders the block's
+ * actions itself, so `controls.code` below does not reach it: keep the two in step.
  */
 function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: string }) {
   const incomplete = useIsCodeFenceIncomplete()

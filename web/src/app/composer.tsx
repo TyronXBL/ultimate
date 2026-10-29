@@ -398,7 +398,14 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
           <PromptInputTools className="overflow-hidden">
             <Slot name="composer.toolbar" variant="inline" />
           </PromptInputTools>
-          <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2">
+          {/* On touch, these buttons leave the focus in the editor: the keyboard stays up, and the rows typing hides
+              (index.css) don't come back under the finger between pressing and releasing. */}
+          <div
+            className="flex max-w-full min-w-0 shrink-0 items-center gap-2"
+            onPointerDown={(event) => {
+              if (touchKeyboard()) event.preventDefault()
+            }}
+          >
             <span
               className={cn(
                 'truncate font-mono text-[11px]',
@@ -427,7 +434,7 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
             {choose && (
               <Button
                 className="h-9 rounded-lg px-3"
-                disabled={!!blocked || sending || reading}
+                disabled={loading || !!blocked || sending || reading}
                 // oxlint-disable-next-line typescript/no-floating-promises -- send catches submission failures and displays them in the draft's error state.
                 onClick={() => void send('followUp')}
                 type="button"

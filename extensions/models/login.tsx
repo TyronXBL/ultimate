@@ -512,7 +512,7 @@ function Chooser({
                 <span className="shrink-0 text-[11px] text-muted-foreground/70">
                   {typeLabel(method)}
                 </span>
-                <span className="shrink-0 text-[11px] text-muted-foreground/50 max-sm:hidden">
+                <span className="shrink-0 text-[11px] text-muted-foreground/50 max-sm:pointer-coarse:hidden">
                   {method.provider.id}
                 </span>
               </button>

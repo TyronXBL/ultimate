@@ -50,23 +50,28 @@ it('queues and steers from a touch composer while a run is busy', async () => {
   const composer = page.locator('[data-composer-target="conversation"]')
   const button = (name: string) => composer.getByRole('button', { name, exact: true })
   await button('Stop').waitFor()
+  // A cold Vite cache can still reload the page once its dependencies are optimized, which drops a draft typed
+  // before it: type again until the draft holds.
+  const draft = async (text: string, shows: string) =>
+    until(async () => {
+      const editor = composer.locator('#composer-input')
+      if ((await editor.inputValue()) !== text) await editor.fill(text)
+      return button(shows).isVisible()
+    }, 60000)
 
-  await composer.locator('textarea').fill('Queued note')
-  await button('Queue').waitFor()
+  await draft('Queued note', 'Queue')
   expect(await button('Stop').count()).toBe(0)
-  await button('Queue').tap()
-  await composer.getByText('follow-up', { exact: true }).waitFor()
-
-  await composer.locator('textarea').fill('Steering note')
-  await button('Steer').tap()
-  await composer.getByText('steer', { exact: true }).waitFor()
-  await button('Stop').waitFor()
-
   const modes = async () =>
     ((await server.harness.snapshot(InboxDoc, ultimate, context))?.items ?? []).map((item) =>
       item.mode === 'write' ? [item.mode] : [item.mode, item.content],
     )
+  await button('Queue').tap()
+  await until(async () => (await modes()).length === 1)
+
+  await draft('Steering note', 'Steer')
+  await button('Steer').tap()
   await until(async () => (await modes()).length === 2)
+  await button('Stop').waitFor()
   expect(await modes()).toEqual([
     ['followUp', 'Queued note'],
     ['steer', 'Steering note'],

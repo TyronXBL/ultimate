@@ -34,11 +34,11 @@ function writeConversation(id: number, replace: boolean) {
 export const store = createStore({
   ui: {
     theme: localStorage.getItem('ultimate.theme') === 'light' ? 'light' : 'dark',
+    // This browser's choice, else wrapped on a phone, where code would scroll sideways in a narrow column.
     codeWrap:
-      localStorage.getItem('ultimate.codeWrap') === '1' ||
-      (localStorage.getItem('ultimate.codeWrap') === null &&
-        viewport() === 'phone' &&
-        touchKeyboard()),
+      localStorage.getItem('ultimate.codeWrap') === null
+        ? viewport() === 'phone' && touchKeyboard()
+        : localStorage.getItem('ultimate.codeWrap') === '1',
   },
   onFallback: () => {
     replaceSelection = true
@@ -101,16 +101,20 @@ store.subscribe(() => {
     writeConversation(view.conversation.id, true)
     replaceSelection = false
   }
-  // The theme and code wrapping are preferences of this browser.
+  // The theme is a preference of this browser.
   localStorage.setItem('ultimate.theme', ui.theme)
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
-  localStorage.setItem('ultimate.codeWrap', ui.codeWrap ? '1' : '0')
   document.documentElement.toggleAttribute('data-code-wrap', ui.codeWrap)
   // The browser bar and the installed app's chrome take the page background (web/index.html).
   document
     .querySelector('meta[name=theme-color]')
     ?.setAttribute('content', ui.theme === 'dark' ? '#111112' : '#f9fafb')
 })
+/** Wrap long lines in code blocks or scroll them sideways; this browser keeps the choice. */
+export function setCodeWrap(on: boolean) {
+  localStorage.setItem('ultimate.codeWrap', on ? '1' : '0')
+  store.setUi({ codeWrap: on })
+}
 /** The next selection replaces the current history entry rather than pushing one, as a redirect does. */
 export function replaceNextSelection() {
   replaceSelection = true

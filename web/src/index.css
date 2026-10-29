@@ -193,7 +193,8 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--inset-bottom)
       env(safe-area-inset-left);
   }
-  .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus) {
+  /* Any field, the app's own or one in a dialog portaled beside it. */
+  :root:has(textarea:focus, input:focus, [contenteditable]:focus) .safe-area {
     --inset-bottom: 0px;
   }
   /* Installed on a phone, the status line's ends sit in from the rounded corners, so it reaches down into the
@@ -243,7 +244,7 @@
 /* Typing on a phone, the room above the keyboard goes to the conversation: the status line and the composer's status
    row wait until the keyboard closes. Unlayered, so it wins over their display utilities. */
 @media (pointer: coarse) and (width < 48rem) {
-  .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus)
+  :root:has(textarea:focus, input:focus, [contenteditable]:focus)
     :is(.status-line, .composer-status) {
     display: none;
   }
