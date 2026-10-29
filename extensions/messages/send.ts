@@ -49,6 +49,8 @@ export async function send(
     dismiss?: boolean
     /** With `to: 'user'`, the decisions the message asks, as its answer card shows them. */
     questions?: Question[]
+    /** With `to: 'user'`, the branch conversation these decisions belong to. */
+    about?: number
   },
   ctx: Context,
   options: {
@@ -88,6 +90,11 @@ export async function send(
   if (!input.text.trim()) throw new Error('Message text must not be empty')
   if (input.questions !== undefined && (input.to !== 'user' || input.reply === false))
     throw new Error('questions go only with a reply-expected message to the user')
+  if (input.about !== undefined) {
+    if (input.to !== 'user') throw new Error('about goes only with a message to the user')
+    if (!Number.isSafeInteger(input.about) || input.about < 1)
+      throw new Error('about must be a positive conversation id')
+  }
   const questions = input.questions === undefined ? undefined : checkQuestions(input.questions)
   // Checked before resolving, which may create a standing agent's conversation.
   const parent = from === 'user' ? undefined : await parentOf(host, from, ctx)
@@ -115,6 +122,8 @@ export async function send(
       if (!original || !openQuestion(original))
         throw new Error('These questions are no longer open')
     }
+    if (input.about !== undefined && !(await tx.conversation(input.about as ConversationId)))
+      throw new Error(`Unknown conversation #${input.about}`)
     if (input.images !== undefined && from === 'user')
       throw new Error('your images go along with what you submit, not with a message')
     const images =
@@ -182,6 +191,7 @@ export async function send(
       ...(callId === undefined ? {} : { call: callId }),
       ...(images ? { images } : {}),
       ...(questions ? { questions } : {}),
+      ...(input.about === undefined ? {} : { about: input.about }),
       ...(options.report ? { report: true as const } : {}),
     })
     await host.emit(tx, MessageSent, {

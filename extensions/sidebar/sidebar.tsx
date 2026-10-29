@@ -42,7 +42,8 @@ import {
   stateTone,
   stateWord,
 } from '../messages/ui.tsx'
-import { InFlight, inFlight, MemoryRow, stillOpen } from './root.tsx'
+import { inFlight } from './branch.tsx'
+import { InFlight, MemoryRow, stillOpen } from './root.tsx'
 import type { Flight } from './root.tsx'
 import { Landed, useLandings } from './landed.tsx'
 import { useRoots } from '../lineage/ui.tsx'

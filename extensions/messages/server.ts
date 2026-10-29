@@ -178,7 +178,7 @@ export default function messages(host: ExtensionHost) {
       defineTool({
         name: 'message',
         description:
-          'Send a message to #id or @name (only @ultimate may send to user). Returns immediately; the answer comes back as a reply. A busy recipient gets it after its current run, or during it with steer: true (the default for @ultimate). images forwards screenshots or other images from your conversation, to an agent or to the user. To an agent or the user whose message you owe an answer, it is that answer (with its images and questions) and ends your run.',
+          'Send a message to #id or @name (only @ultimate may send to user). For a user message, `about` names the existing branch conversation it belongs to. Returns immediately; the answer comes back as a reply. A busy recipient gets it after its current run, or during it with steer: true (the default for @ultimate). images forwards screenshots or other images from your conversation, to an agent or to the user. To an agent or the user whose message you owe an answer, it is that answer (with its images and questions) and ends your run.',
         parameters: Type.Object({
           to: Type.String(),
           text: Type.String({ minLength: 1 }),
@@ -186,6 +186,12 @@ export default function messages(host: ExtensionHost) {
           steer: Type.Optional(Type.Boolean()),
           images: Type.Optional(imagesParameter),
           questions: Type.Optional(questionsParameter),
+          about: Type.Optional(
+            Type.Integer({
+              minimum: 1,
+              description: 'The branch conversation this message belongs to.',
+            }),
+          ),
         }),
         // The task-scoped receipt deduplicates admission; the memo returns the same id on replay.
         replay: 'safe',

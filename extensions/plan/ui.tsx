@@ -1,4 +1,7 @@
-/** The plan's components for other extensions: the task chip of a conversation that works on a plan task. */
+/**
+ * The plan's components for other extensions: the task chip of a conversation that works on a plan task, and a
+ * coordinator's plan document.
+ */
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -13,6 +16,8 @@ import type { SyntheticEvent } from 'react'
 import { cn, useDocOf, useUiState, useUltimate } from '@/sdk'
 import { TaskIndexDoc } from './refs.ts'
 import type { TaskLink } from './refs.ts'
+
+export { PlanDoc } from './refs.ts'
 
 const statuses: Record<string, { icon: typeof CircleIcon; tone: string; dot: string }> = {
   backlog: { icon: CircleDashedIcon, tone: 'text-muted-foreground/70', dot: 'bg-muted-foreground' },
