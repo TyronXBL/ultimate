@@ -196,14 +196,6 @@
   .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus) {
     --inset-bottom: 0px;
   }
-  /* Typing on a phone, the room above the keyboard goes to the conversation: the status line and the composer's
-     status row wait until the keyboard closes. */
-  @media (pointer: coarse) and (width < 48rem) {
-    .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus)
-      :is(.status-line, .composer-status) {
-      display: none;
-    }
-  }
   /* Installed on a phone, the status line's ends sit in from the rounded corners, so it reaches down into the
      home-indicator band: no empty strip under it, its items still 14px clear of the bottom edge and the indicator. */
   @media (display-mode: standalone) and (width < 48rem) {
@@ -245,6 +237,30 @@
   textarea,
   select {
     font-size: 16px;
+  }
+}
+
+/* Typing on a phone, the room above the keyboard goes to the conversation: the status line and the composer's status
+   row wait until the keyboard closes. Unlayered, so it wins over their display utilities. */
+@media (pointer: coarse) and (width < 48rem) {
+  .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus)
+    :is(.status-line, .composer-status) {
+    display: none;
+  }
+}
+
+/* How far a wide markdown table fades out at its scrolling edge (`.markdown` tables): none unless it scrolls. */
+@property --table-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes table-fade {
+  from {
+    --table-fade: 2rem;
+  }
+  to {
+    --table-fade: 0px;
   }
 }
 
@@ -307,10 +323,11 @@
       @apply pl-[2ch] -indent-[2ch];
     }
   }
-  & [data-streamdown='table-wrapper'] {
-    overflow-x: auto;
-    scrollbar-width: none;
-    mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
+  /* A table wider than the column fades out on the side it scrolls on, until its end: phones show no scrollbar. */
+  & [data-streamdown='table-wrapper'] div:has(> table) {
+    mask-image: linear-gradient(to right, black calc(100% - var(--table-fade)), transparent);
+    animation: table-fade linear both;
+    animation-timeline: scroll(self inline);
   }
   & [data-streamdown='table-wrapper'] {
     @apply my-3 gap-0 rounded-md border-border/80 bg-transparent p-0;

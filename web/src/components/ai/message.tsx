@@ -90,6 +90,7 @@ export function MentionText({ text }: { text: string }) {
   )
 }
 
+/** Wraps long lines of every code block instead of scrolling them sideways; this browser remembers the choice. */
 function CodeWrapButton() {
   const wrap = useStore((state) => state.ui.codeWrap)
   return (
@@ -97,7 +98,7 @@ function CodeWrapButton() {
       aria-label="Wrap lines"
       aria-pressed={wrap}
       className={cn(
-        'cursor-pointer rounded-sm p-1 transition-all hover:text-foreground',
+        'cursor-pointer rounded-sm p-1 transition-all hover:text-foreground pointer-coarse:p-2',
         wrap ? 'bg-muted text-foreground' : 'text-muted-foreground',
       )}
       data-streamdown="code-block-wrap-button"
@@ -111,6 +112,10 @@ function CodeWrapButton() {
 }
 
 const CoreCode = defaultComponents.code
+/**
+ * Streamdown's code; a fenced block (Streamdown's `pre` marks it `data-block`) gets the wrap button beside copy, unless
+ * `codeBlocks` renderers own its language: Streamdown's code hands those to `ExtensionCodeBlock`.
+ */
 function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: string }) {
   const incomplete = useIsCodeFenceIncomplete()
   const extensions = useExtensions()

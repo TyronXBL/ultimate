@@ -104,8 +104,7 @@ store.subscribe(() => {
   // The theme and code wrapping are preferences of this browser.
   localStorage.setItem('ultimate.theme', ui.theme)
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
-  if (ui.codeWrap) localStorage.setItem('ultimate.codeWrap', '1')
-  else localStorage.setItem('ultimate.codeWrap', '0')
+  localStorage.setItem('ultimate.codeWrap', ui.codeWrap ? '1' : '0')
   document.documentElement.toggleAttribute('data-code-wrap', ui.codeWrap)
   // The browser bar and the installed app's chrome take the page background (web/index.html).
   document
