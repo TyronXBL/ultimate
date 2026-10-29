@@ -66,11 +66,11 @@ it('launches an idea into one input for @ultimate, which links the branch it sta
     tags: ['#UI'],
     images: [picture],
   })
-  expect(idea).toMatchObject({ id: 1, title: 'Phone board', tags: ['ui'], by: 'user' })
+  expect(idea).toMatchObject({ id: 1, title: 'Phone board', tags: ['ui'], by: 'user', images: 100 })
   // Its pictures live in a display-only entry on conversation 1, not in the board document.
   expect(entries).toEqual([
     {
-      id: idea.images,
+      id: 100,
       conversation: 1,
       kind: 'ideas.images',
       data: { idea: 1, images: [picture] },
