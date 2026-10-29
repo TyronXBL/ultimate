@@ -29,10 +29,12 @@ it('times out a hung step, closes its page and keeps later calls working', async
   }
   try {
     for (const hang of ['new Promise(() => {})', 'for (;;) {}']) {
-      const hung = await drive([{ eval: '1 + 1' }, { eval: hang }], 1000)
+      // The limit covers every step, the page load included: 1 s timed the load out on a busy 4-CPU CI shard, so the
+      // fast step 1 never ran. 5 s leaves the load room and still ends the hung step well inside the 15 s bound.
+      const hung = await drive([{ eval: '1 + 1' }, { eval: hang }], 5000)
       expect(hung.result.isError).toBe(true)
       expect(hung.text).toContain('Step 1: OK 2')
-      expect(hung.text).toContain('Step 2: TimeoutError: timed out after 1s')
+      expect(hung.text).toContain('Step 2: TimeoutError: timed out after 5s')
       expect(hung.ms).toBeLessThan(15_000)
       const next = await drive([{ eval: 'document.title' }])
       expect(next.result.isError).toBeFalsy()
