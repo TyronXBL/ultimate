@@ -1,6 +1,6 @@
 /** The board's rows: each idea with its stage, its branch and the decisions it waits on, all read live. */
-import { useEffect, useState } from 'react'
-import { useDocOf } from '@/sdk'
+import { useEffect } from 'react'
+import { useDocOf, useExtensionUiState } from '@/sdk'
 import { useConcludedSince } from '../conversations/ui.tsx'
 import { useRoots } from '../lineage/ui.tsx'
 import { MessagesDoc, emptyMessages } from '../messages/ui.tsx'
@@ -50,10 +50,12 @@ function landingOf(
   return note ? { sha: note.sha, base: note.base, at: note.at } : undefined
 }
 
-/** Whether `branch` has a plan epic yet: what tells an assessment that turned into building. */
-function PlanProbe({ branch, onPlan }: { branch: number; onPlan: (planned: boolean) => void }) {
+/** Watches `branch` for its first plan epic: what tells an assessment that turned into building. */
+function PlanProbe({ branch, onPlan }: { branch: number; onPlan: () => void }) {
   const planned = Object.keys(useDocOf(branch, PlanDoc)?.epics ?? {}).length > 0
-  useEffect(() => onPlan(planned), [planned, onPlan])
+  useEffect(() => {
+    if (planned) onPlan()
+  }, [planned, onPlan])
   return null
 }
 
@@ -65,13 +67,23 @@ export function useBoard() {
   const landings = useLandings(useRoots() ?? [])
   const concludedSince = useConcludedSince()
   const asks = waiting((useDocOf(1, MessagesDoc) ?? emptyMessages).messages).toReversed()
-  const [planned, setPlanned] = useState<Record<number, boolean>>({})
+  // Branches seen building, kept: a reload shows them in Building at once, and a branch never goes back to assessing.
+  const [started, setStarted] = useExtensionUiState<number[]>('started', [])
   const byId = new Map(conversations.map((conversation) => [conversation.id, conversation]))
   const linked = (items ?? []).flatMap((idea) => {
     const branch = idea.launch?.branch === undefined ? undefined : byId.get(idea.launch.branch)
     return branch ? [branch] : []
   })
   const work = useFlightWork(linked)
+  const start = (id: number) => {
+    if (!started.includes(id)) setStarted([...started, id])
+  }
+  const committed = linked.find(
+    (branch) => work.get(branch.id)?.commits && !started.includes(branch.id),
+  )
+  useEffect(() => {
+    if (committed) start(committed.id)
+  })
   const rows = (items ?? []).map((idea): Row => {
     const id = idea.launch?.branch
     const branch = id === undefined ? undefined : byId.get(id)
@@ -83,7 +95,7 @@ export function useBoard() {
             landed,
             concluded: concludedSince(id) === Infinity,
             submitted: index.queue.some((item) => item.conversationId === id),
-            started: planned[id] || !!work.get(id)?.commits,
+            started: started.includes(id) || !!work.get(id)?.commits,
           }
     const activity = branch ? Math.max(branch.inputAt ?? 0, branch.answerAt ?? 0) : 0
     return {
@@ -95,17 +107,11 @@ export function useBoard() {
       at: Math.max(activity, idea.parked ?? 0, idea.launch?.at ?? 0, idea.at),
     }
   })
-  const probes = linked.map((branch) => (
-    <PlanProbe
-      branch={branch.id}
-      key={branch.id}
-      onPlan={(value) =>
-        setPlanned((before) =>
-          (before[branch.id] ?? false) === value ? before : { ...before, [branch.id]: value },
-        )
-      }
-    />
-  ))
+  const probes = linked
+    .filter((branch) => !started.includes(branch.id))
+    .map((branch) => (
+      <PlanProbe branch={branch.id} key={branch.id} onPlan={() => start(branch.id)} />
+    ))
   return { loading: items === undefined, rows, probes }
 }
 

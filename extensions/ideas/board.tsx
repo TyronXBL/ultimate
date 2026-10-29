@@ -63,7 +63,12 @@ export function Board() {
         <Header>
           <span className="flex min-w-0 items-baseline gap-2 pl-1">
             <span className="text-[13px] font-medium">Board</span>
-            <span className="truncate font-mono text-[11px] text-muted-foreground">
+            <span
+              className={cn(
+                'truncate font-mono text-[11px] text-muted-foreground',
+                loading && 'invisible',
+              )}
+            >
               {rows.filter((row) => row.column !== 'parked').length} ideas
               {needs > 0 && <span className="text-warning"> · {needs} need you</span>}
             </span>
@@ -97,12 +102,12 @@ function UltimateDock() {
   )
 }
 
-function ColumnHead({ label, rows }: { label: string; rows: Row[] }) {
+function ColumnHead({ label, rows, loading }: { label: string; rows: Row[]; loading: boolean }) {
   const needs = rows.filter((row) => row.asks.length > 0).length
   return (
     <h2 className="flex items-baseline gap-1.5 px-1 font-mono text-[10.5px] tracking-wider text-muted-foreground uppercase">
       {label}
-      <span className="tracking-normal text-muted-foreground/60">{rows.length}</span>
+      {!loading && <span className="tracking-normal text-muted-foreground/60">{rows.length}</span>}
       {needs > 0 && (
         <span className="ml-auto tracking-normal normal-case text-warning">{needs} need you</span>
       )}
@@ -133,14 +138,14 @@ function Columns({ rows, loading }: { rows: Row[]; loading: boolean }) {
               data-ideas-column={column.id}
               key={column.id}
             >
-              <ColumnHead label={column.label} rows={items} />
+              <ColumnHead label={column.label} loading={loading} rows={items} />
               <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1 pb-4">
                 {column.id === 'ideas' && <AddIdea />}
                 {column.id === 'ideas' && blank && <Welcome />}
                 {items.map((row) => (
                   <IdeaCard key={row.idea.id} now={now} row={row} />
                 ))}
-                {!items.length && empty[column.id] && (
+                {!loading && !items.length && empty[column.id] && (
                   <p className="rounded-md border border-dashed border-border/70 px-3 py-4 text-center text-[12px] text-muted-foreground/70">
                     {empty[column.id]}
                   </p>

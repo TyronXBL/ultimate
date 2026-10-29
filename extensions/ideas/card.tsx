@@ -325,9 +325,9 @@ function IdeaMenu({
   )
 }
 
-/** A message's first lines of prose, without Markdown marks. */
-const gist = (text: string) =>
-  text
+/** A message's prose on one line, without Markdown marks; its links stay links, so a preview opens from the card. */
+function Gist({ text }: { text: string }) {
+  const prose = text
     .split('\n')
     .map((line) =>
       line
@@ -337,6 +337,25 @@ const gist = (text: string) =>
     )
     .filter(Boolean)
     .join(' ')
+  const parts = prose.split(/(\[[^\]]+\]\([^)\s]+\))/)
+  return parts.map((part, index) => {
+    const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(part)
+    return link ? (
+      <a
+        className="text-brand underline-offset-2 hover:underline"
+        href={link[2]}
+        // oxlint-disable-next-line react/no-array-index-key -- The parts of one fixed text, in order.
+        key={index}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {link[1]}
+      </a>
+    ) : (
+      part
+    )
+  })
+}
 
 /**
  * One decision the idea's branch waits on: what @ultimate asked, and its real answer card. The card sits in the
@@ -350,7 +369,7 @@ function Ask({ branch, message }: { branch: number; message: Message }) {
     <div className="-mx-3 -mb-2.5 mt-2.5" data-idea-ask={message.id}>
       <div className="border-t border-border/60 px-3 py-2">
         <p className="line-clamp-3 text-[12.5px] leading-relaxed text-foreground/90">
-          {gist(message.text)}
+          <Gist text={message.text} />
         </p>
         {from !== undefined && (
           <button
