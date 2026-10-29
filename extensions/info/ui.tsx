@@ -64,7 +64,7 @@ export function Copy({
       {copied ? (
         <CheckIcon className="size-3 shrink-0 text-success" />
       ) : (
-        <CopyIcon className="size-3 shrink-0 opacity-0 transition-opacity group-hover/copy:opacity-50" />
+        <CopyIcon className="size-3 shrink-0 opacity-0 transition-opacity group-hover/copy:opacity-50 pointer-coarse:opacity-50" />
       )}
     </button>
   )

@@ -18,6 +18,7 @@ import {
   cn,
   errorMessage,
   refreshModels,
+  touchKeyboard,
   useCopy,
   useDialog,
   useDoc,
@@ -289,7 +290,7 @@ function FlowView({
     if (status === 'complete') void refreshModels()
   }, [status])
   return (
-    <div className="flex flex-col">
+    <div className="flex min-w-0 flex-col">
       <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2.5">
         <Button
           aria-label="Back to providers"
@@ -439,11 +440,12 @@ function Chooser({
     )
   }
   return (
-    <div className="flex flex-col">
+    // min-w-0: the dialog is a grid, whose column would otherwise grow to the rows' widest content.
+    <div className="flex min-w-0 flex-col">
       <div className="flex h-11 items-center gap-2 border-b border-border/70 px-3">
         <SearchIcon className="size-4 shrink-0 opacity-50" />
         <input
-          autoFocus
+          autoFocus={!touchKeyboard()}
           className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -492,11 +494,11 @@ function Chooser({
             )
           return (
             <div
-              className="group/row flex items-center gap-2 rounded-sm px-2 py-1.5 transition-colors hover:bg-accent/60"
+              className="group/row flex items-center gap-2 rounded-sm px-2 py-1.5 transition-colors hover:bg-accent/60 pointer-coarse:min-h-10"
               key={row}
             >
               <button
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                className="flex min-w-0 flex-1 items-center gap-2 self-stretch text-left"
                 onClick={() => onChoose(method)}
                 type="button"
               >
@@ -510,7 +512,7 @@ function Chooser({
                 <span className="shrink-0 text-[11px] text-muted-foreground/70">
                   {typeLabel(method)}
                 </span>
-                <span className="shrink-0 text-[11px] text-muted-foreground/50">
+                <span className="shrink-0 text-[11px] text-muted-foreground/50 max-sm:hidden">
                   {method.provider.id}
                 </span>
               </button>
@@ -519,7 +521,7 @@ function Chooser({
                   <span className="shrink-0 text-[11px] text-success/90">✓ {label}</span>
                   {method.provider.status.source === 'stored' && (
                     <Button
-                      className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+                      className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 pointer-coarse:h-9 pointer-coarse:opacity-100"
                       disabled={busy === method.provider.id}
                       onClick={() => setConfirming(row)}
                       size="sm"

@@ -205,7 +205,8 @@ export function Sidebar() {
   )
 }
 
-const tab = 'flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 whitespace-nowrap'
+const tab =
+  'flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 whitespace-nowrap pointer-coarse:h-9 pointer-coarse:px-2.5'
 const tabButton =
   'text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset'
 const GAP = 2
@@ -261,7 +262,7 @@ function PanelTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem 
   }, [panels, active])
   const hidden = panels.filter((panel) => fit.overflow.has(key(panel)))
   return (
-    <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-2 font-mono text-[11.5px]">
+    <div className="flex h-10 shrink-0 items-center border-b border-border/70 px-2 font-mono text-[11.5px] pointer-coarse:h-12">
       <div className="relative flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden" ref={row}>
         {/* Every tab with and without its label, and the menu button, unseen: what fits. */}
         <div aria-hidden className="invisible absolute flex w-max gap-0.5" ref={measure}>
@@ -343,6 +344,38 @@ function PanelTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem 
   )
 }
 
+/**
+ * The tabs on a phone, where a tooltip never shows: every tab keeps its label, finger-sized, in a row that scrolls
+ * sideways and brings the shown tab into view.
+ */
+function PhoneTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem }) {
+  return (
+    <div className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/70 px-2 font-mono text-[12px] [scrollbar-width:none]">
+      {panels.map((panel) => {
+        const Icon = panel.icon
+        const shown = panel.id === active.id
+        return (
+          <button
+            aria-current={shown ? 'true' : undefined}
+            className={cn(tab, tabButton, 'h-9 px-3', shown && 'bg-accent text-foreground')}
+            key={key(panel)}
+            onClick={() => actions.openPanel(panel.id)}
+            ref={
+              shown
+                ? (element) => element?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+                : undefined
+            }
+            type="button"
+          >
+            {Icon && <Icon className="size-3.5" />}
+            {panel.title}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /** The right panel: a tab per extension panel (`mod+alt+b`), over the conversation below desktop width. */
 export function Panels() {
   useMountRegion('panels')
@@ -358,7 +391,11 @@ export function Panels() {
   const Panel = active.component
   const content = (
     <>
-      <PanelTabs active={active} panels={tabs} />
+      {viewport === 'phone' ? (
+        <PhoneTabs active={active} panels={tabs} />
+      ) : (
+        <PanelTabs active={active} panels={tabs} />
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <ExtensionBoundary
           extension={active.extension}

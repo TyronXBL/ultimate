@@ -109,7 +109,8 @@ function Trail() {
           <Provided input={summary} point={ConversationKind}>
             {(kind) =>
               (kind ?? summary?.label) && (
-                <span className="shrink-0 font-mono text-[12px] text-brand">
+                // On a phone the title needs the room more than the role.
+                <span className="shrink-0 font-mono text-[12px] text-brand max-md:hidden">
                   {kind ?? summary?.label}
                 </span>
               )
