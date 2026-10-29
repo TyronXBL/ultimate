@@ -37,8 +37,8 @@ as usual.
 ## Board
 
 The **Board** surface (title bar, ⌘K "Switch to Board") shows the ideas by stage: **Ideas → Assessing → Building →
-Landed**, with **Parked** folded under Ideas. The add field heads the Ideas column (a title; notes and tags open under
-it); a card's ⋯ edits, parks or brings back an idea, and removes one never launched. **Launch** asks how it starts:
+Landed**, with **Parked** folded under Ideas. The add field heads the Ideas column (a title; notes, pictures and tags open
+under it); a card's ⋯ edits, parks or brings back an idea, and removes one never launched. **Launch** asks how it starts:
 assess first (the default) or build. Everything after that is read live (`data.tsx`, `stage.ts`):
 
 - An assess-first launch stays in Assessing until its branch has a plan epic or commits not yet landed; a build
@@ -54,7 +54,13 @@ assess first (the default) or build. Everything after that is read live (`data.t
 On a desktop @ultimate's conversation is docked beside the columns, whatever conversation the Agent surface shows.
 On a phone the Board is one list with stage pills, what needs you first, filtered by the pills at its top; @ultimate
 stays one tap away in the title bar. A launch shows in @ultimate's transcript as an `Idea launched` card on the user's
-side, naming the idea and its size.
+side, naming the idea, its size and the pictures that went with it.
+
+Pictures (`pictures.tsx`): the form's picture button opens the photo library or the camera on a phone; a paste or a
+drop adds them too, up to four. One that does not fit the limits (a phone's photo of several MiB, a HEIC) is redrawn
+as a JPEG of at most 2048 px, smaller until it fits. A card shows small thumbnails that open large, loaded once per page
+from the idea's `ideas.images` entry and only for an idea that has pictures; editing sends `images` only when they
+changed. The entry itself renders as nothing in conversation 1's transcript, the History page.
 
 ## Agents
 

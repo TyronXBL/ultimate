@@ -14,5 +14,9 @@ export default defineWebExtension({
       component: Board,
     },
   ],
-  entries: { 'ideas.launch': LaunchCard },
+  entries: {
+    'ideas.launch': LaunchCard,
+    // An idea's pictures, kept on conversation 1 for the board; the History page has nothing to show of them.
+    'ideas.images': () => null,
+  },
 })

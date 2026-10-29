@@ -35,6 +35,7 @@ import { Review } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation } from '../workspaces/ui.tsx'
 import type { Row } from './data.tsx'
 import { IdeaForm } from './form.tsx'
+import { Thumbnails, usePictures } from './pictures.tsx'
 import { LaunchAction, ParkAction, RemoveAction, UpdateAction } from './refs.ts'
 import type { LaunchSize } from './refs.ts'
 import { columns } from './stage.ts'
@@ -98,6 +99,7 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
           {idea.notes}
         </p>
       )}
+      {idea.images !== undefined && <Pictures entry={idea.images} />}
       <div className="mt-1.5 flex min-w-0 items-center gap-2 font-mono text-[10.5px] leading-4 text-muted-foreground">
         {pill && <StagePill row={row} />}
         <Status row={row} />
@@ -120,6 +122,13 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
         asks.map((message) => <Ask branch={branch.id} key={message.id} message={message} />)}
     </article>
   )
+}
+
+/** An idea's pictures as small thumbnails, loaded only for an idea that has some; a quiet square while they load. */
+function Pictures({ entry }: { entry: number }) {
+  const images = usePictures(entry)
+  if (!images) return <div aria-hidden className="mt-2 size-10 animate-pulse rounded-md bg-muted" />
+  return <Thumbnails className="mt-2" images={images} />
 }
 
 /** On a phone's single list: the stage an idea is in, quiet unless it landed; the status beside it says it needs you. */
