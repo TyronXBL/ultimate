@@ -16,6 +16,7 @@ const tones = {
   cancelled: ['border-l-warning/70', 'text-warning', CircleSlashIcon, 'CI cancelled'],
   refused: ['border-l-error/70', 'text-error', XIcon, 'CI refused'],
   'no-run': ['border-l-warning/70', 'text-warning', TriangleAlertIcon, 'CI did not start'],
+  timeout: ['border-l-warning/70', 'text-warning', TriangleAlertIcon, 'CI timed out'],
   unreachable: ['border-l-warning/70', 'text-warning', TriangleAlertIcon, 'CI unreachable'],
 } as const
 

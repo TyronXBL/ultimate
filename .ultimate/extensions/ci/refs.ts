@@ -10,8 +10,11 @@ export type CiResult = {
   ref?: string
   /** The Actions run. */
   url?: string
-  /** `refused`: the secret scan stopped the push; `no-run`: no run started; `unreachable`: GitHub failed. */
-  conclusion: 'success' | 'failure' | 'cancelled' | 'refused' | 'no-run' | 'unreachable'
+  /**
+   * `refused`: the secret scan stopped the push; `no-run`: no run started; `timeout`: the run did not finish within
+   * an hour; `unreachable`: GitHub failed.
+   */
+  conclusion: 'success' | 'failure' | 'cancelled' | 'refused' | 'no-run' | 'timeout' | 'unreachable'
   /** First job start to last job end. */
   seconds?: number
   jobs: JobResult[]

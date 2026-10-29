@@ -26,6 +26,8 @@ import type { CiResult } from './refs.ts'
 const REMOTE = 'fork'
 /** A pushed ref whose run has not appeared by then, or a GitHub that fails this long, ends the task. */
 const PATIENCE_MS = 5 * 60_000
+/** A run still not finished this long after its push (stuck in a queue) ends the task too. */
+const RUN_LIMIT_MS = 60 * 60_000
 
 type Input = { to: number; cwd: string; sha: string }
 type Checkpoint =
@@ -38,17 +40,30 @@ const deliver = (result: CiResult) => ({
   status: 'running' as const,
   checkpoint: { phase: 'deliver' as const, result },
 })
+/** The task's own ref, `t` apart from the gate's `ci/<sha>-<n>`; the same on every rerun of the task. */
+const refOf = (task: { id: number; input: Input }) => `ci/${task.input.sha}-t${task.id}`
+/** Delete `ref` from the fork; a ref already gone is fine. Resolves a note for the card when it stays behind. */
+const drop = (cwd: string, ref: string) =>
+  git(cwd, ['push', '-q', REMOTE, '--delete', ref]).then(
+    () => undefined,
+    (error: unknown) =>
+      /remote ref does not exist/.test(describe(error))
+        ? undefined
+        : `${ref} could not be deleted from the fork: ${describe(error)}`,
+  )
 
 /** What the model reads with the card: the outcome and, on failure, the failing tests. */
 function summary(result: CiResult) {
   const sha = result.sha.slice(0, 7)
   const time = result.seconds === undefined ? '' : ` in ${result.seconds} s`
-  if (result.conclusion === 'success') return `CI passed for ${sha}${time}: ${result.url}`
+  const note = result.reason ? ` (${result.reason})` : ''
+  if (result.conclusion === 'success') return `CI passed for ${sha}${time}: ${result.url}${note}`
   if (result.conclusion === 'failure' || result.conclusion === 'cancelled')
     return [
-      `CI ${result.conclusion === 'failure' ? 'failed' : 'was cancelled'} for ${sha}${time}: ${result.url}`,
+      `CI ${result.conclusion === 'failure' ? 'failed' : 'was cancelled'} for ${sha}${time}: ${result.url}${note}`,
       ...result.failures.map((failure) => `FAIL ${failure.title}: ${failure.message}`),
     ].join('\n')
+  if (result.conclusion === 'timeout') return `CI timed out for ${sha}: ${result.reason}`
   return `CI did not run for ${sha}: ${result.reason}`
 }
 
@@ -60,6 +75,7 @@ const CiRun = defineTask<Input, Checkpoint, null>({
     // Pushing the same sha to the same ref again changes nothing, so a rerun of this phase after a crash is harmless.
     start: async (task, runtime, ctx) => {
       const { cwd, sha } = task.input
+      const ref = refOf(task)
       let next
       try {
         const leaks = await secretsIn(cwd, sha, REMOTE)
@@ -75,17 +91,18 @@ const CiRun = defineTask<Input, Checkpoint, null>({
             jobs: [],
             failures: [],
           })
-        else if (passed)
+        else if (passed) {
+          // A rerun after a crash may find the run its own push started: its ref goes too.
+          const left = await drop(cwd, ref)
           next = deliver({
             sha,
             conclusion: 'success',
             url: passed.html_url,
             jobs: (await runState(cwd, repo, passed.id)).jobs.map(jobResult),
             failures: [],
-            reason: 'this commit already passed CI',
+            reason: left ?? 'this commit already passed CI',
           })
-        else {
-          const ref = `ci/${sha}-${task.id}`
+        } else {
           await git(cwd, ['push', '-q', REMOTE, `${sha}:refs/heads/${ref}`])
           const pushed = runtime.now()
           next = {
@@ -95,10 +112,11 @@ const CiRun = defineTask<Input, Checkpoint, null>({
           }
         }
       } catch (error) {
+        const left = await drop(cwd, ref)
         next = deliver({
           sha,
           conclusion: 'unreachable',
-          reason: describe(error),
+          reason: [describe(error), left].filter(Boolean).join('; '),
           jobs: [],
           failures: [],
         })
@@ -110,11 +128,15 @@ const CiRun = defineTask<Input, Checkpoint, null>({
       const { cwd, sha } = task.input
       const { ref, pushed, failing } = task.state.checkpoint
       const now = runtime.now()
-      const drop = () =>
-        git(cwd, ['push', '-q', REMOTE, '--delete', ref]).catch(
-          // The result is what counts; a leftover ci/ branch only clutters the fork.
-          () => undefined,
-        )
+      const end = async (result: Omit<CiResult, 'sha' | 'ref'>) => {
+        const left = await drop(cwd, ref)
+        return deliver({
+          sha,
+          ref,
+          ...result,
+          ...(left ? { reason: [result.reason, left].filter(Boolean).join('; ') } : {}),
+        })
+      }
       let next
       try {
         const repo = await repository(cwd, REMOTE)
@@ -123,17 +145,13 @@ const CiRun = defineTask<Input, Checkpoint, null>({
           const state = await runState(cwd, repo, run.id)
           const failures =
             state.run.conclusion === 'success' ? [] : await failuresOf(cwd, repo, state.jobs)
-          const jobs = state.jobs.map(jobResult)
           const ends = state.jobs.flatMap((job) =>
             job.completed_at ? [Date.parse(job.completed_at)] : [],
           )
           const starts = state.jobs.flatMap((job) =>
             job.started_at ? [Date.parse(job.started_at)] : [],
           )
-          await drop()
-          next = deliver({
-            sha,
-            ref,
+          next = await end({
             url: state.run.html_url,
             conclusion:
               state.run.conclusion === 'success'
@@ -144,20 +162,25 @@ const CiRun = defineTask<Input, Checkpoint, null>({
             ...(starts.length && ends.length
               ? { seconds: Math.round((Math.max(...ends) - Math.min(...starts)) / 1000) }
               : {}),
-            jobs,
+            jobs: state.jobs.map(jobResult),
             failures,
           })
-        } else if (!run && now - pushed > PATIENCE_MS) {
-          await drop()
-          next = deliver({
-            sha,
-            ref,
+        } else if (!run && now - pushed > PATIENCE_MS)
+          next = await end({
             conclusion: 'no-run',
             reason: `no Actions run started for ${ref} within 5 min`,
             jobs: [],
             failures: [],
           })
-        } else
+        else if (now - pushed > RUN_LIMIT_MS)
+          next = await end({
+            ...(run ? { url: run.html_url } : {}),
+            conclusion: 'timeout',
+            reason: `the run had not finished 60 min after the push`,
+            jobs: [],
+            failures: [],
+          })
+        else
           next = {
             status: 'sleeping' as const,
             until: now + (await pollMs(cwd, repo)),
@@ -165,17 +188,14 @@ const CiRun = defineTask<Input, Checkpoint, null>({
           }
       } catch (error) {
         const since = failing ?? now
-        if (now - since > PATIENCE_MS) {
-          await drop()
-          next = deliver({
-            sha,
-            ref,
+        if (now - since > PATIENCE_MS)
+          next = await end({
             conclusion: 'unreachable',
             reason: describe(error),
             jobs: [],
             failures: [],
           })
-        } else
+        else
           next = {
             status: 'sleeping' as const,
             until: now + 60_000,
@@ -205,8 +225,12 @@ const CiRun = defineTask<Input, Checkpoint, null>({
       )
     },
   },
-  abort: (_task, runtime, ctx) =>
-    runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+  // A stopped conversation stops its run's polling; the ref it pushed goes with it.
+  abort: async (task, runtime, ctx) => {
+    if (task.state.checkpoint.phase === 'poll')
+      await drop(task.input.cwd, task.state.checkpoint.ref)
+    await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx)
+  },
 })
 
 export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness' | 'projectRoot'>) {

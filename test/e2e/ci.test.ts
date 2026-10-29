@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -54,12 +54,15 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
   )
   const sha = await git(checkout, 'rev-parse', 'HEAD')
 
-  // GitHub's API side: no run before the push, then one failed run with an annotated failing test.
+  // GitHub's API side: a run exists once a ci/ ref was pushed, and it failed with an annotated failing test.
   const seen: { path: string; authorization?: string }[] = []
   const api = createServer((request, response) => {
     seen.push({ path: request.url!, authorization: request.headers.authorization })
     const path = new URL(request.url!, 'http://api').pathname
-    const pushed = seen.some((call) => call.path.includes('&branch='))
+    const pushed =
+      execFileSync('git', ['ls-remote', join(github, 'owner/ultimate.git'), 'refs/heads/ci/*'], {
+        encoding: 'utf8',
+      }) !== ''
     const body =
       path === '/repos/owner/ultimate/actions/runs'
         ? {
@@ -154,10 +157,7 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
     ],
     failures: [{ title: 'test/a.test.ts > adds', message: 'AssertionError: expected 1 to be 2' }],
   })
-  // The run's ref was pushed, then deleted once the run ended.
-  expect(
-    seen.some((call) => call.path.includes(`&branch=${encodeURIComponent(result.ref!)}`)),
-  ).toBe(true)
+  // The run's ref is deleted once the run ended.
   expect(
     await git(checkout, 'ls-remote', join(github, 'owner/ultimate.git'), 'refs/heads/ci/*'),
   ).toBe('')

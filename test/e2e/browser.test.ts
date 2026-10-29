@@ -28,7 +28,7 @@ it('times out a hung step, closes its page and keeps later calls working', async
     return { result, text: JSON.stringify(result.output), ms: Date.now() - started }
   }
   try {
-    // The step limit also bounds the browser's launch: a cold Chrome start on a fresh CI runner took longer than 5 s,
+    // The step limit also bounds the browser's launch: on a fresh CI runner the first call ran past 5 s before step 1,
     // so launch the shared browser first with the default limit. 5 s per step leaves a busy 4-CPU shard room to load
     // the page and still ends the hung step well inside the 15 s bound.
     expect((await drive([{ eval: 'document.title' }])).result.isError).toBeFalsy()

@@ -64,9 +64,12 @@ export async function repository(cwd: string, remote: string) {
 
 /** Commits a push of `sha` to `remote` would publish that look like they carry a secret: `<commit> <file>`, never what. */
 export async function secretsIn(cwd: string, sha: string, remote: string) {
+  // `--cc` adds what a merge's own resolution introduced, which plain `-p` leaves out of merge commits; a combined diff
+  // marks an added line `++`, `+ ` or ` +`.
   const patch = await git(cwd, [
     'log',
     '-p',
+    '--cc',
     '--format=commit %H%n%B',
     sha,
     '--not',
@@ -78,7 +81,7 @@ export async function secretsIn(cwd: string, sha: string, remote: string) {
   for (const line of patch.split('\n')) {
     if (line.startsWith('commit ')) [commit, file] = [line.slice(7, 14), '(message)']
     else if (line.startsWith('+++ ')) file = line.slice(6)
-    else if ((line.startsWith('+') || file === '(message)') && SECRETS.test(line))
+    else if ((/^[+ ]?\+/.test(line) || file === '(message)') && SECRETS.test(line))
       found.push(`${commit} ${file}`)
   }
   return [...new Set(found)]
@@ -101,11 +104,11 @@ async function token(cwd: string, repo: string) {
 }
 
 /**
- * How often to look at a run: every 20 s with a token; every 60 s without, where two calls a look would otherwise use
- * up the 60 an hour within 15 minutes.
+ * How often to look at a run: every 20 s with a token; every 3 min without, where the 60 calls an hour are shared by
+ * every run and landing on the machine.
  */
 export const pollMs = async (cwd: string, repo: string) =>
-  (await token(cwd, repo)) ? 20_000 : 60_000
+  (await token(cwd, repo)) ? 20_000 : 180_000
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
 
@@ -123,7 +126,9 @@ async function call<T>(cwd: string, repo: string, path: string, tries = 3): Prom
         signal: AbortSignal.timeout(30_000),
       })
       if (response.ok) return (await response.json()) as T
-      failure = `HTTP ${response.status} ${(await response.text()).slice(0, 200)}`
+      const body = (await response.text()).slice(0, 200)
+      // A body that echoed the request would carry the token: it never leaves this function.
+      failure = `HTTP ${response.status} ${secret ? body.replaceAll(secret, '***') : body}`
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error)
     }
