@@ -244,7 +244,11 @@ function PhoneList({ rows, loading }: { rows: Row[]; loading: boolean }) {
     <main className="flex min-h-0 flex-1 flex-col" data-ideas-board="phone">
       <nav
         aria-label="Stages"
-        className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-border/70 px-3 py-2 [scrollbar-width:none]"
+        className={cn(
+          'flex shrink-0 gap-1.5 overflow-x-auto border-b border-border/70 px-3 py-2 [scrollbar-width:none]',
+          // Counts before the ideas load would read as an empty board.
+          loading && 'invisible',
+        )}
       >
         {pills.map((pill) => (
           <button
