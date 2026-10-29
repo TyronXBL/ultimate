@@ -25,6 +25,7 @@
     "shared/events.ts",
     "shared/extension-api.ts",
     "extensions/*/refs.ts",
+    ".ultimate/extensions/*/refs.ts",
     "extensions/messages/caller.ts",
     "extensions/cloud/types.ts",
     "extensions/conversations/types.ts",
