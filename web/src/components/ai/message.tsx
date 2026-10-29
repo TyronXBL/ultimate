@@ -2,18 +2,21 @@
 // Changes: `from` is a plain role, no branches or actions; only the code plugin; denser typography; links go through
 // the extensions' `link` renderers.
 import { cn } from 'cn'
+import { WrapTextIcon } from 'lucide-react'
 import type { ComponentProps, HTMLAttributes, ReactNode } from 'react'
-import { memo, useMemo } from 'react'
+import { isValidElement, memo, useMemo } from 'react'
 import {
   CodeBlock,
   CodeBlockCopyButton,
   defaultComponents,
   defaultRemarkPlugins,
   Streamdown,
+  useIsCodeFenceIncomplete,
 } from 'streamdown'
 import type { CustomRendererProps, ExtraProps } from 'streamdown'
 import { ExtensionBoundary } from '../../app/boundary.tsx'
-import { useExtensions } from '../../sdk/hooks.ts'
+import { store } from '../../sdk/client.ts'
+import { useExtensions, useStore } from '../../sdk/hooks.ts'
 import { codeBlockLanguages, codeBlockRenderers, linkRenderers } from '../../sdk/registry.ts'
 import { codePlugin } from './code-block.tsx'
 import { mentionHref, parseMention, remarkMentions, splitMentions } from './mentions.ts'
@@ -87,7 +90,56 @@ export function MentionText({ text }: { text: string }) {
   )
 }
 
-const components = { a: Link }
+function CodeWrapButton() {
+  const wrap = useStore((state) => state.ui.codeWrap)
+  return (
+    <button
+      aria-label="Wrap lines"
+      aria-pressed={wrap}
+      className={cn(
+        'cursor-pointer rounded-sm p-1 transition-all hover:text-foreground',
+        wrap ? 'bg-muted text-foreground' : 'text-muted-foreground',
+      )}
+      data-streamdown="code-block-wrap-button"
+      onClick={() => store.setUi({ codeWrap: !wrap })}
+      title="Wrap lines"
+      type="button"
+    >
+      <WrapTextIcon aria-hidden size={14} />
+    </button>
+  )
+}
+
+const CoreCode = defaultComponents.code
+function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: string }) {
+  const incomplete = useIsCodeFenceIncomplete()
+  const extensions = useExtensions()
+  const { node: _node, className, children, 'data-block': block, ...rest } = props
+  const language = /language-(\S+)/.exec(className ?? '')?.[1] ?? ''
+  if (!block || codeBlockRenderers(extensions, language).length > 0) return <CoreCode {...props} />
+  const code =
+    typeof children === 'string'
+      ? children
+      : isValidElement<{ children?: unknown }>(children) &&
+          typeof children.props.children === 'string'
+        ? children.props.children
+        : ''
+  return (
+    <CodeBlock
+      className={className}
+      code={code}
+      isIncomplete={incomplete}
+      language={language}
+      lineNumbers={false}
+      {...rest}
+    >
+      <CodeWrapButton />
+      <CodeBlockCopyButton />
+    </CodeBlock>
+  )
+}
+
+const components = { a: Link, code: Code }
 // After GFM, so autolinked URLs are links already and keep their `#fragment`.
 const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkMentions]
 
@@ -96,6 +148,7 @@ function ExtensionCodeBlock({ code, language, isIncomplete }: CustomRendererProp
   const renderers = codeBlockRenderers(useExtensions(), language)
   const core = (
     <CodeBlock code={code} isIncomplete={isIncomplete} language={language} lineNumbers={false}>
+      <CodeWrapButton />
       <CodeBlockCopyButton />
     </CodeBlock>
   )

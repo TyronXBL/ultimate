@@ -21,6 +21,8 @@ export interface UiState {
   paletteOpen: boolean
   dialogs: Readonly<Record<string, boolean | undefined>>
   theme: 'dark' | 'light'
+  /** Whether code blocks in Markdown wrap long lines instead of scrolling sideways. */
+  codeWrap: boolean
   /** The surface on screen, which the host records as it renders: the shown one, or the next in line after it failed. */
   surface?: { id: string; title: string }
   /**
@@ -116,6 +118,7 @@ export function createStore(options: StoreOptions = {}) {
       paletteOpen: false,
       dialogs: {},
       theme: 'dark',
+      codeWrap: false,
       ...options.ui,
     },
   }
