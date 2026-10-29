@@ -26,7 +26,7 @@ type Question = {
 The tool refuses, naming the question: no questions, a choice or multi with fewer than two options or repeated labels
 or keys, an option that is "Something else"/"Other" (the card adds it), a scale without an ascending range of at most
 10 steps, and repeated question texts or refs. Fields that do not apply to a kind are dropped, text is trimmed.
-`questions` goes only with a reply-expected message to `user`.
+`questions` goes only with a reply-expected message to `user`. A message's `about` names the branch its decisions belong to.
 
 A question stays open until the user answers it (its card, or a Reply to that message) or dismisses it. Typed input,
 answers to other messages and agent messages leave it open. While it is open, messages starts each of the asker's runs

@@ -4,7 +4,7 @@ Durable messages between conversations, standing agents and the user. Built in a
 
 ## Messaging
 
-`message { to, text, reply?: true, steer?, images? }` returns the message id immediately. `images` forwards
+`message { to, text, reply?: true, steer?, images?, about? }` returns the message id immediately. `about` is a positive id of an existing conversation in this project, and only goes with `to: 'user'`; it names the branch this message belongs to. `images` forwards
 images from the sender's own conversation, since a model cannot produce image bytes: `'latest'` takes the newest
 entry with images (a pasted input or a tool result such as a screenshot, searching the whole history), a number names
 that entry. The reference resolves when the message is admitted (at most
@@ -202,6 +202,7 @@ type Message = {
   error?: string
   remote?: { project: string; machine: string; key: string; id?: number } // the other Ultimate
   report?: true // a branch's routed final answer after it stopped with nothing under way
+  about?: number // the branch conversation this message belongs to
   questions?: Question[] // what a reply-expected message to the user asks (see Questions)
 }
 ```

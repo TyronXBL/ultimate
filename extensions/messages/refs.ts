@@ -61,6 +61,8 @@ export type Message = {
   report?: true
   /** The other project's Ultimate a `remote` side names. */
   remote?: Remote
+  /** The branch conversation these decisions belong to. */
+  about?: number
   /** The questions a reply-expected message to the user asks, answered on its card. */
   questions?: Question[]
 }

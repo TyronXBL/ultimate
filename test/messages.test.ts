@@ -773,6 +773,27 @@ it('answers questions to the user through answer cards or input in the sender co
   await f.open()
   expect(await state(second.id)).toBe('delivered')
 })
+it('stores about on a user message and refuses it for another recipient', async () => {
+  const f = await fixture()
+  await f.send('user', 'Decision', { about: f.recipient.id })
+  expect((await f.log())!.messages.at(-1)).toMatchObject({
+    to: 'user',
+    text: 'Decision',
+    about: f.recipient.id,
+  })
+
+  await expect(
+    f
+      .service()
+      .send(
+        1,
+        { to: `#${f.recipient.id}`, text: 'No', reply: false, about: 1 } as never,
+        'about-not-user',
+        context,
+      ),
+  ).rejects.toThrow('about goes only with a message to the user')
+  expect((await f.log())!.messages).toHaveLength(1)
+})
 it("ends @ultimate's run with its message to the user, unless it still owes a reply", async () => {
   const f = await fixture()
   await f.send('user', 'Landed')
