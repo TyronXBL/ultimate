@@ -1,2 +1,2 @@
-/** Theme: the palette command that toggles the light and dark theme. Core tier, no service. */
+/** Theme: the machine's colour theme and fonts, and each device's light or dark. Core tier, no service. */
 export const tier = 'core'

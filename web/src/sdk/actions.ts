@@ -1,4 +1,4 @@
-import { registry, replaceNextSelection, store, uiState } from './client.ts'
+import { registry, replaceNextSelection, setThemeMode, store, uiState } from './client.ts'
 import { errorMessage } from './format.ts'
 import {
   HOME,
@@ -136,7 +136,7 @@ export const actions: UltimateActions = {
         (input): input is HTMLElement => input instanceof HTMLElement && !input.closest('[inert]'),
       )
       ?.focus(),
-  setTheme: (theme) => store.setUi({ theme }),
+  setTheme: setThemeMode,
 }
 
 /** Run command `id` in `context`, reporting a failure as a notice; shortcuts pass the context of where they were typed. */

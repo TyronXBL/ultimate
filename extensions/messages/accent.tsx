@@ -33,20 +33,21 @@ const palette: readonly Accent[] = [
     name: 'text-lime-700 dark:text-lime-300',
   },
 ]
+/** The user: neutral ink, so an answer stays apart from the @ultimate question it sits under. */
 const user: Accent = {
-  left: 'border-l-brand/60',
-  fill: 'bg-brand/5',
+  left: 'border-l-foreground/40',
+  fill: 'bg-foreground/[0.03]',
+  name: 'text-foreground',
+}
+
+/** @ultimate: the theme's accent in every chapter, so its bubbles are always recognisable. */
+const ultimate: Accent = {
+  left: 'border-l-brand/70',
+  fill: 'bg-brand/10',
   name: 'text-brand',
 }
 
-/** @ultimate, the same purple in every chapter, so its bubbles are always recognisable. */
-const ultimate: Accent = {
-  left: 'border-l-purple-500/70',
-  fill: 'bg-purple-500/10',
-  name: 'text-purple-700 dark:text-purple-300',
-}
-
-/** Another project's Ultimate: a violet the conversation palette never uses, bluer than @ultimate's purple. */
+/** Another project's Ultimate: a violet the conversation palette never uses. */
 const remote: Accent = {
   left: 'border-l-violet-500/70',
   fill: 'bg-violet-500/10',
@@ -61,7 +62,7 @@ export function accentIndex(id: number, size: number) {
 }
 
 /**
- * The accent of a sender: the user always has the brand colour, @ultimate purple, another project's Ultimate violet,
+ * The accent of a sender: the user neutral ink, @ultimate the theme's accent, another project's Ultimate violet,
  * a conversation a stable slot of a small palette.
  */
 export const accentOf = (id: number | 'user' | 'ultimate' | 'remote'): Accent =>

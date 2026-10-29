@@ -20,7 +20,10 @@ export interface Connection {
 export interface UiState {
   paletteOpen: boolean
   dialogs: Readonly<Record<string, boolean | undefined>>
+  /** The light or dark theme on screen: `themeMode`, or the device's system setting while that is `system`. */
   theme: 'dark' | 'light'
+  /** This device's own choice, kept in its `localStorage`; the palette itself is the machine's (`extensions/theme`). */
+  themeMode: 'system' | 'dark' | 'light'
   /** The surface on screen, which the host records as it renders: the shown one, or the next in line after it failed. */
   surface?: { id: string; title: string }
   /**
@@ -116,6 +119,7 @@ export function createStore(options: StoreOptions = {}) {
       paletteOpen: false,
       dialogs: {},
       theme: 'dark',
+      themeMode: 'system',
       ...options.ui,
     },
   }

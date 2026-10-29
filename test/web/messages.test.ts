@@ -133,20 +133,21 @@ describe('sender accents', () => {
     expect(accentIndex(2, 6)).toBe(accentIndex(2, 6))
     expect(new Set([2, 3, 4, 5, 6, 7].map((id) => accentIndex(id, 6))).size).toBe(6)
   })
-  it('gives the user the brand colour and conversations a palette colour, the same one every time', () => {
+  it('gives the user neutral ink and conversations a palette colour, the same one every time', () => {
     expect(accentOf('user')).toEqual({
-      left: 'border-l-brand/60',
-      fill: 'bg-brand/5',
-      name: 'text-brand',
+      left: 'border-l-foreground/40',
+      fill: 'bg-foreground/[0.03]',
+      name: 'text-foreground',
     })
     expect(accentOf(97078)).toBe(accentOf(97078))
     const conversations = [2, 3, 4, 5, 6, 7].map(accentOf)
     expect(new Set(conversations).size).toBe(6)
     expect(conversations.map((accent) => accent.name)).not.toContain('text-brand')
   })
-  it('gives @ultimate a fixed purple apart from the palette and the remote violet', () => {
+  it("gives @ultimate the theme's accent, apart from the user, the palette and the remote violet", () => {
     const ultimate = accentOf('ultimate')
-    expect(ultimate.left).toBe('border-l-purple-500/70')
+    expect(ultimate.left).toBe('border-l-brand/70')
+    expect(accentOf('user')).not.toBe(ultimate)
     expect([2, 3, 4, 5, 6, 7].map(accentOf)).not.toContain(ultimate)
     expect(accentOf('remote')).not.toBe(ultimate)
   })

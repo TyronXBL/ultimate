@@ -18,17 +18,33 @@
     <title>Ultimate</title>
     <style>
       html {
-        background: oklch(0.985 0.002 270);
+        background: var(--background, oklch(0.985 0.002 270));
       }
       html.dark {
-        background: oklch(0.178 0.003 270);
+        background: var(--background, oklch(0.178 0.003 270));
       }
     </style>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <script>
-      if (localStorage.getItem('ultimate.theme') === 'light') {
-        document.documentElement.classList.remove('dark')
-        document.querySelector('meta[name=theme-color]').content = '#f9fafb'
+      // This device's light or dark (an explicit choice, else the system's) in the machine's theme as last painted
+      // (extensions/theme/web.tsx), before the app loads.
+      {
+        const mode = localStorage.getItem('ultimate.theme')
+        const light =
+          mode === 'light' ||
+          (mode !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches)
+        const root = document.documentElement
+        root.classList.toggle('dark', !light)
+        const cache = JSON.parse(localStorage.getItem('ultimate.theme.cache') ?? 'null')
+        const theme = cache?.[light ? 'light' : 'dark']
+        if (theme) {
+          for (const [name, value] of Object.entries(theme.vars))
+            root.style.setProperty(`--${name}`, value)
+          root.style.setProperty('--font-sans', cache.sans)
+          root.style.setProperty('--font-mono', cache.mono)
+        }
+        document.querySelector('meta[name=theme-color]').content =
+          theme?.themeColor ?? (light ? '#f9fafb' : '#111112')
       }
     </script>
   </head>
