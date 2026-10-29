@@ -89,6 +89,13 @@ async function find(tx: Tx, id: unknown) {
 
 // Each returns a copy: the document's overlay is unusable once the commit settles, and callers reply with it.
 
+/** A copy of an idea in the document, its tags and launch included: they are overlays too. */
+const copy = (idea: Idea): Idea => ({
+  ...idea,
+  tags: [...idea.tags],
+  ...(idea.launch && { launch: { ...idea.launch } }),
+})
+
 export async function add(
   tx: Tx,
   input: { title?: unknown; notes?: unknown; tags?: unknown; from?: unknown },
@@ -118,7 +125,7 @@ async function update(
     if (text) idea.notes = text
     else delete idea.notes
   }
-  return { ...idea }
+  return copy(idea)
 }
 
 async function park(tx: Tx, id: unknown, parked: unknown) {
@@ -126,7 +133,7 @@ async function park(tx: Tx, id: unknown, parked: unknown) {
   const idea = await find(tx, id)
   if (parked) idea.parked ??= Date.now()
   else delete idea.parked
-  return { ...idea }
+  return copy(idea)
 }
 
 async function remove(tx: Tx, id: unknown) {
@@ -148,7 +155,7 @@ export async function launch(tx: Tx, id: unknown, size: unknown) {
   if (idea.launch?.branch !== undefined)
     throw new Error(`Idea ${idea.id} is already #${idea.launch.branch}`)
   idea.launch ??= { size: size, at: Date.now() }
-  return { ...idea, launch: { ...idea.launch } }
+  return { ...copy(idea), launch: { ...idea.launch } }
 }
 
 export async function link(tx: Tx, id: unknown, branch: unknown) {
