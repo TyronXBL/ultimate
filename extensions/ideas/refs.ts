@@ -26,9 +26,8 @@ export type Idea = {
 /** `{ next, items }` on conversation 1, oldest first. */
 export const IdeasDoc = docRef<{ next: number; items: Idea[] }>('ideas')
 
-/** The input a launch posts into @ultimate's conversation, shown there as a card on the user's side. */
+/** The `ideas.launch` input a launch posts into @ultimate's conversation, shown there as a card on the user's side. */
 export type LaunchEntry = { id: number; title: string; size: LaunchSize }
-export const LAUNCH_ENTRY = 'ideas.launch'
 
 /** `{ title, notes?, tags? }` → the new idea. User-only; @ultimate uses its `idea` tool. */
 export const AddAction = actionRef<{ title: string; notes?: string; tags?: string[] }, Idea>(

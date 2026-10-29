@@ -90,11 +90,10 @@ export async function send(
   if (!input.text.trim()) throw new Error('Message text must not be empty')
   if (input.questions !== undefined && (input.to !== 'user' || input.reply === false))
     throw new Error('questions go only with a reply-expected message to the user')
-  if (input.about !== undefined && input.to !== 'user')
-    throw new Error('about goes only with a message to the user')
-  if (input.about !== undefined && (!Number.isSafeInteger(input.about) || input.about < 1))
-    throw new Error('about must be a positive conversation id')
   if (input.about !== undefined) {
+    if (input.to !== 'user') throw new Error('about goes only with a message to the user')
+    if (!Number.isSafeInteger(input.about) || input.about < 1)
+      throw new Error('about must be a positive conversation id')
     const exists = await host
       .harness()
       .commit((tx) => tx.conversation(input.about as ConversationId), ctx)
