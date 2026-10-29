@@ -29,11 +29,15 @@ function writeConversation(id: number, replace: boolean) {
   else history.pushState(history.state, '', url)
 }
 
+/** Light or dark is each device's own: `ultimate.theme` holds an explicit choice, else the system setting decides. */
+const prefersLight = matchMedia('(prefers-color-scheme: light)')
+const systemTheme = () => (prefersLight.matches ? 'light' : 'dark')
+const savedMode = localStorage.getItem('ultimate.theme')
+const themeMode = savedMode === 'light' || savedMode === 'dark' ? savedMode : 'system'
+
 /** The page's one live stream and its replica. */
 export const store = createStore({
-  ui: {
-    theme: localStorage.getItem('ultimate.theme') === 'light' ? 'light' : 'dark',
-  },
+  ui: { themeMode, theme: themeMode === 'system' ? systemTheme() : themeMode },
   onFallback: () => {
     replaceSelection = true
     uiState.delete('shell.conversation')
@@ -95,14 +99,18 @@ store.subscribe(() => {
     writeConversation(view.conversation.id, true)
     replaceSelection = false
   }
-  // The theme is a preference of this browser.
-  localStorage.setItem('ultimate.theme', ui.theme)
+  // The theme extension paints the palette and the browser bar for this polarity.
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
-  // The browser bar and the installed app's chrome take the page background (web/index.html).
-  document
-    .querySelector('meta[name=theme-color]')
-    ?.setAttribute('content', ui.theme === 'dark' ? '#111112' : '#f9fafb')
 })
+prefersLight.addEventListener('change', () => {
+  if (store.getState().ui.themeMode === 'system') store.setUi({ theme: systemTheme() })
+})
+/** Show this device light or dark, or follow its system setting again (`system`). */
+export function setThemeMode(mode: 'dark' | 'light' | 'system') {
+  if (mode === 'system') localStorage.removeItem('ultimate.theme')
+  else localStorage.setItem('ultimate.theme', mode)
+  store.setUi({ themeMode: mode, theme: mode === 'system' ? systemTheme() : mode })
+}
 /** The next selection replaces the current history entry rather than pushing one, as a redirect does. */
 export function replaceNextSelection() {
   replaceSelection = true

@@ -1,5 +1,5 @@
 import { TriangleAlertIcon, XIcon } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, defineWebExtension, errorMessage, resumed, useReady, useStore } from '@/sdk'
 import { store } from '@/sdk/client'
 import { StatusAction } from '../onboarding/ui.tsx'
@@ -39,22 +39,41 @@ const charge = `data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.x} 0 ${view.width} ${view.height}" width="${view.width / 10}" height="${view.height / 10}"><path d="${letters.flat().join('')}" fill="#fff"/></svg>`,
 )}`
 
+/** The theme's brand colour as `#rrggbb`, `white` of the way to white (0 to 1). */
+function brand(white: number) {
+  const ink = document.createElement('canvas').getContext('2d')!
+  ink.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--brand')
+  ink.fillRect(0, 0, 1, 1)
+  const rgb = Array.from(ink.getImageData(0, 0, 1, 1).data.slice(0, 3))
+  return `#${rgb
+    .map((v) =>
+      Math.round(v + (255 - v) * white)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`
+}
+
 /**
  * Lightning around the wordmark, in a box reaching past it so the glow has room. `level` drives it: how far the sweep
  * has reached and how strong it is. Theme colours: brand light in dark, brand ink in light.
  */
 function Lightning({ level }: { level: () => Level }) {
   const theme = useStore((state) => state.ui.theme)
+  const [color, glowColor] = useMemo(
+    () => (theme === 'dark' ? [brand(0.55), brand(0)] : [brand(0), brand(0)]),
+    [theme],
+  )
   return (
     <Electric
       arcs={0.25}
       bend={0.45}
       className="pointer-events-none absolute top-1/2 left-1/2 h-[400%] w-[120%] -translate-1/2"
-      color={theme === 'dark' ? '#e4d6ff' : '#7b47bf'}
+      color={color}
       crackle={1}
       flicker={0.3}
       glow={0.8}
-      glowColor={theme === 'dark' ? '#bb9af4' : '#7b47bf'}
+      glowColor={glowColor}
       bursts={() => level().bursts}
       presence={() => level().presence}
       reveal={() => level().reveal}

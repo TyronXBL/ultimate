@@ -154,8 +154,11 @@ export interface UltimateActions {
   close: (dialog: string) => void
   openPalette: () => void
   focusComposer: () => void
-  /** Switch this browser to the light or dark theme; `getState().ui.theme` is the current one. */
-  setTheme: (theme: 'dark' | 'light') => void
+  /**
+   * Show this device light or dark, or follow its system setting again; `getState().ui.themeMode` is the choice and
+   * `getState().ui.theme` the theme on screen.
+   */
+  setTheme: (mode: 'dark' | 'light' | 'system') => void
 }
 export interface UltimateContext extends UltimateActions {
   /** The shown conversation, once known. */
