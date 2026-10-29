@@ -1,6 +1,7 @@
 import { ActionError, actionMessage, createApi } from './api.ts'
 import { createRegistry } from './registry.ts'
 import { createStore } from './store.ts'
+import { touchKeyboard, viewport } from './viewport.ts'
 import { createTestHook } from './test-hook.ts'
 import type { TestHook } from './test-hook.ts'
 
@@ -33,6 +34,11 @@ function writeConversation(id: number, replace: boolean) {
 export const store = createStore({
   ui: {
     theme: localStorage.getItem('ultimate.theme') === 'light' ? 'light' : 'dark',
+    codeWrap:
+      localStorage.getItem('ultimate.codeWrap') === '1' ||
+      (localStorage.getItem('ultimate.codeWrap') === null &&
+        viewport() === 'phone' &&
+        touchKeyboard()),
   },
   onFallback: () => {
     replaceSelection = true
@@ -95,9 +101,12 @@ store.subscribe(() => {
     writeConversation(view.conversation.id, true)
     replaceSelection = false
   }
-  // The theme is a preference of this browser.
+  // The theme and code wrapping are preferences of this browser.
   localStorage.setItem('ultimate.theme', ui.theme)
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
+  if (ui.codeWrap) localStorage.setItem('ultimate.codeWrap', '1')
+  else localStorage.setItem('ultimate.codeWrap', '0')
+  document.documentElement.toggleAttribute('data-code-wrap', ui.codeWrap)
   // The browser bar and the installed app's chrome take the page background (web/index.html).
   document
     .querySelector('meta[name=theme-color]')

@@ -301,6 +301,17 @@
   & [data-streamdown='code-block-body'] {
     @apply rounded-none border-none bg-transparent px-3 pt-0 pb-2.5 font-mono text-[12px] leading-[1.6];
   }
+  :root[data-code-wrap] & [data-streamdown='code-block-body'] pre {
+    @apply wrap-anywhere whitespace-pre-wrap;
+    & code > span {
+      @apply pl-[2ch] -indent-[2ch];
+    }
+  }
+  & [data-streamdown='table-wrapper'] {
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
+  }
   & [data-streamdown='table-wrapper'] {
     @apply my-3 gap-0 rounded-md border-border/80 bg-transparent p-0;
   }
