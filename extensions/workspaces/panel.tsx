@@ -141,7 +141,7 @@ function Copyable({ value, shown = value }: { value: string; shown?: string }) {
       type="button"
     >
       <span className="truncate">{shown}</span>
-      <CopyIcon className="size-3 shrink-0 opacity-0 transition-opacity group-hover/copy:opacity-50" />
+      <CopyIcon className="size-3 shrink-0 opacity-0 transition-opacity group-hover/copy:opacity-50 pointer-coarse:opacity-50" />
     </button>
   )
 }

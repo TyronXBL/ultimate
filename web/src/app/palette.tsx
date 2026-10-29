@@ -14,9 +14,10 @@ import { store } from '../sdk/client.ts'
 import { useCommands, useStore } from '../sdk/hooks.ts'
 import { formatKeys } from '../sdk/keys.ts'
 
+/** A key chord; hidden on touch screens, which have no keyboard to press it on. */
 export function Shortcut({ keys }: { keys: string }) {
   return (
-    <span className="flex items-center gap-1">
+    <span className="flex items-center gap-1 pointer-coarse:hidden">
       {formatKeys(keys).map((chord, index) => (
         // oxlint-disable-next-line react/no-array-index-key -- Chord positions in a fixed shortcut sequence.
         <KbdGroup key={index}>
@@ -57,7 +58,7 @@ export function CommandPalette() {
             <CommandGroup heading={group}>
               {items.map((command) => (
                 <CommandItem
-                  className="text-[12.5px]"
+                  className="text-[12.5px] pointer-coarse:min-h-10"
                   key={command.id}
                   keywords={[command.id, command.extension]}
                   onSelect={() => {

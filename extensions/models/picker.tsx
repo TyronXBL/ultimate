@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
-import { cn, errorMessage, useDialog, useUltimate } from '@/sdk'
+import { cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
 import {
   authLabel,
   dialogs,
@@ -44,7 +44,10 @@ export function ModelRow({
 }) {
   return (
     <CommandItem
-      className={cn('gap-2 py-1 font-mono text-[12px]', !model.available && 'opacity-60')}
+      className={cn(
+        'gap-2 py-1 font-mono text-[12px] pointer-coarse:min-h-10',
+        !model.available && 'opacity-60',
+      )}
       disabled={disabled}
       onSelect={onSelect}
       value={`${model.provider}/${model.id}`}
@@ -140,6 +143,10 @@ export function ModelPicker() {
     >
       <DialogContent
         className="top-[16%] translate-y-0 gap-0 overflow-hidden p-0 font-mono sm:max-w-2xl"
+        // A touch keyboard would slide up over half the list: searching stays one tap away.
+        onOpenAutoFocus={(event) => {
+          if (touchKeyboard()) event.preventDefault()
+        }}
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Pick a model</DialogTitle>
@@ -180,13 +187,13 @@ export function ModelPicker() {
             ))}
             <CommandGroup heading="Accounts">
               <CommandItem
-                className="gap-2 py-1 font-mono text-[12px]"
+                className="gap-2 py-1 font-mono text-[12px] pointer-coarse:min-h-10"
                 onSelect={() => openLogin({ ...actions, conversationId: id })}
                 value="login"
               >
                 <LogInIcon className="size-3.5" />
                 Log in to a provider…
-                <span className="ml-auto text-[11px] text-muted-foreground">
+                <span className="ml-auto truncate text-[11px] text-muted-foreground max-sm:hidden">
                   subscriptions and API keys, shared with pi
                 </span>
               </CommandItem>
@@ -197,10 +204,10 @@ export function ModelPicker() {
               <span className="truncate text-error">{error}</span>
             ) : (
               <>
-                <span>
+                <span className="pointer-coarse:hidden">
                   <Kbd>↵</Kbd> use
                 </span>
-                <span>
+                <span className="pointer-coarse:hidden">
                   <Kbd>esc</Kbd> close
                 </span>
                 <span className="ml-auto">
@@ -233,12 +240,12 @@ function ProviderHeading({ id, provider }: { id: string; provider: ProviderInfo 
       ) : id === 'claude-code' ? (
         <span className="ml-auto flex items-center gap-1 tracking-normal normal-case text-warning/80">
           <TerminalIcon className="size-3" />
-          external setup · ↵ opens setup
+          external setup<span className="pointer-coarse:hidden"> · ↵ opens setup</span>
         </span>
       ) : (
         <span className="ml-auto flex items-center gap-1 tracking-normal normal-case text-warning/80">
           <KeyRoundIcon className="size-3" />
-          not logged in · ↵ logs in
+          not logged in<span className="pointer-coarse:hidden"> · ↵ logs in</span>
         </span>
       )}
     </span>

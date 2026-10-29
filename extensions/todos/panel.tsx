@@ -209,7 +209,7 @@ function TodoRow({
       {start && !todo.done ? (
         <button
           aria-label={`${label}: ${todo.text}`}
-          className="mt-1 mr-2 ml-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground opacity-0 group-hover/todo:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="mt-1 mr-2 ml-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground opacity-0 group-hover/todo:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:mt-0 pointer-coarse:mr-1 pointer-coarse:size-9 pointer-coarse:opacity-100"
           data-todo-start
           onClick={() => start(todo)}
           title={label}
