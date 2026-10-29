@@ -10,11 +10,12 @@ import {
   defineTool,
   ROOT_CONVERSATION_ID,
 } from '@earendil-works/pi-durable'
-import type { ConversationId, Tx } from '@earendil-works/pi-durable'
+import type { ConversationId, EntryId, Tx } from '@earendil-works/pi-durable'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { actingAs } from '../../lib/acting-as.ts'
 import { implementAction } from '../../lib/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import { imageMimeTypes, maxImageBytes, maxImages } from '../../shared/protocol.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import {
   AddAction,
@@ -24,7 +25,7 @@ import {
   RemoveAction,
   UpdateAction,
 } from './refs.ts'
-import type { Idea, LaunchEntry, LaunchSize } from './refs.ts'
+import type { Idea, IdeaImage, LaunchEntry, LaunchSize } from './refs.ts'
 
 const TITLE_CHARS = 120
 const NOTES_CHARS = 4000
@@ -45,6 +46,40 @@ export const docs = [Ideas]
 
 /** The launch input in @ultimate's conversation; web.tsx renders it as the user's card. */
 const LaunchInput = defineEntry<LaunchEntry>('ideas.launch')
+/** An idea's pictures, display-only on conversation 1, so the board document stays small and the tally never reads them. */
+const ImagesEntry = defineEntry<{ idea: number; images: IdeaImage[] }>('ideas.images')
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
+
+function images(value: unknown) {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new Error('images must be a list')
+  if (value.length > maxImages) throw new Error(`at most ${maxImages} images`)
+  return value.map((image): IdeaImage => {
+    const { data, mimeType } = (image ?? {}) as Record<string, unknown>
+    if (
+      typeof data !== 'string' ||
+      typeof mimeType !== 'string' ||
+      !imageMimeTypes.includes(mimeType) ||
+      !BASE64.test(data)
+    )
+      throw new Error('images must be PNG, JPEG, WebP or GIF as base64 data')
+    if (Buffer.byteLength(data, 'base64') > maxImageBytes) throw new Error('an image is over 2 MiB')
+    return { data, mimeType }
+  })
+}
+
+/** Keep `list` as idea `idea`'s pictures in a new entry on conversation 1; none clears them. */
+async function attach(tx: Tx, idea: Idea, list: IdeaImage[]) {
+  if (!list.length) {
+    delete idea.images
+    return
+  }
+  const entry = await tx.appendEntry(ImagesEntry, ROOT_CONVERSATION_ID, {
+    data: { idea: idea.id, images: list },
+  })
+  idea.images = entry.id
+}
 
 function title(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) throw new Error('title must be nonempty')
@@ -98,24 +133,26 @@ const copy = (idea: Idea): Idea => ({
 
 export async function add(
   tx: Tx,
-  input: { title?: unknown; notes?: unknown; tags?: unknown; from?: unknown },
+  input: { title?: unknown; notes?: unknown; tags?: unknown; from?: unknown; images?: unknown },
   by: Idea['by'],
 ) {
   if (input.from !== undefined && (typeof input.from !== 'string' || !BREADCRUMB.test(input.from)))
     throw new Error('from must be a #<conversation>/<entry> breadcrumb')
   const fields = { title: title(input.title), tags: tags(input.tags) }
   const text = notes(input.notes)
+  const pictures = images(input.images)
   const doc = await board(tx)
   const idea: Idea = { id: doc.next++, ...fields, by, at: Date.now() }
   if (text) idea.notes = text
   if (input.from) idea.from = input.from
+  if (pictures) await attach(tx, idea, pictures)
   doc.items.push(idea)
   return { ...idea }
 }
 
 async function update(
   tx: Tx,
-  input: { id?: unknown; title?: unknown; notes?: unknown; tags?: unknown },
+  input: { id?: unknown; title?: unknown; notes?: unknown; tags?: unknown; images?: unknown },
 ) {
   const idea = await find(tx, input.id)
   if (input.title !== undefined) idea.title = title(input.title)
@@ -125,6 +162,8 @@ async function update(
     if (text) idea.notes = text
     else delete idea.notes
   }
+  const pictures = images(input.images)
+  if (pictures) await attach(tx, idea, pictures)
   return copy(idea)
 }
 
@@ -174,7 +213,7 @@ const SIZES: Record<LaunchSize, string> = {
 }
 
 /** What @ultimate reads when the user launches an idea. */
-export function launchText(idea: Idea & { launch: NonNullable<Idea['launch']> }) {
+export function launchText(idea: Idea & { launch: NonNullable<Idea['launch']> }, pictures = 0) {
   return [
     `The user launched idea #${idea.id} from the idea board: start a branch for it.`,
     `Size: ${SIZES[idea.launch.size]}`,
@@ -183,7 +222,7 @@ export function launchText(idea: Idea & { launch: NonNullable<Idea['launch']> })
     ...(idea.from ? [`Found in: ${idea.from}`] : []),
     ...(idea.notes ? ['Notes:', idea.notes] : []),
     '',
-    `Start it with \`branch\` (its title from the idea, a self-contained prompt with the notes), then call \`idea {action: 'link', id: ${idea.id}, branch: <branch id>}\`.`,
+    `Start it with \`branch\` (its title from the idea, a self-contained prompt with the notes${pictures ? `, \`images: 'latest'\` for the ${pictures === 1 ? 'picture' : `${pictures} pictures`} attached here` : ''}), then call \`idea {action: 'link', id: ${idea.id}, branch: <branch id>}\`.`,
   ].join('\n')
 }
 
@@ -230,14 +269,24 @@ export const actions = {
       .harness()
       .commit((tx) => launch(tx, field(args).id, field(args).size), context)
     const requestId = `ideas.launch:${idea.id}:${idea.launch.at}`
-    const placed = await host
-      .harness()
-      .commit((tx) => tx.submissionByRequest(ultimate, requestId), context)
+    const { placed, pictures } = await host.harness().commit(
+      async (tx) => ({
+        placed: await tx.submissionByRequest(ultimate, requestId),
+        pictures:
+          idea.images === undefined
+            ? []
+            : ((await tx.entry(ImagesEntry, idea.images as EntryId))?.data.images ?? []),
+      }),
+      context,
+    )
     if (!placed)
       await (await host.harness().conversation(ultimate, context))!.submit(
         {
           type: 'input',
-          content: launchText(idea),
+          content: [
+            { type: 'text', text: launchText(idea, pictures.length) },
+            ...pictures.map((image) => ({ type: 'image' as const, ...image })),
+          ],
           // The user's request, like a to-do's ▶: after @ultimate's current run, never interrupting it.
           whenBusy: 'followUp',
           requestId,

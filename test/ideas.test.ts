@@ -8,7 +8,13 @@ const ULTIMATE = 5
 /** A host over plain documents whose @ultimate is conversation 5 and records what is submitted to it. */
 function fakeHost() {
   const docs = new Map<string, object>()
-  const submitted: { requestId: string; whenBusy: string; content: string; entry: unknown }[] = []
+  const entries: { id: number; conversation: number; kind: string; data: unknown }[] = []
+  const submitted: {
+    requestId: string
+    whenBusy: string
+    content: { type: string; text?: string; data?: string }[]
+    entry: unknown
+  }[] = []
   const tx = {
     doc: async (
       { definition: def }: { definition: { kind: string; initial: () => object } },
@@ -24,6 +30,16 @@ function fakeHost() {
     },
     submissionByRequest: async (_id: number, requestId: string) =>
       submitted.find((input) => input.requestId === requestId),
+    appendEntry: async (
+      token: { kind: string },
+      conversation: number,
+      { data }: { data: unknown },
+    ) => {
+      entries.push({ id: entries.length + 100, conversation, kind: token.kind, data })
+      return entries.at(-1)
+    },
+    entry: async (token: { kind: string }, id: number) =>
+      entries.find((entry) => entry.id === id && entry.kind === token.kind),
   } as unknown as Tx
   const host = {
     doc: () => undefined,
@@ -35,20 +51,31 @@ function fakeHost() {
       }),
     }),
   } as unknown as ExtensionHost
-  return { host, tx, submitted }
+  return { host, tx, submitted, entries }
 }
 
 const call = (host: ExtensionHost, action: keyof typeof actions, args: object) =>
   actions[action](args as never, { host } as never)
 
 it('launches an idea into one input for @ultimate, which links the branch it started', async () => {
-  const { host, tx, submitted } = fakeHost()
+  const { host, tx, submitted, entries } = fakeHost()
+  const picture = { data: 'iVBORw0KGgo=', mimeType: 'image/png' }
   const idea = await call(host, 'add', {
     title: ' Phone board ',
     notes: 'Stage pills',
     tags: ['#UI'],
+    images: [picture],
   })
   expect(idea).toMatchObject({ id: 1, title: 'Phone board', tags: ['ui'], by: 'user' })
+  // Its pictures live in a display-only entry on conversation 1, not in the board document.
+  expect(entries).toEqual([
+    {
+      id: idea.images,
+      conversation: 1,
+      kind: 'ideas.images',
+      data: { idea: 1, images: [picture] },
+    },
+  ])
 
   await call(host, 'launch', { id: 1, size: 'assess' })
   // A second click before @ultimate linked a branch places nothing new.
@@ -58,8 +85,11 @@ it('launches an idea into one input for @ultimate, which links the branch it sta
     whenBusy: 'followUp',
     entry: { kind: 'ideas.launch', data: { id: 1, title: 'Phone board', size: 'assess' } },
   })
-  expect(submitted[0].content).toContain('Assess first and build nothing.')
-  expect(submitted[0].content).toContain("idea {action: 'link', id: 1, branch: <branch id>}")
+  const [text, image] = submitted[0].content
+  expect(text.text).toContain('Assess first and build nothing.')
+  expect(text.text).toContain("images: 'latest'")
+  expect(text.text).toContain("idea {action: 'link', id: 1, branch: <branch id>}")
+  expect(image).toEqual({ type: 'image', ...picture })
 
   const tool = ideasExtension(host).tools!.find((candidate) => candidate.name === 'idea')!
   const run = (conversationId: number, args: object) =>

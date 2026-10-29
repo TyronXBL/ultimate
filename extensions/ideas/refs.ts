@@ -4,6 +4,9 @@ import { actionRef, docRef } from '../../shared/extension-api.ts'
 /** How a launched idea starts: an assessment first, or straight to building. */
 export type LaunchSize = 'assess' | 'build'
 
+/** A picture on an idea: base64 data of a PNG, JPEG, WebP or GIF of at most 2 MiB. */
+export type IdeaImage = { data: string; mimeType: string }
+
 /** One idea. Epoch ms throughout. */
 export type Idea = {
   id: number
@@ -17,6 +20,8 @@ export type Idea = {
   /** Where @ultimate found it, a `#<conversation>/<entry>` breadcrumb. */
   from?: string
   at: number
+  /** The display-only `ideas.images` entry on conversation 1 holding its pictures (`{ idea, images }`), at most 4. */
+  images?: number
   /** When the user parked it; absent while it is on the board. */
   parked?: number
   /** Set when the user launched it; `branch` once @ultimate linked the branch it started. */
@@ -29,14 +34,14 @@ export const IdeasDoc = docRef<{ next: number; items: Idea[] }>('ideas')
 /** The `ideas.launch` input a launch posts into @ultimate's conversation, shown there as a card on the user's side. */
 export type LaunchEntry = { id: number; title: string; size: LaunchSize }
 
-/** `{ title, notes?, tags? }` → the new idea. User-only; @ultimate uses its `idea` tool. */
-export const AddAction = actionRef<{ title: string; notes?: string; tags?: string[] }, Idea>(
-  'ideas',
-  'add',
-)
-/** `{ id, title?, notes?, tags? }` → the idea, changed. User-only. */
+/** `{ title, notes?, tags?, images? }` → the new idea. User-only; @ultimate uses its `idea` tool. */
+export const AddAction = actionRef<
+  { title: string; notes?: string; tags?: string[]; images?: IdeaImage[] },
+  Idea
+>('ideas', 'add')
+/** `{ id, title?, notes?, tags?, images? }` → the idea, changed; `images` replaces them all, `[]` removes them. User-only. */
 export const UpdateAction = actionRef<
-  { id: number; title?: string; notes?: string; tags?: string[] },
+  { id: number; title?: string; notes?: string; tags?: string[]; images?: IdeaImage[] },
   Idea
 >('ideas', 'update')
 /** `{ id, parked }` → the idea, parked or back on the board. User-only. */
