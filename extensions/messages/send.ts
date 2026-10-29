@@ -94,10 +94,6 @@ export async function send(
     if (input.to !== 'user') throw new Error('about goes only with a message to the user')
     if (!Number.isSafeInteger(input.about) || input.about < 1)
       throw new Error('about must be a positive conversation id')
-    const exists = await host
-      .harness()
-      .commit((tx) => tx.conversation(input.about as ConversationId), ctx)
-    if (!exists) throw new Error(`Unknown conversation #${input.about}`)
   }
   const questions = input.questions === undefined ? undefined : checkQuestions(input.questions)
   // Checked before resolving, which may create a standing agent's conversation.
@@ -126,6 +122,8 @@ export async function send(
       if (!original || !openQuestion(original))
         throw new Error('These questions are no longer open')
     }
+    if (input.about !== undefined && !(await tx.conversation(input.about as ConversationId)))
+      throw new Error(`Unknown conversation #${input.about}`)
     if (input.images !== undefined && from === 'user')
       throw new Error('your images go along with what you submit, not with a message')
     const images =

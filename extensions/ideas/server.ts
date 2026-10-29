@@ -7,10 +7,11 @@ import {
   defineDoc,
   defineEntry,
   defineExtension,
+  defineTask,
   defineTool,
   ROOT_CONVERSATION_ID,
 } from '@earendil-works/pi-durable'
-import type { ConversationId, EntryId, Tx } from '@earendil-works/pi-durable'
+import type { ConversationId, EntryId, InputSubmissionDraft, Tx } from '@earendil-works/pi-durable'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { actingAs } from '../../lib/acting-as.ts'
 import { implementAction } from '../../lib/actions.ts'
@@ -183,28 +184,84 @@ async function remove(tx: Tx, id: unknown) {
   return { id: idea.id }
 }
 
+/** Places a launched idea's input in @ultimate's conversation. */
+const Deliver = defineTask<{ idea: number; ultimate: number }, { phase: 'deliver' }, null>({
+  name: 'ideas.deliver',
+  version: 1,
+  initial: () => ({ phase: 'deliver' }),
+  phases: {
+    deliver: async (task, runtime, ctx) => {
+      let input: InputSubmissionDraft | undefined
+      await runtime.commit(async (tx) => {
+        const idea = copy(await find(tx, task.input.idea))
+        const pictures =
+          idea.images === undefined
+            ? []
+            : ((await tx.entry(ImagesEntry, idea.images as EntryId))?.data.images ?? [])
+        const launched = { ...idea, launch: idea.launch! }
+        input = {
+          type: 'input',
+          content: [
+            { type: 'text', text: launchText(launched, pictures.length) },
+            ...pictures.map((image) => ({ type: 'image' as const, ...image })),
+          ],
+          // The user's request, like a to-do's ▶: after @ultimate's current run, never interrupting it.
+          whenBusy: 'followUp',
+          // Keyed by the launch: a rerun after a crash, or a second launch, finds the input already placed.
+          requestId: `ideas.launch:${idea.id}:${launched.launch.at}`,
+          entry: {
+            kind: LaunchInput.kind,
+            data: { id: idea.id, title: idea.title, size: launched.launch.size },
+          },
+        }
+        return undefined
+      }, ctx)
+      await (await runtime.conversation(task.input.ultimate as ConversationId, ctx))!.submit(
+        input!,
+        ctx,
+      )
+      await runtime.commit(
+        () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
+        ctx,
+      )
+    },
+  },
+  abort: (_task, runtime, ctx) =>
+    runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+})
+
 /**
- * Mark idea `id` launched. Launching again before @ultimate linked a branch keeps the first launch, so its input
- * (keyed by that launch) is placed at most once.
+ * Mark idea `id` launched and start delivering its input to @ultimate (`ultimate`) in the same commit. Launching
+ * again before @ultimate linked a branch keeps the first launch and delivers it again, which places nothing new.
  */
-export async function launch(tx: Tx, id: unknown, size: unknown) {
+export async function launch(tx: Tx, id: unknown, size: unknown, ultimate: ConversationId) {
   if (size !== 'assess' && size !== 'build') throw new Error("size must be 'assess' or 'build'")
   const idea = await find(tx, id)
   if (idea.parked !== undefined) throw new Error(`Idea ${idea.id} is parked`)
   if (idea.launch?.branch !== undefined)
     throw new Error(`Idea ${idea.id} is already #${idea.launch.branch}`)
   idea.launch ??= { size: size, at: Date.now() }
-  return { ...copy(idea), launch: { ...idea.launch } }
+  await tx.createTask(
+    Deliver,
+    { idea: idea.id, ultimate },
+    { conversationId: ultimate, ownership: { kind: 'conversation' }, background: true },
+  )
+  return copy(idea)
 }
 
 export async function link(tx: Tx, id: unknown, branch: unknown) {
   if (typeof branch !== 'number' || !Number.isSafeInteger(branch) || branch < 1)
     throw new Error('branch must be a conversation id')
+  if (!(await tx.conversation(branch as ConversationId)))
+    throw new Error(`No conversation #${branch}`)
+  const doc = await board(tx)
+  const other = doc.items.find((item) => item.id !== id && item.launch?.branch === branch)
+  if (other) throw new Error(`#${branch} is already idea ${other.id}'s branch`)
   const idea = await find(tx, id)
   if (!idea.launch) throw new Error(`Idea ${idea.id} was not launched`)
+  // A park the user chose meanwhile stays: the board shows the branch under Parked.
   idea.launch.branch = branch
-  delete idea.parked
-  return { ...idea, launch: { ...idea.launch } }
+  return copy(idea)
 }
 
 const SIZES: Record<LaunchSize, string> = {
@@ -265,39 +322,9 @@ export const actions = {
   ),
   launch: implementAction(LaunchAction, async (args, { host }) => {
     const ultimate = await host.need(SubagentsApi).standing('ultimate', context)
-    const idea = await host
+    return host
       .harness()
-      .commit((tx) => launch(tx, field(args).id, field(args).size), context)
-    const requestId = `ideas.launch:${idea.id}:${idea.launch.at}`
-    const { placed, pictures } = await host.harness().commit(
-      async (tx) => ({
-        placed: await tx.submissionByRequest(ultimate, requestId),
-        pictures:
-          idea.images === undefined
-            ? []
-            : ((await tx.entry(ImagesEntry, idea.images as EntryId))?.data.images ?? []),
-      }),
-      context,
-    )
-    if (!placed)
-      await (await host.harness().conversation(ultimate, context))!.submit(
-        {
-          type: 'input',
-          content: [
-            { type: 'text', text: launchText(idea, pictures.length) },
-            ...pictures.map((image) => ({ type: 'image' as const, ...image })),
-          ],
-          // The user's request, like a to-do's ▶: after @ultimate's current run, never interrupting it.
-          whenBusy: 'followUp',
-          requestId,
-          entry: {
-            kind: LaunchInput.kind,
-            data: { id: idea.id, title: idea.title, size: idea.launch.size },
-          },
-        },
-        context,
-      )
-    return idea
+      .commit((tx) => launch(tx, field(args).id, field(args).size, ultimate), context)
   }),
 }
 
@@ -307,6 +334,7 @@ const standing = (tx: Tx, id: ConversationId) =>
 export default function ideasExtension(host: ExtensionHost) {
   return defineExtension({
     name: 'ideas',
+    tasks: [Deliver],
     tools: [
       defineTool({
         name: 'idea',
@@ -338,7 +366,7 @@ export default function ideasExtension(host: ExtensionHost) {
             }
             if (args.action === 'link') {
               const idea = await link(tx, args.id, args.branch)
-              return `Linked idea ${idea.id} to #${idea.launch.branch}`
+              return `Linked idea ${idea.id} to #${args.branch}`
             }
             return listText((await board(tx)).items) ?? 'The idea board is empty.'
           }, ctx)

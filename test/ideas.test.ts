@@ -1,13 +1,17 @@
-import type { Tx } from '@earendil-works/pi-durable'
+import type { Task, Tx } from '@earendil-works/pi-durable'
 import { expect, it } from 'vitest'
 import ideasExtension, { actions, Ideas } from '../extensions/ideas/server.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 
 const ULTIMATE = 5
 
-/** A host over plain documents whose @ultimate is conversation 5 and records what is submitted to it. */
+/**
+ * A host over plain documents whose @ultimate is conversation 5. It records the tasks a commit creates, and what
+ * running them submits.
+ */
 function fakeHost() {
   const docs = new Map<string, object>()
+  const tasks: { task: Task<unknown, { phase: string }, unknown, object>; input: unknown }[] = []
   const entries: { id: number; conversation: number; kind: string; data: unknown }[] = []
   const submitted: {
     requestId: string
@@ -28,8 +32,9 @@ function fakeHost() {
         )
       return docs.get(key)
     },
-    submissionByRequest: async (_id: number, requestId: string) =>
-      submitted.find((input) => input.requestId === requestId),
+    conversation: async (id: number) => ({ id }),
+    createTask: async (task: (typeof tasks)[number]['task'], input: unknown) =>
+      void tasks.push({ task, input }),
     appendEntry: async (
       token: { kind: string },
       conversation: number,
@@ -41,24 +46,31 @@ function fakeHost() {
     entry: async (token: { kind: string }, id: number) =>
       entries.find((entry) => entry.id === id && entry.kind === token.kind),
   } as unknown as Tx
+  const runtime = {
+    commit: (fn: (tx: Tx) => unknown) => fn(tx),
+    conversation: async () => ({
+      submit: async (input: (typeof submitted)[number]) => void submitted.push(input),
+    }),
+  }
   const host = {
     doc: () => undefined,
     need: () => ({ standing: async () => ULTIMATE }),
-    harness: () => ({
-      commit: (fn: (tx: Tx) => unknown) => fn(tx),
-      conversation: async () => ({
-        submit: async (input: (typeof submitted)[number]) => void submitted.push(input),
-      }),
-    }),
+    harness: () => runtime,
   } as unknown as ExtensionHost
-  return { host, tx, submitted, entries }
+  /** Run every task created so far once, as the harness would after their commits. */
+  const runTasks = async () => {
+    for (const { task, input } of tasks.splice(0))
+      for (const phase of Object.values(task.definition.phases))
+        await phase({ input } as never, runtime as never, undefined as never)
+  }
+  return { host, tx, submitted, entries, runTasks }
 }
 
 const call = (host: ExtensionHost, action: keyof typeof actions, args: object) =>
   actions[action](args as never, { host } as never)
 
 it('launches an idea into one input for @ultimate, which links the branch it started', async () => {
-  const { host, tx, submitted, entries } = fakeHost()
+  const { host, tx, submitted, entries, runTasks } = fakeHost()
   const picture = { data: 'iVBORw0KGgo=', mimeType: 'image/png' }
   const idea = await call(host, 'add', {
     title: ' Phone board ',
@@ -78,9 +90,12 @@ it('launches an idea into one input for @ultimate, which links the branch it sta
   ])
 
   await call(host, 'launch', { id: 1, size: 'assess' })
-  // A second click before @ultimate linked a branch places nothing new.
+  // A second click before @ultimate linked a branch delivers the first launch again, under the same request id,
+  // which admission keeps to one input.
   await call(host, 'launch', { id: 1, size: 'build' })
-  expect(submitted).toHaveLength(1)
+  await runTasks()
+  expect(submitted).toHaveLength(2)
+  expect(submitted[1]).toEqual(submitted[0])
   expect(submitted[0]).toMatchObject({
     whenBusy: 'followUp',
     entry: { kind: 'ideas.launch', data: { id: 1, title: 'Phone board', size: 'assess' } },
