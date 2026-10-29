@@ -440,7 +440,7 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
           </div>
         </PromptInputFooter>
       </PromptInput>
-      <div className="flex items-center gap-3 overflow-hidden pt-1.5 font-mono text-[11px] whitespace-nowrap text-muted-foreground empty:hidden">
+      <div className="composer-status flex items-center gap-3 overflow-hidden pt-1.5 font-mono text-[11px] whitespace-nowrap text-muted-foreground empty:hidden">
         <Slot name="composer.status" variant="inline" />
       </div>
     </div>

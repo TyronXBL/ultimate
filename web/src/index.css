@@ -185,15 +185,24 @@
     color-scheme: dark;
   }
   /* Edge to edge (viewport-fit=cover): the app shell keeps out of the notch, rounded corners and home indicator. The
-     open keyboard covers the home indicator, so typing drops the bottom inset instead of leaving a gap above it. */
+     open keyboard covers the home indicator, so typing drops the bottom inset instead of leaving a gap above it. On
+     touch devices it is as tall as the visible page, above the keyboard (`--app-height`, viewport.ts). */
   .safe-area {
     --inset-bottom: env(safe-area-inset-bottom);
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--inset-bottom)
       env(safe-area-inset-left);
   }
   .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus) {
     --inset-bottom: 0px;
+  }
+  /* Typing on a phone, the room above the keyboard goes to the conversation: the status line and the composer's
+     status row wait until the keyboard closes. */
+  @media (pointer: coarse) and (width < 48rem) {
+    .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus)
+      :is(.status-line, .composer-status) {
+      display: none;
+    }
   }
   /* Installed on a phone, the status line's ends sit in from the rounded corners, so it reaches down into the
      home-indicator band: no empty strip under it, its items still 14px clear of the bottom edge and the indicator. */
