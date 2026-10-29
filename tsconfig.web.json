@@ -51,6 +51,7 @@
     "extensions/sidebar/label.ts",
     "extensions/tasks/kinds.ts",
     "extensions/sidebar/listed.ts",
+    "extensions/ideas/stage.ts",
     "extensions/side-chat/logic.ts",
     "extensions/voice-live/relay.ts",
     "extensions/voice-live/session.ts",

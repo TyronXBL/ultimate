@@ -1,6 +1,14 @@
-/** The sidebar's points for other extensions' browser code. */
+/**
+ * The sidebar for other extensions' browser code: its points, where a branch stands as its row shows it (in flight or
+ * landed, its state word, its work so far) and the roots' landing notes.
+ */
 import type { ReactNode } from 'react'
 import { definePoint } from '@/sdk'
+
+export { inFlight, landedAt, useBranchState, useFlightWork } from './branch.tsx'
+export type { BranchTone } from './branch.tsx'
+export { useLandings } from './landed.tsx'
+export type { Landing } from './landings.ts'
 
 /**
  * Rows nested under @ultimate's row (`side-chat` lists its open side chats, `voice-live` the Voice conversation); several

@@ -30,6 +30,28 @@ the idea's branch (assess first, or build when the user chose so) with its title
 Only @ultimate launches branches, so a branch's answers and decisions come back to it, and it relays them to the user
 as usual.
 
+## Board
+
+The **Board** surface (title bar, ⌘K "Switch to Board") shows the ideas by stage: **Ideas → Assessing → Building →
+Landed**, with **Parked** folded under Ideas. The add field heads the Ideas column (a title; notes and tags open under
+it); a card's ⋯ edits, parks or brings back an idea, and removes one never launched. **Launch** asks how it starts:
+assess first (the default) or build. Everything after that is read live (`data.tsx`, `stage.ts`):
+
+- An assess-first launch stays in Assessing until its branch has a plan epic or commits not yet landed; a build
+  launch starts in Building, and so does any branch in the lander's queue. Until @ultimate links the branch the card
+  says `launching`.
+- A branch says where it stands as its sidebar row does (`sidebar/ui.tsx` `useBranchState`), with a link that opens it.
+- A landed branch moves to Landed with its sha, which opens Review of what it brought; one concluded without landing
+  moves to Parked as `not built`.
+- An idea whose branch has decisions waiting (messages to the user `about` the branch) says `needs you` in the
+  waiting tone, sorts first and carries their real answer cards, answered in place exactly as in the chat. Board
+  cards take clicks only; the desktop answer keys stay with the shown conversation's newest card.
+
+On a desktop @ultimate's conversation is docked beside the columns, whatever conversation the Agent surface shows.
+On a phone the Board is one list with stage pills, what needs you first, filtered by the pills at its top; @ultimate
+stays one tap away in the title bar. A launch shows in @ultimate's transcript as an `Idea launched` card on the user's
+side, naming the idea and its size.
+
 ## Agents
 
 `idea {action: 'add', title, notes?, tags?, from?} | {action: 'link', id, branch} | {action: 'list'}` belongs to
