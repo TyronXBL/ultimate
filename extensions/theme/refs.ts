@@ -22,7 +22,8 @@ export type ThemeChoice = {
 /** On conversation 1: the machine's theme choice, mirrored from `theme` in `~/.ultimate/settings.json`. */
 export const ThemeDoc = docRef<{ choice?: ThemeChoice }>('theme.choice')
 /**
- * A `ThemeChoice` → the choice as saved: validated, written to `theme` in the user's settings and mirrored into
- * `ThemeDoc`, so every browser on this machine repaints. Refuses an unknown preset or a malformed colour.
+ * A `ThemeChoice` → the choice as saved: validated, put into `ThemeDoc` so every browser on this machine repaints,
+ * then written to `theme` in the user's settings. Refuses an unknown preset or a malformed colour; when the write
+ * fails, the document goes back to what the settings hold.
  */
 export const SetAction = actionRef<ThemeChoice, ThemeChoice>('theme', 'set')

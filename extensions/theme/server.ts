@@ -35,7 +35,7 @@ type ThemeHost = Pick<ExtensionHost, 'userHome' | 'harness' | 'notice' | 'resour
  */
 function serial(host: ThemeHost, task: () => Promise<void>) {
   const queue = host.resource('theme.queue', () => ({ last: Promise.resolve() }))
-  const next = queue.last.then(task, task)
+  const next = queue.last.then(task)
   queue.last = next.catch(() => {
     // Its caller sees the failure; the queue only orders the next task after it.
   })
@@ -54,17 +54,19 @@ async function store(host: ThemeHost, choice: ThemeChoice) {
   }, context)
 }
 
-/** Mirror the settings file's `theme` into the document; an invalid one is reported and counts as the default. */
-const mirror = (host: ThemeHost) =>
-  serial(host, async () => {
-    const { theme } = await readSettings(userSettingsPath(host.userHome))
-    const choice = theme === undefined ? DEFAULT_CHOICE : parseChoice(theme)
-    if (!choice)
-      host.notice(
-        `Invalid theme ${JSON.stringify(theme)} in ~/.ultimate/settings.json; using the default`,
-      )
-    await store(host, choice ?? DEFAULT_CHOICE)
-  })
+/** The settings file's `theme`; an invalid one is reported and counts as the default. */
+async function saved(host: ThemeHost) {
+  const { theme } = await readSettings(userSettingsPath(host.userHome))
+  const choice = theme === undefined ? DEFAULT_CHOICE : parseChoice(theme)
+  if (!choice)
+    host.notice(
+      `Invalid theme ${JSON.stringify(theme)} in ~/.ultimate/settings.json; using the default`,
+    )
+  return choice ?? DEFAULT_CHOICE
+}
+
+/** Mirror the settings file's `theme` into the document. */
+const mirror = (host: ThemeHost) => serial(host, async () => store(host, await saved(host)))
 
 export const actions = {
   /**
@@ -75,10 +77,17 @@ export const actions = {
     const choice = parseChoice(args)
     if (!choice) throw new Error(`Not a theme choice: ${JSON.stringify(args)}`)
     await serial(host, async () => {
+      const before = await host.harness().snapshot(State, ROOT_CONVERSATION_ID, context)
       await store(host, choice)
-      await updateSettings(userSettingsPath(host.userHome), (settings) => {
-        settings.theme = choice
-      })
+      try {
+        await updateSettings(userSettingsPath(host.userHome), (settings) => {
+          settings.theme = choice
+        })
+      } catch (error) {
+        // Not saved: browsers go back to the choice they showed, and the caller sees why.
+        await store(host, before?.choice ?? DEFAULT_CHOICE)
+        throw error
+      }
     })
     return choice
   }),

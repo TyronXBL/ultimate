@@ -33,6 +33,8 @@ export const appearanceDialog = 'theme.appearance'
 // The choice being edited and not yet saved, painted on this page only: saving rewrites the user's settings and
 // reloads every browser's modules, so a drag previews here and saves once, on release.
 let draft: ThemeChoice | undefined
+/** The draft a save is on its way with; closing the picker keeps it painted until the saved choice catches up. */
+let saving: ThemeChoice | undefined
 const listeners = new Set<() => void>()
 const setDraft = (next: ThemeChoice | undefined) => {
   draft = next
@@ -49,6 +51,27 @@ export const useDraft = () => useSyncExternalStore(subscribe, () => draft)
 /** Whether two choices save to the same thing. */
 const sameChoice = (a: ThemeChoice, b: ThemeChoice) =>
   JSON.stringify(parseChoice(a)) === JSON.stringify(parseChoice(b))
+
+/** Paint `next` here at once and save it for every device; `failed` hears why a save did not happen. */
+function saveChoice(next: ThemeChoice, failed: (message: string) => void) {
+  setDraft(next)
+  saving = next
+  api.action(SetAction, next).then(
+    (stored) => {
+      // A newer edit owns the draft now.
+      if (draft === next) setDraft(stored)
+    },
+    (failure: unknown) => {
+      if (draft === next) setDraft(undefined)
+      failed(errorMessage(failure))
+    },
+  )
+}
+
+/** Closed mid-edit (a drag whose release never came): an unsaved draft would hide later choices from elsewhere. */
+const dropUnsaved = () => {
+  if (draft !== saving) setDraft(undefined)
+}
 
 /** Drop the draft once the saved choice caught up with it. */
 export const settleDraft = (saved: ThemeChoice) => {
@@ -103,7 +126,6 @@ export function AppearanceDialog() {
           'top-auto right-0 bottom-0 left-0 flex max-h-[80dvh] max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-b-none p-0 font-mono',
           'sm:top-12 sm:right-3 sm:bottom-auto sm:left-auto sm:max-h-[calc(100dvh-5rem)] sm:w-[25rem] sm:max-w-[25rem] sm:rounded-lg',
         )}
-        data-appearance
         onOpenAutoFocus={(event) => event.preventDefault()}
         showCloseButton={false}
       >
@@ -118,20 +140,11 @@ function Body({ onClose }: { onClose: () => void }) {
   const choice = useDraft() ?? saved
   const polarity = useStore((state) => state.ui.theme)
   const [error, setError] = useState<string>()
+  useEffect(() => dropUnsaved, [])
 
   const save = (next: ThemeChoice) => {
-    setDraft(next)
     setError(undefined)
-    api.action(SetAction, next).then(
-      (stored) => {
-        // A newer edit owns the draft now.
-        if (draft === next) setDraft(stored)
-      },
-      (failure: unknown) => {
-        if (draft === next) setDraft(undefined)
-        setError(errorMessage(failure))
-      },
-    )
+    saveChoice(next, setError)
   }
   const custom = (patch: Partial<ThemeChoice>): ThemeChoice => ({
     ...choice,
@@ -577,6 +590,7 @@ function FontPicker({
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
+            aria-label={`${label} font: ${selected.label}`}
             className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-sm border border-input px-2 text-left text-[12.5px] text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent sm:h-7"
             type="button"
           >
