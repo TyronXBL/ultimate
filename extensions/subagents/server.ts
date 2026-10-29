@@ -865,7 +865,7 @@ export default function subagents(
       defineTool({
         name: 'subagent',
         description:
-          'Delegate to a named agent. start returns its answer (foreground) or id (background). Foreground start/message and wait yield on queued steering with details.yielded:true; work continues independently. Stop children explicitly; stopping the parent does not stop them; stop lists files left uncommitted in the child worktree. message steers a busy child (steer false queues a follow-up instead); wait returns the latest answer; stop stops current work; list shows your children; land verifies and fast-forwards a finished worktree child; discard removes its worktree but keeps its branch. start accepts isolate none or worktree, and fork true to inherit parent history before this call (more context cost; prompt caching usually covers the shared prefix). Background answers join the current run after its tool round, or wake you when idle.',
+          'Delegate to a named agent. start returns its answer (foreground) or id (background). Foreground start/message and wait yield on queued steering with details.yielded:true; work continues independently. Stop children explicitly; stopping the parent does not stop them; stop lists files left uncommitted in the child worktree. message steers a busy child (steer false queues a follow-up instead); wait returns the latest answer; stop stops current work; list shows your children; land verifies and fast-forwards a finished worktree child; discard removes its worktree but keeps its branch, and on dirty worktrees requires force: true to delete uncommitted files. start accepts isolate none or worktree, and fork true to inherit parent history before this call (more context cost; prompt caching usually covers the shared prefix). Background answers join the current run after its tool round, or wake you when idle.',
         // Call-id receipts deduplicate starts/messages; memoized targets and guards protect stop/workspace replays.
         replay: 'safe',
         parameters: Type.Object({
@@ -888,6 +888,9 @@ export default function subagents(
           text: Type.Optional(Type.String()),
           steer: Type.Optional(Type.Boolean()),
           isolate: Type.Optional(Type.Union([Type.Literal('none'), Type.Literal('worktree')])),
+          force: Type.Optional(
+            Type.Boolean({ description: 'For discard only: delete modified and untracked files.' }),
+          ),
         }),
         execute: async (args, api, context) => {
           const cached = await api.memo<ReturnType<typeof reply>>('result', context)
@@ -920,7 +923,13 @@ export default function subagents(
             await api.memo('workspace-operation', true, context)
             const operation = args.action
             return finish(
-              JSON.stringify(await workspaces[operation](args.id as ConversationId, context)),
+              JSON.stringify(
+                operation === 'discard'
+                  ? await workspaces.discard(args.id as ConversationId, context, {
+                      force: args.force,
+                    })
+                  : await workspaces.land(args.id as ConversationId, context),
+              ),
             )
           }
           if (args.action === 'start' || args.action === 'message') {

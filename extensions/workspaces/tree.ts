@@ -140,13 +140,14 @@ export async function removeCheckout(
   source: string,
   path: string,
   name: string,
+  force = false,
 ) {
   const { remove } = layout(settings)
   if (remove === undefined) {
-    await git(source, 'worktree', 'remove', path)
+    await git(source, 'worktree', 'remove', ...(force ? ['--force'] : []), path)
     return
   }
-  if (await git(path, 'status', '--porcelain', '--untracked-files=all'))
+  if (!force && (await git(path, 'status', '--porcelain', '--untracked-files=all')))
     throw new Error(
       `'${path}' contains modified or untracked files; isolates.worktree.remove was not run`,
     )

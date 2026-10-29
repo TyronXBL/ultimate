@@ -81,7 +81,12 @@ export function parseSchedule(input: string | Schedule, now = Date.now()): Sched
       expr: match[1],
       tz: match[2] ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     }
-  } else schedule = { kind: 'at', time: input.replace(/^at\s+/, '') }
+  } else {
+    const bareCron = /^(\S+\s+\S+\s+\S+\s+\S+\s+\S+)(?:\s+(\S+))?$/.exec(input)
+    if (bareCron)
+      throw new Error(`Use cron "${bareCron[1]}"${bareCron[2] ? ` ${bareCron[2]}` : ''}`)
+    schedule = { kind: 'at', time: input.replace(/^at\s+/, '') }
+  }
   if (schedule.kind === 'every') {
     if (!Number.isFinite(schedule.ms) || schedule.ms < 1000)
       throw new Error('Intervals must be at least 1s')

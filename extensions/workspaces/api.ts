@@ -12,6 +12,8 @@ type Implementation = ReturnType<typeof workspaces>
 export type WorkspaceService = {
   /** The worktree of conversation `id` (path, branch, target, state), or undefined when it has none. */
   get: Implementation['get']
+  /** Wait for a preparing checkout to finish; failed preparation remains failed. */
+  ready: Implementation['ready']
   /** Give conversation `id` a new worktree of `cwd`'s repository inside `tx`; throws when `cwd` cannot be isolated. */
   create: Implementation['create']
   /** Fast-forward the source checkout to the worktree tip of `id`, as `workspace land` does; returns what landed. */

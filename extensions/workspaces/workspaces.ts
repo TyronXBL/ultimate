@@ -1000,19 +1000,32 @@ export function workspaces(host: Host) {
         ),
       }
     },
-    async discard(id: ConversationId, context: Context) {
+    async discard(id: ConversationId, context: Context, options: { force?: boolean } = {}) {
       await idle(id, context)
       const workspace = await get(id, context)
       if (!workspace) throw new Error('Conversation has no workspace')
       if (workspace.state === 'preparing') throw new Error('Workspace is preparing')
       if (workspace.state !== 'removed') {
-        if (await listedBySource(workspace))
+        if (await listedBySource(workspace)) {
+          const dirty = await git(workspace.path, 'status', '--porcelain', '--untracked-files=all')
+          if (dirty && !options.force) {
+            const files = dirty
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => line.slice(3))
+            const shown = files.slice(0, 20)
+            throw new Error(
+              `Worktree has modified or untracked files:\n${shown.join('\n')}${files.length > shown.length ? `\n…and ${files.length - shown.length} more` : ''}\nCall discard again with force: true to delete them`,
+            )
+          }
           await removeCheckout(
             await host.projectSettings(),
             workspace.source,
             workspace.path,
             treeName(workspace.branch),
+            options.force,
           )
+        }
         await host.harness().commit(async (tx) => {
           ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'removed'
         }, context)
