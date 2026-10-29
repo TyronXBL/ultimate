@@ -30,15 +30,13 @@ function writeConversation(id: number, replace: boolean) {
   else history.pushState(history.state, '', url)
 }
 
+const codeWrap = localStorage.getItem('ultimate.codeWrap')
 /** The page's one live stream and its replica. */
 export const store = createStore({
   ui: {
     theme: localStorage.getItem('ultimate.theme') === 'light' ? 'light' : 'dark',
     // This browser's choice, else wrapped on a phone, where code would scroll sideways in a narrow column.
-    codeWrap:
-      localStorage.getItem('ultimate.codeWrap') === null
-        ? viewport() === 'phone' && touchKeyboard()
-        : localStorage.getItem('ultimate.codeWrap') === '1',
+    codeWrap: codeWrap === null ? viewport() === 'phone' && touchKeyboard() : codeWrap === '1',
   },
   onFallback: () => {
     replaceSelection = true
