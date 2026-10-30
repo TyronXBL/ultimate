@@ -35,7 +35,15 @@ const tagged = (file: string, graph: Graph) => {
   url.search = `?ultimate=${graph.id}.${graph.versions.get(file) ?? 0}`
   return url.href
 }
-const known = (graph: Graph, file: string) => graph.importers.has(file) || graph.imports.has(file)
+/** A file still imported, or importing: one whose importers all reloaded without it no longer counts. */
+const known = (graph: Graph, file: string) =>
+  !!graph.importers.get(file)?.size || graph.imports.has(file)
+/** How the graph keys `file`: Node's resolved path, or for a missing file its nearest existing folder's. */
+function real(file: string): string {
+  if (existsSync(file)) return realpathSync(file)
+  const folder = dirname(file)
+  return folder === file ? file : join(real(folder), basename(file))
+}
 /** Record that `parent` imports `file`; returns whether the graph had not seen `file` before. */
 function link(graph: Graph, parent: string, file: string) {
   const added = !known(graph, file)
@@ -71,7 +79,7 @@ function register() {
           // The file may appear later: its importer then loads anew like on a change. The watcher drops a file once
           // it is removed, so it is handed over on every failure, not only when new.
           if (specifier.startsWith('.') || specifier.startsWith('/')) {
-            const missing = fileURLToPath(new URL(specifier, context.parentURL))
+            const missing = real(fileURLToPath(new URL(specifier, context.parentURL)))
             link(graph, parent, missing)
             graph.found(missing)
           }
@@ -133,7 +141,7 @@ export function extensionLoader(ultimateRoot: string, found: (file: string) => v
     /** Local files the graph knows, for the watcher. */
     files: () => new Set([...graph.importers.keys(), ...graph.imports.keys()]),
     /** Whether an extension imports `file`, or tried to before it existed. */
-    knows: (file: string) => known(graph, file),
+    knows: (file: string) => known(graph, real(file)),
     /** The module of `file`: the same instance until `file` or a module it imports is invalidated. */
     // oxlint-disable-next-line typescript/no-explicit-any -- an extension module's exports are validated by the caller.
     async load(file: string): Promise<Record<string, any>> {
@@ -156,13 +164,7 @@ export function extensionLoader(ultimateRoot: string, found: (file: string) => v
     },
     /** `file` changed, appeared or went away: it and every module importing it load anew; returns those files. */
     invalidate(file: string) {
-      // The graph keys resolved files; a removed file resolves through its folder.
-      const folder = dirname(file)
-      const resolved = existsSync(file)
-        ? realpathSync(file)
-        : existsSync(folder)
-          ? join(realpathSync(folder), basename(file))
-          : file
+      const resolved = real(file)
       const stale = new Set<string>()
       const visit = (current: string) => {
         if (stale.has(current)) return
