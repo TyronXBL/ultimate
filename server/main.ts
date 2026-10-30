@@ -18,7 +18,7 @@ import { alive } from './lock.ts'
 import { realpath } from 'node:fs/promises'
 import { extensionModules } from './vite-extensions.ts'
 import { admit, createAccess } from './request-security.ts'
-import { writeProject } from './project.ts'
+import { discoveryRoots, writeProject } from './project.ts'
 import { reportCore } from './supervisor-protocol.ts'
 import { viteLogger } from './vite-logger.ts'
 import type { Notice } from '../shared/protocol.ts'
@@ -107,6 +107,7 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
   // A vite.config.ts change restarts Vite with a new watcher; listeners move to each new one.
   const restarted = new Set<(watcher: ViteDevServer['watcher']) => void>()
   reportCore({ type: 'web', state: 'preparing' })
+  const cacheDir = resolvePath(host.home, 'vite')
   const vite = await createViteServer({
     customLogger: viteLogger(),
     clearScreen: false,
@@ -116,13 +117,37 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
       middlewareMode: true,
       allowedHosts: true,
       hmr: { server: hmr },
+      // `/@fs/` serves any allowed file to an admitted browser: allow only the web sources, never the rest of
+      // `~/.ultimate` (secrets, credentials, databases) or a project's files. A symlinked extension outside these
+      // folders still loads, as Vite allows each module it reached through an import.
       fs: {
-        allow: [ultimateRoot, projectRoot, resolvePath(host.userHome, '.ultimate')],
+        allow: [
+          ultimateRoot,
+          ...discoveryRoots(ultimateRoot, projectRoot, host.userHome)
+            .slice(1)
+            .map((root) => resolvePath(root.path, 'extensions')),
+          cacheDir,
+        ],
+        deny: [
+          // Vite's defaults, which a list here replaces.
+          '.env',
+          '.env.*',
+          '*.{crt,pem,key,p12,pfx,cer,der}',
+          '.npmrc',
+          '.yarnrc.yml',
+          '**/.git/**',
+          'secrets.json',
+          'auth.json',
+          '*credentials*',
+          '.netrc',
+          '**/.ssh/**',
+          'id_{rsa,dsa,ecdsa,ed25519}*',
+        ],
       },
     },
     appType: 'spa',
     // One dependency cache per state home, so tests and instances never re-optimize the live instance's page.
-    cacheDir: resolvePath(host.home, 'vite'),
+    cacheDir,
     resolve: { alias: { '@': resolvePath(ultimateRoot, 'web/src') } },
     plugins: [
       extensionModules(ultimateRoot, projectRoot, host.userHome),

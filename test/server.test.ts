@@ -364,6 +364,22 @@ export default host => { host.resource('cleanup.process',()=>{
       view.dispose()
     }
   })
+  it('serves user extensions but never secrets from ~/.ultimate over /@fs/', async () => {
+    const { server } = await fixture(false, undefined, true)
+    const user = join(server.host.userHome, '.ultimate')
+    await mkdir(join(user, 'extensions/mine'), { recursive: true })
+    const files = [
+      'secrets.json',
+      'github-fork-credentials',
+      'tailscale.json',
+      'extensions/mine/secrets.json',
+      'extensions/mine/web.tsx',
+    ]
+    for (const file of files) await writeFile(join(user, file), 'export default {}')
+    const status = async (file: string) =>
+      (await fetch(server.url + '/@fs' + join(user, file))).status
+    expect(await Promise.all(files.map(status))).toEqual([403, 403, 403, 403, 200])
+  })
   it('scans committed submissions newest first, filtered and paged', async () => {
     const { server } = await fixture(false, undefined, true)
     server.host.faux!.setResponses([fauxAssistantMessage('One'), fauxAssistantMessage('Two')])
