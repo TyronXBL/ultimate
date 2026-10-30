@@ -700,8 +700,10 @@ export async function loadExtensions(
     pending.set(file, structural || (pending.get(file) ?? false))
   }
   const onChange = (file: string) => {
+    if (closed) return
+    // A file an extension imports reloads it wherever it lives; other files only inside Ultimate's roots.
+    if (loader.knows(file)) return queue(file, false)
     if (
-      closed ||
       ![host.ultimateRoot, host.projectRoot, ...roots.slice(1).map((root) => root.path)].some(
         (root) => resolve(file).startsWith(root + '/'),
       ) ||

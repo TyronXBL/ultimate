@@ -35,14 +35,17 @@ const tagged = (file: string, graph: Graph) => {
   url.search = `?ultimate=${graph.id}.${graph.versions.get(file) ?? 0}`
   return url.href
 }
+const known = (graph: Graph, file: string) => graph.importers.has(file) || graph.imports.has(file)
+/** Record that `parent` imports `file`; returns whether the graph had not seen `file` before. */
 function link(graph: Graph, parent: string, file: string) {
-  if (!graph.importers.has(file) && !graph.imports.has(file)) graph.found(file)
+  const added = !known(graph, file)
   const importers = graph.importers.get(file) ?? new Set()
   importers.add(parent)
   graph.importers.set(file, importers)
   const imports = graph.imports.get(parent) ?? new Set()
   imports.add(file)
   graph.imports.set(parent, imports)
+  return added
 }
 
 function register() {
@@ -66,7 +69,7 @@ function register() {
         if (bare(specifier)) result = next(specifier, context)
         else {
           // The file may appear later: its importer then loads anew like on a change. The watcher drops a file once
-          // it is removed, so it is handed over again each time.
+          // it is removed, so it is handed over on every failure, not only when new.
           if (specifier.startsWith('.') || specifier.startsWith('/')) {
             const missing = fileURLToPath(new URL(specifier, context.parentURL))
             link(graph, parent, missing)
@@ -77,7 +80,7 @@ function register() {
       }
       if (!result.url.startsWith('file:') || result.url.includes('/node_modules/')) return result
       const file = fileURLToPath(result.url)
-      link(graph, parent, file)
+      if (link(graph, parent, file)) graph.found(file)
       return { ...result, url: tagged(file, graph), shortCircuit: true }
     },
     load(url, context, next) {
@@ -129,6 +132,8 @@ export function extensionLoader(ultimateRoot: string, found: (file: string) => v
   return {
     /** Local files the graph knows, for the watcher. */
     files: () => new Set([...graph.importers.keys(), ...graph.imports.keys()]),
+    /** Whether an extension imports `file`, or tried to before it existed. */
+    knows: (file: string) => known(graph, file),
     /** The module of `file`: the same instance until `file` or a module it imports is invalidated. */
     // oxlint-disable-next-line typescript/no-explicit-any -- an extension module's exports are validated by the caller.
     async load(file: string): Promise<Record<string, any>> {

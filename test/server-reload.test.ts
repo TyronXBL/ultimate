@@ -135,7 +135,7 @@ describe('server reload', () => {
     expect(entry().server!.loadedAt).toBe(successful)
     expect(server.host.registry.snapshot().extension('counter')).toBe(installed)
   })
-  it('reloads only the owning extension when files or directories are added or removed', async () => {
+  it('reloads only the owning extension when files or directories are added or removed, and an importer once its missing file appears', async () => {
     const { server } = await fixture(false, {
       a: orderedSource('a'),
       b: orderedSource('b'),
