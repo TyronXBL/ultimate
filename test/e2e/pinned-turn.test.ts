@@ -17,8 +17,6 @@ afterEach(async () => {
 const answer = (topic: string) =>
   Array.from({ length: 40 }, (_, index) => `${topic} paragraph ${index + 1}.`).join('\n\n')
 
-// The first page load transforms the whole web app on a cold Vite cache: on a cold run this took 60 s here and timed
-// out; warm, 27 s. The timeout covers that load, as in the other browser tests, not a flake.
 it('pins the answered user turn while scrolled up and reveals it on click', async () => {
   const home = await temp('ultimate-pinned-turn-')
   cleanup.push(() => removeTemp(home))
@@ -28,6 +26,7 @@ it('pins the answered user turn while scrolled up and reveals it on click', asyn
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   server.host.faux!.setResponses([
@@ -90,4 +89,4 @@ it('pins the answered user turn while scrolled up and reveals it on click', asyn
   const view = await log.evaluate((node) => node.getBoundingClientRect())
   expect(top).toBeGreaterThanOrEqual(view.top)
   expect(top).toBeLessThan(view.bottom)
-}, 120_000)
+})
