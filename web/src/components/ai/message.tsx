@@ -127,15 +127,15 @@ function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: stri
   const extensions = useExtensions()
   const { node: _node, className, children, 'data-block': block, ...rest } = props
   const language = /language-(\S+)/.exec(className ?? '')?.[1] ?? ''
-  if (!block) {
-    const code =
-      typeof children === 'string'
-        ? children
-        : isValidElement<{ children?: unknown }>(children) &&
-            typeof children.props.children === 'string'
-          ? children.props.children
-          : ''
-    const core = <CoreCode {...props} />
+  const code =
+    typeof children === 'string'
+      ? children
+      : isValidElement<{ children?: unknown }>(children) &&
+          typeof children.props.children === 'string'
+        ? children.props.children
+        : ''
+  // Inline code, as the `inlineCode` renderers compose it, starting with Streamdown's.
+  if (!block)
     return inlineCodeRenderers(extensions).reduce<ReactNode>(
       (inner, { extension, version, component: Renderer }) => (
         <ExtensionBoundary
@@ -148,17 +148,9 @@ function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: stri
           <Renderer code={code} core={inner} />
         </ExtensionBoundary>
       ),
-      core,
+      <CoreCode {...props} />,
     )
-  }
   if (codeBlockRenderers(extensions, language).length > 0) return <CoreCode {...props} />
-  const code =
-    typeof children === 'string'
-      ? children
-      : isValidElement<{ children?: unknown }>(children) &&
-          typeof children.props.children === 'string'
-        ? children.props.children
-        : ''
   return (
     <CodeBlock
       className={className}
