@@ -63,8 +63,9 @@ export async function runOnPc(
   try {
     await git(cwd, ['push', '-q', 'pc', `${sha}:refs/heads/run/${sha}`])
   } catch (error) {
+    // ssh's own line says why (`connect to host … timed out`); git's advice after it does not.
     return result('unavailable', {
-      reason: `pushing to ${host} failed: ${(error as Error).message}`,
+      reason: `pushing to ${host} failed: ${(error as Error).message.split('\n')[0]}`,
     })
   }
   const jobs: JobResult[] = []
