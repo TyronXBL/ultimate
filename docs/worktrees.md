@@ -12,10 +12,12 @@ where the project's `isolates.worktree.path` says, made by its `add` and `remove
 `workspace status` shows its tip and the original checkout's tip.
 Read worker reports and diffs; rerun checks only for missing or thin evidence, reported failures, changes crossing
 workers, `server/` or `shared/` changes, or surprises in the diff, then land and call `workspace submit`.
-The lander is the final gate: it runs every configured check (here `pnpm check`, then `pnpm test` and `pnpm test:e2e` in parallel) on the merged result
-and reports back, landed or not, with findings.
+The lander is the final gate: it runs every configured check (here `pnpm check`, then `.ultimate/scripts/ci-gate.ts`,
+which runs `pnpm test` and `pnpm test:e2e` on the fork's GitHub Actions) on the merged result and reports back, landed
+or not, with findings. The full suites are the lander's and CI's job: a branch runs `pnpm check` and the test files
+covering its change, and gets an earlier full run from the project's `ci` tool instead of running the suites here.
 It fixes small failures when the project configures it to; on success it fast-forwards the branch and pushes to
-`lander.push` (here `origin`), so keep working while it runs.
+`lander.push` (here `fork`), so keep working while it runs.
 Its progress shows live on the submit tool card, with expandable steps, and its report as an outcome card, both in
 the submitting conversation; the source's @lander conversation, pinned in the sidebar's agents group, keeps
 the full log and shows as working in the Agents tab while it lands. It runs the `lander` agent

@@ -34,7 +34,8 @@ pnpm install --frozen-lockfile --prefer-offline   # only after step 1, and only 
 pnpm check
 ```
 
-Then run the tests covering what it touches (`pnpm test <paths>`, `pnpm test:e2e` for spawned processes). Name
+Then run the test files covering what it touches (`pnpm vitest run <files>`, with `--config test/e2e/vitest.config.ts`
+for `test/e2e` files), never the full suites here; the `ci` tool runs those on GitHub Actions. Name
 conflicts with main and failing checks in the report; do not fix the author's code at this stage.
 
 ## 3. Prove it once

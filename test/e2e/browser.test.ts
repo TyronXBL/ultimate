@@ -28,11 +28,15 @@ it('times out a hung step, closes its page and keeps later calls working', async
     return { result, text: JSON.stringify(result.output), ms: Date.now() - started }
   }
   try {
+    // The step limit also bounds the browser's launch: on a fresh CI runner the first call ran past 5 s before step 1,
+    // so launch the shared browser first with the default limit. 5 s per step leaves a busy 4-CPU shard room to load
+    // the page and still ends the hung step well inside the 15 s bound.
+    expect((await drive([{ eval: 'document.title' }])).result.isError).toBeFalsy()
     for (const hang of ['new Promise(() => {})', 'for (;;) {}']) {
-      const hung = await drive([{ eval: '1 + 1' }, { eval: hang }], 1000)
+      const hung = await drive([{ eval: '1 + 1' }, { eval: hang }], 5000)
       expect(hung.result.isError).toBe(true)
       expect(hung.text).toContain('Step 1: OK 2')
-      expect(hung.text).toContain('Step 2: TimeoutError: timed out after 1s')
+      expect(hung.text).toContain('Step 2: TimeoutError: timed out after 5s')
       expect(hung.ms).toBeLessThan(15_000)
       const next = await drive([{ eval: 'document.title' }])
       expect(next.result.isError).toBeFalsy()

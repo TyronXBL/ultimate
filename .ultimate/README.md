@@ -9,7 +9,14 @@ Every built-in is already on; this setup adds how the repository is landed and r
   `scripts/ci-gate.ts`, and pushes to `fork`. The gate pushes the merged commit to `fork:ci/<sha>` and waits for its
   GitHub Actions run (`.github/workflows/ci.yml`); it refuses commits that look like they carry a secret, and runs
   `pnpm test` and `pnpm test:e2e` here instead, saying so, when GitHub cannot be reached.
-- `agents/lander.md`: the lander fixes a submission that fails to land, then lands it once every check passes again.
+- `extensions/ci/`: the `ci` tool, for a full CI run before submitting. It pushes the caller's committed tip to
+  `fork:ci/<sha>-t<task>` after the same secret scan, follows the run in the background and wakes the caller once with
+  a result card; it never runs the suites here. The gate and the tool share `extensions/ci/github.ts`, which calls the
+  GitHub API with the fork's stored Git credential when there is one.
+- `agents/lander.md`: the lander fixes a submission that fails to land, then lands it once every check passes again,
+  reproducing only the failing files here.
+- `agents/{coordinator,worker,designer,reviewer}.md`: overlays that keep full suites off this machine: locally only
+  `pnpm check` and the test files covering a change; full runs on CI.
 - `agents/reviewer-*.md`: the review team (correctness, simplicity, architecture), each on its own model; the shipped
   `reviewer` starts them in parallel and returns one merged verdict.
 
