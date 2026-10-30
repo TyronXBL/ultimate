@@ -2,6 +2,7 @@
 name: reviewer-simplicity
 description: Simplicity, slop and test-quality review of an immutable commit range (Claude Sonnet 5.5).
 model: anthropic/claude-sonnet-5-5
+fallback: [openai-codex/gpt-6.1-terra]
 thinking: high
 tools: [read, bash]
 resident: false
