@@ -125,7 +125,23 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
     ciExtension({
       projectRoot: checkout,
       harness: () => opened.harness,
-      need: (() => ({ get: async () => undefined })) as never,
+      need: (() => ({
+        get: async () => undefined,
+        // The lander's record: the failing test also failed at two landings of another branch.
+        failing: async ({ tests, except }: { tests: string[]; except: number }) =>
+          tests.includes('test/a.test.ts > adds') && except === caller.id
+            ? [
+                {
+                  test: 'test/a.test.ts > adds',
+                  landings: [
+                    { submission: 's2', conversationId: 9, at: 2, sank: true },
+                    { submission: 's1', conversationId: 9, at: 1, sank: false },
+                  ],
+                  branches: [9],
+                },
+              ]
+            : [],
+      })) as never,
     }),
   )
   prepared.faux!.setResponses([
@@ -155,7 +171,13 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
       { name: 'check', conclusion: 'success', seconds: 20 },
       { name: 'test (1/4)', conclusion: 'failure', seconds: 60 },
     ],
-    failures: [{ title: 'test/a.test.ts > adds', message: 'AssertionError: expected 1 to be 2' }],
+    failures: [
+      {
+        title: 'test/a.test.ts > adds',
+        message: 'AssertionError: expected 1 to be 2',
+        earlier: { landings: 2, branches: [9] },
+      },
+    ],
   })
   // The run's ref is deleted once the run ended.
   expect(
@@ -165,6 +187,8 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
   expect(seen.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true)
   const transcript = JSON.stringify((await caller.context(context)).entries)
   expect(transcript).not.toContain(TOKEN)
-  expect(transcript).toContain('FAIL test/a.test.ts > adds: AssertionError: expected 1 to be 2')
+  expect(transcript).toContain(
+    'FAIL test/a.test.ts > adds: AssertionError: expected 1 to be 2 (also failed in 2 earlier landings: #9)',
+  )
   api.close()
 })

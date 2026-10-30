@@ -4,7 +4,13 @@
  */
 import { actionRef, docRef } from '../../shared/extension-api.ts'
 import { defineEvent } from '../../shared/events.ts'
-import type { WorkspaceDisk, WorkspaceIndex, WorkspaceInfo, WorkspaceStats } from './types.ts'
+import type {
+  FailingTest,
+  WorkspaceDisk,
+  WorkspaceIndex,
+  WorkspaceInfo,
+  WorkspaceStats,
+} from './types.ts'
 import type { KeptWork } from '../conversations/types.ts'
 
 /** Why the project cannot isolate conversations (`reason`, absent when it can), and whether its folder is empty. */
@@ -13,6 +19,11 @@ export type Isolation = { reason?: string; empty?: boolean }
 /** The worktree index on the root conversation: each conversation's isolate, the lander queue and recent outcomes. */
 export const WorkspacesDoc = docRef<WorkspaceIndex>('ultimate.workspaces')
 
+/** `{ tests?, except?, limit? }` → repeat test failures across lander submissions, most repeated first. */
+export const FailingAction = actionRef<
+  { tests?: string[]; except?: number; limit?: number },
+  FailingTest[]
+>('workspaces', 'failing')
 /** `{ id }` → conversation `id`'s worktree with its branch, tip and changes, or null when it has none. */
 export const InfoAction = actionRef<{ id: number }, WorkspaceInfo | null>('workspaces', 'info')
 /**

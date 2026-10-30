@@ -49,8 +49,6 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close()
 })
 
-// The first page load transforms the whole web app on a cold Vite cache (20–30 s on a loaded machine), so this
-// takes 40–60 s and ran past the default 60 s on a 4-core CI runner; the timeout covers that load, not a flake.
 it('answers a decisions card with letters, arrows and Enter', async () => {
   const home = await temp('ultimate-questions-keys-')
   cleanup.push(() => removeTemp(home))
@@ -60,6 +58,7 @@ it('answers a decisions card with letters, arrows and Enter', async () => {
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   // @ultimate asks the user the three decisions on each input, and acknowledges anything else.
@@ -153,4 +152,4 @@ it('answers a decisions card with letters, arrows and Enter', async () => {
     (await log())?.messages.find((m) => m.re === second.id && m.from === 'user')
   await until(async () => !!(await picked()))
   expect((await picked())!.text).toMatch(/^1a\. .+\n\n2a\. .+\n\n3a\. Land it: yes$/)
-}, 120_000)
+})

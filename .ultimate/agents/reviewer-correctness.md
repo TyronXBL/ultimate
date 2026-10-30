@@ -1,7 +1,8 @@
 ---
 name: reviewer-correctness
-description: Correctness, security and regressions review of an immutable commit range (Astra 6).
+description: Correctness, security and regressions review of an immutable commit range (Terra 6.1).
 model: openai-codex/gpt-6.1-terra
+fallback: [anthropic/claude-opus-5-5]
 thinking: high
 tools: [read, bash]
 resident: false

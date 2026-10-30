@@ -6,6 +6,7 @@ import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
 import type { git } from '../../lib/git.ts'
+import type { FailingTest } from './types.ts'
 import type { Workspaces, workspaces } from './workspaces.ts'
 
 type Implementation = ReturnType<typeof workspaces>
@@ -25,6 +26,14 @@ export type WorkspaceService = {
   release: Implementation['release']
   /** Run `git` with `args` in a directory; rejects with Git's message. Use it instead of spawning Git yourself. */
   git: typeof git
+  /**
+   * The tests that failed at landing, from the lander log, most branches first: only `tests` when given, without the
+   * submissions of conversation `except`.
+   */
+  failing(
+    options: { tests?: string[]; except?: number; limit?: number },
+    ctx: Context,
+  ): Promise<FailingTest[]>
   /** The worktree index document (`ultimate.workspaces` on the root), for reads inside a transaction. */
   doc: typeof Workspaces
   /** Make the project folder a Git repository with a first commit, so worktrees and landing work. */
@@ -35,6 +44,7 @@ export const WorkspacesApi = defineApi<WorkspaceService>()('workspaces')
 
 export { CheckRan, SubmissionLanded } from './refs.ts'
 export type { LandedData } from './refs.ts'
+export type { FailingTest } from './types.ts'
 export type BranchesService = {
   /** The conversation that started branch `id`, which hears that its submission landed. */
   starter(id: ConversationId, ctx: Context): Promise<number | undefined>
