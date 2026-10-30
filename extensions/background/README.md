@@ -22,3 +22,11 @@ conversation aborts the task, which stops the command's group and wakes nobody.
 
 Logs, exit codes and pid files live in `<home>/background/<task>.*`. Logs stay for the agent to read and are not
 cleaned up.
+
+Known limitations, all of them needing a host outage or a leader killed from outside:
+
+- When the leader was killed from outside, the pid file is removed even though the group could not be verified, and
+  the card's note blames that leader even if the group id was reused meanwhile. Nothing is signalled either way; the
+  note only points at a read-only `ps` check.
+- The leader's own drain after an hour without a host was proven once by hand, not by a committed test.
+- Stop does not stop a running command, like every background task; concluding the conversation does.
