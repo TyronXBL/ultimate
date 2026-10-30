@@ -190,14 +190,16 @@
     color-scheme: dark;
   }
   /* Edge to edge (viewport-fit=cover): the app shell keeps out of the notch, rounded corners and home indicator. The
-     open keyboard covers the home indicator, so typing drops the bottom inset instead of leaving a gap above it. */
+     open keyboard covers the home indicator, so typing drops the bottom inset instead of leaving a gap above it. On
+     touch devices it is as tall as the visible page, above the keyboard (`--app-height`, viewport.ts). */
   .safe-area {
     --inset-bottom: env(safe-area-inset-bottom);
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
     padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--inset-bottom)
       env(safe-area-inset-left);
   }
-  .safe-area:has(textarea:focus, input:focus, [contenteditable]:focus) {
+  /* Any field, the app's own or one in a dialog portaled beside it. */
+  :root:has(textarea:focus, input:focus, [contenteditable]:focus) .safe-area {
     --inset-bottom: 0px;
   }
   /* Installed on a phone, the status line's ends sit in from the rounded corners, so it reaches down into the
@@ -241,6 +243,30 @@
   textarea,
   select {
     font-size: 16px;
+  }
+}
+
+/* Typing on a phone, the room above the keyboard goes to the conversation: the status line and the composer's status
+   row wait until the keyboard closes. Unlayered, so it wins over their display utilities. */
+@media (pointer: coarse) and (width < 48rem) {
+  :root:has(textarea:focus, input:focus, [contenteditable]:focus)
+    :is(.status-line, .composer-status) {
+    display: none;
+  }
+}
+
+/* How far a wide markdown table fades out at its scrolling edge (`.markdown` tables): none unless it scrolls. */
+@property --table-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes table-fade {
+  from {
+    --table-fade: 2rem;
+  }
+  to {
+    --table-fade: 0px;
   }
 }
 
@@ -296,6 +322,18 @@
   }
   & [data-streamdown='code-block-body'] {
     @apply rounded-none border-none bg-transparent px-3 pt-0 pb-2.5 font-mono text-[12px] leading-[1.6];
+  }
+  :root[data-code-wrap] & [data-streamdown='code-block-body'] pre {
+    @apply wrap-anywhere whitespace-pre-wrap;
+    & code > span {
+      @apply pl-[2ch] -indent-[2ch];
+    }
+  }
+  /* A table wider than the column fades out on the side it scrolls on, until its end: phones show no scrollbar. */
+  & [data-streamdown='table-wrapper'] div:has(> table) {
+    mask-image: linear-gradient(to right, black calc(100% - var(--table-fade)), transparent);
+    animation: table-fade linear both;
+    animation-timeline: scroll(self inline);
   }
   & [data-streamdown='table-wrapper'] {
     @apply my-3 gap-0 rounded-md border-border/80 bg-transparent p-0;

@@ -23,7 +23,7 @@ import { switchAt } from './switches.ts'
 import type { Fallback } from './refs.ts'
 
 const toolbarButton =
-  'flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-md px-2 font-mono text-[11.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground'
+  'flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-md px-2 font-mono text-[11.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground pointer-coarse:h-9'
 
 function ModelButton() {
   const { ref, loading } = useCurrentModel()
@@ -101,7 +101,7 @@ function ThinkingButton() {
         {levels.map((level) => (
           <button
             className={cn(
-              'flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-[12px] transition-colors hover:bg-accent',
+              'flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-[12px] transition-colors hover:bg-accent pointer-coarse:h-10',
               level === current && 'text-brand',
             )}
             key={level}
@@ -112,7 +112,12 @@ function ThinkingButton() {
             {level}
           </button>
         ))}
-        <div className="mt-1 flex items-center gap-1.5 border-t border-border/70 px-2 pt-1.5 pb-1 text-[11px] text-muted-foreground">
+        <div
+          className={cn(
+            'mt-1 flex items-center gap-1.5 border-t border-border/70 px-2 pt-1.5 pb-1 text-[11px] text-muted-foreground',
+            !error && 'pointer-coarse:hidden',
+          )}
+        >
           {error ? (
             <span className="text-error">{error}</span>
           ) : (

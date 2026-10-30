@@ -24,6 +24,8 @@ export interface UiState {
   theme: 'dark' | 'light'
   /** This device's own choice, kept in its `localStorage`; the palette itself is the machine's (`extensions/theme`). */
   themeMode: 'system' | 'dark' | 'light'
+  /** Whether code blocks in Markdown wrap long lines instead of scrolling sideways. */
+  codeWrap: boolean
   /** The surface on screen, which the host records as it renders: the shown one, or the next in line after it failed. */
   surface?: { id: string; title: string }
   /**
@@ -120,6 +122,7 @@ export function createStore(options: StoreOptions = {}) {
       dialogs: {},
       theme: 'dark',
       themeMode: 'system',
+      codeWrap: false,
       ...options.ui,
     },
   }

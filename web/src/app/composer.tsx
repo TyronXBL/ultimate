@@ -11,6 +11,7 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from '@/components/ai/prompt-input'
+import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { api } from '../sdk/client.ts'
 import { ConversationIdContext } from '../sdk/conversation-scope.tsx'
@@ -353,6 +354,9 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
     // oxlint-disable-next-line typescript/no-floating-promises -- send catches submission failures and displays them in the draft's error state.
     void send(event.altKey ? 'followUp' : 'steer')
   }
+  // A touch keyboard has no Alt+Enter: a draft for a busy run offers Queue beside Steer, and Stop waits for an empty
+  // draft, so a slip next to Send never ends the run.
+  const choose = busy && !target && !empty && touchKeyboard()
 
   return (
     // Only the shown conversation's composer takes typing shortcuts (Escape, Shift+Tab): they act on that conversation.
@@ -394,7 +398,14 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
           <PromptInputTools className="overflow-hidden">
             <Slot name="composer.toolbar" variant="inline" />
           </PromptInputTools>
-          <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2">
+          {/* On touch, these buttons leave the focus in the editor: the keyboard stays up, and the rows typing hides
+              (index.css) don't come back under the finger between pressing and releasing. */}
+          <div
+            className="flex max-w-full min-w-0 shrink-0 items-center gap-2"
+            onPointerDown={(event) => {
+              if (touchKeyboard()) event.preventDefault()
+            }}
+          >
             <span
               className={cn(
                 'truncate font-mono text-[11px]',
@@ -410,8 +421,9 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
                 ) : null)}
             </span>
             {!target && <Slot name="composer.actions" variant="inline" />}
-            {busy && (
+            {busy && !choose && (
               <PromptInputSubmit
+                className="pointer-coarse:size-9"
                 mode="stop"
                 onClick={() =>
                   void api.abort(id).catch((failure: Error) => setError(failure.message))
@@ -419,10 +431,22 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
                 title="Stop (Esc)"
               />
             )}
+            {choose && (
+              <Button
+                className="h-9 rounded-lg px-3"
+                disabled={loading || !!blocked || sending || reading}
+                // oxlint-disable-next-line typescript/no-floating-promises -- send catches submission failures and displays them in the draft's error state.
+                onClick={() => void send('followUp')}
+                type="button"
+                variant="secondary"
+              >
+                Queue
+              </Button>
+            )}
             {(!busy || !empty) && (
               <PromptInputSubmit
                 disabled={loading || empty || !!blocked || sending || reading}
-                aria-label={loading ? 'Loading conversation' : 'Send'}
+                aria-label={loading ? 'Loading conversation' : choose ? 'Steer' : 'Send'}
                 title={
                   loading
                     ? 'Loading conversation'
@@ -430,17 +454,22 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
                       ? 'Steer (Enter)'
                       : 'Send (Enter)'
                 }
-                className={loading ? 'bg-muted text-muted-foreground' : undefined}
+                className={cn(
+                  choose ? 'h-9 w-auto px-3' : 'pointer-coarse:size-9',
+                  loading && 'bg-muted text-muted-foreground',
+                )}
               >
                 {loading ? (
                   <LoaderCircleIcon className="size-4 motion-safe:animate-spin" />
+                ) : choose ? (
+                  'Steer'
                 ) : undefined}
               </PromptInputSubmit>
             )}
           </div>
         </PromptInputFooter>
       </PromptInput>
-      <div className="flex items-center gap-3 overflow-hidden pt-1.5 font-mono text-[11px] whitespace-nowrap text-muted-foreground empty:hidden">
+      <div className="composer-status flex items-center gap-3 overflow-hidden pt-1.5 font-mono text-[11px] whitespace-nowrap text-muted-foreground empty:hidden">
         <Slot name="composer.status" variant="inline" />
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { ActionError, actionMessage, createApi } from './api.ts'
 import { createRegistry } from './registry.ts'
 import { createStore } from './store.ts'
+import { touchKeyboard, viewport } from './viewport.ts'
 import { createTestHook } from './test-hook.ts'
 import type { TestHook } from './test-hook.ts'
 
@@ -34,10 +35,16 @@ const prefersLight = matchMedia('(prefers-color-scheme: light)')
 const systemTheme = () => (prefersLight.matches ? 'light' : 'dark')
 const savedMode = localStorage.getItem('ultimate.theme')
 const themeMode = savedMode === 'light' || savedMode === 'dark' ? savedMode : 'system'
+const codeWrap = localStorage.getItem('ultimate.codeWrap')
 
 /** The page's one live stream and its replica. */
 export const store = createStore({
-  ui: { themeMode, theme: themeMode === 'system' ? systemTheme() : themeMode },
+  ui: {
+    themeMode,
+    theme: themeMode === 'system' ? systemTheme() : themeMode,
+    // This browser's choice, else wrapped on a phone, where code would scroll sideways in a narrow column.
+    codeWrap: codeWrap === null ? viewport() === 'phone' && touchKeyboard() : codeWrap === '1',
+  },
   onFallback: () => {
     replaceSelection = true
     uiState.delete('shell.conversation')
@@ -101,6 +108,7 @@ store.subscribe(() => {
   }
   // The theme extension paints the palette and the browser bar for this polarity.
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
+  document.documentElement.toggleAttribute('data-code-wrap', ui.codeWrap)
 })
 prefersLight.addEventListener('change', () => {
   if (store.getState().ui.themeMode === 'system') store.setUi({ theme: systemTheme() })
@@ -110,6 +118,11 @@ export function setThemeMode(mode: 'dark' | 'light' | 'system') {
   if (mode === 'system') localStorage.removeItem('ultimate.theme')
   else localStorage.setItem('ultimate.theme', mode)
   store.setUi({ themeMode: mode, theme: mode === 'system' ? systemTheme() : mode })
+}
+/** Wrap long lines in code blocks or scroll them sideways; this browser keeps the choice. */
+export function setCodeWrap(on: boolean) {
+  localStorage.setItem('ultimate.codeWrap', on ? '1' : '0')
+  store.setUi({ codeWrap: on })
 }
 /** The next selection replaces the current history entry rather than pushing one, as a redirect does. */
 export function replaceNextSelection() {
