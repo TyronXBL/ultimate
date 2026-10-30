@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { execFile, execFileSync } from 'node:child_process'
@@ -26,10 +26,12 @@ const until = (test: () => boolean | Promise<boolean>) =>
 
 const TOKEN = 'stored-fork-token-1234'
 const hosts: OpenHost[] = []
+const searchPath = process.env.PATH
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close()
   vi.useRealTimers()
   delete process.env.CI_GATE_API
+  process.env.PATH = searchPath
 })
 
 it('runs CI on the fork in the background and wakes the caller once with the failing tests', async () => {
@@ -191,4 +193,96 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
     'FAIL test/a.test.ts > adds: AssertionError: expected 1 to be 2 (also failed in 2 earlier landings: #9)',
   )
   api.close()
+})
+
+it('runs CI on the PC runner first and delivers its failing tests without GitHub', async () => {
+  const root = await temp('ultimate-ci-pc-')
+  // The PC: a bare ci.git in its runner's home, reached by an `ssh` that runs the real forced command there.
+  const pcHome = join(root, 'pc')
+  await mkdir(pcHome)
+  await git(root, 'init', '-q', '--bare', join(pcHome, 'ci.git'))
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  await writeFile(
+    join(bin, 'ssh'),
+    [
+      '#!/bin/bash',
+      'while [[ $1 == -* ]]; do case $1 in -o|-p|-i) shift 2;; *) shift;; esac; done',
+      'shift',
+      `HOME=${pcHome} SSH_ORIGINAL_COMMAND="$*" exec ${join(import.meta.dirname, '../../.ultimate/ci-runner/ultimate-ci')}`,
+    ].join('\n'),
+  )
+  await chmod(join(bin, 'ssh'), 0o755)
+  process.env.PATH = `${bin}:${searchPath}`
+  // A project whose `test` suite fails one test the way Vitest reports it; it has no fork remote, so GitHub is never used.
+  const checkout = join(root, 'checkout')
+  await mkdir(checkout)
+  await git(checkout, 'init', '-q', '-b', 'main')
+  await writeFile(
+    join(checkout, 'package.json'),
+    JSON.stringify({
+      name: 'p',
+      private: true,
+      scripts: { check: 'echo checked', test: 'node t.mjs', 'test:e2e': 'echo e2e' },
+    }),
+  )
+  await writeFile(
+    join(checkout, 'pnpm-lock.yaml'),
+    "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n",
+  )
+  await writeFile(
+    join(checkout, 't.mjs'),
+    "console.log(' FAIL  test/a.test.ts > adds > two')\nconsole.log('AssertionError: expected 3 to be 4')\nprocess.exit(1)\n",
+  )
+  await git(checkout, 'add', '.')
+  await git(checkout, 'commit', '-qm', 'first')
+  await git(checkout, 'remote', 'add', 'pc', 'my-pc:ci.git')
+  const sha = await git(checkout, 'rev-parse', 'HEAD')
+
+  const prepared = await prepareHarness({
+    ultimateRoot: root,
+    userHome: await temp(),
+    home: join(root, 'home'),
+    faux: fauxProvider(),
+  })
+  let opened: OpenHost
+  prepared.registry.install(
+    ciExtension({
+      projectRoot: checkout,
+      harness: () => opened.harness,
+      need: (() => ({ get: async () => undefined, failing: async () => [] })) as never,
+    }),
+  )
+  prepared.faux!.setResponses([
+    fauxAssistantMessage([fauxToolCall('ci', {})], { stopReason: 'toolUse' }),
+    fauxAssistantMessage([fauxText('Started.')]),
+    fauxAssistantMessage([fauxText('Read the result.')]),
+  ])
+  opened = await prepared.open()
+  hosts.push(opened)
+  const caller = opened.root
+  await caller.submit({ type: 'input', requestId: 'go', content: 'Run CI' }, context)
+
+  const results = async () =>
+    (await caller.context(context)).entries.filter((entry) => entry.kind === 'ci.result')
+  await waitFor(async () => (await results()).length > 0, 45_000)
+  const result = (await results())[0].data as CiResult
+  expect(result).toMatchObject({
+    sha,
+    conclusion: 'failure',
+    runner: 'my-pc',
+    jobs: [
+      { name: 'check', conclusion: 'success' },
+      { name: 'test', conclusion: 'failure' },
+    ],
+    failures: [
+      { title: 'test/a.test.ts > adds > two', message: 'AssertionError: expected 3 to be 4' },
+    ],
+  })
+  expect(result.url).toBeUndefined()
+  // The run's worktree and ref are gone from the PC.
+  expect(await git(join(pcHome, 'ci.git'), 'for-each-ref')).toBe('')
+  expect(JSON.stringify((await caller.context(context)).entries)).toContain(
+    'FAIL test/a.test.ts > adds > two: AssertionError: expected 3 to be 4',
+  )
 })

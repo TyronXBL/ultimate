@@ -15,6 +15,8 @@ export type CiResult = {
   ref?: string
   /** The Actions run. */
   url?: string
+  /** PC host that ran the suites. */
+  runner?: string
   /**
    * `refused`: the secret scan stopped the push; `no-run`: no run started; `timeout`: the run did not finish within
    * an hour; `unreachable`: GitHub failed.
