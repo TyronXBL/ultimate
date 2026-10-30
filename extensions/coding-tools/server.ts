@@ -29,9 +29,32 @@ import { git } from '../../lib/git.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { CancelAction, CancelledDoc, Committed } from './refs.ts'
+import { atRevision } from './revision.ts'
 
 /** Lets Pi's read tool shrink an image past the model's limits (2000x2000 by default) instead of refusing it. */
 const images = await createNodePhotonImages()
+
+/** Pi's read tool, with `rev` to read a file as committed there. */
+function readTool() {
+  const read = createReadTool({ images })
+  return defineTool({
+    ...read,
+    description: `${read.description} Pass rev (a commit, branch or tag) to read the file as of that commit instead of the working tree; a relative path resolves in the cwd's repository, whose commits every worktree shares.`,
+    parameters: Type.Object({
+      ...read.parameters.properties,
+      rev: Type.Optional(
+        Type.String({
+          description: 'Commit, branch or tag to read the file at, instead of the working tree',
+        }),
+      ),
+    }),
+    async execute({ rev, ...args }, api, context) {
+      if (rev === undefined || !api.env) return read.execute(args, api, context)
+      const env = await atRevision(api.env, args.path, rev, context)
+      return read.execute(args, { ...api, env }, context)
+    },
+  })
+}
 
 /** Pi's edit tool, with how to recover from its two common failures. */
 function editTool() {
@@ -332,12 +355,7 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit'>) {
   return defineExtension({
     name: 'coding-tools',
     // Each tool keeps its own parameters; the list is only read through the base registration.
-    tools: [
-      createReadTool({ images }),
-      createWriteTool(),
-      editTool(),
-      bashTool,
-    ] as ToolRegistration[],
+    tools: [readTool(), createWriteTool(), editTool(), bashTool] as ToolRegistration[],
     wraps: [
       wrapTool(createBashTool(), (bash) => ({
         ...bash,
