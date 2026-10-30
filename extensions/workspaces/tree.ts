@@ -4,7 +4,7 @@
  */
 import { realpath, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { exec } from '../../lib/exec.ts'
 import { git } from '../../lib/git.ts'
@@ -142,6 +142,19 @@ export async function removeCheckout(
   name: string,
   force = false,
 ) {
+  const nested = (await git(source, 'worktree', 'list', '--porcelain'))
+    .split('\n\n')
+    .flatMap((entry) => entry.split('\n'))
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => line.slice('worktree '.length))
+    .filter((candidate) => {
+      const below = relative(path, candidate)
+      return below !== '' && below !== '..' && !below.startsWith(`..${sep}`) && !isAbsolute(below)
+    })
+  if (nested.length)
+    throw new Error(
+      `Cannot remove worktree ${path}; it contains nested worktrees:\n${nested.join('\n')}`,
+    )
   const { remove } = layout(settings)
   if (remove === undefined) {
     await git(source, 'worktree', 'remove', ...(force ? ['--force'] : []), path)
