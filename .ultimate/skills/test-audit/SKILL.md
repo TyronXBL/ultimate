@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: Decide whether a test should exist, and audit an area's tests for low-value proof (duplicate, implementation-coupled or test-only seams). Use when writing, changing or reviewing tests, and for the weekly test audit of one area.
+description: Decide whether a test should exist, and audit an area's tests for low-value proof (duplicate, implementation-coupled or test-only seams) and for missing proof (surviving mutants in the weekly mutation report). Use when writing, changing or reviewing tests, and for the weekly test audit of one area.
 ---
 
 # Test audit
@@ -62,14 +62,25 @@ graph, and observable ordering. A failing baseline may be a bug to repair, not a
    `ultimate.action('workspaces', 'failing', { limit: 20 })` and prefer an area whose tests fail for many branches.
    Read the area's tests and the code they cover, and its history (`git log --follow`). Measure the area's runtime
    (`pnpm test <files>`, median of 3).
-2. For each candidate, record: the junk pattern, the contract it claims, **which remaining test still proves that
+2. When the area has code in the mutation allowlist (`lib/` and the extension modules listed in `scripts/mutate.ts`),
+   read the latest weekly mutation report: `node scripts/mutate.ts --latest` downloads it from the fork's
+   `mutation.yml` run, and `node scripts/mutate.ts --report <area paths>` prints that area's surviving mutants and its
+   tests without a unique kill.
+   - Sort each survivor into a **real gap** (a credible regression no test notices: a dropped validation, a missing
+     regex anchor, an untested failure path) or **noise** (an equivalent mutant, a cosmetic string, data in a table).
+   - Propose one test per real gap that passes the authoring gate, extending the area's existing table or fixture.
+     Never one test per mutant, and never a test for noise.
+   - A test without a unique kill catches nothing another test doesn't (`killedBy`). That is evidence for deleting
+     it, but not proof: it may still guard a contract outside the mutated files. Check that before proposing.
+3. For each candidate, record: the junk pattern, the contract it claims, **which remaining test still proves that
    contract** (file:line), and its cost.
-3. Build nothing. Return one proposal to @ultimate, grouped into coherent batches by owner, never chasing deletion
+4. Build nothing. Return one proposal to @ultimate, grouped into coherent batches by owner, never chasing deletion
    counts:
    - delete, merge into a table, or move to the real boundary;
+   - tests to add for real mutation gaps, each naming the surviving mutant it kills;
    - production seams that would go with them;
    - test and production lines removed, and the seconds saved;
    - contracts deliberately kept, and why.
      End with numbered decisions, one per batch.
-4. After the user approves, implement the chosen batches with workers. Run `pnpm check`, the area's tests and their
+5. After the user approves, implement the chosen batches with workers. Run `pnpm check`, the area's tests and their
    siblings, then review and submit.
