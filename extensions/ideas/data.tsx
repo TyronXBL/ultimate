@@ -23,7 +23,7 @@ export type Row = {
   /** Its linked branch, once @ultimate started it and while it is known. */
   branch?: WorkspaceConversation
   landed?: BranchFacts['landed']
-  /** Messages about its branch that wait on the user, oldest first. */
+  /** Messages from or about its branch that wait on the user, oldest first. */
   asks: Message[]
   /** When it last moved: the branch's latest input or answer, else when it was parked, launched or added. */
   at: number
@@ -127,7 +127,10 @@ export function useBoard() {
       ...stageOf(idea, facts),
       branch,
       landed,
-      asks: id === undefined ? [] : asks.filter((message) => message.about === id),
+      asks:
+        id === undefined
+          ? []
+          : asks.filter((message) => message.about === id || message.from === id),
       at: Math.max(activity, idea.parked ?? 0, idea.launch?.at ?? 0, idea.at),
     }
   })

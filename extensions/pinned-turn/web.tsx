@@ -5,7 +5,6 @@ import {
   events,
   TranscriptEntry,
   useConversation,
-  useThread,
   useTranscriptScroll,
   useViewport,
 } from '@/sdk'
@@ -61,11 +60,10 @@ function turnAbove(scroll: HTMLElement, content: HTMLElement): Turn | number | u
   // A turn scrolled to the top lands a fraction of a pixel above it.
   if (bubble) return bubble.getBoundingClientRect().top >= top - 1 ? undefined : turnOf(bubble)
   if (!content.querySelector(':scope > [data-earlier-history]')) return undefined
-  // A thread's root row carries the negated thread id, not an entry's.
   return Math.min(
-    ...[...content.querySelectorAll('[data-entry-id]')]
-      .map((row) => Number(row.getAttribute('data-entry-id')))
-      .filter((entryId) => entryId > 0),
+    ...[...content.querySelectorAll('[data-entry-id]')].map((row) =>
+      Number(row.getAttribute('data-entry-id')),
+    ),
   )
 }
 
@@ -78,8 +76,6 @@ function PinnedTurn() {
   const { isAtBottom, scrollRef, contentRef } = useTranscriptScroll()
   const id = useConversation((conversation) => conversation.id)
   const phone = useViewport() === 'phone'
-  // The stored inputs are the whole conversation's: a thread's own turn below its loaded rows is not among them alone.
-  const thread = useThread()
   const [shown, setShown] = useState<Turn | 'earlier'>()
   const [open, setOpen] = useState(false)
   const [lookup, setLookup] = useState<Lookup>()
@@ -116,7 +112,6 @@ function PinnedTurn() {
       frame = requestAnimationFrame(() => {
         const above = turnAbove(scroll, content)
         if (typeof above !== 'number') return setShown(above)
-        if (thread !== undefined) return setShown(undefined)
         // The turn found below an older `before` is the one below `above` too, unless it is loaded by now.
         const turn = found && above <= found.before ? found.turn : undefined
         if (turn !== undefined && (turn === null || turn.entryId < above))
@@ -138,7 +133,7 @@ function PinnedTurn() {
       scroll.removeEventListener('scroll', scrolled)
       resize.disconnect()
     }
-  }, [isAtBottom, scrollRef, contentRef, id, found, thread])
+  }, [isAtBottom, scrollRef, contentRef, id, found])
   const turn = isAtBottom ? undefined : shown
   const reveal = (entryId: number) =>
     events.emit('ultimate:reveal-entry', { conversationId: id, entryId })

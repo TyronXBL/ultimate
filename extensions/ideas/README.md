@@ -33,8 +33,8 @@ before a branch is linked keeps the first launch, so it never places a second in
 the idea's branch (assess first, or build when the user chose so) with its title, tags and notes, then link it. It
 carries the idea's pictures, and then asks @ultimate to pass them on with `branch {images: 'latest'}`; with `agents`,
 the branch's own agent setup, it asks @ultimate to pass them on with `branch {agents}` as given.
-Only @ultimate launches branches, so a branch's answers and decisions come back to it, and it relays them to the user
-as usual.
+Only @ultimate launches branches, so a branch's answers and decisions come back to it, and the branch asks the user
+after @ultimate weighs in, as usual.
 
 ## Board
 
@@ -49,7 +49,7 @@ assess first (the default) or build. Everything after that is read live (`data.t
 - A branch says where it stands as its sidebar row does (`sidebar/ui.tsx` `useBranchState`), with a link that opens it.
 - A landed branch moves to Landed with its sha, which opens Review of what it brought; one concluded without landing
   moves to Parked as `not built`.
-- An idea whose branch has decisions waiting (messages to the user `about` the branch) says `needs you` in the
+- An idea whose branch has decisions waiting (its own questions to the user, or @ultimate's messages `about` it) says `needs you` in the
   waiting tone, sorts first and carries their real answer cards, answered in place exactly as in the chat. Board
   cards take clicks only; the desktop answer keys stay with the shown conversation's newest card.
 
