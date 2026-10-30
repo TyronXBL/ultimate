@@ -49,6 +49,7 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
           <p className="break-all text-muted-foreground">
             {result.cwd} · {result.log}
           </p>
+          {result.note && <p className="break-words text-warning">{result.note}</p>}
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-muted-foreground">
             {result.tail || '(no output)'}
           </pre>

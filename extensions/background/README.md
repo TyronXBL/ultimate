@@ -7,9 +7,12 @@ durable `background.run` task then:
 
 1. starts the command with `bash -c`, niced (`nice -n 10`), in the directory the conversation's bash runs in, as the
    leader of its own process group; stdout and stderr go to a log file;
-2. when the command ends, its leader stops whatever it left running in the group and records the exit code;
-3. looks for that code every 3 s at first, then up to every 15 s; a command still running at its timeout is stopped
-   with its whole group (`timeout`), and a group gone without a code is `lost` (killed from outside, or a reboot);
+2. when the command ends, its leader records the exit code and stays alive, so the pid file still proves the group is
+   this task's (an hour at most, should the host never come back);
+3. looks for that code every 3 s at first, then up to every 15 s; once it is there, or at the timeout (`timeout`), it
+   stops the whole group (TERM, then KILL) before it reports, so nothing the command started outlives the result. A
+   group gone without a code is `lost` (killed from outside, or a reboot). Processes it could not stop (their leader
+   killed from outside) are named on the card with the command that stops them;
 4. submits one `background.result` input (request id `background.result:<task>`): outcome, exit code, duration, the
    last 40 lines of output (at most 4 KB) and the log path.
 
