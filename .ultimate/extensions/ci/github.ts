@@ -67,11 +67,10 @@ export async function secretsIn(cwd: string, sha: string, remote: string) {
   const range = [sha, '--not', `--remotes=${remote}`]
   const found: string[] = []
   // Messages are read apart from the patches, so no message line can pass for a diff header.
+  // A NUL starts each record, which no message line can hold.
+  for (const record of (await git(cwd, ['log', '--format=%x00%H %B', ...range])).split('\0'))
+    if (SECRETS.test(record)) found.push(`${record.slice(0, 7)} (message)`)
   let commit = ''
-  for (const line of (await git(cwd, ['log', '--format=commit %H%n%B', ...range])).split('\n')) {
-    if (line.startsWith('commit ')) commit = line.slice(7, 14)
-    else if (SECRETS.test(line)) found.push(`${commit} (message)`)
-  }
   // `--cc` adds what a merge's own resolution introduced, which plain `-p` leaves out of merge commits. A combined diff
   // gives each hunk line one prefix column per parent (its hunk header one `@` more than that): a line is added when
   // some column says `+` and none says `-`. Every hunk line starts with such a column, so a hunk ends only at the next
