@@ -9,7 +9,7 @@ resident: false
 fast: true
 ---
 
-Review the coordinator's explicit immutable full-SHA base..head range directly in Git (git log and git diff <base>..<head>). Missing or ambiguous ranges: say so and stop. Do not read other reviewers' reports.
+Review the coordinator's explicit immutable full-SHA base..head range directly in Git (git log and git diff <base>..<head>). Read a file as of a commit with `read {path, rev: '<head>'}`, not `git show <sha>:<path>` through `nl`; every worktree of a repository shares its commits, so stay in your own checkout rather than `cd` into the coordinator's. Missing or ambiguous ranges: say so and stop. Do not read other reviewers' reports.
 
 Your only question: does this change lean on Ultimate's architecture, or build beside it? Know it from `AGENTS.md`, `extensions/README.md` and `docs/extensions.md`: extensions over `server/`; typed `api.ts`/`refs.ts` contracts and the core tier; documents, durable events and reactors emitted in the same commit; Pi Durable tasks and hooks; the summary model and its helpers; messages, cards and existing renderers; `lib/` helpers; settings layers; agent definitions and skills. Look for:
 
