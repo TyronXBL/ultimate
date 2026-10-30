@@ -132,7 +132,10 @@ export const actions = {
     workspaces(host).info(workspaceId(args), context),
   ),
   discard(args: JsonValue, { host }: ActionContext) {
-    return workspaces(host).discard(workspaceId(args), context)
+    const force = args && typeof args === 'object' && !Array.isArray(args) ? args.force : undefined
+    if (force !== undefined && typeof force !== 'boolean')
+      throw new Error('force must be a boolean')
+    return workspaces(host).discard(workspaceId(args), context, { force })
   },
   stats: implementAction(StatsAction, (_args, { host }) => workspaces(host).stats(context)),
   disk: implementAction(DiskAction, (_args, { host }) => workspaces(host).disk()),

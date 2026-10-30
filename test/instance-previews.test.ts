@@ -44,8 +44,8 @@ it('previews the nearest owner worktree of a subagent, else the host checkout', 
   const workspaces = { get: async (id: ConversationId) => (id === 10 ? branch : undefined) }
   const resolve = (id: number) =>
     previewWorkspace(host as never, workspaces as never, id as ConversationId, BACKGROUND_CONTEXT)
-  expect(await resolve(11)).toBe(branch)
-  expect(await resolve(12)).toBe(branch)
+  expect(await resolve(11)).toEqual({ workspace: branch, conversationId: 10 })
+  expect(await resolve(12)).toEqual({ workspace: branch, conversationId: 10 })
   expect(await resolve(21)).toBeUndefined()
 })
 
