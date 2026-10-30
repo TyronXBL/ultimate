@@ -8,6 +8,8 @@ import { parseFrontmatter, resolveCliModel } from '@earendil-works/pi-coding-age
 import type { ModelRuntime, SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { Source } from '../server/project.ts'
 import { writeTextAtomically } from './json-file.ts'
+import { DEFAULT_FAMILY, definitionRuns, isFamilyName, refOf } from './families.ts'
+import { readFamilies } from './families-settings.ts'
 // oxlint-disable-next-line no-restricted-imports -- agent discovery follows the core project trust decision
 import { projectDecision, useProjectSetup } from '../server/project-setup.ts'
 // oxlint-disable-next-line no-restricted-imports -- extension-owned definitions follow the same enabled folders as their facets
@@ -29,6 +31,10 @@ export interface AgentDefinition {
   thinking?: ModelThinkingLevel
   /** Ordered backup models a conversation switches to when its model hits a rate limit, capacity or quota error. */
   fallback?: FallbackModel[]
+  /** The model family it runs on unless it pins a model or settings assign it another (lib/families.ts). */
+  family?: string
+  /** What it runs on once the families are applied; discovery sets it. */
+  runs?: ReturnType<typeof definitionRuns>
   tools?: string[]
   /** Tools overlays added to a definition without a `tools` list: it has every tool already, and deferred ones load. */
   addTools?: string[]
@@ -36,8 +42,6 @@ export interface AgentDefinition {
   isolate?: 'none' | 'worktree'
   /** A standing agent: one conversation per project, started on first use. */
   resident?: boolean
-  /** What the lander does when a submission fails: explain it, or fix it and land. Only the lander reads it. */
-  onFailure?: 'diagnose' | 'fix'
   /** Requests on an `openai-codex/` or `openai/` model go on the priority (fast) tier; the fast extension reads it. */
   fast?: boolean
   /** `false`: its conversations get no automatic summaries (intent, title, reply activity, spawn refresh, abstract). */
@@ -64,39 +68,62 @@ export const hasLogin = (available: readonly Listed[], ref: ModelRef | undefined
   !!ref && available.some((model) => model.provider === ref.provider && model.id === ref.modelId)
 
 /**
- * The model a conversation runs on when nothing pins one: a preview's, else Pi's default, else the first model with a
- * login here; each only when it has a login. Undefined while no model has one.
+ * The model a conversation runs on when nothing pins one: a preview's, else the default family's (`family`), else
+ * Pi's default, the first of them with a login here. When none has one, the first configured one all the same: its
+ * login is gone, and the fallback card asks the user, rather than a model nobody chose (rog, 2026-10-29: a logged-out
+ * Claude Code default started a branch on a paid Anthropic key). Only with nothing configured, the first model with a
+ * login. Undefined while none has one.
  */
 export function defaultModel(
   available: readonly Listed[],
   settings: Pick<SettingsManager, 'getDefaultProvider' | 'getDefaultModel'>,
+  family?: ModelRef,
 ): ModelRef | undefined {
   const first = available[0]
   return (
-    configuredModel(available, settings) ??
+    configuredModel(available, settings, family) ??
+    configured(settings, family)[0] ??
     (first && { provider: first.provider, modelId: first.id })
   )
 }
 
-/** A preview's model, else Pi's default, each only when it has a login here: `defaultModel` without its last resort. */
+/** A preview's model, the default family's and Pi's default, those that name one, in that order. */
+const configured = (
+  settings: Pick<SettingsManager, 'getDefaultProvider' | 'getDefaultModel'>,
+  family?: ModelRef,
+) =>
+  [
+    previewModel(),
+    family,
+    { provider: settings.getDefaultProvider(), modelId: settings.getDefaultModel() },
+  ].filter((ref): ref is ModelRef => !!ref?.provider && !!ref.modelId)
+
+/**
+ * A preview's model, else the default family's (`family`), else Pi's default, each only when it has a login here:
+ * `defaultModel` without its last resort.
+ */
 export function configuredModel(
   available: readonly Listed[],
   settings: Pick<SettingsManager, 'getDefaultProvider' | 'getDefaultModel'>,
+  family?: ModelRef,
 ): ModelRef | undefined {
-  const configured = {
-    provider: settings.getDefaultProvider(),
-    modelId: settings.getDefaultModel(),
-  }
-  for (const ref of [previewModel(), configured])
-    if (ref?.provider && ref.modelId && hasLogin(available, ref as ModelRef)) return ref as ModelRef
-  return undefined
+  return configured(settings, family).find((ref) => hasLogin(available, ref))
 }
 
-/** `defaultModel` for a host's model runtime and Pi settings. */
-export const hostDefaultModel = (host: {
+type DefaultHost = {
   modelRuntime: Pick<ModelRuntime, 'getAvailableSnapshot'>
   settings: Pick<SettingsManager, 'getDefaultProvider' | 'getDefaultModel'>
-}) => defaultModel(host.modelRuntime.getAvailableSnapshot(), host.settings)
+  userHome: string
+  projectRoot: string
+}
+
+/** The model of the project's default family, when it names one; else the default is Pi's. */
+export const familyDefault = async (host: Pick<DefaultHost, 'userHome' | 'projectRoot'>) =>
+  refOf((await readFamilies(host.userHome, host.projectRoot)).families[DEFAULT_FAMILY].model)
+
+/** `defaultModel` for a host's model runtime, its project's default family and Pi settings. */
+export const hostDefaultModel = async (host: DefaultHost) =>
+  defaultModel(host.modelRuntime.getAvailableSnapshot(), host.settings, await familyDefault(host))
 
 /**
  * The agent change a definition makes over `parent`: the explicit model, else the definition's pin when it has a login
@@ -119,12 +146,15 @@ export function definitionAgent(
   } = {},
 ): AgentChange {
   const excludeTools = [...excluded, ...(definition?.denyTools ?? [])]
-  const pin = hasLogin(modelRuntime.getAvailableSnapshot(), definition?.model)
-    ? definition?.model
-    : undefined
+  // Discovery resolved the definition's family; a definition made elsewhere runs on its own pin.
+  const wanted = definition?.runs ? definition.runs.model : definition?.model
+  const pin = hasLogin(modelRuntime.getAvailableSnapshot(), wanted) ? wanted : undefined
   const ref = previewModel() ?? overrideModel ?? pin ?? parent.model
   const model = ref && modelRuntime.getModel(ref.provider, ref.modelId)
-  const thinking = overrideThinking ?? definition?.thinking ?? parent.thinkingLevel
+  const thinking =
+    overrideThinking ??
+    (definition?.runs ? definition.runs.thinking : definition?.thinking) ??
+    parent.thinkingLevel
   const tools = [
     ...new Map([...parent.tools, ...parent.deferred].map((tool) => [tool.name, tool])).values(),
   ]
@@ -173,11 +203,11 @@ const fields = new Set([
   'model',
   'thinking',
   'fallback',
+  'family',
   'tools',
   'denyTools',
   'isolate',
   'resident',
-  'onFailure',
   'fast',
   'summaries',
 ])
@@ -188,9 +218,9 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     AgentDefinition,
     | 'description'
     | 'thinking'
+    | 'family'
     | 'isolate'
     | 'resident'
-    | 'onFailure'
     | 'fast'
     | 'summaries'
     | 'denyTools'
@@ -204,13 +234,15 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     model,
     thinking,
     fallback,
+    family,
     isolate,
     resident,
-    onFailure,
     fast,
     summaries,
     denyTools,
   } = frontmatter
+  if (family !== undefined && (typeof family !== 'string' || !isFamilyName(family)))
+    throw new Error('family must be a family name: lowercase letters, digits and -')
   if (denyTools !== undefined && !isTools(denyTools))
     throw new Error('denyTools must be a list of tool names')
   if (fallback !== undefined && !isFallback(fallback))
@@ -223,8 +255,6 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     throw new Error('model must be a nonempty string')
   if (isolate !== undefined && isolate !== 'none' && isolate !== 'worktree')
     throw new Error('isolate must be none or worktree')
-  if (onFailure !== undefined && onFailure !== 'diagnose' && onFailure !== 'fix')
-    throw new Error('onFailure must be diagnose or fix')
   if (resident !== undefined && typeof resident !== 'boolean')
     throw new Error('resident must be a boolean')
   if (fast !== undefined && typeof fast !== 'boolean') throw new Error('fast must be a boolean')
@@ -237,9 +267,9 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     ...(fallback !== undefined
       ? { fallback: typeof fallback === 'string' ? [fallback] : fallback }
       : {}),
+    ...(family ? { family: family } : {}),
     ...(isolate ? { isolate: isolate } : {}),
     ...(resident !== undefined ? { resident: resident } : {}),
-    ...(onFailure ? { onFailure: onFailure } : {}),
     ...(fast !== undefined ? { fast } : {}),
     ...(summaries !== undefined ? { summaries } : {}),
     ...(denyTools !== undefined ? { denyTools } : {}),
@@ -411,8 +441,10 @@ export async function discoverAgents(
           const base = definitions.get(overlay.name)
           if (!base) throw new Error(`addTools needs an earlier definition named ${overlay.name}`)
           const heading = source === 'user' ? 'User additions' : 'Project additions'
+          // A family without a model of its own replaces the model an earlier file pins.
+          const { model: _pin, ...unpinned } = base
           definitions.set(overlay.name, {
-            ...base,
+            ...(overlay.settings.family && !overlay.settings.model ? unpinned : base),
             ...overlay.settings,
             ...(overlay.settings.denyTools
               ? {
@@ -445,8 +477,12 @@ export async function discoverAgents(
     }
   }
   const decision = projectDecision(projectRoot, userHome)
+  const families = await readFamilies(userHome, projectRoot)
   return {
-    definitions: [...definitions.values()],
+    definitions: [...definitions.values()].map((definition) => ({
+      ...definition,
+      runs: definitionRuns(definition, families),
+    })),
     errors,
     replaced,
     projectSetup: decision === true ? 'trusted' : decision === false ? 'declined' : 'undecided',
@@ -462,11 +498,11 @@ export interface DefinitionFields {
   model?: string
   thinking?: string
   fallback?: string[]
+  family?: string
   tools?: string[]
   denyTools?: string[]
   isolate?: 'none' | 'worktree'
   resident?: boolean
-  onFailure?: 'diagnose' | 'fix'
   fast?: boolean
   summaries?: boolean
 }
@@ -501,11 +537,11 @@ export function serializeDefinition(
     ...(frontmatter.model ? [`model: ${scalar(frontmatter.model)}`] : []),
     ...(frontmatter.thinking ? [`thinking: ${scalar(frontmatter.thinking)}`] : []),
     ...(frontmatter.fallback ? [`fallback: ${flowList(frontmatter.fallback)}`] : []),
+    ...(frontmatter.family ? [`family: ${scalar(frontmatter.family)}`] : []),
     ...(frontmatter.tools ? [`tools: ${flowList(frontmatter.tools)}`] : []),
     ...(frontmatter.denyTools?.length ? [`denyTools: ${flowList(frontmatter.denyTools)}`] : []),
     ...(frontmatter.isolate === 'worktree' ? ['isolate: worktree'] : []),
     ...(frontmatter.resident !== undefined ? [`resident: ${frontmatter.resident}`] : []),
-    ...(frontmatter.onFailure ? [`onFailure: ${frontmatter.onFailure}`] : []),
     ...(frontmatter.fast ? ['fast: true'] : []),
     ...(frontmatter.summaries === false ? ['summaries: false'] : []),
   ]
@@ -580,10 +616,10 @@ export async function saveOverlay(
   if (form.description.trim() !== base.description)
     settings.push(`description: ${scalar(form.description.trim())}`)
   const baseModel = base.model && `${base.model.provider}/${base.model.modelId}`
-  if (form.model !== baseModel) {
-    if (!form.model) throw cannot('clear the model')
-    settings.push(`model: ${scalar(form.model)}`)
-  }
+  // A family replaces the model the base pins; without one, there is nothing to run on instead.
+  const unpin = !form.model && !!baseModel
+  if (unpin && !form.family) throw cannot('clear the model without a family')
+  if (form.model && form.model !== baseModel) settings.push(`model: ${scalar(form.model)}`)
   if (form.thinking !== base.thinking) {
     if (!form.thinking) throw cannot('clear thinking')
     settings.push(`thinking: ${scalar(form.thinking)}`)
@@ -591,14 +627,14 @@ export async function saveOverlay(
   const fallback = (form.fallback ?? []).join(', ')
   if (fallback !== (base.fallback ?? []).map(modelName).join(', '))
     settings.push(`fallback: ${flowList(form.fallback ?? [])}`)
+  if (form.family !== base.family || unpin) {
+    if (!form.family) throw cannot('clear the family')
+    settings.push(`family: ${scalar(form.family)}`)
+  }
   if ((form.isolate ?? 'none') !== (base.isolate ?? 'none'))
     settings.push(`isolate: ${form.isolate ?? 'none'}`)
   if ((form.resident ?? false) !== (base.resident ?? false))
     settings.push(`resident: ${form.resident ?? false}`)
-  if (form.onFailure !== base.onFailure) {
-    if (!form.onFailure) throw cannot('clear onFailure')
-    settings.push(`onFailure: ${form.onFailure}`)
-  }
   if ((form.fast ?? false) !== (base.fast ?? false)) settings.push(`fast: ${form.fast ?? false}`)
   if ((form.summaries ?? true) !== (base.summaries ?? true))
     settings.push(`summaries: ${form.summaries ?? true}`)

@@ -37,6 +37,8 @@ import type { BranchInput } from '../extensions/lineage/server.ts'
 import { Branch, Roots } from '../extensions/lineage/api.ts'
 import { Standing, Subagents } from '../extensions/subagents/api.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
+import { concludedIn } from '../extensions/conversations/server.ts'
+import { UiState } from '../server/ui-state.ts'
 
 const homes: string[] = []
 const hosts: OpenHost[] = []
@@ -131,18 +133,20 @@ async function fixture(
           }
         : name === 'workspaces'
           ? { doc: Workspaces, git: async () => '' }
-          : name === 'lineage'
-            ? {
-                rootOf: (id: number, ctx: Context) => rootOf(host, id, ctx),
-                branch: (input: BranchInput, ctx: Context) => startBranch(host, input, ctx),
-              }
-            : undefined
+          : name === 'conversations'
+            ? { concludedIn }
+            : name === 'lineage'
+              ? {
+                  rootOf: (id: number, ctx: Context) => rootOf(host, id, ctx),
+                  branch: (input: BranchInput, ctx: Context) => startBranch(host, input, ctx),
+                }
+              : undefined
   const host = {
     ...prepared,
     metadata: Metadata,
     emit,
     harness: () => opened.harness,
-    // Messages also implements workspaces' handoff point; the tests call its own service.
+    // Messages also implements workspaces' branches point; the tests call its own service.
     implement: (api: { name: string }, value: MessagesService) => {
       if (api.name === 'messages') service = value
     },
@@ -637,34 +641,6 @@ it('refuses messages to the user from anyone but @ultimate', async () => {
     to: 'user',
     text: 'Relayed update',
   })
-})
-it('names the lander in both message and reply model text', async () => {
-  const f = await fixture()
-  await f.opened.harness.commit(async (tx) => {
-    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).landerConversations.test = f.recipient.id
-  }, context)
-  await f.send(`#${f.recipient.id}`)
-  await until(() =>
-    f.observed.some((text) => text.startsWith(`Reply from #${f.recipient.id} (@lander)`)),
-  )
-  await (
-    await f.recipient.submit(
-      {
-        type: 'input',
-        content: 'SEND ' + JSON.stringify({ to: '#1', text: 'Lander update', reply: false }),
-      },
-      context,
-    )
-  ).wait(context)
-  await until(() =>
-    f.observed.some((text) => text.startsWith(`Message from #${f.recipient.id} (@lander)`)),
-  )
-  expect(f.observed).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining(`Reply from #${f.recipient.id} (@lander) to your message`),
-      expect.stringContaining(`Message from #${f.recipient.id} (@lander):`),
-    ]),
-  )
 })
 it('resolves a standing address and returns unanswered inputs as failure replies', async () => {
   const f = await fixture()
@@ -1448,6 +1424,19 @@ it("leaves a branch's final answer as a note while its work is under way", async
   ).toHaveLength(0)
   view.dispose()
 })
+it('leaves the final answer of a branch its landing concluded as a note, since the landing woke the starter', async () => {
+  const f = await fixture()
+  const b = await branched(f)
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(UiState, ROOT_CONVERSATION_ID))['ext.conversations.concluded'] = [b.id]
+  }, context)
+  // Its answer is routed after the lander concluded it: the starter already woke with the landing card.
+  await b.later('Done')
+  await until(async () => (await b.from()).length === 2)
+  const [, routed] = await b.from()
+  expect(routed).toMatchObject({ reply: false })
+  expect(routed.report).toBeUndefined()
+})
 it("leaves a branch's answer as a note while a subagent's report is still on its way", async () => {
   const f = await fixture()
   const b = await branched(f)
@@ -1515,6 +1504,46 @@ it("does not route an answer to the starter's reply-enabled message", async () =
   await until(async () => (await replies(f)).length === 2)
   await b.settled()
   expect((await b.from()).map((m) => m.re)).toEqual([1, 3])
+})
+it("does not route a branch's answer to a sibling's question to its starter", async () => {
+  // #18872 answered sibling #18345's question; the answer went back to #18345 and, a second time, to @ultimate.
+  const f = await fixture()
+  const b = await branched(f)
+  await (
+    await f.recipient.submit(
+      { type: 'input', content: 'SEND ' + JSON.stringify({ to: `#${b.id}`, text: 'Hook?' }) },
+      context,
+    )
+  ).wait(context)
+  await until(async () => (await b.from()).length === 2)
+  await b.settled()
+  const question = (await f.log())!.messages.find((m) => m.text === 'Hook?')!
+  expect((await b.from()).map((m) => [m.to, m.re])).toEqual([
+    [1, 1],
+    [f.recipient.id, question.id],
+  ])
+})
+it('still wakes the starter when a sibling question queued behind the last work run ends it', async () => {
+  const f = await fixture()
+  const b = await branched(f)
+  await b.branch.submit({ type: 'input', content: 'HOLD' }, context)
+  await until(f.holding)
+  await (
+    await f.recipient.submit(
+      { type: 'input', content: 'SEND ' + JSON.stringify({ to: `#${b.id}`, text: 'Hook?' }) },
+      context,
+    )
+  ).wait(context)
+  f.hold.release()
+  await until(async () => (await b.from()).some((m) => m.to === f.recipient.id))
+  await b.settled()
+  const toStarter = (await b.from()).filter((m) => m.to === 1).slice(1)
+  // However the two runs' routes interleave, the starter ends with one report, and never the answer to the sibling.
+  expect(toStarter.filter((m) => m.report)).toHaveLength(1)
+  expect(toStarter.at(-1)?.report).toBe(true)
+  expect(toStarter.some((m) => m.text.startsWith(`Answer: Message from #${f.recipient.id}`))).toBe(
+    false,
+  )
 })
 it("routes an answer to the starter's one-way message, waking it for a decision without a loop", async () => {
   const f = await fixture()

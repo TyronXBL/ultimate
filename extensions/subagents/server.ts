@@ -415,7 +415,7 @@ export const actions = {
   }),
   /** `{name, scope, frontmatter, instructions}`: write `<scope>/agents/<name>.md`; invalid input writes nothing. */
   saveDefinition: implementAction(SaveDefinitionAction, async (args, { host }) => {
-    const { name, scope, frontmatter, instructions, create } = (args ?? {}) as Record<
+    const { name, scope, frontmatter, instructions, create, overlay } = (args ?? {}) as Record<
       string,
       JsonValue
     >
@@ -429,11 +429,11 @@ export const actions = {
       model,
       thinking,
       fallback,
+      family,
       tools,
       denyTools,
       isolate,
       resident,
-      onFailure,
       fast,
       summaries,
     } = frontmatter
@@ -441,6 +441,8 @@ export const actions = {
     if (model !== undefined && typeof model !== 'string') throw new Error('model must be a string')
     if (thinking !== undefined && typeof thinking !== 'string')
       throw new Error('thinking must be a string')
+    if (family !== undefined && typeof family !== 'string')
+      throw new Error('family must be a string')
     if (
       fallback !== undefined &&
       (!Array.isArray(fallback) ||
@@ -460,8 +462,6 @@ export const actions = {
       throw new Error('denyTools must be a list of tool names')
     if (isolate !== undefined && isolate !== 'none' && isolate !== 'worktree')
       throw new Error('isolate must be none or worktree')
-    if (onFailure !== undefined && onFailure !== 'diagnose' && onFailure !== 'fix')
-      throw new Error('onFailure must be diagnose or fix')
     if (resident !== undefined && typeof resident !== 'boolean')
       throw new Error('resident must be a boolean')
     if (fast !== undefined && typeof fast !== 'boolean') throw new Error('fast must be a boolean')
@@ -481,17 +481,18 @@ export const actions = {
       ...(thinking ? { thinking } : {}),
       // An overlay save without one clears the base's list, as the form shows it empty.
       ...(fallback?.length ? { fallback } : {}),
+      ...(family ? { family } : {}),
       ...(tools ? { tools } : {}),
       ...(denyTools?.length ? { denyTools } : {}),
       ...(isolate ? { isolate } : {}),
       ...(resident !== undefined ? { resident } : {}),
-      ...(onFailure ? { onFailure } : {}),
       ...(fast ? { fast } : {}),
       ...(!summaries ? { summaries } : {}),
     }
     // The form shows the merged definition; a whole copy would freeze the overlays' additions and the base's
-    // instructions, so the save becomes an overlay holding only what differs from the base.
-    if (existing?.overlays?.length) {
+    // instructions, so the save becomes an overlay holding only what differs from the base. `overlay` asks for one
+    // too over a definition from another scope (a built-in moved to another family).
+    if (existing?.overlays?.length || (overlay === true && existing && existing.source !== scope)) {
       await saveOverlay(host, host.modelRuntime, scope, name, fields, instructions)
       const { definitions: saved } = await discoverAgents(
         host.ultimateRoot,
@@ -592,7 +593,9 @@ export default function subagents(
         host.modelRuntime,
       )
       const found = definitions.find((definition) => definition.name === name)
-      return found && { model: found.model, fallback: found.fallback }
+      return (
+        found && { model: found.runs ? found.runs.model : found.model, fallback: found.fallback }
+      )
     },
   })
   host.implement(SubagentsApi, {
@@ -621,7 +624,7 @@ export default function subagents(
         let created: ConversationRecord | undefined
         // A new conversation starts on the default model; an existing one keeps the model and thinking level chosen
         // in it, so a refresh changes them only where the definition pins them.
-        let base = { ...main, model: hostDefaultModel(host) }
+        let base = { ...main, model: await hostDefaultModel(host) }
         // One running on a backup model of its definition (extensions/backup) stays on it: backup returns it later.
         let backup: Parameters<typeof definitionAgent>[3]
         if (id !== undefined && (await tx.conversation(id))) {

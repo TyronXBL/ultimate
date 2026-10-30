@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import type { EntryRecord } from '@earendil-works/pi-durable'
 import type { ConversationSummary } from '../../../shared/protocol.ts'
 import { events } from './events.ts'
 import { errorMessage } from './format.ts'
@@ -7,8 +8,10 @@ import type {
   CompactCallTest,
   CompactDocs,
   CompactQuietTest,
+  CompactRow,
   CompactSummaryProps,
   CommandContribution,
+  Threading,
   ComposerRenderer,
   Contribution,
   DocumentContribution,
@@ -144,8 +147,10 @@ const shapes: Record<keyof WebExtension, [Check, string]> = {
       docs: optional(arrayOf(isString)),
       quiet: optional(isFunction),
       summary: optional(isComponent),
+      thread: optional(isFunction),
+      threads: optional(isFunction),
     }),
-    'a { when, tools?, docs?, quiet?, summary? } object',
+    'a { when, tools?, docs?, quiet?, summary?, thread?, threads? } object',
   ],
   intro: [
     fields({
@@ -599,6 +604,8 @@ export function compactTools(
   | {
       keeps: CompactCallTest
       quiet: CompactQuietTest
+      thread?: (row: CompactRow, docs: CompactDocs) => boolean
+      threads?: (entries: readonly EntryRecord[], docs: CompactDocs, shown: number) => Threading
       summary?: {
         extension: string
         version: number
@@ -648,8 +655,35 @@ export function compactTools(
       })
       return verdicts.includes(true) || (verdicts.includes('hidden') ? 'hidden' : false)
     },
+    thread: matching.some(({ compact }) => compact.thread)
+      ? (row, docs) =>
+          matching.some(({ name, compact }) => {
+            try {
+              return compact.thread?.(row, docs) ?? false
+            } catch (error) {
+              report(name, error)
+              // A broken test keeps the row readable.
+              return true
+            }
+          })
+      : undefined,
     summary: matching.flatMap(({ name, version, compact }) =>
       compact.summary ? [{ extension: name, version, component: compact.summary }] : [],
     )[0],
+    // The first facet that threads the conversation; a broken one leaves it unthreaded.
+    threads: matching.flatMap(({ name, compact }) => {
+      const { threads } = compact
+      if (!threads) return []
+      return [
+        (entries: readonly EntryRecord[], docs: CompactDocs, shown: number): Threading => {
+          try {
+            return threads(entries, docs, shown)
+          } catch (error) {
+            report(name, error)
+            return { root: '', of: new Map(), hidden: new Set(), roots: new Map(), live: [] }
+          }
+        },
+      ]
+    })[0],
   }
 }

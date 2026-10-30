@@ -14,5 +14,5 @@
   ],
   "project": ["**/*.{ts,tsx,css}"],
   "ignoreBinaries": ["loginctl"],
-  "ignore": ["web/src/lib/utils.ts"]
+  "ignore": ["web/src/lib/utils.ts", ".ultimate/skills/preview-demo/fixture/**"]
 }

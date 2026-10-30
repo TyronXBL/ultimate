@@ -45,6 +45,19 @@ export const RecentAction = actionRef<
   { id: number; limit?: number; types?: RootEvent['type'][] },
   RootEvent[]
 >('lineage', 'recent')
+/**
+ * No arguments → opens the project folder in Zed on the machine Ultimate runs on (`zeditor`, else `zed`, on PATH).
+ * Refused when neither is installed. User-only.
+ */
+export const OpenEditorAction = actionRef<null, { editor: string }>('lineage', 'openEditor')
+/**
+ * `{ id, sha }` → the abstract of branch `id` as its landing of `sha` froze it in its tree's tally; null when that
+ * landing has none.
+ */
+export const AbstractAction = actionRef<
+  { id: number; sha: string },
+  { text: string; at: number; title?: string; feature?: string } | null
+>('lineage', 'abstract')
 /** `{ id, instructions? }` → `{ taskId }`: compact root `id`'s tally, for its history footer and the palette. */
 export const CompactAction = actionRef<{ id: number; instructions?: string }, { taskId: number }>(
   'lineage',

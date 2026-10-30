@@ -13,8 +13,6 @@ Every built-in is already on; this setup adds how the repository is landed and r
   `fork:ci/<sha>-t<task>` after the same secret scan, follows the run in the background and wakes the caller once with
   a result card; it never runs the suites here. The gate and the tool share `extensions/ci/github.ts`, which calls the
   GitHub API with the fork's stored Git credential when there is one.
-- `agents/lander.md`: the lander fixes a submission that fails to land, then lands it once every check passes again,
-  reproducing only the failing files here.
 - `agents/{coordinator,worker,designer,reviewer}.md`: overlays that keep full suites off this machine: locally only
   `pnpm check` and the test files covering a change; full runs on CI.
 - `agents/reviewer-*.md`: the review team (correctness, simplicity, architecture), each on its own model; the shipped

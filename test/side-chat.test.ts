@@ -37,7 +37,7 @@ beforeAll(async () => {
     JSON.stringify({ summaryModel: 'unavailable/test' }),
   )
 })
-// Each test closes its servers: closing every test's at once outlasts the hook timeout.
+// Each test's servers close when it ends: closing every test's servers at once overruns the hook timeout under load.
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
 })

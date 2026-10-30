@@ -530,7 +530,7 @@ function globals(
       description:
         "Agent definitions for subagents and automations, the files that failed to parse, user or project files replacing a built-in, and the project's `.ultimate/` setup decision: its definitions apply only once trusted. To change one, edit its file.",
       signature:
-        "(): Promise<{ definitions: { name: string; description: string; path: string; source: 'builtin' | 'user' | 'project'; instructions: string; model?: { provider: string; modelId: string }; thinking?: string; tools?: string[]; isolate?: 'none' | 'worktree'; resident?: boolean; onFailure?: 'diagnose' | 'fix'; fast?: boolean; summaries?: boolean; overlays?: string[] }[]; errors: { name: string; path: string; source: string; error: string }[]; replaced: { name: string; path: string; source: string }[]; projectSetup: 'trusted' | 'declined' | 'undecided' }>",
+        "(): Promise<{ definitions: { name: string; description: string; path: string; source: 'builtin' | 'user' | 'project'; instructions: string; model?: { provider: string; modelId: string }; thinking?: string; tools?: string[]; isolate?: 'none' | 'worktree'; resident?: boolean; fast?: boolean; summaries?: boolean; overlays?: string[] }[]; errors: { name: string; path: string; source: string; error: string }[]; replaced: { name: string; path: string; source: string }[]; projectSetup: 'trusted' | 'declined' | 'undecided' }>",
       execute: () =>
         discoverAgents(host.ultimateRoot, host.projectRoot, host.userHome, host.modelRuntime),
     },
@@ -603,7 +603,7 @@ export default function codemode(host: ExtensionHost) {
     name: 'codemode',
     replay: 'unsafe',
     description:
-      'Run an async JavaScript function body in a QuickJS/WASM sandbox. Call tools.<name>(args), use Promise.all for parallel calls, text()/console.log() for output, return for JSON, store(key,value)/load(key) for durable conversation values. Store writes are saved only when the script finishes successfully; a yielded wait discards them. No host I/O except injected functions. Nested results stay out of model context. Nested tool hooks do not run. Optional first line: // @options: {"timeout_ms":60000,"max_output_tokens":10000}.\n\n' +
+      'Run an async JavaScript function body in a QuickJS/WASM sandbox. Call tools.<name>(args), use Promise.all for parallel calls, text()/console.log() for output, return for JSON, store(key,value)/load(key) for durable conversation values (at most 256K characters of JSON per value, 1M in all). Store writes are saved only when the script finishes successfully; a yielded wait discards them. No host I/O except injected functions. Nested results stay out of model context. Nested tool hooks do not run. Optional first line: // @options: {"timeout_ms":60000,"max_output_tokens":10000}.\n\n' +
       renderDeclarations({ globals: globalDeclarations }),
     parameters: Type.Object({ code: Type.String() }),
     async execute({ code: source }, api, context) {

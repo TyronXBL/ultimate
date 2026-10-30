@@ -8,17 +8,31 @@ import { defineExtension, defineTool, section } from '@earendil-works/pi-durable
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import type { ExtensionHost } from '../../server/extensions.ts'
 
+/** Chromium executables Playwright may have installed under `home` for `platform`, newest first. */
+export async function playwrightChromiums(
+  home: string,
+  platform = process.platform,
+  arch = process.arch,
+) {
+  const [cache, executable] =
+    platform === 'darwin'
+      ? [
+          join(home, 'Library/Caches/ms-playwright'),
+          `chrome-mac-${arch}/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`,
+        ]
+      : [join(home, '.cache/ms-playwright'), 'chrome-linux64/chrome']
+  return (await readdir(cache).catch(() => []))
+    .filter((name) => name.startsWith('chromium-'))
+    .toSorted((a, b) => b.localeCompare(a, 'en', { numeric: true }))
+    .map((name) => join(cache, name, executable))
+}
+
 export async function browserBinary() {
-  const cache = join(homedir(), '.cache/ms-playwright')
   const candidates = [
     process.env.ULTIMATE_CHROMIUM,
     '/usr/bin/chromium',
     '/usr/bin/google-chrome-stable',
-    ...(await readdir(cache).catch(() => []))
-      .filter((name) => name.startsWith('chromium-'))
-      .toSorted()
-      .toReversed()
-      .map((name) => join(cache, name, 'chrome-linux64/chrome')),
+    ...(await playwrightChromiums(homedir())),
   ].filter((path): path is string => !!path)
   for (const path of candidates) {
     try {
@@ -29,7 +43,7 @@ export async function browserBinary() {
     }
   }
   throw new Error(
-    'No Chromium found. Set ULTIMATE_CHROMIUM or install /usr/bin/chromium, /usr/bin/google-chrome-stable, or ~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome.',
+    'No Chromium found. Set ULTIMATE_CHROMIUM, install /usr/bin/chromium or /usr/bin/google-chrome-stable, or run `npx playwright install chromium` (~/.cache/ms-playwright on Linux, ~/Library/Caches/ms-playwright on macOS).',
   )
 }
 
@@ -211,15 +225,17 @@ export default function browserExtension(host: ExtensionHost) {
                   else await guard(page.locator(step.wait).waitFor())
                 } else if ('send' in step || 'until' in step) {
                   // `window.ultimate` (web/src/sdk/test-hook.ts) appears once the page's SDK has loaded.
-                  await guard(
-                    page
-                      .waitForFunction(() => 'ultimate' in window)
-                      .catch(() => {
-                        throw new Error(
-                          'This page has no window.ultimate: not an Ultimate UI, or one older than send/until steps',
-                        )
-                      }),
-                  )
+                  const hook = () =>
+                    guard(
+                      page
+                        .waitForFunction(() => 'ultimate' in window)
+                        .catch(() => {
+                          throw new Error(
+                            'This page has no window.ultimate: not an Ultimate UI, or one older than send/until steps',
+                          )
+                        }),
+                    )
+                  await hook()
                   if ('send' in step)
                     value = await guard(
                       page.evaluate(
@@ -230,23 +246,43 @@ export default function browserExtension(host: ExtensionHost) {
                     )
                   else {
                     const ms = step.timeoutMs ?? untilTimeoutMs
+                    const end = Date.now() + ms
                     // The hook times out first and says what was still busy; the guard only backs it up.
-                    const outcome = await guard(
-                      page.evaluate(
-                        ([condition, conversation, timeoutMs]) =>
-                          window
-                            .ultimate!.until(condition, {
-                              conversation: conversation ?? undefined,
-                              timeoutMs,
-                            })
-                            .then(
-                              (result) => ({ result }),
-                              (error: unknown) => ({ error: String(error) }),
-                            ),
-                        [step.until, step.conversation ?? null, ms] as const,
-                      ),
-                      ms,
-                    )
+                    const wait = () =>
+                      guard(
+                        page.evaluate(
+                          ([condition, conversation, timeoutMs]) =>
+                            window
+                              .ultimate!.until(condition, {
+                                conversation: conversation ?? undefined,
+                                timeoutMs,
+                              })
+                              .then(
+                                (result) => ({ result }),
+                                (error: unknown) => ({ error: String(error) }),
+                              ),
+                          [
+                            step.until,
+                            step.conversation ?? null,
+                            Math.max(1, end - Date.now()),
+                          ] as const,
+                        ),
+                        ms,
+                      )
+                    let outcome: Awaited<ReturnType<typeof wait>>
+                    for (;;) {
+                      try {
+                        outcome = await wait()
+                        break
+                      } catch (error) {
+                        // A reload (hot reload, server swap) destroys the wait, not the sent turn: the page keeps its
+                        // sent records in sessionStorage, so waiting again in the new page is a retry, never a resend.
+                        if (!String(error).includes('Execution context was destroyed')) throw error
+                        context.abortSignal?.throwIfAborted()
+                        api.output('The page reloaded; waiting again\n')
+                        await hook()
+                      }
+                    }
                     if ('error' in outcome) throw new Error(outcome.error.replace(/^Error: /, ''))
                     value = outcome.result
                   }

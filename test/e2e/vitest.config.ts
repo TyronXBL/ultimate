@@ -9,5 +9,7 @@ export default defineConfig({
     maxWorkers: 4,
     // As in vite.config.ts: Node loads the extension loader, as in production.
     server: { deps: { external: [/\/server\/extension-loader\.ts$/] } },
+    // Like vite.config.ts: under an agent Vitest's minimal reporter is silent for passing files.
+    reporters: ['default'],
   },
 })

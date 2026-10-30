@@ -89,9 +89,12 @@ async function start() {
   const root = await temp('ultimate-trace-')
   await linkDependencies(root)
   await mkdir(join(root, 'web'))
+  // On macOS chokidar shares one FSEvents stream per tree across a process's servers; a server joining it receives
+  // the late events of its own fresh files and restarts Vite mid-test. Without usePolling: false chokidar falls back to
+  // polling on macOS instead of fs.watch.
   await writeFile(
     join(root, 'vite.config.ts'),
-    "export default { root: 'web', optimizeDeps: { noDiscovery: true } }",
+    "export default { root: 'web', optimizeDeps: { noDiscovery: true }, server: { watch: { useFsEvents: false, usePolling: false } } }",
   )
   await mkdir(join(root, 'extensions'))
   await symlink(resolve('extensions/secrets'), join(root, 'extensions/secrets'))
@@ -609,6 +612,38 @@ it('records a tool that returns an error result as failed, with its text', async
   })
   expect(rows.find((row) => row.name === 'fine')).toMatchObject({ ok: true })
   expect(rows.find((row) => row.name === 'fine')).not.toHaveProperty('error')
+  trace.close()
+})
+
+it('names a failed shell command by its exit code, from the error diagnostic', async () => {
+  // Pi's bash returns a nonzero exit as an error result with no text parts: the exit code is its error diagnostic.
+  const exited = {
+    isError: true,
+    structuredOutput: { output: 'make: *** [all] Error 2\n', truncated: false, exitCode: 2 },
+    diagnostics: [
+      { severity: 'info', code: 'full_output', message: 'Full output: /tmp/x' },
+      { severity: 'error', code: 'exit_code', message: 'Command exited with code 2' },
+    ],
+  }
+  const trace = callTrace(join(await temp(), 'trace.sqlite'))
+  trace.open()
+  const [bash] = trace.tools({
+    name: 'ext',
+    tools: [{ name: 'bash', execute: async () => exited } as never],
+  }).tools!
+  await bash.execute(
+    { command: 'make all' },
+    {
+      conversationId: 1,
+      taskId: 1,
+      callId: 'call',
+      getTask: async () => ({ input: model('call') }),
+    } as never,
+    {} as never,
+  )
+  const [bashRow] = trace.reader.query().filter((row) => row.name === 'bash')
+  expect(bashRow).toMatchObject({ ok: false, error: 'Command exited with code 2' })
+  expect(bashRow).not.toHaveProperty('args')
   trace.close()
 })
 

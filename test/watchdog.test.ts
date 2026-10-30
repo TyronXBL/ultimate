@@ -53,7 +53,7 @@ const error = (text = 'invalid model configuration') =>
 const overloaded = 'Our servers are currently overloaded. Please try again later.'
 const quota = '429 You exceeded your current quota (insufficient_quota).'
 const rateHint =
-  'Still rate limited after Pi’s retries, so Ultimate is paused; once the limit resets (or the agent definition has a backup model in its `fallback`), press Play and resume this conversation with a message'
+  'Still rate limited after Pi’s retries; once the limit resets (or the agent definition has a backup model in its `fallback`), resume this conversation with a message'
 const model = { provider: 'faux', modelId: 'faux-1' }
 const Anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'watchdog-test.anchor',

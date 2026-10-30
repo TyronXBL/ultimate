@@ -115,7 +115,7 @@ async function agentsArea(host: CheckHost): Promise<SetupIssue[]> {
       area: 'Agent models',
       status: 'warn',
       summary: `${names.join(', ')} → ${provider}: no login here`,
-      impact: `They fail at their first model call${names.includes('lander') ? ', so landings fail' : ''}.`,
+      impact: 'They fail at their first model call.',
       fix: LOGIN,
     })
   if (errors.length)
@@ -171,8 +171,9 @@ async function secretsArea(host: CheckHost): Promise<SetupIssue> {
   const missing = new Map<string, string[]>()
   for (const extension of host.extensions()) {
     if (!extension.enabled || !extension.server || extension.server.error) continue
-    for (const { name } of extension.server.secrets ?? [])
-      if (!set.has(name)) missing.set(name, [...(missing.get(name) ?? []), extension.name])
+    for (const { name, provider } of extension.server.secrets ?? [])
+      if (!set.has(name) && !(provider && configured(host, provider)))
+        missing.set(name, [...(missing.get(name) ?? []), extension.name])
   }
   if (!missing.size) return { area: 'Secrets', status: 'ok', summary: 'all set' }
   const names = [...missing.keys()]

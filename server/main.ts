@@ -15,7 +15,6 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { ChildMessage, SupervisorMessage } from './supervisor-protocol.ts'
 
 import { alive } from './lock.ts'
-import { homedir } from 'node:os'
 import { realpath } from 'node:fs/promises'
 import { extensionModules } from './vite-extensions.ts'
 import { admit, createAccess } from './request-security.ts'
@@ -53,7 +52,15 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
     report: notice,
   })
   let system: Awaited<ReturnType<typeof createSystem>> | undefined
+  // Remote origins (Tailscale's HTTPS URL) usually register after startup and can go away: say each change once.
+  let remote: string[] = []
   const access = createAccess(() => {
+    const origins = access.origins()
+    for (const origin of origins)
+      if (!remote.includes(origin)) console.log(`Ultimate: ${origin} (remote)`)
+    for (const origin of remote)
+      if (!origins.includes(origin)) console.log(`Ultimate: ${origin} (remote) is no longer served`)
+    remote = origins
     void system
       ?.changed()
       .catch((error: unknown) => console.error('Publishing access changes failed:', error))
@@ -110,7 +117,7 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
       allowedHosts: true,
       hmr: { server: hmr },
       fs: {
-        allow: [ultimateRoot, projectRoot, resolvePath(options.userHome ?? homedir(), '.ultimate')],
+        allow: [ultimateRoot, projectRoot, resolvePath(host.userHome, '.ultimate')],
       },
     },
     appType: 'spa',

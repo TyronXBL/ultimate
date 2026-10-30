@@ -5,7 +5,7 @@ for @ultimate and the dream branch, is in [DREAM.md](DREAM.md); this file is the
 
 A dream is ordinary work, and nothing in code tracks it:
 
-1. **Asked for.** The user tells @ultimate to dream, presses **Dream** (Memory panel header or ⌘K "Dream…"; user-only
+1. **Asked for.** The user tells @ultimate to dream, presses **Dream** (Memory surface header or ⌘K "Dream…"; user-only
    `start` gives @ultimate a `dream.requested` input), or a built-in automation fires (below).
 2. **Dreamed.** In that turn @ultimate writes its handoff into the prompt of one dream branch, which runs the six
    passes as `dream-pass` subagents (`agents/dream-pass.md`) and answers with its journal and a `Decisions:` block.
@@ -109,4 +109,4 @@ restart never returns: the new host opens the requested chapter.
 
 `refs.ts` holds the document and actions: `start`, `asleep`, `switch` (user-only), `prepare`, `chapters`, and `stats`,
 which reads tool calls from `<home>/trace.sqlite` read-only: calls, failures and mean duration per tool, the 20 most
-frequent errors, and enabled tools never called in the trace's window (7 days or 200k rows).
+frequent errors (each with its two newest calls as `#<conversation>/<entry>` and the start of its args), and enabled tools never called in the trace's window (7 days or 200k rows).

@@ -378,6 +378,8 @@ export function supervisor(
           ) as ConversationId
           // The escalation message already reached @ultimate.
           if (kind === 'escalated' && id === ultimate) continue
+          // A lander conversation is its log and takes no input; a subscriber stored before that stays harmless.
+          if ((await runtime.snapshot(host.metadata, id, ctx))?.label === 'lander') continue
           const requestId = `automations:${sub.id}:${event}:${target}`
           const conversation = await runtime.conversation(id, ctx)
           if (!conversation) throw new Error(`Automation ${sub.id}: conversation #${id} is missing`)

@@ -111,14 +111,14 @@ async function boundary(tx: Tx, task: Generation, next?: Generation) {
 
 /**
  * What a failed run's error asks for: a broken login needs the user, so it reports at once with a hint to log in again;
- * a rate limit that outlasted Pi's retries paused Ultimate (the pause extension), so it reports once and never
- * re-prompts into the limit; an incomplete Claude Code relay response (status 200 or unknown) is a dropped stream,
- * and a provider's per-user concurrency cap frees itself, so both retry like Pi's own retryable errors.
+ * a rate limit that outlasted Pi's retries reports once and never re-prompts into the limit; an incomplete Claude Code
+ * relay response (status 200 or unknown) is a dropped stream, and a provider's per-user concurrency cap frees itself,
+ * so both retry like Pi's own retryable errors.
  */
 export function diagnose(error: string, assistant?: AssistantMessage) {
   if (rateLimited(error))
     return {
-      hint: 'Still rate limited after Pi’s retries, so Ultimate is paused; once the limit resets (or the agent definition has a backup model in its `fallback`), press Play and resume this conversation with a message',
+      hint: 'Still rate limited after Pi’s retries; once the limit resets (or the agent definition has a backup model in its `fallback`), resume this conversation with a message',
       temporary: false,
     }
   if (/not logged in/i.test(error))

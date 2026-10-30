@@ -16,6 +16,7 @@ import {
   scriptMessaged,
   sentBy,
   sentStatus,
+  threadRow,
   ultimateCompact,
   waitingOnUser,
 } from '../../extensions/messages/data.tsx'
@@ -135,8 +136,8 @@ describe('sender accents', () => {
   })
   it('gives the user neutral ink and conversations a palette colour, the same one every time', () => {
     expect(accentOf('user')).toEqual({
-      left: 'border-l-foreground/40',
       fill: 'bg-foreground/[0.03]',
+      edge: 'border-foreground/20',
       name: 'text-foreground',
     })
     expect(accentOf(97078)).toBe(accentOf(97078))
@@ -146,7 +147,7 @@ describe('sender accents', () => {
   })
   it("gives @ultimate the theme's accent, apart from the user, the palette and the remote violet", () => {
     const ultimate = accentOf('ultimate')
-    expect(ultimate.left).toBe('border-l-brand/70')
+    expect(ultimate.name).toBe('text-brand')
     expect(accentOf('user')).not.toBe(ultimate)
     expect([2, 3, 4, 5, 6, 7].map(accentOf)).not.toContain(ultimate)
     expect(accentOf('remote')).not.toBe(ultimate)
@@ -246,6 +247,25 @@ describe("background in @ultimate's compact transcript", () => {
     expect(
       backgroundRow(row('pi.assistant', undefined, said('stop')), { messages: [], next: 1 }),
     ).toBe(false)
+  })
+
+  it('reads as the thread only what you and @ultimate say to each other', () => {
+    const toUser = { id: 'ask', name: 'message', arguments: { to: 'user' } }
+    const toAgent = { id: 'tell', name: 'message', arguments: { to: '#5' } }
+    const empty = { messages: [], next: 1 }
+    expect(threadRow(row('pi.user'), messagesLog)).toBe(true)
+    expect(threadRow(row('board.message', { from: 'user' }), messagesLog)).toBe(true)
+    expect(threadRow(row('pi.assistant', undefined, said('toolUse'), [toUser]), messagesLog)).toBe(
+      true,
+    )
+    expect(threadRow(row('pi.assistant', undefined, said('stop')), empty)).toBe(true)
+    // An answer that went back to the agent that asked, a message to an agent, a landing, a reload.
+    expect(threadRow(row('pi.assistant', undefined, said('stop')), messagesLog)).toBe(false)
+    expect(threadRow(row('pi.assistant', undefined, said('toolUse'), [toAgent]), messagesLog)).toBe(
+      false,
+    )
+    expect(threadRow(row('lineage.note', { source: 'lander' }), messagesLog)).toBe(false)
+    expect(threadRow(row('prompt.build'), messagesLog)).toBe(false)
   })
 
   it('names who each row was with', () => {
