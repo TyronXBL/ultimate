@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { Context } from '@earendil-works/chord'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { spawnGroup, stopGroup, groupAlive, readPidFile } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
@@ -30,11 +30,20 @@ async function makeResult(
 ): Promise<BackgroundResult> {
   const files = paths(task)
   let text = ''
-  try {
-    text = await readFile(files.log, 'utf8')
-  } catch {
-    /* command may not have opened the log yet */
-  }
+  // Only the end of the log: a command may have written gigabytes.
+  const handle = await open(files.log, 'r').catch(
+    // The command may not have opened the log yet.
+    () => undefined,
+  )
+  if (handle)
+    try {
+      const { size } = await handle.stat()
+      const length = Math.min(size, 64 * 1024)
+      const { buffer } = await handle.read(Buffer.alloc(length), 0, length, size - length)
+      text = buffer.toString('utf8')
+    } finally {
+      await handle.close()
+    }
   const tail = text.split('\n').slice(-40).join('\n').slice(-4096)
   return {
     command: task.input.command,
@@ -46,6 +55,8 @@ async function makeResult(
     log: files.log,
   }
 }
+/** Look often at first, then every 15 s: a long run costs few checkpoints. */
+const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
 const Run = defineTask<Input, Checkpoint, null>({
   name: 'background.run',
   version: 1,
@@ -55,6 +66,9 @@ const Run = defineTask<Input, Checkpoint, null>({
       const files = paths(task)
       await mkdir(join(task.input.home, 'background'), { recursive: true })
       const began = runtime.now()
+      // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started.
+      const left = await readPidFile(files.pid)
+      if (left) await stopGroup(left, { pidFile: files.pid })
       await rm(files.status, { force: true })
       const script = `trap 'code=$?; printf "%s\\n" "$code" > "$STATUS"; exit "$code"' EXIT; ${task.input.command}; code=$?; trap - EXIT; printf "%s\\n" "$code" > "$STATUS"; exit "$code"`
       const group = spawnGroup(
@@ -96,7 +110,7 @@ const Run = defineTask<Input, Checkpoint, null>({
       else
         next = {
           status: 'sleeping' as const,
-          until: runtime.now() + 3000,
+          until: runtime.now() + pollMs(runtime.now() - began),
           checkpoint: { phase: 'poll' as const, pid, began },
         }
       await runtime.commit(() => next, ctx)
@@ -149,10 +163,16 @@ export default function backgroundExtension(
       defineTool({
         name: 'background',
         description:
-          'Run a local shell command in the background. Returns immediately; you will be woken with its result, so keep working or end your turn.',
+          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in your checkout. Returns immediately; you are woken once with a result card: exit code, duration, the last 40 lines of output and the full log path. Stopping your conversation stops the command. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
         parameters: Type.Object({
           command: Type.String(),
-          timeout: Type.Optional(Type.Number({ minimum: 1, maximum: 86400 })),
+          timeout: Type.Optional(
+            Type.Number({
+              minimum: 1,
+              maximum: 86400,
+              description: 'Seconds before the command is stopped; default 3600.',
+            }),
+          ),
         }),
         async execute(args, api, ctx) {
           const cwd = await checkout(api.conversationId, ctx)
