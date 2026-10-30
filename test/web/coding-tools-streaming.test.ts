@@ -7,6 +7,9 @@ vi.mock('@/sdk', async () => ({
   api: { action: () => new Promise(() => {}) },
   cn: (...names: unknown[]) => names.filter(Boolean).join(' '),
   defineWebExtension: (extension: unknown) => extension,
+  definePoint: (name: string) => ({ name }),
+  // No extension provides a point here: the open-file button stays out.
+  Provided: ({ children }: { children: (value: undefined) => unknown }) => children(undefined),
   formatBytes: (bytes: number) => `${bytes} B`,
   shortenPath: (path: string) => path,
   useConversation: () => undefined,
