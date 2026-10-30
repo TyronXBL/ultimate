@@ -435,10 +435,14 @@ export default function instanceExtension(
       if (!child) throw new Error(`Unknown subagent: ${args.subagent}`)
       conversationId = child.conversationId
     }
-    const workspace =
+    let workspace =
       args.subagent === undefined
         ? await previewWorkspace(host, workspaces, conversationId, context)
         : await workspaces.get(conversationId, context)
+    if (workspace?.state === 'preparing') {
+      await workspaces.ready(conversationId, context)
+      workspace = await workspaces.get(conversationId, context)
+    }
     if (args.subagent !== undefined && !workspace)
       throw new Error('Subagent must have an active worktree isolate')
     if (workspace) {
