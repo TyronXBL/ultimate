@@ -1,5 +1,5 @@
 import { request } from 'node:http'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve as resolvePath } from 'node:path'
 import { applyImmutable } from '@earendil-works/chord/delta'
 import type { Op } from '@earendil-works/chord/delta'
@@ -368,17 +368,22 @@ export default host => { host.resource('cleanup.process',()=>{
     const { server } = await fixture(false, undefined, true)
     const user = join(server.host.userHome, '.ultimate')
     await mkdir(join(user, 'extensions/mine'), { recursive: true })
+    // A link inside the extensions folder does not open its target's other files.
+    const target = join(server.host.home, 'linked')
+    await mkdir(target)
+    await symlink(target, join(user, 'extensions/linked'))
     const files = [
       'secrets.json',
       'github-fork-credentials',
       'tailscale.json',
       'extensions/mine/secrets.json',
+      'extensions/linked/notes.txt',
       'extensions/mine/web.tsx',
     ]
     for (const file of files) await writeFile(join(user, file), 'export default {}')
     const status = async (file: string) =>
       (await fetch(server.url + '/@fs' + join(user, file))).status
-    expect(await Promise.all(files.map(status))).toEqual([403, 403, 403, 403, 200])
+    expect(await Promise.all(files.map(status))).toEqual([403, 403, 403, 403, 403, 200])
   })
   it('scans committed submissions newest first, filtered and paged', async () => {
     const { server } = await fixture(false, undefined, true)
