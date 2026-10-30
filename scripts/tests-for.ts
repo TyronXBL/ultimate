@@ -41,27 +41,37 @@ for (const [file, text] of source)
  */
 const hub = (file: string) => file.startsWith('test/helpers')
 
-const changed = process.argv.length > 2 ? process.argv.slice(2) : branchChanges()
-const covering = new Set<string>()
-for (const file of changed) {
+/** The tests that import `file`, directly or through other files, `file` itself included when it is one. */
+function importingTests(file: string) {
   const seen = new Set([file])
   for (const current of seen)
     if (current === file || !hub(current))
       for (const importer of importers.get(current) ?? []) seen.add(importer)
-  for (const test of tests) if (seen.has(test)) covering.add(test)
+  return tests.filter((test) => seen.has(test))
+}
+
+const changed = process.argv.length > 2 ? process.argv.slice(2) : branchChanges()
+const covering = new Set<string>()
+for (const file of changed) {
+  for (const test of importingTests(file)) covering.add(test)
   const extension = /^(?:\.ultimate\/)?extensions\/([^/]+)\//.exec(file)?.[1]
-  if (extension) {
-    const named = new RegExp(`extensions/${extension}/|['"\`]${extension}['"\`]`)
-    for (const test of tests) if (named.test(source.get(test)!)) covering.add(test)
-  }
+  if (!extension) continue
+  // A test or a shared fixture (a `test/` file tests import) that names the extension loads it.
+  const named = new RegExp(`extensions/${extension}/|['"\`]${extension}['"\`]`)
+  for (const [path, text] of source)
+    if (path.startsWith('test/') && !hub(path) && named.test(text))
+      for (const test of importingTests(path)) covering.add(test)
 }
 
 const unit = [...covering].filter((file) => !file.startsWith('test/e2e/')).toSorted()
 const e2e = [...covering].filter((file) => file.startsWith('test/e2e/')).toSorted()
-const core = changed.filter((file) =>
-  /^(server\/|shared\/|test\/helpers|test\/e2e\/vitest\.config|package\.json|pnpm-lock|vite\.config|tsconfig)/.test(
-    file,
-  ),
+/** Changes the graph cannot place: core, helpers, configuration and anything else outside the mapped folders. */
+const core = changed.filter(
+  (file) =>
+    !file.endsWith('.md') &&
+    (hub(file) ||
+      /(^|\/)[^/]*config[^/]*$/.test(file) ||
+      !/^(extensions|\.ultimate|web|lib|scripts|test)\//.test(file)),
 )
 if (core.length || covering.size > 30)
   console.log(

@@ -19,7 +19,14 @@ afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close()
 })
 
-it('runs in the background and delivers one result; stopping its owner kills the process group', async () => {
+it('runs in the background and delivers one result; concluding its owner kills the process group', async () => {
+  // Names this test's sleeper among every process on the machine.
+  const marker = `background-test-${process.pid}-${Date.now()}`
+  const sleeping = () =>
+    run('pgrep', ['-f', marker]).then(
+      () => true,
+      () => false,
+    )
   const root = await temp('ultimate-background-')
   const prepared = await prepareHarness({
     ultimateRoot: root,
@@ -27,27 +34,19 @@ it('runs in the background and delivers one result; stopping its owner kills the
     home: `${root}/home`,
     faux: fauxProvider(),
   })
-  let opened: OpenHost
-  prepared.registry.install(
-    backgroundExtension({
-      projectRoot: root,
-      home: `${root}/home`,
-      harness: () => opened.harness,
-      need: (() => ({ get: async () => undefined })) as never,
-    }),
-  )
+  prepared.registry.install(backgroundExtension({ projectRoot: root, home: `${root}/home` }))
   prepared.faux!.setResponses([
     fauxAssistantMessage(
       [fauxToolCall('background', { command: "printf 'line one\\nline two\\n'; exit 3" })],
       { stopReason: 'toolUse' },
     ),
     fauxAssistantMessage([fauxText('Started.')]),
-    fauxAssistantMessage([fauxToolCall('background', { command: 'sleep 60' })], {
+    fauxAssistantMessage([fauxToolCall('background', { command: `sleep 60; : ${marker}` })], {
       stopReason: 'toolUse',
     }),
     fauxAssistantMessage([fauxText('Started.')]),
   ])
-  opened = await prepared.open()
+  const opened = await prepared.open()
   hosts.push(opened)
   const caller = opened.root
   await caller.submit({ type: 'input', requestId: 'first', content: 'Run command' }, context)
@@ -64,20 +63,10 @@ it('runs in the background and delivers one result; stopping its owner kills the
     tail: expect.stringContaining('line two'),
   })
   await caller.submit({ type: 'input', requestId: 'second', content: 'Start sleeper' }, context)
-  await until(
-    async () =>
-      await run('pgrep', ['-f', '^sleep 60$']).then(
-        () => true,
-        () => false,
-      ),
-  )
+  await until(sleeping)
+  // What concluding the conversation does to its background tasks.
   await caller.abort(context, { background: true })
-  await until(async () =>
-    run('pgrep', ['-f', '^sleep 60$']).then(
-      () => false,
-      () => true,
-    ),
-  )
+  await until(async () => !(await sleeping()))
   expect(
     (await caller.context(context)).entries.filter((entry) => entry.kind === 'background.result'),
   ).toHaveLength(1)

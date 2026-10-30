@@ -1,6 +1,6 @@
 import { cn } from 'cn'
 import { CheckIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
-import { defineWebExtension, Fold } from '@/sdk'
+import { Card, defineWebExtension, Fold } from '@/sdk'
 import type { EntryRecord } from '@/sdk'
 import type { BackgroundResult } from './refs.ts'
 
@@ -31,9 +31,9 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
         </>
       }
     >
-      <section
+      <Card
         className={cn(
-          'min-w-0 rounded-md border border-l-2 border-border bg-muted/20 font-mono text-[12px]',
+          'font-mono text-[12px]',
           failed ? 'border-l-error/70' : 'border-l-success/70',
         )}
       >
@@ -53,7 +53,7 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
             {result.tail || '(no output)'}
           </pre>
         </div>
-      </section>
+      </Card>
     </Fold>
   )
 }
