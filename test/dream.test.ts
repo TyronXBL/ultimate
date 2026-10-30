@@ -352,5 +352,8 @@ it('counts skill reads and runs from the trace, with failed reads and listed ski
   expect(db.prepare('SELECT count(*) AS n FROM calls WHERE args IS NOT NULL').get()).toEqual({
     n: 0,
   })
+  expect(db.prepare("SELECT error FROM calls WHERE kind = 'skill' AND ok = 0").all()).toEqual([
+    { error: 'Read failed' },
+  ])
   db.close()
 })

@@ -407,7 +407,8 @@ CREATE INDEX IF NOT EXISTS calls_at ON calls (at);`)
           }
           const { context: self, finish: finishTool } = begin(call, parent ?? null)
           const skill = skillRead(tool.name, args)
-          // The skill row is a child of the read's, written first, with the same outcome.
+          // The skill row is a child of the read's, written first, with the same outcome; a failure keeps no path, only
+          // that the read failed (the read's own row has its error).
           const mark =
             skill &&
             begin(
@@ -415,7 +416,7 @@ CREATE INDEX IF NOT EXISTS calls_at ON calls (at);`)
               self,
             )
           const finish = (ok: boolean, value: unknown) => {
-            if (mark) mark.finish(ok, value)
+            if (mark) mark.finish(ok, 'Read failed')
             finishTool(ok, value)
           }
           const key = `${api.taskId}/${api.callId}`
