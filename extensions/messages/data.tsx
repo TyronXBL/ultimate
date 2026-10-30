@@ -201,7 +201,9 @@ export function threadRow(
   log: Readonly<MessagesData> | null | undefined,
 ): boolean {
   const { entry, calls } = row
-  if (entry.kind === 'pi.user') return true
+  // The user's typed requests that carry a card of their own: an idea launched, a branch with its agent setup.
+  if (entry.kind === 'pi.user' || entry.kind === 'ideas.launch' || entry.kind === 'branch.setup')
+    return true
   if (entry.kind === 'board.message' || entry.kind === 'board.reply')
     return (entry.data as { from?: unknown } | undefined)?.from === 'user'
   if (entry.kind !== 'pi.assistant' || backgroundRow(row, log) !== false) return false

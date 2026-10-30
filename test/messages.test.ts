@@ -35,7 +35,7 @@ import type { MessagesService } from '../extensions/messages/api.ts'
 import { BranchReceipts, Tally, rootOf, startBranch } from '../extensions/lineage/server.ts'
 import type { BranchInput } from '../extensions/lineage/server.ts'
 import { Branch, Roots } from '../extensions/lineage/api.ts'
-import { Standing, Subagents } from '../extensions/subagents/api.ts'
+import { BranchSetup, Standing, Subagents } from '../extensions/subagents/api.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
 import { concludedIn } from '../extensions/conversations/server.ts'
 import { UiState } from '../server/ui-state.ts'
@@ -111,7 +111,7 @@ async function fixture(
     home,
     ultimateRoot: home,
     userHome: home,
-    faux: fauxProvider(),
+    faux: fauxProvider({ models: [{ id: 'faux-1' }, { id: 'faux-think', reasoning: true }] }),
   })
   let opened: OpenHost
   let service!: MessagesService
@@ -1369,6 +1369,32 @@ it('forwards images into a new branch with its prompt', async () => {
   expect(message.images?.count).toBe(1)
   const entry = await placed(f, message.to as number, message.id)
   expect(imagesIn(entry)).toEqual([png(0)])
+})
+it('starts a branch on its own agent setup and keeps it on the branch for the subagents under it', async () => {
+  const f = await fixture()
+  const tool = (await f.opened.root.agent(context)).deferred.find((t) => t.name === 'branch')!
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(Roots, ROOT_CONVERSATION_ID)).roots = [1]
+    await configure(tx, f.opened.root.id, { modelTools: { add: [tool] } })
+  }, context)
+  const agents = { coordinator: 'faux/faux-think:high' }
+  await f.opened.root.submit(
+    {
+      type: 'input',
+      content: 'BRANCH ' + JSON.stringify({ prompt: 'Explore', isolated: false, agents }),
+    },
+    context,
+  )
+  await until(async () => (await replies(f)).length === 1)
+  const id = (await f.log())!.messages[0].to as ConversationId
+  const branch = (await f.opened.harness.conversation(id, context))!
+  expect(await branch.agent(context)).toMatchObject({
+    model: { provider: 'faux', modelId: 'faux-think' },
+    thinkingLevel: 'high',
+  })
+  expect(await f.opened.harness.snapshot(BranchSetup, id, context)).toEqual({
+    agents: { coordinator: { provider: 'faux', modelId: 'faux-think', thinking: 'high' } },
+  })
 })
 it("routes a branch's later final answer to its starter once, waking it when the branch stopped idle", async () => {
   const f = await fixture()

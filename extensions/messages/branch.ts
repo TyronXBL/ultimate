@@ -3,7 +3,13 @@ import { Type } from '@earendil-works/pi-ai'
 import { configure, defineTool, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { definitionAgent, discoverAgents, hostDefaultModel } from '../../lib/agents.ts'
+import {
+  definitionAgent,
+  discoverAgents,
+  hostDefaultModel,
+  resolveSetup,
+} from '../../lib/agents.ts'
+import { BranchSetup } from '../subagents/api.ts'
 import { LineageApi, Roots } from '../lineage/api.ts'
 import { actingAs } from '../../lib/acting-as.ts'
 import { imagesParameter } from './images.ts'
@@ -15,13 +21,14 @@ export const branchTool = (host: ExtensionHost) =>
     name: 'branch',
     deferred: true,
     description:
-      "Start a lineage branch. Its answer returns to you as a reply. Give it a title: one short line naming the work (at most 60 characters), shown in the sidebar and the tally until its summary renames it; without one, the prompt's first 80 characters name it.",
+      "Start a lineage branch. Its answer returns to you as a reply. Give it a title: one short line naming the work (at most 60 characters), shown in the sidebar and the tally until its summary renames it; without one, the prompt's first 80 characters name it. `agents` gives this branch its own models, `{ coordinator: 'provider/id:thinking', worker: 'provider/id', … }`: its coordinator and every subagent under it run on them instead of their definitions'.",
     parameters: Type.Object({
       prompt: Type.String({ minLength: 1 }),
       title: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
       root: Type.Optional(Type.Number()),
       isolated: Type.Optional(Type.Boolean()),
       images: Type.Optional(imagesParameter),
+      agents: Type.Optional(Type.Record(Type.String(), Type.String())),
     }),
     // Lineage atomically deduplicates the fork; Sent deduplicates its first message.
     replay: 'safe',
@@ -47,6 +54,9 @@ export const branchTool = (host: ExtensionHost) =>
         )
         const coordinator = definitions.find((definition) => definition.name === 'coordinator')
         if (!coordinator) throw new Error('Missing coordinator definition')
+        // Checked before anything is created: a wrong name or a model without a login starts no branch.
+        const setup = input.agents && resolveSetup(input.agents, definitions, host.modelRuntime)
+        const own = setup?.coordinator
         // The model and thinking level the definition pins when its provider has a login here, thinking clamped to
         // what the model supports; without one, the current default model, never the one the root last stored.
         const rootAgent = await (await host
@@ -56,6 +66,10 @@ export const branchTool = (host: ExtensionHost) =>
           coordinator,
           { ...rootAgent, model: await hostDefaultModel(host) },
           host.modelRuntime,
+          own && {
+            model: { provider: own.provider, modelId: own.modelId },
+            ...(own.thinking ? { thinking: own.thinking } : {}),
+          },
         )
         const branch = await lineage.branch(
           {
@@ -80,6 +94,7 @@ export const branchTool = (host: ExtensionHost) =>
           })
           ;(await tx.doc(host.metadata, branch.id)).label = 'coordinator'
           ;(await tx.doc(Started, branch.id)).by = from
+          if (setup) (await tx.doc(BranchSetup, branch.id)).agents = setup
         }, ctx)
         id = await api.memo('branch-id', branch.id, ctx)
       }

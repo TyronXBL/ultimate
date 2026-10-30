@@ -22,15 +22,17 @@ All user-only, for the board.
   `[]` removes them.
 - `park { id, parked }` → the idea, parked or back on the board.
 - `remove { id }` → `{ id }`; a launched idea is parked instead.
-- `launch { id, size }` → the idea, launched. It refuses a parked idea and one already linked to a branch.
+- `launch { id, size, agents? }` → the idea, launched. It refuses a parked idea and one already linked to a branch, and
+  agents it cannot run (see `extensions/branch-setup`).
 
 ## Launch
 
-Launching sets `launch { size, at }` and places an `ideas.launch` input `{ id, title, size }` in @ultimate's
+Launching sets `launch { size, at, agents? }` and places an `ideas.launch` input `{ id, title, size, agents? }` in @ultimate's
 conversation, after its current run when it is busy, keyed by request id `ideas.launch:<id>:<at>`. Launching again
 before a branch is linked keeps the first launch, so it never places a second input. The input asks @ultimate to start
 the idea's branch (assess first, or build when the user chose so) with its title, tags and notes, then link it. It
-carries the idea's pictures, and then asks @ultimate to pass them on with `branch {images: 'latest'}`.
+carries the idea's pictures, and then asks @ultimate to pass them on with `branch {images: 'latest'}`; with `agents`,
+the branch's own agent setup, it asks @ultimate to pass them on with `branch {agents}` as given.
 Only @ultimate launches branches, so a branch's answers and decisions come back to it, and it relays them to the user
 as usual.
 

@@ -86,6 +86,14 @@ export const Started = defineEvent<{
   kind: 'child' | 'standing' | 'branch'
 }>('subagents.started')
 
+/** A branch's own agent setup: by definition name, the model and thinking level it runs on in that branch. */
+export type BranchSetupState = { agents?: Record<string, ModelRef & { thinking?: string }> }
+/**
+ * `{ agents? }` on a branch conversation: what its coordinator and every subagent under it run on instead of their
+ * definitions' models; absent on branches started without a setup.
+ */
+export const BranchSetupDoc = docRef<BranchSetupState>('subagents.setup')
+
 /** `{ [name]: conversationId }` of the standing agents, on conversation 1. */
 export const StandingDoc = docRef<Record<string, number>>('ultimate.standing-agents')
 

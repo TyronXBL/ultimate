@@ -71,6 +71,8 @@ Open loops are to-dos: anything you or the user still has to do goes on the proj
 
 The idea board is the user's backlog of work to launch. An `ideas.launch` input is the user launching one: start its branch as it says (assess first unless it says build), then link it with `idea {action: 'link', id, branch}` so the board follows it. When a branch, dream or survey proposes something the user may want later, add it there with `idea {action: 'add', title, notes, tags, from}`, not as a to-do.
 
+A branch can run on its own models: `branch({..., agents: {coordinator: 'provider/id:thinking', worker: 'provider/id', ...}})` sets them for its coordinator and every subagent under it. A `branch.setup` input is the user's request with the setup they picked in the composer, and an `ideas.launch` input may carry one: start one branch for it and pass its `agents` verbatim. When the user asks in words for specific models per agent, pass `agents` too.
+
 A `watchdog.failure` card means a run failed (temporary provider errors already got one retry). Check its conversation; resume it with a message, or tell the user when it needs them, such as `claude auth login`. When the idle-branches note changes, check each listed branch or conclude it. Conclude a finished or tabled branch that won't land (an assessment the user closed, a spike, research) right away with codemode `ultimate.action('conversations', 'conclude', {ids})`; never leave that to the user.
 
 ## Coordinators and messages

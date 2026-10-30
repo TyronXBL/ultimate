@@ -24,15 +24,23 @@ export type Idea = {
   images?: number
   /** When the user parked it; absent while it is on the board. */
   parked?: number
-  /** Set when the user launched it; `branch` once @ultimate linked the branch it started. */
-  launch?: { size: LaunchSize; at: number; branch?: number }
+  /**
+   * Set when the user launched it; `agents` the branch's own agent setup (`provider/id[:thinking]` by agent) when the
+   * user picked one, `branch` once @ultimate linked the branch it started.
+   */
+  launch?: { size: LaunchSize; at: number; agents?: Record<string, string>; branch?: number }
 }
 
 /** `{ next, items }` on conversation 1, oldest first. */
 export const IdeasDoc = docRef<{ next: number; items: Idea[] }>('ideas')
 
 /** The `ideas.launch` input a launch posts into @ultimate's conversation, shown there as a card on the user's side. */
-export type LaunchEntry = { id: number; title: string; size: LaunchSize }
+export type LaunchEntry = {
+  id: number
+  title: string
+  size: LaunchSize
+  agents?: Record<string, string>
+}
 
 /** `{ title, notes?, tags?, images? }` → the new idea. User-only; @ultimate uses its `idea` tool. */
 export const AddAction = actionRef<
@@ -48,5 +56,11 @@ export const UpdateAction = actionRef<
 export const ParkAction = actionRef<{ id: number; parked: boolean }, Idea>('ideas', 'park')
 /** `{ id }` → `{ id }`; refuses a launched idea. User-only. */
 export const RemoveAction = actionRef<{ id: number }, { id: number }>('ideas', 'remove')
-/** `{ id, size }` → the idea, launched: asks @ultimate to start its branch. Refuses one already launched. User-only. */
-export const LaunchAction = actionRef<{ id: number; size: LaunchSize }, Idea>('ideas', 'launch')
+/**
+ * `{ id, size, agents? }` → the idea, launched: asks @ultimate to start its branch, on the agent setup `agents` when
+ * given (extensions/branch-setup). Refuses one already launched. User-only.
+ */
+export const LaunchAction = actionRef<
+  { id: number; size: LaunchSize; agents?: Record<string, string> },
+  Idea
+>('ideas', 'launch')
