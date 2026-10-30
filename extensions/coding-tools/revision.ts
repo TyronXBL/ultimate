@@ -12,8 +12,9 @@ import {
 import { exec } from '../../lib/exec.ts'
 import { git } from '../../lib/git.ts'
 
-/** The largest file `read` loads at a revision; Pi's read shows at most 50 KB of text, and images are far smaller. */
+/** The largest file `read` loads at a revision, whole; Pi's read shows at most 50 KB of text. */
 const MAX_BLOB = 64 * 1024 * 1024
+const TIMEOUT = 30_000
 
 /**
  * `env` with the file at `path` as committed in `rev`: Pi's read tool then opens these bytes instead of the working
@@ -28,9 +29,9 @@ export async function atRevision(
 ): Promise<ExecutionEnv> {
   const absolute = getOrThrow(await env.absolutePath(path, context))
   // The file, or even its folder, may be gone from the working tree; git runs in the nearest folder that remains.
-  let cwd = dirname(absolute)
+  let cwd = absolute
   while (!(await isDirectory(cwd))) cwd = dirname(cwd)
-  await git(cwd, 'rev-parse', '--git-dir').catch((error: unknown) => {
+  const prefix = await git(cwd, 'rev-parse', '--show-prefix').catch((error: unknown) => {
     throw new Error(`${path} is not in a Git repository, so it has no revision ${rev}`, {
       cause: error,
     })
@@ -47,17 +48,30 @@ export async function atRevision(
       cause: error,
     })
   })
-  // `./` makes the path relative to cwd rather than to the repository's top.
-  const object = `${commit}:./${relative(cwd, absolute)}`
-  const type = await git(cwd, 'cat-file', '-t', object).catch((error: unknown) => {
-    throw new Error(`${path} does not exist at ${rev}`, { cause: error })
+  // Relative to the repository's top; empty for the top itself.
+  const inRepo = (prefix + relative(cwd, absolute)).replace(/\/$/, '')
+  // --follow-symlinks resolves links inside the commit, as a read of the working tree follows them.
+  const lookup = exec('git', ['cat-file', '--batch-check', '--follow-symlinks'], {
+    cwd,
+    timeout: TIMEOUT,
   })
+  lookup.child.stdin?.end(`${commit}:${inRepo}\n`)
+  const found = (await lookup).stdout.split('\n')[0]
+  const [oid, type, size] = found.split(' ')
+  if (type === 'tree') throw new Error(`${path} is a directory at ${rev}`)
   if (type !== 'blob')
-    throw new Error(`${path} is a ${type === 'tree' ? 'directory' : type} at ${rev}`)
-  const { stdout } = await exec('git', ['cat-file', 'blob', object], {
+    throw new Error(
+      `${path} does not exist at ${rev}${found.endsWith(' missing') ? '' : ` as a file (git: ${found})`}`,
+    )
+  if (Number(size) > MAX_BLOB)
+    throw new Error(
+      `${path} is ${size} bytes at ${rev}, more than the ${MAX_BLOB / 2 ** 20} MiB a read at a revision loads; use git show in bash`,
+    )
+  const { stdout } = await exec('git', ['cat-file', 'blob', oid], {
     cwd,
     encoding: 'buffer',
     maxBuffer: MAX_BLOB,
+    timeout: TIMEOUT,
   })
   // A plain array, not a Node Buffer: the image processor transfers what `read` returns to its worker.
   const bytes = new Uint8Array(stdout)

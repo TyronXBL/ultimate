@@ -470,15 +470,20 @@ function ReadLine({ call }: { call: ToolCallView }) {
   const path = text(call.args.path)
   const shown = usePath(path)
   const skill = skillOf(path)
-  return skill ? (
+  const rev = revOf(call)
+  return (
     <>
-      <span className="text-foreground/80">skill</span> <span className="text-brand">{skill}</span>
-      <span className="text-muted-foreground/60">{revOf(call)}</span>
-    </>
-  ) : (
-    <>
-      <span className="text-foreground/80">read</span> {shown}
-      <span className="text-muted-foreground/60">{revOf(call)}</span>
+      {skill ? (
+        <>
+          <span className="text-foreground/80">skill</span>{' '}
+          <span className="text-brand">{skill}</span>
+        </>
+      ) : (
+        <>
+          <span className="text-foreground/80">read</span> {shown}
+        </>
+      )}
+      {rev && <span className="text-muted-foreground/60">{rev}</span>}
     </>
   )
 }

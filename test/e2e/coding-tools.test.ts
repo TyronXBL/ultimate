@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { ToolExecutionApi } from '@earendil-works/pi-durable'
@@ -73,6 +73,7 @@ it('reads a file as committed at a revision, after the working tree dropped it',
     await mkdir(join(cwd, 'notes'))
     await writeFile(join(cwd, 'notes', 'a.txt'), 'one\ntwo\nthree\n')
     await copyFile(resolve('web/public/icons/icon-180.png'), join(cwd, 'notes', 'icon.png'))
+    await symlink('a.txt', join(cwd, 'notes', 'link.txt'))
     await git('add', '.')
     await git('commit', '-m', 'add')
     const added = (await git('rev-parse', 'HEAD')).stdout.trim()
@@ -92,6 +93,9 @@ it('reads a file as committed at a revision, after the working tree dropped it',
     )
     expect(result.output).toEqual([{ type: 'text', text: 'two' }])
     expect(result.diagnostics?.[0].message).toBe('2 more lines in file. Use offset=3 to continue.')
+    // Git stores a link as its target's name; the read follows it, as in the working tree.
+    const linked = await read.execute({ path: 'notes/link.txt', rev: added }, api, context)
+    expect(linked.output).toEqual([{ type: 'text', text: 'one\ntwo\nthree\n' }])
     // The image processor transfers the bytes to its worker, which a Node Buffer would refuse.
     const image = await read.execute({ path: 'notes/icon.png', rev: added }, api, context)
     expect(image.output).toEqual([
