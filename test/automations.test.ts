@@ -20,9 +20,17 @@ import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
 import { apis, eventHost, temp, until as waitFor } from './helpers.ts'
 
-// Advance scheduler time while the shared helper measures IO against a real deadline.
-const until = (test: () => boolean | Promise<boolean>, timeout = 7000) =>
-  waitFor(test, timeout, () => vi.advanceTimersByTimeAsync(50))
+// Advance scheduler time while the shared helper measures IO against a real deadline: 50 ms per 5 ms of real time
+// at most. A fixed step per poll let fake time race hours ahead while a loaded machine stalled real IO, so schedules
+// fired again and tripped the six-fires-an-hour guard.
+const until = (test: () => boolean | Promise<boolean>, timeout = 7000) => {
+  let last = performance.now()
+  return waitFor(test, timeout, async () => {
+    if (performance.now() - last < 5) return
+    last = performance.now()
+    await vi.advanceTimersByTimeAsync(50)
+  })
+}
 
 const hosts: OpenHost[] = []
 afterEach(async () => {
