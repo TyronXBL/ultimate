@@ -232,8 +232,8 @@ export const actions: Record<string, ExtensionAction> = {
 }
 
 /**
- * The workspace a preview of conversation `id` serves: its own, else the nearest owner's (a subagent without an isolate
- * works in its parent's worktree, at any depth); undefined means the host checkout.
+ * The workspace a preview serves and the conversation that owns it: its own, else the nearest owner's (a subagent
+ * without an isolate works in its parent's worktree, at any depth); undefined means the host checkout.
  */
 export async function previewWorkspace(
   host: Pick<ExtensionHost, 'harness'>,
@@ -244,7 +244,7 @@ export async function previewWorkspace(
   let current: ConversationId | undefined = id
   while (current !== undefined) {
     const workspace = await workspaces.get(current, context)
-    if (workspace) return workspace
+    if (workspace) return { workspace, conversationId: current }
     const at: ConversationId = current
     current = (await host.harness().commit((tx) => tx.conversation(at), context))?.owner
       ?.conversationId
@@ -435,13 +435,16 @@ export default function instanceExtension(
       if (!child) throw new Error(`Unknown subagent: ${args.subagent}`)
       conversationId = child.conversationId
     }
-    let workspace =
-      args.subagent === undefined
-        ? await previewWorkspace(host, workspaces, conversationId, context)
-        : await workspaces.get(conversationId, context)
+    let workspaceConversationId = conversationId
+    let workspace: Awaited<ReturnType<WorkspaceService['get']>>
+    if (args.subagent === undefined) {
+      const found = await previewWorkspace(host, workspaces, conversationId, context)
+      workspace = found?.workspace
+      if (found) workspaceConversationId = found.conversationId
+    } else workspace = await workspaces.get(conversationId, context)
     if (workspace?.state === 'preparing') {
-      await workspaces.ready(conversationId, context)
-      workspace = await workspaces.get(conversationId, context)
+      await workspaces.ready(workspaceConversationId, context)
+      workspace = await workspaces.get(workspaceConversationId, context)
     }
     if (args.subagent !== undefined && !workspace)
       throw new Error('Subagent must have an active worktree isolate')
