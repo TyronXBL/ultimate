@@ -125,6 +125,88 @@ function localReads(host: ExtensionHost, context: Context) {
     } while (cursor)
     return items
   }
+  const toolRuns = async (
+    conversation: unknown,
+    options: { tool?: string; match?: string; errorsOnly?: boolean; limit?: number } = {},
+  ) => {
+    if (
+      options.limit !== undefined &&
+      (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 200)
+    )
+      throw new Error('limit must be an integer from 1 to 200')
+    const count = options.limit ?? 20
+    const found = await host.harness().conversation(id(conversation), context)
+    if (!found) throw new Error('Unknown conversation')
+    const results = new Map<
+      string,
+      { tool: string; isError: boolean; ms?: number; output: string }
+    >()
+    const calls: { entry: number; tool: string; args: unknown; resultId: string }[] = []
+    let cursor: Cursor | undefined
+    do {
+      const page = await found.entries({}, 100, cursor, context)
+      for (const entry of page.items) {
+        const item = entry.model?.[0] as
+          | {
+              role?: string
+              content?: {
+                type?: string
+                id?: string
+                name?: string
+                arguments?: unknown
+                text?: string
+              }[]
+              toolCallId?: string
+              toolName?: string
+              isError?: boolean
+              durationMs?: number
+            }
+          | undefined
+        if (entry.kind === 'pi.tool-result' && item?.role === 'toolResult' && item.toolCallId) {
+          results.set(item.toolCallId, {
+            tool: item.toolName ?? '',
+            isError: item.isError === true,
+            ...(typeof item.durationMs === 'number' ? { ms: item.durationMs } : {}),
+            output: (item.content ?? [])
+              .filter((block) => block.type === 'text')
+              .map((block) => block.text ?? '')
+              .join('\n')
+              .slice(-2000),
+          })
+        } else if (entry.kind === 'pi.assistant' && Array.isArray(item?.content)) {
+          for (const part of item.content)
+            if (part.type === 'toolCall' && part.id && part.name)
+              calls.push({
+                entry: entry.id,
+                tool: part.name,
+                args: part.arguments,
+                resultId: part.id,
+              })
+        }
+      }
+      cursor = page.next
+    } while (cursor)
+    const rows = calls
+      .toSorted((a, b) => b.entry - a.entry)
+      .flatMap((call) => {
+        const result = results.get(call.resultId)
+        if (!result || result.tool !== call.tool || (options.tool && options.tool !== call.tool))
+          return []
+        if (options.match && !JSON.stringify(call.args ?? null).includes(options.match)) return []
+        if (options.errorsOnly && !result.isError) return []
+        return [
+          {
+            entry: call.entry,
+            tool: call.tool,
+            args: call.args,
+            isError: result.isError,
+            ...(result.ms === undefined ? {} : { ms: result.ms }),
+            output: result.output,
+          },
+        ]
+      })
+    return rows.slice(0, count)
+  }
   const search = async (
     text: unknown,
     options: { conversationId?: number; limit?: number } = {},
@@ -180,7 +262,7 @@ function localReads(host: ExtensionHost, context: Context) {
       const database = await closedChapter(host.home, host.chapter.name, args[at])
       return database ? readChapter(database, op, args) : live(args)
     }
-  return {
+  const reads = {
     conversations: history('conversations', 0, () => listed()),
     entries: history('entries', 1, ([conversation, options]) =>
       entries(conversation, options as Parameters<typeof entries>[1]),
@@ -202,6 +284,7 @@ function localReads(host: ExtensionHost, context: Context) {
       return snapshot ?? token.definition.initial()
     },
   } satisfies Record<Read, (args: unknown[]) => unknown>
+  return { ...reads, toolRuns }
 }
 
 function globals(
@@ -381,6 +464,40 @@ function globals(
       signature:
         '(conversationId: number, options?: { kinds?: string[]; limit?: number; before?: number; project?: string; machine?: string; chapter?: string }): Promise<unknown[]>',
       execute: read('entries', 1),
+    },
+    {
+      name: 'toolRuns',
+      description:
+        "A conversation's tool calls paired with their results, newest first: filter by tool name, a substring of the arguments, or failures; output is the result's tail.",
+      signature:
+        '(conversationId: number, options?: { tool?: string; match?: string; errorsOnly?: boolean; limit?: number }): Promise<{ entry: number; tool: string; args: unknown; isError: boolean; ms?: number; output: string }[]>',
+      execute: (values) => {
+        const [conversation, options] = values as [number, Parameters<typeof reads.toolRuns>[1]]
+        return reads.toolRuns(conversation, options)
+      },
+    },
+    {
+      name: 'sleep',
+      description: "Wait between polling reads; setTimeout isn't available in the sandbox.",
+      signature: '(ms: number): Promise<void>',
+      execute: ([ms], { signal }) => {
+        if (typeof ms !== 'number' || !Number.isInteger(ms) || ms < 1 || ms > 30000)
+          throw new Error('ms must be an integer from 1 to 30000')
+        return new Promise<void>((resolve, reject) => {
+          const finish = () => {
+            signal.removeEventListener('abort', abort)
+            resolve()
+          }
+          const timer = setTimeout(finish, ms)
+          const abort = () => {
+            clearTimeout(timer)
+            signal.removeEventListener('abort', abort)
+            reject(signal.reason ?? new Error('Aborted'))
+          }
+          if (signal.aborted) abort()
+          else signal.addEventListener('abort', abort, { once: true })
+        })
+      },
     },
     {
       name: 'search',

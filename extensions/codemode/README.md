@@ -31,7 +31,9 @@ Only inside codemode (not standalone model tools):
 - `ultimate.conversations()` — all stored conversations with their owner, and for listed ones title, label, cwd,
   busy, inputAt and concluded.
 - `ultimate.entries(conversationId, { kinds?, limit?, before? })` — newest-first fork-aware history, including entries before resets/compactions; `before` is an exclusive entry ID.
+- `ultimate.toolRuns(conversationId, { tool?, match?, errorsOnly?, limit? })` — tool calls paired with results, newest first; filter by tool name, an argument substring or failures, with each result's output tail.
 - `ultimate.search(text, { conversationId?, limit? })` — case-sensitive substring over stored entry JSON, including pre-reset/pre-compaction history.
+- `ultimate.sleep(ms)` — wait 1–30,000 ms between polling reads; `setTimeout` isn't available in the sandbox.
 - `ultimate.taskGraph()` — live tasks and ownership graph.
 
 ### Other chapters
