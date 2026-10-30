@@ -65,9 +65,13 @@ function register() {
         if (code !== 'ERR_MODULE_NOT_FOUND') throw error
         if (bare(specifier)) result = next(specifier, context)
         else {
-          // The file may appear later: its importer then loads anew like on a change.
-          if (specifier.startsWith('.') || specifier.startsWith('/'))
-            link(graph, parent, fileURLToPath(new URL(specifier, context.parentURL)))
+          // The file may appear later: its importer then loads anew like on a change. The watcher drops a file once
+          // it is removed, so it is handed over again each time.
+          if (specifier.startsWith('.') || specifier.startsWith('/')) {
+            const missing = fileURLToPath(new URL(specifier, context.parentURL))
+            link(graph, parent, missing)
+            graph.found(missing)
+          }
           throw error
         }
       }
