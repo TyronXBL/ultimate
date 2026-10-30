@@ -209,5 +209,7 @@ export default defineConfig({
     hookTimeout: 5000,
     teardownTimeout: 5000,
     maxWorkers: 8,
+    // Node, not Vitest, loads the extension loader, so its import() and module hooks are the ones production runs.
+    server: { deps: { external: [/\/server\/extension-loader\.ts$/] } },
   },
 })

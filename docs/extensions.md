@@ -6,6 +6,10 @@ Each extension is a folder `extensions/<name>/`: `server.ts` exports a Durable e
 subscribe with `/api/events?conversation=<id>&docs=<kind>,<kind>` for `doc` snapshots and `docOps` batches.
 The Documents tab shows each exported kind through the renderer a web facet registers (`documents: [{ kind, title, component }]`), or as JSON.
 Local imported modules reload with the facet. Failed loads leave the previous version installed.
+Node loads server facets itself (`server/extension-loader.ts`), so their TypeScript must be erasable, and package imports
+resolve from Ultimate's clone first, also for extensions outside it. A changed file gives it and every module importing
+it a new URL, as Vite's graph did; Node never frees the old copies, which the Info panel counts as kept modules. Vite
+serves only the browser facets.
 
 Server extensions coordinate through typed contracts in each provider's `api.ts`: services, extension points,
 documents and durable events (below); lint rejects the untyped `host.provide` and `host.use` in `extensions/`. The

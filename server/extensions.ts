@@ -7,6 +7,7 @@ import { discoveryRoots, projects } from './project.ts'
 import type { ProjectInfo } from './project.ts'
 import { extensionSettingsFiles } from './extension-settings.ts'
 import { watchRoots } from './watch-roots.ts'
+import { extensionLoader } from './extension-loader.ts'
 import { actionExec } from './actions.ts'
 import type { ExtensionAction } from './actions.ts'
 import type { JsonValue } from '@earendil-works/chord'
@@ -116,6 +117,9 @@ export async function loadExtensions(
   const log = eventLog(runtime.harness, trace.run, trace.keep)
   const roots = discoveryRoots(host.ultimateRoot, host.projectRoot, host.userHome)
   const directories = roots.map((root) => join(root.path, 'extensions'))
+  // Vite watched every file its SSR graph loaded; now the loader names them, such as an outside extension's helpers.
+  let watcher: ViteDevServer['watcher'] | undefined
+  const loader = extensionLoader(host.ultimateRoot, (file) => watcher?.add(file))
   const provided = new Map<ExtensionHost, Map<string, unknown>>()
   const providers = new Map<string, { owner: ExtensionHost; value: unknown }>()
   const facetHosts = new Map<string, ExtensionHost>()
@@ -258,7 +262,7 @@ export async function loadExtensions(
   const pollActions = new Map<string, string[]>()
   const settingsReloads = new Set<string>()
   const records = new Map<string, ExtensionInfo>()
-  /** Each loaded extension's folder with symlinks resolved, where Vite keys its modules. */
+  /** Each loaded extension's folder with symlinks resolved, where the loader keys its modules. */
   const targets = new Map<string, string>()
   const documents = new Map<string, ConversationDocToken<JsonObject>[]>()
   const findDoc = (kind: string) =>
@@ -537,8 +541,8 @@ export async function loadExtensions(
       if (enabled && record.facets.server && (!servers || servers.has(name))) {
         const facetHost = scope(name)
         try {
-          // Vite keeps a URL bound to the file it first resolved to, so a repointed link loads by its target.
-          const module = await vite.ssrLoadModule(join(target, 'server.ts'))
+          // Node keys a module by its resolved file, so a link loads by its target.
+          const module = await loader.load(join(target, 'server.ts'))
           const extension: Extension =
             typeof module.default === 'function' ? await module.default(facetHost) : module.default
           if (!extension || extension.name !== name)
@@ -662,12 +666,44 @@ export async function loadExtensions(
     )
   }
   await reload()
-  // A restarted Vite starts with an empty module graph, so the next change reloads every extension.
-  let graphLost = false
-  // Vite owns the transitive local module graph; query-string imports do not.
+  /** Files waiting for the queued reload; true when one was added or removed, which reloads its folder's server. */
+  const pending = new Map<string, boolean>()
+  /** Reload every extension whose server facet imports a pending file, or whose folder holds one. */
+  async function reloadChanged() {
+    const files = [...pending]
+    pending.clear()
+    try {
+      const selected = new Set<string>()
+      const servers = new Set<string>()
+      for (const [file, structural] of files) {
+        const stale = loader.invalidate(file)
+        for (const name of records.keys())
+          if (stale.has(join(targets.get(name)!, 'server.ts'))) {
+            selected.add(name)
+            servers.add(name)
+          }
+        const directory = directories.find((root) => file.startsWith(root + '/'))
+        if (!directory) continue
+        const name = file.slice(directory.length + 1).split('/')[0]
+        selected.add(name)
+        if (structural || file === join(directory, name, 'server.ts')) servers.add(name)
+      }
+      await reload(selected, servers)
+    } catch (error) {
+      for (const record of records.values()) if (record.server) record.server.error = String(error)
+      throw error
+    }
+  }
+  /** Queue `file` for the next reload; one that arrives while a reload is queued joins it, so a landing reloads each extension once. */
+  const queue = (file: string, structural: boolean) => {
+    if (!pending.size) enqueue(reloadChanged)
+    pending.set(file, structural || (pending.get(file) ?? false))
+  }
   const onChange = (file: string) => {
+    if (closed) return
+    // A file an extension imports reloads it wherever it lives; other files only inside Ultimate's roots.
+    if (loader.knows(file)) return queue(file, false)
     if (
-      closed ||
       ![host.ultimateRoot, host.projectRoot, ...roots.slice(1).map((root) => root.path)].some(
         (root) => resolve(file).startsWith(root + '/'),
       ) ||
@@ -680,71 +716,33 @@ export async function loadExtensions(
     }
     const directory = directories.find((root) => file.startsWith(root + '/'))
     if (!directory && !/\.[cm]?[jt]s$/.test(file)) return
-    if (graphLost) {
-      graphLost = false
-      enqueue(() => reload())
-      return
-    }
-    enqueue(async () => {
-      try {
-        const selected = new Set<string>()
-        const modules = vite.moduleGraph.getModulesByFile(file)
-        const visited = new Set<import('vite-plus').ModuleNode>()
-        const visit = (module: import('vite-plus').ModuleNode) => {
-          if (visited.has(module)) return
-          visited.add(module)
-          for (const name of records.keys())
-            if (module.file === join(targets.get(name)!, 'server.ts')) selected.add(name)
-          for (const importer of module.importers) visit(importer)
-        }
-        for (const module of modules ?? []) visit(module)
-        for (const module of visited) vite.moduleGraph.invalidateModule(module)
-        const name = directory ? file.slice(directory.length + 1).split('/')[0] : undefined
-        const servers = new Set(selected)
-        if (name) {
-          selected.add(name)
-          if (directory && file === join(directory, name, 'server.ts')) servers.add(name)
-        }
-        await reload(selected, servers)
-      } catch (error) {
-        for (const record of records.values())
-          if (record.server) record.server.error = String(error)
-        throw error
-      }
-    })
+    queue(file, false)
   }
   const onStructure = (file: string) => {
-    const directory = directories.find((root) => file.startsWith(root + '/'))
-    if (!directory) return onChange(file)
-    if (graphLost) {
-      graphLost = false
-      enqueue(() => reload())
-      return
-    }
-    const name = file.slice(directory.length + 1).split('/')[0]
-    enqueue(() => reload(new Set([name]), new Set([name])))
+    if (directories.some((root) => file.startsWith(root + '/'))) queue(file, true)
+    else onChange(file)
   }
   const structure = ['add', 'unlink', 'addDir', 'unlinkDir'] as const
-  let attached = false
-  const unwatch = watch((watcher) => {
-    graphLost = attached
-    attached = true
+  const unwatch = watch((current) => {
+    watcher = current
+    current.add([...loader.files()])
     const watchedRoots = [
       ...directories,
       ...settingsFiles,
       ...roots.slice(1).map((root) => join(root.path, 'skills')),
     ]
-    watcher.add(watchedRoots)
+    current.add(watchedRoots)
     const stopRoots = watchRoots(watchedRoots, (root) => {
-      watcher.add(root)
+      current.add(root)
       enqueue(() => (settingsFiles.includes(root) ? reloadSettings() : reload()))
     })
-    watcher.on('change', onChange)
-    for (const event of structure) watcher.on(event, onStructure)
+    current.on('change', onChange)
+    for (const event of structure) current.on(event, onStructure)
     return () => {
       stopRoots()
-      watcher.off('change', onChange)
-      for (const event of structure) watcher.off(event, onStructure)
+      if (watcher === current) watcher = undefined
+      current.off('change', onChange)
+      for (const event of structure) current.off(event, onStructure)
     }
   })
   return {
@@ -788,6 +786,7 @@ export async function loadExtensions(
       closed = true
       unwatch()
       await chain
+      loader.close()
       for (const facetHost of subscriptions.keys()) await dispose(facetHost)
       const results = await Promise.allSettled([...cleanups].map(async (cleanup) => cleanup()))
       for (const result of results)

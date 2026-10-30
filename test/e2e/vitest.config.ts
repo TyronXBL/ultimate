@@ -7,5 +7,7 @@ export default defineConfig({
     include: ['test/e2e/**/*.test.ts'],
     testTimeout: 60_000,
     maxWorkers: 4,
+    // As in vite.config.ts: Node loads the extension loader, as in production.
+    server: { deps: { external: [/\/server\/extension-loader\.ts$/] } },
   },
 })

@@ -135,10 +135,13 @@ describe('server reload', () => {
     expect(entry().server!.loadedAt).toBe(successful)
     expect(server.host.registry.snapshot().extension('counter')).toBe(installed)
   })
-  it('reloads only the owning extension when files or directories are added or removed', async () => {
+  it('reloads only the owning extension when files or directories are added or removed, and an importer once its missing file appears', async () => {
     const { server } = await fixture(false, {
       a: orderedSource('a'),
       b: orderedSource('b'),
+      later: `import { defineExtension } from '@earendil-works/pi-durable'
+import { value } from '../../later.ts'
+export default defineExtension({ name: value })`,
     })
     const loadedAt = (name: string) =>
       server.extensions.info().find((extension) => extension.name === name)!.server!.loadedAt
@@ -157,6 +160,13 @@ describe('server reload', () => {
       await until(() => loadedAt('a') !== aLoaded)
       expect(loadedAt('b')).toBe(bLoaded)
     }
+    // Node keeps a module that failed to load; its missing import appearing, outside any extension folder, must
+    // still load the extension.
+    const later = () => server.extensions.info().find((extension) => extension.name === 'later')!
+    expect(later().server!.error).toContain('later.ts')
+    await writeFile(join(server.host.ultimateRoot, 'later.ts'), "export const value = 'later'")
+    await until(() => !later().server!.error)
+    expect(server.host.registry.snapshot().extension('later')).toBeDefined()
   })
   it('keeps hot reloading extensions after a Vite config change restarts Vite', async () => {
     const { server } = await fixture(true)
