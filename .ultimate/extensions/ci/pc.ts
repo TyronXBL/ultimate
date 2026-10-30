@@ -4,9 +4,9 @@
  * PC's bare `ci.git`, then `ssh <host> run <sha> <suite>…` runs the suites there through the key's forced command
  * (`.ultimate/ci-runner/ultimate-ci`) and streams their output back.
  */
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { stripVTControlCharacters } from 'node:util'
+import { promisify, stripVTControlCharacters } from 'node:util'
 import { git } from './github.ts'
 import type { Failure, JobResult } from './refs.ts'
 
@@ -29,6 +29,8 @@ export type PcRun = {
 /** The runner's exit codes (`ultimate-ci`): 0 every suite passed, 1 one failed; anything else is no verdict. */
 const PASSED = 0
 const FAILED = 1
+/** How long pushing the commit to the PC may take: a stalled push hands over to GitHub. */
+const PUSH_MS = 3 * 60_000
 
 /** The ssh host of the `pc` remote in `cwd`, or undefined on a machine without one. */
 export async function pcHost(cwd: string) {
@@ -41,7 +43,8 @@ export async function pcHost(cwd: string) {
 
 /**
  * Run `suites` for `sha` on the PC at `host`, each output line to `line` as it comes. Never throws: a PC that cannot
- * run it resolves `unavailable` with the reason. `signal` stops the run (the ssh session, and with it the run there).
+ * run it resolves `unavailable` with the reason. `signal` (the caller's deadline) stops waiting: it kills the push or
+ * the local ssh. The run on the PC ends when its output pipe breaks or its own time limits stop it.
  */
 export async function runOnPc(
   cwd: string,
@@ -49,7 +52,7 @@ export async function runOnPc(
   sha: string,
   suites: Suite[],
   line: (text: string) => void,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<PcRun> {
   const started = Date.now()
   const result = (outcome: PcRun['outcome'], rest: Partial<PcRun> = {}): PcRun => ({
@@ -61,12 +64,22 @@ export async function runOnPc(
     ...rest,
   })
   try {
-    await git(cwd, ['push', '-q', 'pc', `${sha}:refs/heads/run/${sha}`])
-  } catch (error) {
-    // ssh's own line says why (`connect to host … timed out`); git's advice after it does not.
-    return result('unavailable', {
-      reason: `pushing to ${host} failed: ${(error as Error).message.split('\n')[0]}`,
+    await promisify(execFile)('git', ['push', '-q', 'pc', `${sha}:refs/heads/run/${sha}`], {
+      cwd,
+      timeout: PUSH_MS,
+      killSignal: 'SIGKILL',
+      signal,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     })
+  } catch (error) {
+    const { stderr, killed } = error as { stderr?: string; killed?: boolean }
+    // ssh's own line says why (`connect to host … timed out`); git's advice after it does not.
+    const why = signal.aborted
+      ? `stopped: ${String(signal.reason)}`
+      : killed
+        ? `it ran past ${PUSH_MS / 1000} s`
+        : (stderr?.trim() || (error as Error).message).split('\n')[0]
+    return result('unavailable', { reason: `pushing to ${host} failed: ${why}` })
   }
   const jobs: JobResult[] = []
   const failures: Failure[] = []
@@ -98,7 +111,8 @@ export async function runOnPc(
       failed = undefined
     }
   }
-  const code = await new Promise<number | null>((done) => {
+  /** ssh's exit code, else why it has none: killed by a signal, or never started. */
+  const { code, ended } = await new Promise<{ code: number | null; ended: string }>((done) => {
     const child = spawn('ssh', [host, 'run', sha, ...suites], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
@@ -106,8 +120,10 @@ export async function runOnPc(
     })
     createInterface({ input: child.stdout }).on('line', read)
     createInterface({ input: child.stderr }).on('line', read)
-    child.on('error', () => done(null))
-    child.on('close', done)
+    child.on('error', (error) => done({ code: null, ended: `ssh failed: ${error.message}` }))
+    child.on('close', (exit, killed) =>
+      done({ code: exit, ended: exit === null ? `ssh killed by ${killed}` : `exit ${exit}` }),
+    )
   })
   if (code === PASSED) return result('passed', { jobs })
   if (code === FAILED) {
@@ -121,8 +137,8 @@ export async function runOnPc(
   }
   return result('unavailable', {
     jobs,
-    reason: signal?.aborted
+    reason: signal.aborted
       ? `stopped: ${String(signal.reason)}`
-      : `${host} gave no verdict (${code === null ? 'ssh failed to start' : `exit ${code}`}): ${last}`,
+      : `${host} gave no verdict (${ended}): ${last}`,
   })
 }

@@ -31,6 +31,8 @@ const REMOTE = 'fork'
 const PATIENCE_MS = 5 * 60_000
 /** A run still not finished this long after its push (stuck in a queue) ends the task too. */
 const RUN_LIMIT_MS = 60 * 60_000
+/** A PC run not finished by then hands over to GitHub. */
+const PC_LIMIT_MS = 30 * 60_000
 
 type Input = { to: number; cwd: string; sha: string }
 /** `pc`: why the PC runner gave no verdict, once it was tried; GitHub runs it then, and the card says why. */
@@ -176,7 +178,7 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
       pc: async (task, runtime, ctx) => {
         const { cwd, sha } = task.input
         const { host } = task.state.checkpoint
-        const limit = AbortSignal.timeout(RUN_LIMIT_MS)
+        const limit = AbortSignal.timeout(PC_LIMIT_MS)
         const run = await runOnPc(
           cwd,
           host,
@@ -185,6 +187,9 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
           () => undefined,
           ctx.abortSignal ? AbortSignal.any([ctx.abortSignal, limit]) : limit,
         )
+        // An aborted task (its conversation concluded, the host stopping) commits nothing: only the PC's own deadline,
+        // or no verdict from it, hands over to GitHub.
+        if (ctx.abortSignal?.aborted) return
         if (run.outcome === 'unavailable') {
           await runtime.commit(
             () => ({

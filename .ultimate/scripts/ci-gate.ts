@@ -30,6 +30,8 @@ const LOCAL = [
   ['pnpm', 'test:e2e'],
 ]
 const LOCAL_TIMEOUT_MS = 600_000
+/** How long the PC may take before GitHub runs it instead, within the lander's 30 min for this check. */
+const PC_TIMEOUT_MS = 15 * 60_000
 
 const log = (line: string) => console.log(`ci-gate: ${line}`)
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
@@ -105,7 +107,14 @@ async function onPc(sha: string) {
   const host = await pcHost(cwd)
   if (!host) return undefined
   log(`running test and test:e2e on ${host}`)
-  const run = await runOnPc(cwd, host, sha, ['test', 'test:e2e'], (line) => console.log(line))
+  const run = await runOnPc(
+    cwd,
+    host,
+    sha,
+    ['test', 'test:e2e'],
+    (line) => console.log(line),
+    AbortSignal.timeout(PC_TIMEOUT_MS),
+  )
   if (run.outcome === 'unavailable') {
     log(`${run.reason}; GitHub Actions runs it instead`)
     return undefined

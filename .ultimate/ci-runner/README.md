@@ -27,7 +27,8 @@ The code is in `.ultimate/extensions/ci/pc.ts`.
 - **No secrets** live on the PC; it never needs GitHub access.
 
 Know what "only test runs" means: a test run executes the commit's code. So the VPS can run any code as the
-unprivileged `ci` user inside the distro. What contains it is the locked-down distro, not the forced command.
+unprivileged `ci` user inside the distro. What contains it is the locked-down distro, not the forced command. A run
+may take up to 15 minutes for the lander and 30 minutes for the `ci` tool; after that, GitHub runs it.
 
 That code can also reach your LAN and the tailnet: no outbound filter limits the `ci` user.
 
@@ -126,6 +127,14 @@ AllowUsers ci
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
+
+# Root owns the key file and the command, outside the home that test code can write to.
+Match User ci
+  AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+  ForceCommand /usr/local/bin/ultimate-ci
+  DisableForwarding yes
+  PermitTTY no
+  PermitUserRC no
 ```
 
 ```bash
@@ -140,16 +149,20 @@ Send @ultimate the fingerprint the last command prints. It checks it against the
 🤖 @ultimate creates `~/.ssh/ultimate-ci` on the VPS and sends you only its public line. The private key never leaves
 the VPS.
 
-🐧 Put the line in `/home/ci/.ssh/authorized_keys` (`mkdir -p /home/ci/.ssh` first), prefixed so it can run nothing but
-the runner script:
+🐧 Put the line in `/etc/ssh/authorized_keys/ci`, prefixed like this (sshd's `ForceCommand` from step 6 applies
+either way):
 
 ```
 restrict,command="/usr/local/bin/ultimate-ci" ssh-ed25519 AAAA… ultimate@my-vps
 ```
 
 ```bash
-chown -R ci: /home/ci/.ssh && chmod 700 /home/ci/.ssh && chmod 600 /home/ci/.ssh/authorized_keys
+mkdir -p /etc/ssh/authorized_keys && chmod 755 /etc/ssh/authorized_keys
+chown root:root /etc/ssh/authorized_keys/ci && chmod 644 /etc/ssh/authorized_keys/ci
+systemctl reload sshd
 ```
+
+Test code runs as `ci`, so nothing that decides what the key may do lives where `ci` can write.
 
 ## 8. Let only the VPS in 🪟 (admin PowerShell)
 
