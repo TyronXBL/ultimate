@@ -1,0 +1,76 @@
+#!/bin/bash
+# The only command the CI key may run on the runner PC: sshd's `ForceCommand` for the `ci` user (README.md here).
+# Install it as /usr/local/bin/ultimate-ci, owned by root, mode 755.
+#
+#   git-receive-pack 'ci.git'   receive commits into ~/ci.git (`git push pc …` from the VPS)
+#   run <sha> <suite>…          test <sha> in a fresh worktree; suites: check, test, test:e2e, in the order given
+#
+# Exit: 0 every suite passed; 1 a suite failed; 2 refused; 75 no verdict now (busy, unknown commit, install failed or
+# timed out, a missing tool).
+set -uo pipefail
+
+repo=$HOME/ci.git
+command=${SSH_ORIGINAL_COMMAND:-}
+say() { echo "ultimate-ci: $*"; }
+refuse() {
+  say "refused: $*" >&2
+  exit 2
+}
+
+# The whole command must match the grammar: one line, single spaces, nothing after it.
+if [[ $command == "git-receive-pack 'ci.git'" ]]; then
+  exec git-receive-pack "$repo"
+fi
+[[ $command =~ ^run\ [0-9a-f]{40}(\ (check|test|test:e2e))+$ ]] || refuse "${command:-no command}"
+read -r -a words <<<"$command"
+sha=${words[1]}
+suites=("${words[@]:2}")
+
+# One run at a time: a second one gets no verdict at once and goes to GitHub.
+exec 9>"$HOME/run.lock"
+flock -n 9 || {
+  say "busy with another run"
+  exit 75
+}
+
+# Holding the lock, no other run is under way: sweep what stopped or refused runs left (worktrees, `run/` refs).
+sweep() {
+  for dir in "$HOME"/runs/*; do
+    [[ -e $dir ]] && git -C "$repo" worktree remove --force "$dir" 2>/dev/null
+  done
+  rm -rf "$HOME/runs"
+  git -C "$repo" worktree prune
+  git -C "$repo" for-each-ref --format='%(refname)' refs/heads/run/ | while read -r ref; do
+    [[ $ref == "refs/heads/run/$1" ]] || git -C "$repo" update-ref -d "$ref"
+  done
+}
+sweep "$sha"
+work=$HOME/runs/$sha
+trap 'sweep none' EXIT
+git -C "$repo" worktree add -q --detach "$work" "$sha" || {
+  say "no commit $sha in $repo"
+  exit 75
+}
+cd "$work" || exit 75
+
+say "installing dependencies"
+timeout --kill-after=10 600 pnpm install --frozen-lockfile --prefer-offline || {
+  say "pnpm install failed or ran past 600 s"
+  exit 75
+}
+for suite in "${suites[@]}"; do
+  say "$suite started"
+  start=$SECONDS
+  timeout --kill-after=10 900 pnpm "$suite"
+  code=$?
+  if [[ $code -eq 0 ]]; then
+    say "$suite passed in $((SECONDS - start)) s"
+  elif [[ $code -eq 126 || $code -eq 127 ]]; then
+    say "$suite could not start a tool (exit $code)"
+    exit 75
+  else
+    [[ $code -eq 124 ]] && say "$suite ran past 900 s and was stopped"
+    say "$suite failed in $((SECONDS - start)) s"
+    exit 1
+  fi
+done

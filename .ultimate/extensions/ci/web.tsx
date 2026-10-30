@@ -63,7 +63,7 @@ function CiResultCard({ entry }: { entry: EntryRecord }) {
             <span className="shrink-0 text-muted-foreground">{duration(result.seconds)}</span>
           )}
           <span className="flex-1" />
-          {result.url && (
+          {result.url ? (
             <a
               className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground hover:text-foreground hover:underline"
               href={result.url}
@@ -73,7 +73,9 @@ function CiResultCard({ entry }: { entry: EntryRecord }) {
               open run
               <ArrowUpRightIcon className="size-2.5 opacity-60" />
             </a>
-          )}
+          ) : result.runner ? (
+            <span className="shrink-0 text-[11px] text-muted-foreground">on {result.runner}</span>
+          ) : null}
         </header>
         <div className="space-y-2 px-3 py-2.5 pl-8.5">
           {result.reason && (
