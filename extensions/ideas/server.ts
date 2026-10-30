@@ -15,6 +15,7 @@ import type { ConversationId, EntryId, InputSubmissionDraft, Tx } from '@earendi
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { actingAs } from '../../lib/acting-as.ts'
 import { implementAction } from '../../lib/actions.ts'
+import { checkSetup } from '../../lib/agents.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { imageMimeTypes, maxImageBytes, maxImages } from '../../shared/protocol.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
@@ -211,7 +212,12 @@ const Deliver = defineTask<{ idea: number; ultimate: number }, { phase: 'deliver
           requestId: `ideas.launch:${idea.id}:${launched.launch.at}`,
           entry: {
             kind: LaunchInput.kind,
-            data: { id: idea.id, title: idea.title, size: launched.launch.size },
+            data: {
+              id: idea.id,
+              title: idea.title,
+              size: launched.launch.size,
+              ...(launched.launch.agents ? { agents: launched.launch.agents } : {}),
+            },
           },
         }
         return undefined
@@ -234,13 +240,19 @@ const Deliver = defineTask<{ idea: number; ultimate: number }, { phase: 'deliver
  * Mark idea `id` launched and start delivering its input to @ultimate (`ultimate`) in the same commit. Launching
  * again before @ultimate linked a branch keeps the first launch and delivers it again, which places nothing new.
  */
-export async function launch(tx: Tx, id: unknown, size: unknown, ultimate: ConversationId) {
+export async function launch(
+  tx: Tx,
+  id: unknown,
+  size: unknown,
+  ultimate: ConversationId,
+  agents?: Record<string, string>,
+) {
   if (size !== 'assess' && size !== 'build') throw new Error("size must be 'assess' or 'build'")
   const idea = await find(tx, id)
   if (idea.parked !== undefined) throw new Error(`Idea ${idea.id} is parked`)
   if (idea.launch?.branch !== undefined)
     throw new Error(`Idea ${idea.id} is already #${idea.launch.branch}`)
-  idea.launch ??= { size: size, at: Date.now() }
+  idea.launch ??= { size: size, at: Date.now(), ...(agents ? { agents } : {}) }
   await tx.createTask(
     Deliver,
     { idea: idea.id, ultimate },
@@ -279,7 +291,8 @@ export function launchText(idea: Idea & { launch: NonNullable<Idea['launch']> },
     ...(idea.from ? [`Found in: ${idea.from}`] : []),
     ...(idea.notes ? ['Notes:', idea.notes] : []),
     '',
-    `Start it with \`branch\` (its title from the idea, a self-contained prompt with the notes${pictures ? `, \`images: 'latest'\` for the ${pictures === 1 ? 'picture' : `${pictures} pictures`} attached here` : ''}), then call \`idea {action: 'link', id: ${idea.id}, branch: <branch id>}\`.`,
+    `Start it with \`branch\` (its title from the idea, a self-contained prompt with the notes${pictures ? `, \`images: 'latest'\` for the ${pictures === 1 ? 'picture' : `${pictures} pictures`} attached here` : ''}${idea.launch.agents ? ', and `agents` exactly as given below' : ''}), then call \`idea {action: 'link', id: ${idea.id}, branch: <branch id>}\`.`,
+    ...(idea.launch.agents ? [`agents: ${JSON.stringify(idea.launch.agents)}`] : []),
   ].join('\n')
 }
 
@@ -321,10 +334,10 @@ export const actions = {
     host.harness().commit((tx) => remove(tx, field(args).id), context),
   ),
   launch: implementAction(LaunchAction, async (args, { host }) => {
+    const { id, size, agents } = field(args)
+    const setup = agents === undefined ? undefined : await checkSetup(host, agents)
     const ultimate = await host.need(SubagentsApi).standing('ultimate', context)
-    return host
-      .harness()
-      .commit((tx) => launch(tx, field(args).id, field(args).size, ultimate), context)
+    return host.harness().commit((tx) => launch(tx, id, size, ultimate, setup), context)
   }),
 }
 

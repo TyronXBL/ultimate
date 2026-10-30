@@ -6,7 +6,8 @@ import type { Context } from '@earendil-works/chord'
 import { defineDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, EntryId, TaskId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
-import { StandingDoc } from './refs.ts'
+import { BranchSetupDoc, StandingDoc } from './refs.ts'
+import type { BranchSetupState } from './refs.ts'
 import type { createChild } from './children.ts'
 
 export { Started, StandingDoc } from './refs.ts'
@@ -60,6 +61,17 @@ export const Standing = defineDoc<Record<string, ConversationId>>({
 /** The definition a conversation was configured from: children (including automation runs) and standing agents. */
 export const Profile = defineDoc<{ definition?: string }>({
   kind: 'ultimate.agent-profile',
+  checkpointWhen: () => false,
+  version: 1,
+  scope: 'conversation',
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({}),
+})
+
+/** A branch's own agent setup (`refs.ts`); `subagent start` under the branch applies it. */
+export const BranchSetup = defineDoc<BranchSetupState>({
+  kind: BranchSetupDoc.kind,
   checkpointWhen: () => false,
   version: 1,
   scope: 'conversation',

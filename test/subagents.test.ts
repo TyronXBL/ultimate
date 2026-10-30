@@ -32,7 +32,7 @@ import type { OpenHost } from '../server/harness.ts'
 import subagents, { actions } from '../extensions/subagents/server.ts'
 import watchdog from '../extensions/watchdog/server.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
-import { Started, Subagents } from '../extensions/subagents/api.ts'
+import { BranchSetup, Started, Subagents } from '../extensions/subagents/api.ts'
 import type { ActionContext } from '../server/actions.ts'
 import codemode from '../extensions/codemode/server.ts'
 import { Metadata } from '../server/metadata.ts'
@@ -77,7 +77,7 @@ async function fixture(
     ultimateRoot,
     userHome,
     home: join(ultimateRoot, 'home'),
-    faux: fauxProvider(),
+    faux: fauxProvider({ models: [{ id: 'faux-1' }, { id: 'faux-think', reasoning: true }] }),
   })
   prepared.registry.install(CodingTools)
   if (extension) prepared.registry.install(extension)
@@ -385,6 +385,47 @@ it('runs root -> forked review lead -> parallel leaves -> lead -> root with scop
     )
   ).wait(context)
   expect(await f.opened.harness.snapshot(Subagents, omittedId, context)).toBeUndefined()
+})
+
+it("runs every agent under a branch on the branch's own setup, down to its lead's team", async () => {
+  const f = await fixture()
+  await writeFile(
+    join(f.ultimateRoot, 'agents/lead.md'),
+    '---\nname: lead\ndescription: lead\ntools: [read, bash, subagent]\n---\nLead\n',
+  )
+  // The root stands in for a branch that `branch({ agents })` started.
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(BranchSetup, f.opened.root.id)).agents = {
+      lead: { provider: 'faux', modelId: 'faux-think', thinking: 'high' },
+      scout: { provider: 'faux', modelId: 'faux-think', thinking: 'low' },
+    }
+  }, context)
+  await call(f.opened, { action: 'start', agent: 'lead', task: 'lead' })
+  const leadId = (await children(f.opened))[0].conversationId
+  const lead = (await f.opened.harness.conversation(leadId, context))!
+  expect(await lead.agent(context)).toMatchObject({
+    model: { provider: 'faux', modelId: 'faux-think' },
+    thinkingLevel: 'high',
+  })
+  await (
+    await lead.submit(
+      {
+        type: 'input',
+        content: `CALL ${JSON.stringify({ action: 'start', agent: 'scout', task: 'leaf' })}`,
+      },
+      context,
+    )
+  ).wait(context)
+  const [leaf] = Object.values(
+    (await f.opened.harness.snapshot(Subagents, leadId, context))!.agents,
+  )
+  const agent = await (await f.opened.harness.conversation(leaf.conversationId, context))!.agent(
+    context,
+  )
+  expect(agent).toMatchObject({
+    model: { provider: 'faux', modelId: 'faux-think' },
+    thinkingLevel: 'low',
+  })
 })
 
 it('names the definitions when start omits agent, for every argument shape seen in the trace', async () => {

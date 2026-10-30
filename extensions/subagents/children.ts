@@ -14,7 +14,27 @@ import { definitionAgent } from '../../lib/agents.ts'
 import type { AgentDefinition } from '../../lib/agents.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { Started } from './refs.ts'
-import { Profile } from './api.ts'
+import { BranchSetup, Profile } from './api.ts'
+
+/**
+ * The model and thinking level the branch that conversation `from` runs under sets for definition `name`: the nearest
+ * conversation up its owner chain with a branch setup decides. Undefined when none does.
+ */
+export async function setupFor(tx: Tx, from: ConversationId, name: string) {
+  for (
+    let id: ConversationId | undefined = from;
+    id !== undefined;
+    id = (await tx.conversation(id))?.owner?.conversationId
+  ) {
+    const { agents } = await tx.doc(BranchSetup, id)
+    if (agents) {
+      if (!Object.hasOwn(agents, name)) return undefined
+      const { thinking, ...model } = agents[name]
+      return { model, ...(thinking ? { thinking: thinking as ModelThinkingLevel } : {}) }
+    }
+  }
+  return undefined
+}
 
 /**
  * Emit `subagents.started` for `conversation`, configured in `tx` to run as `agent`: its model and thinking level as

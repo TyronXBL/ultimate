@@ -349,6 +349,57 @@ function resolveFallback(entries: string[] | undefined, modelRuntime: ModelRunti
 }
 
 /**
+ * A branch's agent setup, `{ [definition]: 'provider/id[:thinking]' }`, resolved: each name a definition that is not
+ * a standing agent, each model one with a login here. Throws naming the first entry that fails.
+ */
+export function resolveSetup(
+  agents: Record<string, string>,
+  definitions: readonly AgentDefinition[],
+  modelRuntime: ModelRuntime,
+): Record<string, FallbackModel> {
+  const available = modelRuntime.getAvailableSnapshot()
+  return Object.fromEntries(
+    Object.entries(agents).map(([name, entry]) => {
+      const definition = definitions.find((item) => item.name === name)
+      if (!definition || definition.resident)
+        throw new Error(
+          `agents.${name}: not an agent a branch runs; one of ${definitions
+            .filter((item) => !item.resident)
+            .map((item) => item.name)
+            .join(', ')}`,
+        )
+      const { model, thinking } = resolveModel(entry, undefined, modelRuntime, `agents.${name}`)
+      if (!model) throw new Error(`agents.${name}: ${entry} is not a model`)
+      if (!hasLogin(available, model))
+        throw new Error(`agents.${name}: ${model.provider} has no login here`)
+      return [name, { ...model, ...(thinking ? { thinking } : {}) }]
+    }),
+  )
+}
+
+/** Untrusted `agents` from the browser checked as `resolveSetup` checks them against this host's definitions; returned as is. */
+export async function checkSetup(
+  host: { ultimateRoot: string; projectRoot: string; userHome: string; modelRuntime: ModelRuntime },
+  agents: unknown,
+): Promise<Record<string, string>> {
+  if (
+    !agents ||
+    typeof agents !== 'object' ||
+    Array.isArray(agents) ||
+    !Object.values(agents).every((entry) => typeof entry === 'string')
+  )
+    throw new Error('agents must map agent names to "provider/id[:thinking]"')
+  const { definitions } = await discoverAgents(
+    host.ultimateRoot,
+    host.projectRoot,
+    host.userHome,
+    host.modelRuntime,
+  )
+  resolveSetup(agents as Record<string, string>, definitions, host.modelRuntime)
+  return agents as Record<string, string>
+}
+
+/**
  * An overlay, marked by `addTools` (empty when it only changes settings): it extends the definition of the same name
  * an earlier folder holds. Its settings replace that definition's, its `addTools` join its tool list, its `denyTools`
  * join its deny list, and its body is appended to its instructions, so the earlier file stays the instructions' source.

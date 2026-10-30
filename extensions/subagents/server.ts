@@ -43,14 +43,14 @@ import {
   saveOverlay,
 } from '../../lib/agents.ts'
 import type { DefinitionFields } from '../../lib/agents.ts'
-import { createChild, started } from './children.ts'
+import { createChild, setupFor, started } from './children.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { exec } from '../../lib/exec.ts'
 import { shortTitle } from '../../lib/title.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { Pin } from '../models/api.ts'
-import { Profile, Standing, Subagents, SubagentsApi } from './api.ts'
+import { BranchSetup, Profile, Standing, Subagents, SubagentsApi } from './api.ts'
 import {
   DefinitionAction,
   DefinitionsAction,
@@ -59,7 +59,7 @@ import {
   StandingAction,
 } from './refs.ts'
 
-export const docs = [Subagents, Standing, Profile]
+export const docs = [Subagents, Standing, Profile, BranchSetup]
 const Anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'ultimate.subagent-anchor',
   version: 1,
@@ -988,6 +988,9 @@ export default function subagents(
               const state = await tx.doc(Subagents, api.conversationId)
               if (state.actions[api.callId]) return { ...state.actions[api.callId] }
               let conversationId = args.id as ConversationId
+              // A branch with its own agent setup runs this definition on the model it picked for it; read before the
+              // commit's first write.
+              const setup = definition && (await setupFor(tx, api.conversationId, definition.name))
               if (definition) {
                 await conversations.requestSummary(
                   tx,
@@ -1002,6 +1005,7 @@ export default function subagents(
                 const child = await createChild(host, tx, {
                   owner: { kind: 'task', taskId: owner },
                   definition,
+                  ...setup,
                   parentAgent: parent,
                   modelRuntime: host.modelRuntime,
                   metadata: host.metadata,
