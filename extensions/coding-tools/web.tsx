@@ -1,5 +1,5 @@
 // Pi upstream: @earendil-works/pi-durable@1.4.0 src/tools/bash.ts and src/tools/edit.ts — internal bash exit_code diagnostic message drives exitOf and untyped details.patch/details.diff drive Edit. Drop when Pi exports structured bash outcomes and structured diff rows for rendering.
-import { XIcon } from 'lucide-react'
+import { FileSearchIcon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnsiOutput } from '@/components/ai/ansi-output'
 import { Shimmer } from '@/components/ai/shimmer'
@@ -22,11 +22,13 @@ import {
   useConversation,
   useStore,
   useToolDuration,
+  Provided,
 } from '@/sdk'
 import type { ToolCallView } from '@/sdk'
 import { type BashStep, formatBashCommand } from './bash-command.tsx'
 import { countChanges, Diff, editRows, parseDisplayDiff, parsePatch } from './diff.tsx'
 import { CancelAction } from './refs.ts'
+import { OpenFile } from './ui.tsx'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 
@@ -48,6 +50,31 @@ const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`
 export function skillOf(path: string) {
   const parts = path.split('/')
   return parts.at(-1) === 'SKILL.md' && parts.length > 1 ? parts.at(-2) : undefined
+}
+
+function OpenFileButton({ path, line }: { path: string; line?: number }) {
+  const conversation = useConversation((current) => current.id)
+  if (!path) return null
+  return (
+    <Provided input={{ path, line, conversation }} point={OpenFile}>
+      {(open) =>
+        open && (
+          <button
+            aria-label="Open file in Files"
+            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:size-8"
+            onClick={(event) => {
+              event.stopPropagation()
+              open()
+            }}
+            title="Open file in Files"
+            type="button"
+          >
+            <FileSearchIcon aria-hidden size={14} />
+          </button>
+        )
+      }
+    </Provided>
+  )
 }
 
 function Read({ call }: { call: ToolCallView }) {
@@ -90,6 +117,7 @@ function Read({ call }: { call: ToolCallView }) {
             </>
           )
         }
+        action={<OpenFileButton line={offset} path={path} />}
       />
       <ToolContent>
         {failed ? (
@@ -160,6 +188,7 @@ function Write({ call }: { call: ToolCallView }) {
         name="write"
         state={call.status}
         title={<FileTitle path={path} verb="writing" />}
+        action={<OpenFileButton path={path} />}
       />
       <ToolContent>
         {content && (
@@ -218,6 +247,7 @@ function Edit({ call }: { call: ToolCallView }) {
         name="edit"
         state={call.status}
         title={<FileTitle path={path} verb="editing" />}
+        action={<OpenFileButton path={path} />}
       />
       <ToolContent>
         {failed ? (

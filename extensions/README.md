@@ -410,6 +410,8 @@ link: ({ href, children, core }) =>
   href.startsWith('https://docs.example.com/') ? <a href={href}>{children}</a> : core
 ```
 
+`inlineCode` similarly composes over Markdown's inline code and receives `{ code, core }`; return `core` to leave it unchanged.
+
 ### Code block renderers
 
 `codeBlocks` renders the fenced code blocks of one language in Markdown that `MessageResponse` shows, keyed by the

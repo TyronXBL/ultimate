@@ -135,6 +135,7 @@ const shapes: Record<keyof WebExtension, [Check, string]> = {
   inbox: [isComponent, 'an inbox renderer component'],
   composer: [isComponent, 'a composer renderer component'],
   link: [isComponent, 'a link renderer component'],
+  inlineCode: [isComponent, 'an inline code renderer component'],
   codeBlocks: [objectOf(isComponent), 'an object of code block language → component'],
   messageActions: [arrayOf(isComponent), 'an array of message action components'],
   messageDetails: [arrayOf(isComponent), 'an array of message detail components'],
@@ -551,6 +552,14 @@ export function linkRenderers(
 ): { extension: string; version: number; component: LinkRenderer }[] {
   return records.flatMap((record) => {
     const component = record.extension?.link
+    return component ? [{ extension: record.name, version: record.version, component }] : []
+  })
+}
+
+/** Every inline Markdown code renderer in discovery order: each receives the previous rendering as `core`. */
+export function inlineCodeRenderers(records: readonly ExtensionRecord[]) {
+  return records.flatMap((record) => {
+    const component = record.extension?.inlineCode
     return component ? [{ extension: record.name, version: record.version, component }] : []
   })
 }

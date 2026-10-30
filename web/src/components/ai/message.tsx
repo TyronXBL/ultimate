@@ -17,7 +17,12 @@ import type { CustomRendererProps, ExtraProps } from 'streamdown'
 import { ExtensionBoundary } from '../../app/boundary.tsx'
 import { setCodeWrap } from '../../sdk/client.ts'
 import { useExtensions, useStore } from '../../sdk/hooks.ts'
-import { codeBlockLanguages, codeBlockRenderers, linkRenderers } from '../../sdk/registry.ts'
+import {
+  codeBlockLanguages,
+  codeBlockRenderers,
+  inlineCodeRenderers,
+  linkRenderers,
+} from '../../sdk/registry.ts'
 import { codePlugin } from './code-block.tsx'
 import { mentionHref, parseMention, remarkMentions, splitMentions } from './mentions.ts'
 
@@ -122,7 +127,31 @@ function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: stri
   const extensions = useExtensions()
   const { node: _node, className, children, 'data-block': block, ...rest } = props
   const language = /language-(\S+)/.exec(className ?? '')?.[1] ?? ''
-  if (!block || codeBlockRenderers(extensions, language).length > 0) return <CoreCode {...props} />
+  if (!block) {
+    const code =
+      typeof children === 'string'
+        ? children
+        : isValidElement<{ children?: unknown }>(children) &&
+            typeof children.props.children === 'string'
+          ? children.props.children
+          : ''
+    const core = <CoreCode {...props} />
+    return inlineCodeRenderers(extensions).reduce<ReactNode>(
+      (inner, { extension, version, component: Renderer }) => (
+        <ExtensionBoundary
+          extension={extension}
+          fallback={inner}
+          key={extension}
+          variant="inline"
+          version={version}
+        >
+          <Renderer code={code} core={inner} />
+        </ExtensionBoundary>
+      ),
+      core,
+    )
+  }
+  if (codeBlockRenderers(extensions, language).length > 0) return <CoreCode {...props} />
   const code =
     typeof children === 'string'
       ? children
