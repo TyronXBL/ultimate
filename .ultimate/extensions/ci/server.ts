@@ -1,8 +1,6 @@
 /**
- * The `ci` tool: the full CI of a committed tip on the fork's GitHub Actions, in the background. The call returns at
- * once; a durable task pushes `ci/<sha>-<task>`, looks at the run until it ends, deletes the ref and wakes the calling
- * conversation once with a `ci.result` card. It never runs the suites on this machine: an unreachable GitHub is a
- * result too.
+ * The `ci` tool: runs CI on a configured PC runner first, otherwise the fork's GitHub Actions. The call returns at
+ * once; a durable task wakes the calling conversation once with a `ci.result` card.
  */
 import { Type } from '@earendil-works/pi-ai'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
@@ -20,7 +18,8 @@ import {
   runState,
   secretsIn,
 } from './github.ts'
-import type { CiResult } from './refs.ts'
+import type { CiResult, Failure } from './refs.ts'
+import { pcHost, runOnPc } from './pc.ts'
 
 /** The fork the lander pushes to (`lander.push`); its Actions run `.github/workflows/ci.yml` on `ci/**`. */
 const REMOTE = 'fork'
@@ -31,8 +30,9 @@ const RUN_LIMIT_MS = 60 * 60_000
 
 type Input = { to: number; cwd: string; sha: string }
 type Checkpoint =
-  | { phase: 'start' }
-  | { phase: 'poll'; ref: string; pushed: number; failing?: number }
+  | { phase: 'github'; reason?: string }
+  | { phase: 'pc'; host: string }
+  | { phase: 'poll'; ref: string; pushed: number; failing?: number; reason?: string }
   | { phase: 'deliver'; result: CiResult }
 
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -43,6 +43,28 @@ const deliver = (result: CiResult) => ({
 /** The task's own ref, `t` apart from the gate's `ci/<sha>-<n>`; the same on every rerun of the task. */
 const refOf = (task: { id: number; input: Input }) => `ci/${task.input.sha}-t${task.id}`
 /** Delete `ref` from the fork; a ref already gone is fine. Resolves a note for the card when it stays behind. */
+async function attachEarlier(
+  host: Pick<ExtensionHost, 'need'>,
+  to: number,
+  failures: Failure[],
+  ctx: Context,
+) {
+  try {
+    const repeated = await host
+      .need(WorkspacesApi)
+      .failing({ tests: failures.map((failure) => failure.title), except: to }, ctx)
+    for (const failure of failures) {
+      const earlier = repeated.find((item) => item.test === failure.title)
+      if (earlier)
+        failure.earlier = {
+          landings: earlier.landings.length,
+          branches: earlier.branches.slice(0, 5),
+        }
+    }
+  } catch {
+    // The run's result is what counts: without the lander's history its failures just carry none.
+  }
+}
 const drop = (cwd: string, ref: string) =>
   git(cwd, ['push', '-q', REMOTE, '--delete', ref]).then(
     () => undefined,
@@ -72,16 +94,18 @@ function summary(result: CiResult) {
   return `CI did not run for ${sha}: ${result.reason}`
 }
 
-function createCiRun(host: Pick<ExtensionHost, 'need'>) {
+function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
   return defineTask<Input, Checkpoint, null>({
     name: 'ci.run',
     version: 1,
-    initial: () => ({ phase: 'start' }),
+    initial: () => ({ phase: 'github' }),
     phases: {
-      // Pushing the same sha to the same ref again changes nothing, so a rerun of this phase after a crash is harmless.
-      start: async (task, runtime, ctx) => {
+      // The PC phase is checkpointed independently; a crash retries it, while an unavailable verdict proceeds to GitHub.
+      github: async (task, runtime, ctx) => {
         const { cwd, sha } = task.input
         const ref = refOf(task)
+        const fallbackReason =
+          task.state.checkpoint.phase === 'github' ? task.state.checkpoint.reason : undefined
         let next
         try {
           const leaks = await secretsIn(cwd, sha, REMOTE)
@@ -109,12 +133,22 @@ function createCiRun(host: Pick<ExtensionHost, 'need'>) {
               reason: left ?? 'this commit already passed CI',
             })
           } else {
-            await git(cwd, ['push', '-q', REMOTE, `${sha}:refs/heads/${ref}`])
-            const pushed = runtime.now()
-            next = {
-              status: 'sleeping' as const,
-              until: pushed + (await pollMs(cwd, repo)),
-              checkpoint: { phase: 'poll' as const, ref, pushed },
+            const host = task.state.checkpoint.reason ? undefined : await pcHost(cwd)
+            if (host) {
+              next = { status: 'running' as const, checkpoint: { phase: 'pc' as const, host } }
+            } else {
+              await git(cwd, ['push', '-q', REMOTE, `${sha}:refs/heads/${ref}`])
+              const pushed = runtime.now()
+              next = {
+                status: 'sleeping' as const,
+                until: pushed + (await pollMs(cwd, repo)),
+                checkpoint: {
+                  phase: 'poll' as const,
+                  ref,
+                  pushed,
+                  ...(fallbackReason ? { reason: fallbackReason } : {}),
+                },
+              }
             }
           }
         } catch (error) {
@@ -130,10 +164,64 @@ function createCiRun(host: Pick<ExtensionHost, 'need'>) {
         }
         await runtime.commit(() => next, ctx)
       },
+      pc: async (task, runtime, ctx) => {
+        const { cwd, sha } = task.input
+        const { host } = task.state.checkpoint
+        const run = await runOnPc(
+          cwd,
+          host,
+          sha,
+          ['check', 'test', 'test:e2e'],
+          () => {},
+          ctx.abortSignal ?? AbortSignal.timeout(RUN_LIMIT_MS),
+        )
+        if (run.outcome === 'unavailable') {
+          const leaks = await secretsIn(cwd, sha, REMOTE)
+          if (leaks.length) {
+            await runtime.commit(
+              () =>
+                deliver({
+                  sha,
+                  conclusion: 'refused',
+                  reason: `possible secrets in ${leaks.join(', ')}; nothing was pushed`,
+                  jobs: [],
+                  failures: [],
+                }),
+              ctx,
+            )
+            return
+          }
+          await runtime.commit(
+            () => ({
+              status: 'running',
+              checkpoint: {
+                phase: 'github',
+                reason: `the PC gave no verdict: ${run.reason}; ran on GitHub`,
+              },
+            }),
+            ctx,
+          )
+          return
+        }
+        const failures = run.outcome === 'failed' ? run.failures : []
+        if (failures.length) await attachEarlier(extension, task.input.to, failures, ctx)
+        await runtime.commit(
+          () =>
+            deliver({
+              sha,
+              conclusion: run.outcome === 'passed' ? 'success' : 'failure',
+              runner: host,
+              seconds: run.seconds,
+              jobs: run.jobs,
+              failures,
+            }),
+          ctx,
+        )
+      },
       // Only reads GitHub until the run ends; deleting the ref twice is harmless.
       poll: async (task, runtime, ctx) => {
         const { cwd, sha } = task.input
-        const { ref, pushed, failing } = task.state.checkpoint
+        const { ref, pushed, failing, reason } = task.state.checkpoint
         const now = runtime.now()
         const end = async (result: Omit<CiResult, 'sha' | 'ref'>) => {
           const left = await drop(cwd, ref)
@@ -152,26 +240,7 @@ function createCiRun(host: Pick<ExtensionHost, 'need'>) {
             const state = await runState(cwd, repo, run.id)
             const failures =
               state.run.conclusion === 'success' ? [] : await failuresOf(cwd, repo, state.jobs)
-            if (failures.length) {
-              try {
-                const repeated = await host
-                  .need(WorkspacesApi)
-                  .failing(
-                    { tests: failures.map((failure) => failure.title), except: task.input.to },
-                    ctx,
-                  )
-                for (const failure of failures) {
-                  const earlier = repeated.find((item) => item.test === failure.title)
-                  if (earlier)
-                    failure.earlier = {
-                      landings: earlier.landings.length,
-                      branches: earlier.branches.slice(0, 5),
-                    }
-                }
-              } catch {
-                // The run's result is what counts: without the lander's history its failures just carry none.
-              }
-            }
+            if (failures.length) await attachEarlier(extension, task.input.to, failures, ctx)
             const ends = state.jobs.flatMap((job) =>
               job.completed_at ? [Date.parse(job.completed_at)] : [],
             )
@@ -179,6 +248,7 @@ function createCiRun(host: Pick<ExtensionHost, 'need'>) {
               job.started_at ? [Date.parse(job.started_at)] : [],
             )
             next = await end({
+              ...(reason ? { reason } : {}),
               url: state.run.html_url,
               conclusion:
                 state.run.conclusion === 'success'
@@ -287,7 +357,7 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
       defineTool({
         name: 'ci',
         description:
-          "Run this repository's full CI (check, unit tests, e2e) on the fork's GitHub Actions for your committed HEAD, in the background, instead of running the suites on this machine. Returns at once; you are woken once with a result card (passed or failed, the failing tests, timings). Uncommitted changes are not tested.",
+          "Run this repository's full CI on the PC runner when one is configured, else the fork's GitHub Actions, for your committed HEAD. Returns at once with a result card. Uncommitted changes are not tested.",
         parameters: Type.Object({}),
         // Not replay-safe (the default): an interrupted call is never rerun, so it starts at most one run.
         async execute(_args, api, ctx) {
@@ -307,7 +377,7 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
               ),
             ctx,
           )
-          const text = `CI started for ${sha.slice(0, 7)} in ${cwd}. You will be woken with its result in about 2–5 minutes; keep working or end your turn.${dirty ? ' Uncommitted changes are not part of it.' : ''}`
+          const text = `CI started for ${sha.slice(0, 7)} in ${cwd}. It will run on the PC runner when configured, else the fork's GitHub Actions. You will be woken with its result; keep working or end your turn.${dirty ? ' Uncommitted changes are not part of it.' : ''}`
           return { output: [{ type: 'text', text }] }
         },
       }),

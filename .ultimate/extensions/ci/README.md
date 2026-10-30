@@ -1,6 +1,6 @@
 # ci
 
-Runs this repository's full CI on the fork's GitHub Actions in the background and wakes the caller with a result card.
+Runs this repository's full CI on a configured PC runner first, then the fork's GitHub Actions when that runner is unavailable. See `.ultimate/ci-runner/README.md` to configure the PC path.
 
 The `ci` tool takes the calling conversation's committed HEAD (its worktree, its nearest owner's, else the project)
 and returns at once. A durable `ci.run` task then:
