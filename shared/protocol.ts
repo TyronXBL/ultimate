@@ -129,6 +129,8 @@ export interface SystemInfo {
     generation: number
     url: string
     activationError?: string
+    /** Extension server modules this process has evaluated; Node never frees one, so reloads keep old copies. */
+    extensionModules: number
   }
   access: { origins: string[] }
   persistence: { kind: 'sqlite'; path: string; sizeBytes: number; walBytes: number }

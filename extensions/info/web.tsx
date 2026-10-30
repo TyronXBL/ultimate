@@ -112,6 +112,12 @@ function Process({ system }: { system: SystemInfo }) {
             restart
           </Button>
         </Row>
+        <Row label="modules">
+          <span className="tabular-nums">{process.extensionModules}</span>
+          <span className="truncate text-muted-foreground/60">
+            extension modules kept since start
+          </span>
+        </Row>
         <Row label="url">
           <Copy value={process.url} />
         </Row>

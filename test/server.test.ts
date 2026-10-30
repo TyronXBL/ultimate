@@ -270,14 +270,19 @@ export const actions = { state: async () => state }`
 
   it('ignores late notices from disposed facets without losing the replacement’s notices', async () => {
     const source = `import { defineExtension } from '@earendil-works/pi-durable'
-export let raise
+let raise
 export default host => {
   raise = message => host.notice(message)
   return defineExtension({ name: 'late-notice' })
-}`
+}
+export const actions = { raise: async message => raise(message) }`
     const { server, options } = await fixture(false, { 'late-notice': source })
     const path = join(options.ultimateRoot, 'extensions/late-notice/server.ts')
-    const previous = (await server.vite.ssrLoadModule(path)).raise as (message: string) => void
+    const raiser = () => {
+      const action = server.extensions.action('late-notice', 'raise')!
+      return (message: string) => action(message, {} as never)
+    }
+    const previous = raiser()
     const initial = server.extensions.info().find((entry) => entry.name === 'late-notice')!
       .server!.loadedAt
     await writeFile(path, source + '\n')
@@ -286,14 +291,14 @@ export default host => {
         server.extensions.info().find((entry) => entry.name === 'late-notice')!.server!.loadedAt !==
         initial,
     )
-    expect(() => previous('retired notice')).not.toThrow()
-    const current = (await server.vite.ssrLoadModule(path)).raise as (message: string) => void
-    current('current notice')
+    await previous('retired notice')
+    const current = raiser()
+    await current('current notice')
     expect(server.extensions.info.diagnostics()).toContain('current notice')
     expect(server.extensions.info.diagnostics()).not.toContain('retired notice')
     servers.splice(servers.indexOf(server), 1)
     await server.close()
-    expect(() => current('shutdown notice')).not.toThrow()
+    await current('shutdown notice')
   })
 
   it('runs late facet openers immediately and continues after throwing cleanups', async () => {

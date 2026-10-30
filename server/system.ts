@@ -21,6 +21,7 @@ import type { ExtensionInfo, SystemInfo } from '../shared/protocol.ts'
 import type { Watch } from './extensions.ts'
 import type { PreparedHost } from './harness.ts'
 import { watchRoots } from './watch-roots.ts'
+import { keptModules } from './extension-loader.ts'
 
 const run = promisify(execFile)
 
@@ -129,6 +130,7 @@ export async function createSystem(
         generation: Number(process.env.ULTIMATE_GENERATION ?? 1),
         ...(processInfo.activationError ? { activationError: processInfo.activationError } : {}),
         url,
+        extensionModules: keptModules(),
       },
       access: { origins: origins() },
       persistence: {
