@@ -254,6 +254,9 @@ describe("background in @ultimate's compact transcript", () => {
     const toAgent = { id: 'tell', name: 'message', arguments: { to: '#5' } }
     const empty = { messages: [], next: 1 }
     expect(threadRow(row('pi.user'), messagesLog)).toBe(true)
+    // A launched idea or a branch request with its setup was hidden in the fold, card and all.
+    expect(threadRow(row('ideas.launch'), messagesLog)).toBe(true)
+    expect(threadRow(row('branch.setup'), messagesLog)).toBe(true)
     expect(threadRow(row('board.message', { from: 'user' }), messagesLog)).toBe(true)
     expect(threadRow(row('pi.assistant', undefined, said('toolUse'), [toUser]), messagesLog)).toBe(
       true,
