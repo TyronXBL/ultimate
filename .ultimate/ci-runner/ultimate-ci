@@ -1,0 +1,75 @@
+#!/bin/bash
+# The only command the CI key may run on the runner PC: the forced `command=` of its authorized_keys line
+# (README.md here). Install it as /usr/local/bin/ultimate-ci, owned by root, mode 755.
+#
+#   git-receive-pack 'ci.git'   receive commits into ~/ci.git (`git push pc …` from the VPS)
+#   run <sha> <suite>…          test <sha> in a fresh worktree; suites: check, test, test:e2e, in the order given
+#
+# Exit: 0 every suite passed; 1 a suite failed; 2 refused; 75 no verdict now (busy, unknown commit, install failed).
+set -uo pipefail
+
+repo=$HOME/ci.git
+say() { echo "ultimate-ci: $*"; }
+refuse() {
+  say "refused: $*" >&2
+  exit 2
+}
+
+read -r -a words <<<"${SSH_ORIGINAL_COMMAND:-}"
+case "${words[0]:-}" in
+git-receive-pack)
+  [[ ${#words[@]} -eq 2 && ${words[1]} == "'ci.git'" ]] || refuse "${SSH_ORIGINAL_COMMAND}"
+  exec git-receive-pack "$repo"
+  ;;
+run) ;;
+*) refuse "${SSH_ORIGINAL_COMMAND:-no command}" ;;
+esac
+
+sha=${words[1]:-}
+suites=("${words[@]:2}")
+[[ $sha =~ ^[0-9a-f]{40}$ && ${#suites[@]} -gt 0 ]] || refuse "usage: run <sha> <suite>…"
+for suite in "${suites[@]}"; do
+  [[ $suite =~ ^(check|test|test:e2e)$ ]] || refuse "unknown suite $suite"
+done
+
+# One run at a time: a second one gets no verdict at once and goes to GitHub.
+exec 9>"$HOME/run.lock"
+flock -n 9 || {
+  say "busy with another run"
+  exit 75
+}
+
+work=$HOME/runs/$sha
+cleanup() {
+  git -C "$repo" worktree remove --force "$work" 2>/dev/null
+  git -C "$repo" worktree prune
+  git -C "$repo" update-ref -d "refs/heads/run/$sha" 2>/dev/null
+}
+# A run stopped before its cleanup may have left this worktree behind.
+git -C "$repo" worktree remove --force "$work" 2>/dev/null
+git -C "$repo" worktree prune
+trap cleanup EXIT
+git -C "$repo" worktree add -q --detach "$work" "$sha" || {
+  say "no commit $sha in $repo"
+  exit 75
+}
+cd "$work" || exit 75
+
+say "installing dependencies"
+pnpm install --frozen-lockfile --prefer-offline || {
+  say "pnpm install failed"
+  exit 75
+}
+for suite in "${suites[@]}"; do
+  say "$suite started"
+  start=$SECONDS
+  timeout --kill-after=10 900 pnpm "$suite"
+  code=$?
+  if [[ $code -eq 0 ]]; then
+    say "$suite passed in $((SECONDS - start)) s"
+  else
+    [[ $code -eq 124 ]] && say "$suite ran past 900 s and was stopped"
+    say "$suite failed in $((SECONDS - start)) s"
+    exit 1
+  fi
+done

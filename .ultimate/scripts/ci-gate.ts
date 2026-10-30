@@ -1,5 +1,7 @@
-// The lander's test gate: push the checked-out commit to `<remote>:ci/<sha>`, wait for its GitHub Actions run and exit
-// with its result. When GitHub cannot be reached it runs `pnpm test` and `pnpm test:e2e` here instead, and says so.
+// The lander's test gate. With a `pc` remote it first runs `pnpm test` and `pnpm test:e2e` on that PC
+// (`.ultimate/extensions/ci/pc.ts`); when the PC gives no verdict (unreachable, busy), it pushes the checked-out commit
+// to `<remote>:ci/<sha>`, waits for its GitHub Actions run and exits with its result. When GitHub cannot be reached
+// either it runs the suites here instead, and says so.
 // The API calls carry the remote's stored Git credential when there is one (`.ultimate/extensions/ci/github.ts`).
 //
 // Usage, in the checkout to test: node .ultimate/scripts/ci-gate.ts [remote]   (default remote: fork)
@@ -17,6 +19,7 @@ import {
   Unreachable,
 } from '../extensions/ci/github.ts'
 import type { Run } from '../extensions/ci/github.ts'
+import { pcHost, runOnPc } from '../extensions/ci/pc.ts'
 
 const remote = process.argv[2] ?? 'fork'
 const cwd = process.cwd()
@@ -97,6 +100,26 @@ async function gate(repo: string, sha: string) {
   }
 }
 
+/** The PC's exit code for `sha`, or undefined when there is no PC or it gave no verdict. */
+async function onPc(sha: string) {
+  const host = await pcHost(cwd)
+  if (!host) return undefined
+  log(`running test and test:e2e on ${host}`)
+  const run = await runOnPc(cwd, host, sha, ['test', 'test:e2e'], (line) => console.log(line))
+  if (run.outcome === 'unavailable') {
+    log(`${run.reason}; GitHub Actions runs it instead`)
+    return undefined
+  }
+  for (const job of run.jobs) log(`  ${job.name}: ${job.conclusion} in ${job.seconds} s on ${host}`)
+  if (run.outcome === 'passed') {
+    log(`${host} passed ${sha.slice(0, 7)} in ${run.seconds} s`)
+    return 0
+  }
+  for (const failure of run.failures) console.log(`FAIL ${failure.title}\n  ${failure.message}`)
+  log(`${host} failed ${sha.slice(0, 7)} in ${run.seconds} s`)
+  return 1
+}
+
 /** Run `command` in its own process group, stopped with it after the time limit; resolves its exit code. */
 function local(command: string[]) {
   return new Promise<number>((done) => {
@@ -121,6 +144,8 @@ async function main() {
     for (const leak of leaks) console.log(`FAIL secret pattern in ${leak}`)
     return 1
   }
+  const pc = await onPc(sha)
+  if (pc !== undefined) return pc
   try {
     return await gate(await repository(cwd, remote), sha)
   } catch (error) {
