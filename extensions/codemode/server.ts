@@ -174,7 +174,8 @@ function localReads(host: ExtensionHost, context: Context) {
               .slice(-2000),
           })
         } else if (entry.kind === 'pi.assistant' && Array.isArray(item?.content)) {
-          for (const part of item.content)
+          // Reversed so that, after the stable sort by entry below, a turn's later calls come first.
+          for (const part of item.content.toReversed())
             if (part.type === 'toolCall' && part.id && part.name)
               calls.push({
                 entry: entry.id,
@@ -484,14 +485,12 @@ function globals(
         if (typeof ms !== 'number' || !Number.isInteger(ms) || ms < 1 || ms > 30000)
           throw new Error('ms must be an integer from 1 to 30000')
         return new Promise<void>((resolve, reject) => {
-          const finish = () => {
+          const timer = setTimeout(() => {
             signal.removeEventListener('abort', abort)
             resolve()
-          }
-          const timer = setTimeout(finish, ms)
+          }, ms)
           const abort = () => {
             clearTimeout(timer)
-            signal.removeEventListener('abort', abort)
             reject(signal.reason ?? new Error('Aborted'))
           }
           if (signal.aborted) abort()
