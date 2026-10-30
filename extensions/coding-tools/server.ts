@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { Context } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context'
 import { Type } from '@earendil-works/pi-ai'
@@ -102,6 +102,30 @@ export function changes(command: string) {
     // A word of its own (npm install, composer install, artisan migrate:fresh), not part of a path or file name.
     new RegExp(`(?:^|[\\s;&|(])(install|migrate)(?=$|[\\s;&|):])`).exec(joined)?.[1]
   )
+}
+
+/**
+ * Hints for a command that works but has a dedicated path: a leading `cd` into the directory bash already starts in,
+ * or one file read with `cat`, `head` or `sed -n`, which the read tool does. Only plain single commands count: pipes,
+ * lists, redirects, substitutions, globs and several files are legitimate shell work, and `tail` has no read equivalent.
+ */
+export function bashHints(command: string, cwd: string) {
+  const hints: string[] = []
+  const cd = /^\s*cd\s+("[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;|\n)/.exec(command)
+  const target = cd?.[1].replace(/^(["'])(.*)\1$/, '$2').replace(/^~(?=\/|$)/, homedir())
+  const own = target !== undefined && resolve(cwd, target) === resolve(cwd)
+  if (own) hints.push(`bash already starts in ${resolve(cwd)}; leave out the leading cd.`)
+  const rest = (own ? command.slice(cd![0].length) : command).trim()
+  const file = String.raw`\s+[^\s-]\S*$`
+  const read = new RegExp(
+    String.raw`^(cat)(\s+-n)?${file}|^(head)(\s+-(n\s*)?\d+)?${file}|^(sed)\s+-n\s+(['"]?)\d+(,\d+)?p\7${file}`,
+  ).exec(rest)
+  // Pipes, lists, redirects, substitutions and globs make it shell work, not a read.
+  if (read && !/[|;&<>`$()\\*?\n]/.test(rest))
+    hints.push(
+      `Read files with the read tool (offset and limit for a range), not ${read[1] ?? read[3] ?? read[6]}.`,
+    )
+  return hints
 }
 
 /**
@@ -306,6 +330,9 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit'>) {
         throw new Error(
           `An interruptible command must only wait, but this one changes things (${change}). Run the change in its own bash call, then wait in a separate interruptible one.`,
         )
+      if (api.env)
+        for (const message of bashHints(args.command, api.env.cwd))
+          api.diagnostic({ severity: 'info', code: 'bash_hint', message })
       // One log per invocation: task ids repeat across projects and a retried call reruns its task.
       const log = join(tmpdir(), `ultimate-commits-${randomUUID()}.log`)
       const call = createBashTool({

@@ -6,6 +6,11 @@ The events commit on their own right after the bash call, with its trace context
 
 Pi's coding tools and how the transcript shows them: `read` as a numbered, highlighted excerpt; `write` with its size and content; `edit` as a unified diff with old and new line numbers; `bash` as a terminal with streamed output, exit status, and duration. `bash-command.tsx` parses the command with [unbash](https://github.com/webpro-nl/unbash) (display only): the card stays collapsed once finished (open while running or failed) and its header condenses the command to its programs: pipes as arrows, list operators between steps, repeats folded (`sed ×2 · rg → head`), a heredoc's target file, and a literal leading `cd` as the directory on the right. Expanded, each step gets a highlighted row and every heredoc body is highlighted by its target file or interpreter. Unparsable commands stay raw.
 
+A bash command that has a dedicated path still runs, with an `info` diagnostic (`bash_hint`) the model sees in a
+`<harness>` block and the card shows below the output: a leading `cd` into the directory bash already starts in, and
+one file read with `cat`, `head` or `sed -n`, which the read tool does. Only a plain single command counts: pipes,
+lists, redirects, substitutions, globs, several files and `tail` (a log's last lines) get no hint.
+
 Bash calls without `timeout` have a 600-second tripwire ceiling. `ULTIMATE_BASH_TIMEOUT` overrides that default
 in seconds and is read at each call; it must be positive and finite. A tripwire timeout stops the process and reports
 how to request a longer explicit timeout. Explicit timeouts retain Pi's ordinary timeout error.
