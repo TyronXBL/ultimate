@@ -8,7 +8,8 @@
  *
  * Each prints the surviving mutants and the score over covered mutants; a mutant no selected test reaches is left out.
  * Only pure tests run: test files that import a mutated file directly and boot no server, which would cost seconds per
- * mutant. Reports go to reports/mutation/.
+ * mutant. The whole run and --latest write reports/mutation/, a branch run reports/changed/, so a branch run never
+ * replaces the weekly report. --latest unpacks the artifact with `bsdtar` (libarchive), which must be installed.
  */
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -31,14 +32,15 @@ const extensionModules = [
   'extensions/update/clone.ts',
   'extensions/voice-live/relay.ts',
 ]
-const reportFile = 'reports/mutation/mutation.json'
 
 const git = (args: string[], input?: string) =>
   execFileSync('git', args, { encoding: 'utf8', input }).trim()
 const lines = (text: string) => text.split('\n').filter(Boolean)
 
 const allowlist = [
-  ...lines(git(['ls-files', 'lib'])).filter((file) => file.endsWith('.ts')),
+  ...lines(git(['ls-files', '--cached', '--others', '--exclude-standard', 'lib'])).filter((file) =>
+    file.endsWith('.ts'),
+  ),
   ...extensionModules,
 ]
 const heavy =
@@ -52,9 +54,12 @@ const pureTests = (files: string[]) =>
     return !heavy.test(text) && files.some((file) => text.includes(`'../${file}'`))
   })
 
-/** `file:start-end` for each hunk this branch added or changed in an allowlisted file, committed or not. */
+/**
+ * `file:start-end` for each hunk this branch added or changed in an allowlisted file, committed or not, and the whole
+ * of each new allowlisted file Git doesn't track yet.
+ */
 function changedRanges(base: string) {
-  const ranges: string[] = []
+  const ranges = lines(git(['ls-files', '--others', '--exclude-standard', '--', ...allowlist]))
   let file = ''
   for (const line of lines(git(['diff', '--unified=0', base, '--', ...allowlist]))) {
     if (line.startsWith('+++ ')) file = line.slice('+++ b/'.length)
@@ -67,6 +72,7 @@ function changedRanges(base: string) {
 
 async function run(mutate: string[], changed: boolean) {
   process.env.MUTATE_TESTS = JSON.stringify(pureTests(mutate.map((entry) => entry.split(':')[0])))
+  const dir = changed ? 'reports/changed' : 'reports/mutation'
   await new Stryker({
     mutate,
     testRunner: 'vitest',
@@ -78,6 +84,8 @@ async function run(mutate: string[], changed: boolean) {
     // Mutants in code that runs at import would rerun every test; they are skipped, not reported.
     ignoreStatic: true,
     reporters: ['progress', 'html', 'json'],
+    htmlReporter: { fileName: `${dir}/mutation.html` },
+    jsonReporter: { fileName: `${dir}/mutation.json` },
     // The weekly run keeps every test that kills a mutant (`killedBy`), the evidence for tests that catch nothing
     // another test doesn't, and reuses the previous results; a branch run stops at the first failing test.
     disableBail: !changed,
@@ -86,6 +94,7 @@ async function run(mutate: string[], changed: boolean) {
     // A branch run shares the machine with every other branch, the lander and previews.
     ...(changed ? { concurrency: 2 } : {}),
   }).runMutationTest()
+  summary(dir)
 }
 
 type Mutant = {
@@ -114,8 +123,8 @@ function original(source: string, { start, end }: Mutant['location']) {
   return rows.join('\n')
 }
 
-function summary(paths: string[] = []) {
-  const report = JSON.parse(readFileSync(reportFile, 'utf8')) as Report
+function summary(dir: string, paths: string[] = []) {
+  const report = JSON.parse(readFileSync(`${dir}/mutation.json`, 'utf8')) as Report
   const files = Object.entries(report.files).filter(
     ([file]) => !paths.length || paths.some((path) => file.startsWith(path)),
   )
@@ -140,7 +149,9 @@ function summary(paths: string[] = []) {
     )
     const redundant = [...new Set(killers.flat())].filter((id) => !unique.has(id))
     if (redundant.length) {
-      console.log('\nTests without a unique kill (every mutant they kill, another test kills too):')
+      console.log(
+        '\nTests whose every kill another test shares (no test that kills nothing is listed):',
+      )
       for (const id of redundant) console.log(`  ${names.get(id) ?? id}`)
     }
   }
@@ -157,16 +168,21 @@ function summary(paths: string[] = []) {
 
 /** The token Git stores for the repo, asked from its credential helpers without prompting; it goes only into headers. */
 function token(repo: string) {
-  const answer = git(
-    ['-c', 'credential.interactive=false', 'credential', 'fill'],
-    `protocol=https\nhost=github.com\npath=${repo}.git\n\n`,
-  )
+  const answer = execFileSync('git', ['-c', 'credential.interactive=false', 'credential', 'fill'], {
+    encoding: 'utf8',
+    input: `protocol=https\nhost=github.com\npath=${repo}.git\n\n`,
+    // Git before 2.46 ignores credential.interactive; with no helper it would otherwise ask on the terminal.
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  })
   const secret = /^password=(.+)$/m.exec(answer)?.[1]
   if (!secret) throw new Error(`no GitHub credential for ${repo}: artifact downloads need one`)
   return secret
 }
 
-/** Downloads the newest successful weekly run's report into reports/mutation/. */
+/**
+ * Downloads the report of the newest successful run on main into reports/mutation/: scheduled, or dispatched by hand,
+ * both mutate the whole allowlist; a run on another branch is not the weekly report.
+ */
 async function latest(remote: string) {
   const repo = /github\.com[:/](.+?)(?:\.git)?\/?$/.exec(git(['remote', 'get-url', remote]))?.[1]
   if (!repo) throw new Error(`${remote} is not a GitHub remote`)
@@ -184,7 +200,7 @@ async function latest(remote: string) {
   }
   const api = `https://api.github.com/repos/${repo}/actions`
   const { workflow_runs: runs } = (await (
-    await get(`${api}/workflows/mutation.yml/runs?status=success&per_page=1`)
+    await get(`${api}/workflows/mutation.yml/runs?branch=main&status=success&per_page=1`)
   ).json()) as { workflow_runs: { id: number; created_at: string; head_sha: string }[] }
   if (!runs.length) throw new Error(`no successful mutation.yml run on ${repo} yet`)
   const { artifacts } = (await (await get(`${api}/runs/${runs[0].id}/artifacts`)).json()) as {
@@ -212,18 +228,19 @@ const { values, positionals } = parseArgs({
   },
 })
 
-if (values.report) summary(positionals)
+if (values.report) summary('reports/mutation', positionals)
 else if (values.latest) {
   await latest(positionals[0] ?? 'fork')
-  summary()
+  summary('reports/mutation')
 } else if (values.changed) {
   const ranges = changedRanges(git(['merge-base', 'HEAD', positionals[0] ?? 'main']))
-  if (!ranges.length) console.log('Nothing to mutate: this branch changed no allowlisted file.')
-  else {
-    await run(ranges, true)
-    summary()
-  }
-} else {
-  await run(allowlist, false)
-  summary()
-}
+  // A file no pure test imports would leave Stryker without a test to run: its mutants all go uncovered.
+  const untested = [...new Set(ranges.map((range) => range.split(':')[0]))].filter(
+    (file) => !pureTests([file]).length,
+  )
+  for (const file of untested) console.log(`Skipped ${file}: no pure test imports it directly.`)
+  const tested = ranges.filter((range) => !untested.includes(range.split(':')[0]))
+  if (tested.length) await run(tested, true)
+  else if (!untested.length)
+    console.log('Nothing to mutate: this branch changed no allowlisted file.')
+} else await run(allowlist, false)
