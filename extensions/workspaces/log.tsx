@@ -71,15 +71,21 @@ function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
         </p>
       ))}
       {outcome.repeats?.map((repeat) => (
-        <p className="text-warning" key={repeat.test}>
-          flaky: {repeat.test} also failed in {repeat.landings} earlier landings{' '}
-          {repeat.branches.map((id, index) => (
+        <p className="break-words" key={repeat.test}>
+          <span className="text-warning">
+            also failed in {repeat.landings} earlier{' '}
+            {repeat.landings === 1 ? 'landing' : 'landings'}:
+          </span>{' '}
+          {repeat.test}{' '}
+          {repeat.branches.map((id) => (
             <button
-              className="text-muted-foreground hover:text-foreground hover:underline"
+              className="mr-1 cursor-pointer text-muted-foreground hover:text-foreground hover:underline"
               key={id}
               onClick={() => switchConversation(id)}
+              title={`Open #${id}`}
+              type="button"
             >
-              {index ? ' ' : ''}#{id}
+              #{id}
             </button>
           ))}
         </p>

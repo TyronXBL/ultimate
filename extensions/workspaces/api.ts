@@ -26,7 +26,10 @@ export type WorkspaceService = {
   release: Implementation['release']
   /** Run `git` with `args` in a directory; rejects with Git's message. Use it instead of spawning Git yourself. */
   git: typeof git
-  /** Derive repeat test failures from each lander conversation's immutable log. */
+  /**
+   * The tests that failed at landing, from the lander log, most branches first: only `tests` when given, without the
+   * submissions of conversation `except`.
+   */
   failing(
     options: { tests?: string[]; except?: number; limit?: number },
     ctx: Context,

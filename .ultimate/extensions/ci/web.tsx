@@ -6,8 +6,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from 'lucide-react'
-import { defineWebExtension, Fold } from '@/sdk'
-import { useUltimate } from '@/sdk'
+import { defineWebExtension, Fold, useUltimate } from '@/sdk'
 import type { EntryRecord } from '@/sdk'
 import type { CiResult } from './refs.ts'
 
@@ -93,14 +92,19 @@ function CiResultCard({ entry }: { entry: EntryRecord }) {
                   <p className="pl-4.5 break-words text-muted-foreground">{failure.message}</p>
                   {failure.earlier && (
                     <p className="pl-4.5 text-muted-foreground">
-                      also failed in {failure.earlier.landings} earlier landings{' '}
-                      {failure.earlier.branches.map((id, index) => (
+                      <span className="text-warning">
+                        also failed in {failure.earlier.landings} earlier{' '}
+                        {failure.earlier.landings === 1 ? 'landing' : 'landings'}
+                      </span>{' '}
+                      {failure.earlier.branches.map((id) => (
                         <button
-                          className="hover:text-foreground hover:underline"
+                          className="mr-1 cursor-pointer hover:text-foreground hover:underline"
                           key={id}
                           onClick={() => switchConversation(id)}
+                          title={`Open #${id}`}
+                          type="button"
                         >
-                          {index ? ' ' : ''}#{id}
+                          #{id}
                         </button>
                       ))}
                     </p>

@@ -1,4 +1,4 @@
-import type { JsonValue } from '@earendil-works/chord'
+import type { Context, JsonValue } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { Type } from '@earendil-works/pi-ai'
 import {
@@ -32,7 +32,7 @@ import {
 import { githubRepo } from '../../lib/project-identity.ts'
 import { sweepChecks } from './lander.ts'
 import { Workspaces, workspaces } from './workspaces.ts'
-import { failingTestsFromLog } from './failing.ts'
+import { failingTests } from './failing.ts'
 export const order = -200
 export const docs = [Workspaces]
 export const userActions = ['setupGit']
@@ -152,13 +152,16 @@ export const actions = {
       (typeof input.limit !== 'number' || !Number.isSafeInteger(input.limit) || input.limit < 0)
     )
       throw new Error('limit must be a non-negative integer')
-    const options = input as { tests?: string[]; except?: number; limit?: number }
-    return host.harness().commit(async (tx) => {
-      const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
-      return failingTestsFromLog(tx, Object.values(index.landerConversations), options)
-    }, context)
+    return failing(host, input as FailingOptions, context)
   }),
 }
+type FailingOptions = Parameters<typeof failingTests>[2]
+/** The tests that failed at landing, from every lander conversation's log. */
+const failing = (host: Pick<ExtensionHost, 'harness'>, options: FailingOptions, ctx: Context) =>
+  host.harness().commit(async (tx) => {
+    const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
+    return failingTests(tx, Object.values(index.landerConversations), options)
+  }, ctx)
 export default function workspaceExtension(host: ExtensionHost) {
   // What a landing asks about its branch is an extension point, wanted where the lander calls it.
   host.want(Branches)
@@ -166,11 +169,7 @@ export default function workspaceExtension(host: ExtensionHost) {
   const service = workspaces(host)
   host.implement(WorkspacesApi, {
     ...service,
-    failing: async (options, ctx) =>
-      host.harness().commit(async (tx) => {
-        const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
-        return failingTestsFromLog(tx, Object.values(index.landerConversations), options)
-      }, ctx),
+    failing: (options, ctx) => failing(host, options, ctx),
     git,
     doc: Workspaces,
     setupGit: () => setupGit(host),

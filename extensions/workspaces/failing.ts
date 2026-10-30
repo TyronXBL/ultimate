@@ -1,13 +1,22 @@
+/**
+ * Tests that keep failing at landing, derived on read from the lander log: no record of its own. Every failed check
+ * run keeps its output in an `ultimate.lander` entry (the first run on its `checked` step, the rerun on the `failed`
+ * outcome), and Vitest names each failed test on a `FAIL <file> > <test>` line.
+ */
 import { stripVTControlCharacters } from 'node:util'
 import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import type { FailingTest, LanderEntry } from './types.ts'
 
-/** Test names carried by Vitest's failure summary lines (or the legacy ci-gate format). */
-export function failedTests(output: string): string[] {
+/**
+ * The tests a check's output names on Vitest's `FAIL` lines, as `<file> > … > <test>` (a file alone when the file
+ * failed). Lines that name no file, such as a failed CI job or an unhandled error, are left out.
+ */
+export function failedTests(output: string) {
   const tests = new Set<string>()
   for (const line of stripVTControlCharacters(output).split('\n')) {
     const match = /^\s*FAIL\s+(.+)$/.exec(line)
     if (!match) continue
+    // Vitest marks a failed file `<file> [ <file> ]`; the CI gate once printed `FAIL <file>: <message>`.
     let name = match[1].trim().replace(/\s+\[\s*[^\]]+\s*\]$/, '')
     if (!name.includes(' > ')) name = name.split(': ', 1)[0].trim()
     if (/^[\w./@-]+\.[cm]?[jt]sx?( > |$)/.test(name)) tests.add(name)
@@ -15,78 +24,72 @@ export function failedTests(output: string): string[] {
   return [...tests]
 }
 
-/** Derive repeat sightings from the immutable lander log; the caller supplies the lander conversations. */
-export async function failingTestsFromLog(
+/**
+ * The failed tests of the lander conversations' logs, most branches first: only `tests` when given, and without the
+ * submissions of conversation `except`, so a branch never counts its own repeated failures.
+ */
+export async function failingTests(
   tx: Tx,
   conversations: number[],
   options: { tests?: string[]; except?: number; limit?: number } = {},
 ): Promise<FailingTest[]> {
-  const wanted = options.tests ? new Set(options.tests) : undefined
+  const wanted = options.tests && new Set(options.tests)
   const submissions = new Map<
     string,
-    {
-      conversationId: number
-      sourceEntry?: number
-      at: number
-      failed: Set<string>
-      sank: Set<string>
-    }
+    { entry: LanderEntry; failed: Set<string>; sank: Set<string> }
   >()
   for (const conversationId of conversations) {
     let cursor: Parameters<Tx['scanEntries']>[2]
     do {
       const page = await tx.scanEntries(
-        { conversationId: conversationId as ConversationId, order: 'descending' },
+        { conversationId: conversationId as ConversationId },
         256,
         cursor,
       )
       for (const raw of page.items) {
         if (raw.kind !== 'ultimate.lander') continue
         const entry = raw.data as LanderEntry
-        if (entry.conversationId === options.except) continue
-        let row = submissions.get(entry.submission)
-        if (!row) {
-          row = {
-            conversationId: entry.conversationId,
-            ...(entry.sourceEntry ? { sourceEntry: entry.sourceEntry } : {}),
-            at: entry.at,
-            failed: new Set(),
-            sank: new Set(),
-          }
-          submissions.set(entry.submission, row)
+        const failedRun = entry.check?.result === 'failed'
+        if (entry.conversationId === options.except || !entry.output) continue
+        if (!failedRun && entry.outcome !== 'failed') continue
+        const row = submissions.get(entry.submission) ?? {
+          entry,
+          failed: new Set<string>(),
+          sank: new Set<string>(),
         }
-        if (entry.check?.result === 'failed')
-          for (const test of failedTests(entry.output ?? '')) row.failed.add(test)
-        if (entry.outcome === 'failed')
-          for (const test of failedTests(entry.output ?? '')) row.sank.add(test)
+        submissions.set(entry.submission, row)
+        for (const test of failedTests(entry.output)) {
+          if (wanted && !wanted.has(test)) continue
+          row.failed.add(test)
+          if (!failedRun) row.sank.add(test)
+        }
       }
       cursor = page.next
     } while (cursor)
   }
   const grouped = new Map<string, FailingTest>()
-  for (const [submission, row] of submissions) {
-    for (const test of row.failed) {
-      if (wanted && !wanted.has(test)) continue
-      const item = grouped.get(test) ?? { test, landings: [], branches: 0 }
+  for (const [submission, { entry, failed, sank }] of submissions)
+    for (const test of failed) {
+      const item = grouped.get(test) ?? { test, landings: [], branches: [] }
       item.landings.push({
         submission,
-        conversationId: row.conversationId,
-        ...(row.sourceEntry ? { sourceEntry: row.sourceEntry } : {}),
-        at: row.at,
-        sank: row.sank.has(test),
+        conversationId: entry.conversationId,
+        ...(entry.sourceEntry === undefined ? {} : { sourceEntry: entry.sourceEntry }),
+        at: entry.at,
+        sank: sank.has(test),
       })
       grouped.set(test, item)
     }
-  }
   const result = [...grouped.values()]
-  for (const item of result)
-    item.branches = new Set(item.landings.map((landing) => landing.conversationId)).size
-  for (const item of result) item.landings.sort((a, b) => b.at - a.at)
+  for (const item of result) {
+    item.landings.sort((a, b) => b.at - a.at)
+    item.branches = [...new Set(item.landings.map((landing) => landing.conversationId))]
+  }
   result.sort(
     (a, b) =>
-      b.branches - a.branches ||
+      b.branches.length - a.branches.length ||
       b.landings.length - a.landings.length ||
-      (b.landings[0]?.at ?? 0) - (a.landings[0]?.at ?? 0),
+      b.landings[0].at - a.landings[0].at,
   )
-  return result.slice(0, options.limit ?? result.length)
+  return result.slice(0, options.limit)
 }

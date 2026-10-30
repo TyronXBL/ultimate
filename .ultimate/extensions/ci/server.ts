@@ -165,13 +165,11 @@ function createCiRun(host: Pick<ExtensionHost, 'need'>) {
                   if (earlier)
                     failure.earlier = {
                       landings: earlier.landings.length,
-                      branches: [
-                        ...new Set(earlier.landings.map((landing) => landing.conversationId)),
-                      ].slice(0, 5),
+                      branches: earlier.branches.slice(0, 5),
                     }
                 }
               } catch {
-                // CI results must still be delivered if the optional history lookup fails.
+                // The run's result is what counts: without the lander's history its failures just carry none.
               }
             }
             const ends = state.jobs.flatMap((job) =>

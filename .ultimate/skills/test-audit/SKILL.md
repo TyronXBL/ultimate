@@ -58,7 +58,9 @@ graph, and observable ordering. A failing baseline may be a bug to repair, not a
 
 ## Weekly audit of one area
 
-1. Read repeat offenders with codemode `ultimate.action('workspaces', 'failing', { limit: 20 })` and prefer an area that keeps sinking landings. Read the area's tests and the code they cover, and its history (`git log --follow`). Measure the area's runtime
+1. When choosing the area, read the tests that keep failing at landing with codemode
+   `ultimate.action('workspaces', 'failing', { limit: 20 })` and prefer an area whose tests fail for many branches.
+   Read the area's tests and the code they cover, and its history (`git log --follow`). Measure the area's runtime
    (`pnpm test <files>`, median of 3).
 2. For each candidate, record: the junk pattern, the contract it claims, **which remaining test still proves that
    contract** (file:line), and its cost.

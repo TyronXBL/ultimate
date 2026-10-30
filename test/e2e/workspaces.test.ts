@@ -142,7 +142,6 @@ it('derives repeat test failures through the workspaces failing action', async (
       conversationId: 42,
       at: 200,
       output: 'FAIL test/a.test.ts > suite > case\nFAIL Unhandled error',
-      outcome: 'failed',
     },
   ])
   const result = await opened.failing({ limit: 20 })
@@ -150,22 +149,22 @@ it('derives repeat test failures through the workspaces failing action', async (
     {
       test: 'test/a.test.ts > suite > case',
       landings: [
-        { submission: 'two', conversationId: 42, at: 200, sank: true },
+        { submission: 'two', conversationId: 42, at: 200, sank: false },
         { submission: 'one', conversationId: 41, at: 100, sank: true },
       ],
-      branches: 2,
+      branches: [42, 41],
     },
     {
       test: 'test/only.test.ts',
       landings: [{ submission: 'one', conversationId: 41, at: 100, sank: true }],
-      branches: 1,
+      branches: [41],
     },
   ])
   expect(await opened.failing({ except: 41 })).toEqual([
     {
       test: 'test/a.test.ts > suite > case',
-      landings: [{ submission: 'two', conversationId: 42, at: 200, sank: true }],
-      branches: 1,
+      landings: [{ submission: 'two', conversationId: 42, at: 200, sank: false }],
+      branches: [42],
     },
   ])
 })

@@ -4,6 +4,7 @@ export type JobResult = { name: string; conclusion: string; seconds?: number }
 export type Failure = {
   title: string
   message: string
+  /** Other branches' landings it also failed at (the lander log's record): how many, and the latest five branches. */
   earlier?: { landings: number; branches: number[] }
 }
 
