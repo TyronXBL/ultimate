@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
@@ -71,7 +71,7 @@ it('lists this machine’s projects, this one first and then by name, with their
   })
 })
 
-it('refuses to start a relative path, a missing folder and the project it already runs', async () => {
+it('refuses to start a relative path, the project it already runs, or to create a folder in ~/.ultimate', async () => {
   const userHome = await mkdtemp(join(tmpdir(), 'ultimate-projects-'))
   homes.push(userHome)
   const current = join(userHome, 'project')
@@ -82,10 +82,37 @@ it('refuses to start a relative path, a missing folder and the project it alread
   await expect(startProject(fake, 'project/app')).rejects.toThrow(
     'project/app is not an absolute path; use ~/ or /',
   )
-  await expect(startProject(fake, join(userHome, 'missing'))).rejects.toThrow(
-    `No folder at ${join(userHome, 'missing')}`,
-  )
+  await expect(startProject(fake, '~/missing')).resolves.toEqual({
+    missing: join(userHome, 'missing'),
+  })
   await expect(startProject(fake, current)).rejects.toThrow(
     'This is the project this Ultimate runs; open another folder',
   )
+  const worktree = join(userHome, '.ultimate/projects/current-00000000/worktrees/42')
+  await expect(startProject(fake, worktree, true)).rejects.toThrow(
+    `Ultimate keeps its own files in ${join(userHome, '.ultimate')}; create the project elsewhere`,
+  )
+  await expect(stat(worktree)).rejects.toThrow('ENOENT')
+})
+
+it('creates a missing folder on request and starts the project there', async () => {
+  const userHome = await realpath(await mkdtemp(join(tmpdir(), 'ultimate-projects-')))
+  homes.push(userHome)
+  const current = join(userHome, 'project')
+  await mkdir(current)
+  const created = join(userHome, 'code/new-app')
+  // Its supervisor is this live process, so the start finds it running instead of spawning one.
+  await writeHome(join(userHome, '.ultimate/projects/new-app-33333333'), {
+    'project.json': { root: created, name: 'new-app', openedAt: 1 },
+    'ultimate.lock': { pid: process.pid, port: 4800 },
+  })
+  const fake = host(userHome, current, join(userHome, '.ultimate/projects/current-00000000'))
+
+  await expect(startProject(fake, '~/code/new-app', true)).resolves.toEqual({
+    name: 'new-app',
+    root: created,
+    current: false,
+    url: 'http://127.0.0.1:4800',
+  })
+  expect((await stat(created)).isDirectory()).toBe(true)
 })

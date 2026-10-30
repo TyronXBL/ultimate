@@ -1,9 +1,9 @@
 /** Projects: lists this machine's Ultimate projects and starts a stopped or new one through its supervisor. */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { open, readFile, realpath, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { defineExtension } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
@@ -107,16 +107,42 @@ export async function list(host: ListHost) {
 const starts = (host: Pick<ExtensionHost, 'resource'>) =>
   host.resource('projects.starts', () => new Map<string, Promise<LocalProject>>())
 
-/** An absolute, existing folder: `~/` is the user's home and a relative path is refused. */
-async function folder(host: Pick<ExtensionHost, 'userHome'>, value: unknown) {
+/** Where `path` lands once its existing part is resolved: the real path of its nearest existing ancestor, then the rest. */
+async function landing(path: string): Promise<string> {
+  // A missing path is the answer here: resolve its parent instead (`/` always exists).
+  const real = await realpath(path).catch(() => undefined)
+  return real ?? join(await landing(dirname(path)), basename(path))
+}
+
+/**
+ * The folder `value` names, absolute (`~/` is the user's home; a relative path is refused), or `missing` with the path
+ * to create when nothing is there. With `create` it makes that folder first, never inside this Ultimate's checkout,
+ * its project or `~/.ultimate`, which holds every project's home and worktrees.
+ */
+async function folder(
+  host: Pick<ExtensionHost, 'userHome' | 'projectRoot' | 'ultimateRoot'>,
+  value: unknown,
+  create: boolean,
+): Promise<{ root: string } | { missing: string }> {
   if (typeof value !== 'string' || value === '') throw new Error('Name the folder to open')
   const expanded = value.startsWith('~/') ? join(host.userHome, value.slice(2)) : value
   if (!isAbsolute(expanded)) throw new Error(`${value} is not an absolute path; use ~/ or /`)
-  // A missing folder is the answer here; which path failed is in the message.
-  const root = await realpath(expanded).catch(() => undefined)
-  if (!root) throw new Error(`No folder at ${value}`)
-  if (!(await stat(root)).isDirectory()) throw new Error(`${value} is not a folder`)
-  return root
+  const path = resolve(expanded)
+  // A missing folder is the answer here: it is created on request, or reported.
+  const existing = await realpath(path).catch(() => undefined)
+  if (existing) {
+    if (!(await stat(existing)).isDirectory()) throw new Error(`${value} is not a folder`)
+    return { root: existing }
+  }
+  if (!create) return { missing: path }
+  const target = await landing(path)
+  for (const reserved of [host.ultimateRoot, host.projectRoot, join(host.userHome, '.ultimate')]) {
+    const own = await landing(reserved)
+    if (target === own || target.startsWith(own + sep))
+      throw new Error(`Ultimate keeps its own files in ${reserved}; create the project elsewhere`)
+  }
+  await mkdir(path, { recursive: true })
+  return { root: await realpath(path) }
 }
 
 /**
@@ -199,9 +225,18 @@ async function launch(host: StartHost, root: string): Promise<LocalProject> {
   }
 }
 
-/** Start Ultimate in `root` (`~/` is the user's home), sharing a start already in flight for the same folder. */
-export async function startProject(host: StartHost, root: unknown): Promise<LocalProject> {
-  const path = await folder(host, root)
+/**
+ * Start Ultimate in `root` (`~/` is the user's home), sharing a start already in flight for the same folder. A missing
+ * folder is created with `create`, and otherwise reported as `missing`.
+ */
+export async function startProject(
+  host: StartHost,
+  root: unknown,
+  create = false,
+): Promise<LocalProject | { missing: string }> {
+  const found = await folder(host, root, create)
+  if ('missing' in found) return found
+  const path = found.root
   const pending = starts(host)
   const shared = pending.get(path)
   if (shared) return shared
@@ -224,7 +259,7 @@ export default function projectsExtension(host: Pick<ExtensionHost, 'want'>) {
 export const actions = {
   list: implementAction(ListAction, (_args, { host }) => list(host)),
   start: implementAction(StartAction, async (args, { host }) => {
-    const root = args && typeof args === 'object' && !Array.isArray(args) ? args.root : undefined
-    return startProject(host, root)
+    const named = args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+    return startProject(host, named.root, named.create === true)
   }),
 }

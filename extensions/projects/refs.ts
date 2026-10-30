@@ -27,6 +27,11 @@ export const ListAction = actionRef<null, { projects: LocalProject[]; remotes: R
 
 /**
  * Starts Ultimate in `root`, an absolute folder (`~/` is the user's home), and resolves once it runs: a project opened
- * before or a new one. Resolves at once for a project that already runs; refuses this server's own project.
+ * before or a new one. Resolves at once for a project that already runs; refuses this server's own project. A missing
+ * folder resolves `{ missing }` with the path it would create; `create: true` makes it first (`mkdir -p`), never inside
+ * this Ultimate's checkout or `~/.ultimate`.
  */
-export const StartAction = actionRef<{ root: string }, LocalProject>('projects', 'start')
+export const StartAction = actionRef<
+  { root: string; create?: boolean },
+  LocalProject | { missing: string }
+>('projects', 'start')

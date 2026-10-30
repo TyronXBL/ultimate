@@ -11,7 +11,10 @@ own address for the current project, else `https://<dns>:<port>` from the port i
 project's port after it stops). The current project comes first, then the rest by name. `remotes` is the `remotes` user
 setting (`lib/remote.ts`), `{ machine, name, url }[]`.
 
-`start { root }` → `LocalProject`. `root` is an absolute folder, or `~/` for the user's home. It resolves at once for
+`start { root, create? }` → `LocalProject | { missing }`. `root` is an absolute folder, or `~/` for the user's home.
+When nothing is there it resolves `{ missing }` with the absolute path; `create: true` makes that folder first
+(`mkdir -p`, no `git init`: the new project's onboarding offers git), refusing a path inside this Ultimate's checkout,
+its project or `~/.ultimate` (every project's home and worktrees). An existing non-folder is refused. It resolves at once for
 a project that already runs, and otherwise starts Ultimate there and resolves once `list` reports it running,
 polling every 500 ms for up to 60 seconds. With the host's tailscale ready it waits up to 15 seconds more for the
 project's tailnet address, then resolves without one.
@@ -36,6 +39,7 @@ The title bar's project chip becomes one menu:
   port on this page's host when the page is on loopback, or at its tailnet address on a page opened from elsewhere.
   One reachable neither way is disabled with the reason. A stopped one shows **Start**, which starts it and then opens
   it; a quiet line says that starting resumes its unfinished work and automations.
-- **Open folder…** (also in ⌘K) takes a path and starts Ultimate there, then opens it.
+- **New or open folder…** (also in ⌘K) takes a path and starts Ultimate there, then opens it. A path with nothing
+  there asks "Create <path> and start a new project there?", and **Create** makes the folder and starts it.
 - **Previews** lists the `instance` previews of this host, on loopback pages only, and shows one in the frame as before.
 - **Other machines** opens the `remotes` in a new tab.

@@ -45,10 +45,18 @@ function address(project: LocalProject): { href: string } | { reason: string } |
   return { href: url.href }
 }
 
-/** Starts the project in `root` and goes there; the message to show when that fails or it is not reachable. */
-async function start(root: string): Promise<string | undefined> {
+/**
+ * Starts the project in `root`, making its folder first with `create`, and goes there. What to show when it does not:
+ * the folder that is missing, or the message when the start fails or the project is not reachable.
+ */
+async function start(
+  root: string,
+  create = false,
+): Promise<{ missing: string } | string | undefined> {
   try {
-    const target = address(await api.action(StartAction, { root }))
+    const started = await api.action(StartAction, { root, create })
+    if ('missing' in started) return started
+    const target = address(started)
     if (target && 'href' in target) {
       location.assign(target.href)
       return undefined
@@ -110,7 +118,11 @@ function Switcher() {
   const begin = async (root: string) => {
     setStarting({ root })
     const error = await start(root)
-    if (error) setStarting({ root, error })
+    if (error)
+      setStarting({
+        root,
+        error: typeof error === 'string' ? error : `No folder at ${error.missing}`,
+      })
     await projects.refetch()
   }
 
@@ -220,7 +232,7 @@ function Switcher() {
           ))}
         <DropdownMenuItem className={item} onSelect={() => open(openFolder)}>
           <FolderOpenIcon className="size-3.5" />
-          <span className="flex-1 text-[13px]">Open folder…</span>
+          <span className="flex-1 text-[13px]">New or open folder…</span>
         </DropdownMenuItem>
         {startable && (
           <p className="px-2 pt-0.5 pb-1 text-[11px] leading-snug text-muted-foreground">
@@ -281,7 +293,10 @@ function Switcher() {
   )
 }
 
-/** "Open folder…": a path on this machine, started (or opened when it runs) and switched to. */
+/**
+ * "New or open folder…": a path on this machine, started (or opened when it runs) and switched to. A missing folder
+ * asks once to be created.
+ */
 function OpenFolder() {
   const [open, setOpen] = useDialog(openFolder)
   return (
@@ -300,15 +315,18 @@ function OpenFolderBody({ onClose }: { onClose: () => void }) {
   const [path, setPath] = useState('')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string>()
+  // The folder this path would create, once the server found nothing there: the next submit creates it.
+  const [missing, setMissing] = useState<string>()
   const submit = async (event: SubmitEvent) => {
     event.preventDefault()
     if (!path.trim() || busy) return
     setBusy(true)
     setFailure(undefined)
-    const error = await start(path.trim())
+    const error = await start(path.trim(), missing !== undefined)
     // Gone on success: the window is on its way to the project.
     if (!error) return
-    setFailure(error)
+    if (typeof error === 'string') setFailure(error)
+    else setMissing(error.missing)
     setBusy(false)
   }
   return (
@@ -316,11 +334,11 @@ function OpenFolderBody({ onClose }: { onClose: () => void }) {
       <div className="space-y-3 px-5 pt-5 pb-4">
         <DialogTitle className="flex items-center gap-2 text-base">
           <FolderOpenIcon className="size-4 text-brand" />
-          Open folder
+          New or open folder
         </DialogTitle>
         <DialogDescription className="text-[13px] leading-relaxed text-muted-foreground">
           Run Ultimate in a folder on this machine and switch this window to it. A project opened
-          before resumes its unfinished work and automations.
+          before resumes its unfinished work and automations; a new path becomes a new project.
         </DialogDescription>
         <input
           aria-label="Folder"
@@ -331,11 +349,22 @@ function OpenFolderBody({ onClose }: { onClose: () => void }) {
           autoFocus
           className="h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 font-mono text-[12.5px] outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
           disabled={busy}
-          onChange={(event) => setPath(event.target.value)}
+          onChange={(event) => {
+            setPath(event.target.value)
+            setMissing(undefined)
+          }}
           placeholder="~/code/my-app"
           spellCheck={false}
           value={path}
         />
+        {missing && (
+          <p
+            className="text-[12px] leading-snug wrap-anywhere text-foreground/80"
+            data-projects-create
+          >
+            Create <span className="font-mono">{missing}</span> and start a new project there?
+          </p>
+        )}
         {failure && <p className="text-[12px] leading-snug wrap-anywhere text-error">{failure}</p>}
       </div>
       <footer className="flex items-center justify-end gap-2 border-t border-border/60 bg-muted/30 px-5 py-3">
@@ -349,7 +378,7 @@ function OpenFolderBody({ onClose }: { onClose: () => void }) {
         </Button>
         <Button disabled={!path.trim() || busy} size="sm" type="submit">
           {busy && <LoaderCircleIcon className="motion-safe:animate-spin" />}
-          Open
+          {missing ? 'Create' : 'Open'}
         </Button>
       </footer>
     </form>
@@ -359,6 +388,10 @@ function OpenFolderBody({ onClose }: { onClose: () => void }) {
 export default defineWebExtension({
   slots: { 'titlebar.project': [Switcher], overlay: [OpenFolder] },
   commands: [
-    { id: 'projects.open', title: 'Open folder…', run: (context) => context.open(openFolder) },
+    {
+      id: 'projects.open',
+      title: 'New or open folder…',
+      run: (context) => context.open(openFolder),
+    },
   ],
 })
