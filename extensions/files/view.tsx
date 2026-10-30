@@ -4,7 +4,7 @@ import { FileQuestionIcon } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { defaultRehypePlugins } from 'streamdown'
+import { defaultRehypePlugins, defaultRemarkPlugins } from 'streamdown'
 import type { StreamdownProps } from 'streamdown'
 import { MessageResponse } from '@/components/ai/message'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -143,6 +143,7 @@ function inScope(url: string, base: string) {
   }
 }
 
+const remarkPlugins = Object.values(defaultRemarkPlugins)
 type Pluggable = NonNullable<StreamdownProps['rehypePlugins']>[number]
 const [harden, hardenOptions] = defaultRehypePlugins.harden as [unknown, object]
 /** Streamdown's plugins, with links and images resolved against file `path`'s directory. */
@@ -275,6 +276,8 @@ export function Markdown({
           key={`${conversation ?? ''}:${path}:${images?.size ?? -1}`}
           linkSafety={{ enabled: false }}
           rehypePlugins={rehypePlugins}
+          // Streamdown's own: links resolve against this document (`urlTransform`), not the transcript's way.
+          remarkPlugins={remarkPlugins}
           urlTransform={transform}
         >
           {text}

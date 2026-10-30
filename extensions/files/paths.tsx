@@ -37,8 +37,11 @@ function isFilePath(value: string) {
 
 /** A Markdown href that names a file: a relative or absolute path, not a URL, an anchor or an app link (`/?…`). */
 function isFileHref(href: string) {
-  if (href.startsWith('//') || href.startsWith('#') || href.startsWith('/?')) return false
-  return !/^[a-z][a-z\d+.-]*:/i.test(splitLine(href).path)
+  // App addresses (`?files=…`, `/?review=…`) are links already, and the Files viewer writes its own as `?files=`.
+  if (/^(?:\/\/|#|\/?\?)/.test(href)) return false
+  // A scheme rules it out (`javascript:123` too); `README.md:12` is a path with a line, its `.` no scheme has.
+  const scheme = /^([a-z][a-z\d+.-]*):/i.exec(href)?.[1]
+  return !scheme || (/[./]/.test(scheme) && /^[^:]*:\d+(?:-\d+)?$/.test(href))
 }
 
 /** A Markdown href as the path it encodes (`%20` → space); a malformed escape stays as written. */
@@ -112,8 +115,10 @@ export function FilePathLink({
 }) {
   const conversation = useConversation((current) => current.id)
   if (!isFileHref(href)) return core
+  // A `#section` names a place in the file, not part of its path.
+  const path = decoded(href).replace(/#.*$/, '')
   return (
-    <FileButton link target={{ ...splitLine(decoded(href)), conversation }}>
+    <FileButton link target={{ ...splitLine(path), conversation }}>
       {children}
     </FileButton>
   )

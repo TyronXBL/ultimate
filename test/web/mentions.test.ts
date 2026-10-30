@@ -4,7 +4,9 @@ import { expect, it, vi } from 'vitest'
 import {
   mentionHref,
   parseMention,
+  parseRelative,
   remarkMentions,
+  remarkRelativeLinks,
   splitMentions,
 } from '../../web/src/components/ai/mentions.ts'
 
@@ -70,6 +72,34 @@ it('turns text mentions into links but never inside code or existing links', () 
   ])
   expect(tree.children?.[1]).toEqual({ type: 'code', value: 'echo #157833' })
   expect(tree.children?.[2]?.children).toEqual([text('#157833')])
+})
+
+it('carries relative paths past link hardening, but never a URL with a scheme', () => {
+  const urls = [
+    'docs/guide.md',
+    '../x.md',
+    'README.md:12',
+    'a/b.md:3-9',
+    'javascript:123',
+    'data:123',
+    'javascript:alert(1)',
+    'https://x.dev/a.md',
+    '//host/a.md',
+    '/tmp/a.md',
+    '#section',
+  ]
+  const tree: Node = {
+    type: 'root',
+    children: urls.map((url) => ({ type: 'link', url, children: [text(url)] })),
+  }
+  remarkRelativeLinks()(tree)
+  expect(tree.children?.map((node) => parseRelative(node.url ?? ''))).toEqual([
+    'docs/guide.md',
+    '../x.md',
+    'README.md:12',
+    'a/b.md:3-9',
+    ...Array.from({ length: 7 }, () => undefined),
+  ])
 })
 
 it('renders a known mention as its chip and an unknown one as its text', () => {

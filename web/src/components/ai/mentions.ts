@@ -75,11 +75,23 @@ export const parseRelative = (href: string) =>
  */
 export function remarkRelativeLinks() {
   const visit = (node: Node) => {
-    if ((node.type === 'link' || node.type === 'definition') && node.url) {
-      const path = node.url.replace(/:\d+(?:-\d+)?$/, '')
-      if (path && !/^[a-z][a-z\d+.-]*:|^[#/]/i.test(path)) node.url = relativePrefix + node.url
-    }
+    if (
+      (node.type === 'link' || node.type === 'definition') &&
+      node.url &&
+      isRelativePath(node.url)
+    )
+      node.url = relativePrefix + node.url
     node.children?.forEach(visit)
   }
   return visit
+}
+
+/**
+ * Whether a link URL is a relative path. A scheme (`https:`, `javascript:123`) rules it out; `README.md:12` is a path
+ * with a line, told apart by the `.` or `/` a scheme never has before its line digits.
+ */
+function isRelativePath(url: string) {
+  if (/^[#/]/.test(url)) return false
+  const scheme = /^([a-z][a-z\d+.-]*):/i.exec(url)?.[1]
+  return !scheme || (/[./]/.test(scheme) && /^[^:]*:\d+(?:-\d+)?$/.test(url))
 }
