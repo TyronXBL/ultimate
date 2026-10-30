@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowUpRightIcon,
+  CheckIcon,
   ChevronDownIcon,
   EllipsisIcon,
   PencilIcon,
@@ -14,6 +15,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -26,6 +28,9 @@ import {
   Provided,
   useUltimate,
 } from '@/sdk'
+import { useAgentRows, useChoices } from '../branch-setup/ui.tsx'
+import type { Choice } from '../branch-setup/ui.tsx'
+import type { Agents } from '../branch-setup/refs.ts'
 import { ConversationPhase, useOverview } from '../conversations/ui.tsx'
 import { MessageAnswers } from '../messages/ui.tsx'
 import type { Message } from '../messages/refs.ts'
@@ -140,8 +145,10 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
         {row.column === 'ideas' && (
           <LaunchMenu
             disabled={pending !== undefined}
-            launch={(size) =>
-              void run('launching', () => api.action(LaunchAction, { id: idea.id, size }))
+            launch={(size, agents) =>
+              void run('launching', () =>
+                api.action(LaunchAction, { id: idea.id, size, ...(agents ? { agents } : {}) }),
+              )
             }
           />
         )}
@@ -268,19 +275,27 @@ function BranchLink({ id }: { id: number }) {
   )
 }
 
-/** The launch button: assess first by default, or build straight away. */
+/**
+ * The launch button: assess first by default, or build straight away, on the agents' defaults or a setup picked below
+ * (a family for every agent, a saved preset); the setup applies to this launch only.
+ */
 function LaunchMenu({
   launch,
   disabled,
 }: {
-  launch: (size: LaunchSize) => void
+  launch: (size: LaunchSize, agents?: Agents) => void
   disabled: boolean
 }) {
+  const [setup, setSetup] = useState<Choice>()
+  const custom = setup && Object.keys(setup.agents).length > 0 ? setup : undefined
   const option = (size: LaunchSize, label: string, detail: string) => (
     <DropdownMenuItem
       className="cursor-pointer flex-col items-start gap-0"
       data-idea-launch={size}
-      onSelect={() => launch(size)}
+      onSelect={() => {
+        launch(size, custom?.agents)
+        setSetup(undefined)
+      }}
     >
       <span className="text-[12.5px]">{label}</span>
       <span className="text-[11px] text-muted-foreground">{detail}</span>
@@ -289,19 +304,64 @@ function LaunchMenu({
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
-        className="-my-1 -mr-1.5 flex h-6 shrink-0 pointer-coarse:h-8 pointer-coarse:px-2.5 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[11px] text-brand outline-none hover:bg-brand/10 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 data-[state=open]:bg-brand/10"
+        className="-my-1 -mr-1.5 flex h-6 min-w-0 shrink-0 pointer-coarse:h-8 pointer-coarse:px-2.5 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[11px] text-brand outline-none hover:bg-brand/10 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 data-[state=open]:bg-brand/10"
         data-idea-launch-menu
         disabled={disabled}
+        title={custom ? `Launches on ${custom.label}` : undefined}
       >
         <PlayIcon className="size-3 fill-current" />
         Launch
+        {custom && <span className="max-w-[6rem] truncate text-brand/80">· {custom.short}</span>}
         <ChevronDownIcon className="size-3 opacity-70" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="end" className="w-72">
         {option('assess', 'Assess first', '@ultimate weighs it and brings you choices')}
         {option('build', 'Build it', 'Skip the assessment and start building')}
+        <LaunchSetups chosen={custom} onChoose={setSetup} />
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+/** The agent setups a launch can start on, read once the menu opens; picking one keeps the menu open. */
+function LaunchSetups({
+  chosen,
+  onChoose,
+}: {
+  chosen: Choice | undefined
+  onChoose: (choice: Choice) => void
+}) {
+  const { rows } = useAgentRows()
+  const { choices } = useChoices(rows, chosen?.agents ?? {})
+  return (
+    <div className="mt-1 border-t border-border/60 pt-1" data-idea-launch-setups>
+      <DropdownMenuLabel className="pt-1 pb-0.5 font-mono text-[10.5px] font-normal tracking-wider text-muted-foreground uppercase">
+        Agents
+      </DropdownMenuLabel>
+      {choices.length === 0 && (
+        <p className="px-2 py-1 font-mono text-[11px] text-muted-foreground/70">Reading setups…</p>
+      )}
+      {choices.map((choice) => {
+        const current = (chosen?.key ?? 'defaults') === choice.key
+        return (
+          <DropdownMenuItem
+            className="cursor-pointer gap-2 py-1 font-mono text-[11.5px]"
+            data-idea-launch-setup={choice.key}
+            key={choice.key}
+            onSelect={(event) => {
+              event.preventDefault()
+              onChoose(choice)
+            }}
+          >
+            <CheckIcon className={cn('size-3.5', current ? 'text-brand' : 'opacity-0')} />
+            <span className="max-w-[60%] shrink-0 truncate">{choice.label}</span>
+            <span className="ml-auto min-w-0 truncate pl-2 text-right text-[10.5px] text-muted-foreground">
+              {choice.detail}
+            </span>
+          </DropdownMenuItem>
+        )
+      })}
+    </div>
   )
 }
 

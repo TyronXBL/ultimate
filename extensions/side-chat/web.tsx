@@ -24,6 +24,7 @@ import {
   errorMessage,
   formatTime,
   provide,
+  Provided,
   useConversation,
   useConversations,
   useDoc,
@@ -37,7 +38,7 @@ import { UnderUltimate, Unlisted } from '../sidebar/ui.tsx'
 import { createEndings, endings, frontSide, openSides, togglesSideMode } from './logic.ts'
 import { DiscardAction, InjectAction, OpenAction, SideChatDoc, SideChatsDoc } from './refs.ts'
 import type { SideChatIndex, SideChatSummary } from './refs.ts'
-import { useSideChatFront as useFront } from './ui.tsx'
+import { ComposerMode, useSideChatFront as useFront } from './ui.tsx'
 
 // ---- state ---------------------------------------------------------------------------------------------------------
 
@@ -121,7 +122,7 @@ function SideComposer({ core, dock }: { core: ReactNode; dock?: boolean }) {
   // A side chat's own composer, and @ultimate's in a docked region, stay as they are: one level only.
   if (id === undefined || id !== main || dock) return core
   const parked = openSides(index).filter((item) => item.id !== shown?.id)
-  const target: ComposerTarget | undefined = on
+  const sideTarget: ComposerTarget | undefined = on
     ? {
         placeholder: 'Ask on the side — @ultimate keeps running…',
         send: async (text) => {
@@ -139,57 +140,69 @@ function SideComposer({ core, dock }: { core: ReactNode; dock?: boolean }) {
     event.preventDefault()
     setSide(!on)
   }
+  // Another composer mode (a branch setup) sits beside the switch; side chat on wins over it.
   return (
-    <div className="relative" data-side-mode={on ? 'side' : 'normal'} onKeyDownCapture={onKeyDown}>
-      {/* Covered by a side chat in front, main's composer and its controls take no focus, typing or clicks. */}
-      <div data-main-composer inert={!!shown}>
-        <div className="mx-auto flex w-full max-w-[46rem] items-center justify-between gap-2 px-3 pb-1.5 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3 font-mono text-[11px] text-muted-foreground/70">
-            {parked.map((item) => (
-              <button
-                className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground hover:text-foreground"
-                key={item.id}
-                onClick={() => setFront(item.id)}
-                title="Bring this side chat back to the front"
-                type="button"
-              >
-                <GitForkIcon className="size-3 text-brand" />
-                Side chat · {formatTime(item.openedAt)}
-                <span className="text-brand">show</span>
-              </button>
-            ))}
-            {parked.length === 0 && (
-              <span className="truncate pointer-coarse:hidden">
-                {on ? (
-                  <>
-                    <span className="text-brand">↵</span> forks @ultimate · <Kbd>Tab</Kbd> back to
-                    normal
-                  </>
-                ) : (
-                  <>
-                    <Kbd>Tab</Kbd> side chat
-                  </>
-                )}
-              </span>
-            )}
-          </div>
-          <ModeSwitch on={on} onToggle={() => setSide(!on)} />
-        </div>
+    <Provided point={ComposerMode} input={{ side: on, normal: () => setSide(false) }}>
+      {(mode) => (
         <div
-          className={cn(
-            'relative transition-[padding] duration-300 motion-reduce:transition-none',
-            on ? 'sm:pl-6' : 'pl-0',
-            '[&_form]:transition-[border-color] [&_form]:duration-300',
-            on &&
-              '[&_form]:border-dashed [&_form]:border-brand/60 [&_form]:focus-within:border-brand/80',
-          )}
-          style={{ transitionTimingFunction: ease }}
+          className="relative"
+          data-side-mode={on ? 'side' : 'normal'}
+          onKeyDownCapture={onKeyDown}
         >
-          <ComposerRedirect to={target}>{core}</ComposerRedirect>
+          {/* Covered by a side chat in front, main's composer and its controls take no focus, typing or clicks. */}
+          <div data-main-composer inert={!!shown}>
+            <div className="mx-auto flex w-full max-w-[46rem] items-center justify-between gap-2 px-3 pb-1.5 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3 font-mono text-[11px] text-muted-foreground/70">
+                {parked.map((item) => (
+                  <button
+                    className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground hover:text-foreground"
+                    key={item.id}
+                    onClick={() => setFront(item.id)}
+                    title="Bring this side chat back to the front"
+                    type="button"
+                  >
+                    <GitForkIcon className="size-3 text-brand" />
+                    Side chat · {formatTime(item.openedAt)}
+                    <span className="text-brand">show</span>
+                  </button>
+                ))}
+                {parked.length === 0 && (
+                  <span className="truncate pointer-coarse:hidden">
+                    {on ? (
+                      <>
+                        <span className="text-brand">↵</span> forks @ultimate · <Kbd>Tab</Kbd> back
+                        to normal
+                      </>
+                    ) : (
+                      <>
+                        <Kbd>Tab</Kbd> side chat
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {mode?.control}
+                <ModeSwitch on={on} onToggle={() => setSide(!on)} />
+              </div>
+            </div>
+            <div
+              className={cn(
+                'relative transition-[padding] duration-300 motion-reduce:transition-none',
+                on ? 'sm:pl-6' : 'pl-0',
+                '[&_form]:transition-[border-color] [&_form]:duration-300',
+                on &&
+                  '[&_form]:border-dashed [&_form]:border-brand/60 [&_form]:focus-within:border-brand/80',
+              )}
+              style={{ transitionTimingFunction: ease }}
+            >
+              <ComposerRedirect to={sideTarget ?? mode?.target}>{core}</ComposerRedirect>
+            </div>
+          </div>
+          {shown && <MainBlocked onBack={() => setFront(null)} />}
         </div>
-      </div>
-      {shown && <MainBlocked onBack={() => setFront(null)} />}
-    </div>
+      )}
+    </Provided>
   )
 }
 
