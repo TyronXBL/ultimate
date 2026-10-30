@@ -1,100 +1,88 @@
+/**
+ * The test files covering changed files, and the commands that run just them:
+ * `node scripts/tests-for.ts [files…]`, by default what this branch changed against main, committed or not.
+ *
+ * A test covers a file it imports, directly or through other files. Extensions are also loaded at runtime, which no
+ * import shows, so a test that names an extension (its `extensions/<name>/` path, or `'<name>'` in quotes, as in a
+ * `trimmedSourceCopy` list or a tool name) covers that extension's files too. A change every test depends on (server
+ * core, test helpers, configuration) or one covered by many tests is reported as broad: run the `ci` tool instead.
+ */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, normalize } from 'node:path'
 
-const root = process.cwd()
-const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
-  .split('\0')
-  .filter(Boolean)
-const trackedSet = new Set(tracked)
-const sourceFiles = tracked.filter(
+const git = (...args: string[]) =>
+  execFileSync('git', args, { encoding: 'utf8' }).split('\n').filter(Boolean)
+
+const files = git('ls-files', '--cached', '--others', '--exclude-standard').filter(
   (file) =>
     /^(server|shared|lib|extensions|web|test|scripts|\.ultimate)\//.test(file) &&
-    /\.tsx?$/.test(file),
+    /\.tsx?$/.test(file) &&
+    existsSync(file),
 )
-const tests = sourceFiles.filter((file) => /^test\/.*\.test\.tsx?$/.test(file))
-const resolveImport = (from: string, specifier: string) => {
-  if (!specifier.startsWith('.')) return undefined
-  const base = resolve(root, dirname(from), specifier)
-  return [
-    base,
-    ...['.ts', '.tsx'].map((ext) => `${base}${ext}`),
-    ...['index.ts', 'index.tsx'].map((name) => resolve(base, name)),
-  ]
-    .map((path) => {
-      const relative = path.slice(root.length + 1)
-      return trackedSet.has(relative) ? relative : undefined
-    })
-    .find(Boolean)
-}
-const graph = new Map<string, string[]>()
-for (const file of sourceFiles) {
-  const source = readFileSync(resolve(root, file), 'utf8')
-  const imports = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*\()\s*['"]([^'"]+)['"]/g)].map(
-    (match) => match[1],
-  )
-  graph.set(
-    file,
-    imports
-      .map((specifier) => resolveImport(file, specifier))
-      .filter((value): value is string => !!value),
-  )
-}
-const args = process.argv.slice(2)
-const changed = args.length
-  ? args
-  : execFileSync(
-      'git',
-      [
-        'diff',
-        '--name-only',
-        execFileSync('git', ['merge-base', 'HEAD', 'main'], { encoding: 'utf8' }).trim(),
-      ],
-      { encoding: 'utf8' },
+const known = new Set(files)
+const tests = files.filter((file) => /^test\/.*\.test\.tsx?$/.test(file))
+const source = new Map(files.map((file) => [file, readFileSync(file, 'utf8')]))
+
+/** Who imports each file: the reverse of every relative `from '…'`, `import('…')` and `import '…'`. */
+const importers = new Map<string, string[]>()
+for (const [file, text] of source)
+  for (const [, specifier] of text.matchAll(/(?:\bfrom|\bimport\s*\(?)\s*['"](\.[^'"]+)['"]/g)) {
+    const base = normalize(join(dirname(file), specifier))
+    const target = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts')].find((path) =>
+      known.has(path),
     )
-      .split('\n')
-      .filter(Boolean)
-const covered = new Set<string>()
-for (const changedFile of changed) {
-  if (tests.includes(changedFile)) covered.add(changedFile)
-  for (const test of tests) {
-    const seen = new Set<string>()
-    const visit = (file: string): boolean => {
-      if (file === changedFile) return true
-      if (seen.has(file)) return false
-      seen.add(file)
-      return (graph.get(file) ?? []).some(visit)
-    }
-    if (visit(test)) covered.add(test)
+    if (target) importers.set(target, [...(importers.get(target) ?? []), file])
   }
-  const match = changedFile.match(/^(?:\.ultimate\/)?extensions\/([^/]+)\//)
-  if (match) {
-    // Runtime-loaded extension matching uses extension names and extension paths in test sources (settings, fauxServer lists, and SSR paths).
-    const name = match[1]
-    const matchingTests = tests.filter((test) => {
-      const source = readFileSync(resolve(root, test), 'utf8')
-      return source.includes(name) || source.includes(`extensions/${name}/`)
-    })
-    for (const test of matchingTests.length ? matchingTests : tests) covered.add(test)
+
+/**
+ * The test helpers import nearly everything a fauxServer needs, so every test would cover every file through them: a
+ * change reaching a helper is followed no further, and the extension-name match below finds the tests that use it.
+ */
+const hub = (file: string) => file.startsWith('test/helpers')
+
+const changed = process.argv.length > 2 ? process.argv.slice(2) : branchChanges()
+const covering = new Set<string>()
+for (const file of changed) {
+  const seen = new Set([file])
+  for (const current of seen)
+    if (current === file || !hub(current))
+      for (const importer of importers.get(current) ?? []) seen.add(importer)
+  for (const test of tests) if (seen.has(test)) covering.add(test)
+  const extension = /^(?:\.ultimate\/)?extensions\/([^/]+)\//.exec(file)?.[1]
+  if (extension) {
+    const named = new RegExp(`extensions/${extension}/|['"\`]${extension}['"\`]`)
+    for (const test of tests) if (named.test(source.get(test)!)) covering.add(test)
   }
 }
-const unit = [...covered].filter((file) => !file.startsWith('test/e2e/')).toSorted()
-const e2e = [...covered].filter((file) => file.startsWith('test/e2e/')).toSorted()
-const broad = changed.some(
-  (file) =>
-    /^(server|shared|lib)\//.test(file) ||
-    file.startsWith('test/helpers') ||
-    /^(package\.json|vite\.config\.ts|vitest.*\.config\.)/.test(file),
+
+const unit = [...covering].filter((file) => !file.startsWith('test/e2e/')).toSorted()
+const e2e = [...covering].filter((file) => file.startsWith('test/e2e/')).toSorted()
+const core = changed.filter((file) =>
+  /^(server\/|shared\/|test\/helpers|test\/e2e\/vitest\.config|package\.json|pnpm-lock|vite\.config|tsconfig)/.test(
+    file,
+  ),
 )
-if (broad)
-  console.log('Broad change: prefer the ci tool; static list follows (capped at 40 per group).')
-console.log('Unit tests:')
-for (const file of unit.slice(0, broad ? 40 : undefined)) console.log(file)
-console.log(
-  `pnpm vitest run${unit.length ? ` ${unit.slice(0, broad ? 40 : undefined).join(' ')}` : ''}`,
-)
-console.log('E2E tests:')
-for (const file of e2e.slice(0, broad ? 40 : undefined)) console.log(file)
-console.log(
-  `pnpm vitest run --config test/e2e/vitest.config.ts${e2e.length ? ` ${e2e.slice(0, broad ? 40 : undefined).join(' ')}` : ''}`,
-)
+if (core.length || covering.size > 30)
+  console.log(
+    `Broad change (${core.length ? core.join(', ') : `${covering.size} test files`}): run the ci tool rather than these locally.\n`,
+  )
+print('Unit', unit, 'pnpm vitest run')
+print('E2E', e2e, 'pnpm vitest run --config test/e2e/vitest.config.ts')
+
+function print(kind: string, list: string[], command: string) {
+  console.log(`${kind} (${list.length}):`)
+  // An empty list prints no command: `pnpm vitest run` without files would run the whole suite.
+  console.log(list.length ? `${list.join('\n')}\n${command} ${list.join(' ')}\n` : 'none\n')
+}
+
+/** What this branch changed against main: committed, staged, unstaged and untracked. */
+function branchChanges() {
+  const base = git('merge-base', 'HEAD', 'main')[0]
+  return [
+    ...new Set([
+      ...git('diff', '--name-only', base),
+      ...git('ls-files', '--others', '--exclude-standard'),
+    ]),
+  ]
+}
