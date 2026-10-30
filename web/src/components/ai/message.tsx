@@ -96,7 +96,7 @@ export function MentionText({ text }: { text: string }) {
 }
 
 /** Wraps long lines of every code block instead of scrolling them sideways; this browser remembers the choice. */
-function CodeWrapButton() {
+export function CodeWrapButton() {
   const wrap = useStore((state) => state.ui.codeWrap)
   return (
     <button

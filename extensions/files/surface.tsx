@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import { CodeWrapButton } from '@/components/ai/message'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import {
   cn,
@@ -385,6 +386,9 @@ export default function FilesViewer() {
           ) : (
             <ModeToggle mode={mode} onChange={setMode} />
           ))}
+        {file?.kind === 'text' && file.text && !(markdown && mode !== 'source') && (
+          <CodeWrapButton />
+        )}
       </Header>
       <div className="flex min-h-0 flex-1">
         {!phone && (
