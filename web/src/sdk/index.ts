@@ -72,6 +72,14 @@ export { AllProvided, Provided } from '../app/boundary.tsx'
 export { ConversationScope } from './conversation-scope.tsx'
 /** One thread of the shown conversation as a transcript of its own (`compact.threads`), such as a side pane. */
 export { ThreadView } from '../app/transcript.tsx'
+/** A stored entry rendered as its transcript row would show it, outside the transcript. */
+export { TranscriptEntry } from '../app/transcript.tsx'
+/**
+ * Inside `transcript.top`: the transcript's scroller (`scrollRef`), its rows' container (`contentRef`), whether it
+ * follows the newest row (`isAtBottom`) and `scrollToBottom`.
+ */
+export { useStickToBottomContext as useTranscriptScroll } from 'use-stick-to-bottom'
+export { useThread } from './thread.ts'
 /** Sends what the composer inside it submits somewhere else, such as a new side chat; see `composer` renderers. */
 export { Composer, ComposerRedirect, fillComposer, insertIntoComposer } from '../app/composer.tsx'
 export type { ComposerTarget } from '../app/composer.tsx'

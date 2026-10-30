@@ -325,6 +325,7 @@ title bar the host shows above every surface.
 | `composer.status`      | Line under the composer; conversation-specific, monospace, one line (`<Conversation />`)                     |
 | `composer.actions`     | Composer footer, beside Send; input helpers that write into the draft with `insertIntoComposer`              |
 | `conversation.overlay` | Over the transcript and the composer (`<Conversation />`); position it `absolute inset-0`                    |
+| `transcript.top`       | Over a transcript's top edge, in its column; `useTranscriptScroll()`; clicks only on `pointer-events-auto`   |
 | `transcript.start`     | Above a transcript's first row once its whole history is loaded; `useTranscript()` inside                    |
 | `transcript.end`       | After a transcript's last row, before the working line: a turn still forming, such as live speech            |
 | `overlay`              | Always mounted at the root, above every surface: dialogs, toasts, global effects                             |

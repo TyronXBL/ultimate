@@ -187,6 +187,11 @@ export function Transcript({ dock }: { dock?: boolean }) {
         <ConversationContent className={cn(column(dock), 'gap-3 pt-6 pb-10')}>
           <TranscriptEntries />
         </ConversationContent>
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
+          <div className={column(dock)}>
+            <Slot name="transcript.top" />
+          </div>
+        </div>
         <ConversationScrollButton />
       </Conversation>
       {placeholder && <TranscriptSkeleton dock={dock} ref={skeleton} />}
@@ -718,6 +723,7 @@ function TranscriptEntries() {
       {!loading && entries.length > 0 && cursor !== undefined && (
         <div
           className="flex min-h-5 items-center justify-center font-mono text-[11px] text-muted-foreground/70"
+          data-earlier-history
           ref={sentinel}
         >
           {pending ? (
@@ -1231,6 +1237,13 @@ const EntryView = memo(function EntryView({ entry, blocks, results, slots, busy 
     coreEntry(entry, results, slots, busy, blocks),
   )
 }, sameRow)
+
+const noResults = new Map<string, ToolResult>()
+const noSlots = new Map<string, ToolSlot>()
+/** A stored entry as its transcript row shows it, outside the transcript: no tool results, nothing running. */
+export const TranscriptEntry = ({ entry }: { entry: EntryRecord }) => (
+  <EntryView busy={false} entry={entry} results={noResults} slots={noSlots} />
+)
 
 /** The tool calls a row shows: an assistant's calls, or the call of a result shown on its own. */
 function rowCalls(entry: EntryRecord): string[] {

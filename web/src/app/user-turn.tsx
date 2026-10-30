@@ -82,7 +82,12 @@ export function UserView({
   const skill = skillInput(text)
   const additions = messageItems(useExtensions(), 'userBubble')
   return (
-    <Message className="group/message mt-3 first:mt-0" from="user">
+    <Message
+      className="group/message mt-3 first:mt-0"
+      // The start of the user's words, for a line that names this turn elsewhere (the pinned turn).
+      data-turn-words={(skill ? skill.request || `/${skill.name}` : text).slice(0, 600)}
+      from="user"
+    >
       <div className="relative">
         <MessageContent>
           {skill && <SkillRun {...skill} />}
