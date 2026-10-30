@@ -7,6 +7,7 @@ const { shared, ui, width } = vi.hoisted(() => {
   return { shared: new Map<string, JsonValue>(), ui: tab, width: { current: 390 } }
 })
 vi.mock('../../web/src/sdk/client.ts', () => ({
+  setThemeMode() {},
   registry: { getSnapshot: () => [] },
   store: {
     getState: () => ({ ui: ui.current }),

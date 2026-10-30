@@ -40,6 +40,7 @@ vi.mock('../../web/src/sdk/client.ts', async () => {
     registry: createRegistry(),
     uiState: createUiState(api.updateUi),
     replaceNextSelection() {},
+    setThemeMode() {},
   }
 })
 vi.mock('../../web/src/sdk/resume.ts', () => ({ covered: () => false }))
