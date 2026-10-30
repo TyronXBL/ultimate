@@ -63,10 +63,27 @@ function open(target: FileTarget) {
     )
 }
 
-function FileButton({ target, children }: { target: FileTarget; children: ReactNode }) {
+/**
+ * A path that opens in Files: styled as the transcript styles links when it is one, else as its code with a dotted
+ * underline, so a phone without hover still shows it can be tapped.
+ */
+function FileButton({
+  target,
+  link,
+  children,
+}: {
+  target: FileTarget
+  link?: boolean
+  children: ReactNode
+}) {
   return (
     <button
-      className="cursor-pointer rounded-sm text-inherit hover:text-brand hover:underline pointer-coarse:py-1.5"
+      className={
+        link
+          ? 'cursor-pointer text-left'
+          : 'cursor-pointer rounded-sm underline decoration-muted-foreground/50 decoration-dotted underline-offset-4 hover:text-brand hover:decoration-brand pointer-coarse:py-1.5'
+      }
+      data-streamdown={link ? 'link' : undefined}
       onClick={() => open(target)}
       title={`Open ${target.path} in Files`}
       type="button"
@@ -95,7 +112,11 @@ export function FilePathLink({
 }) {
   const conversation = useConversation((current) => current.id)
   if (!isFileHref(href)) return core
-  return <FileButton target={{ ...splitLine(decoded(href)), conversation }}>{children}</FileButton>
+  return (
+    <FileButton link target={{ ...splitLine(decoded(href)), conversation }}>
+      {children}
+    </FileButton>
+  )
 }
 
 /** Files' value for coding-tools' open-file point: the read, write and edit cards' open button. */
