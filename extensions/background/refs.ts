@@ -7,6 +7,6 @@ export type BackgroundResult = {
   seconds: number
   tail: string
   log: string
-  /** Processes of the command that could not be stopped, and how to stop them. */
+  /** Why part of the command's process group may still run, and what to check. */
   note?: string
 }

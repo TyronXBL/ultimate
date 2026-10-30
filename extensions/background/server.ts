@@ -21,14 +21,19 @@ type Checkpoint =
 
 /**
  * The group's leader. The command runs in a bash of its own, so any command text parses as it would in the bash tool,
- * and its own syntax errors land in the log. Once it ends, the leader records the exit code and stays alive (`exec`
- * keeps its pid and start time), so the pid file still proves the group is ours: the task then stops the whole group,
- * leader included, with TERM and KILL after a grace, before it reports. A host that never comes back to it gets an hour.
+ * and its own syntax errors land in the log. Once it ends, the leader records the exit code and stays alive, so the pid
+ * file still proves the group is ours: the task then stops the whole group, leader included, with TERM and KILL after a
+ * grace, before it reports. Should no host come within an hour, the leader drains its group itself, the same way and
+ * itself last, so nothing the command started outlives its leader.
  */
 const LEADER = `exec >>"$BACKGROUND_LOG" 2>&1
 bash -c "$BACKGROUND_COMMAND"
 echo $? > "$BACKGROUND_STATUS"
-exec sleep 3600`
+sleep 3600
+trap '' TERM
+kill -TERM 0
+sleep 3
+kill -KILL 0`
 
 const deliver = (result: BackgroundResult) => ({
   status: 'running' as const,
@@ -45,6 +50,12 @@ const exitCode = (file: string) =>
     // No status file yet: the command still runs, or its leader never got to write one.
     () => undefined,
   )
+/** `bytes` from the first byte that starts a UTF-8 character: a continuation byte is 10xxxxxx. */
+const whole = (bytes: Buffer) => {
+  let start = 0
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++
+  return bytes.subarray(start)
+}
 /** The last 40 lines of the log, at most 4 KB. Only its end is read: a command may write gigabytes. */
 async function tail(log: string) {
   const handle = await open(log, 'r').catch(
@@ -56,11 +67,8 @@ async function tail(log: string) {
     const { size } = await handle.stat()
     const length = Math.min(size, 64 * 1024)
     const { buffer } = await handle.read(Buffer.alloc(length), 0, length, size - length)
-    const lines = Buffer.from(buffer.toString('utf8').split('\n').slice(-40).join('\n'))
-    // Cut at the start of a character: a UTF-8 continuation byte is 10xxxxxx.
-    let start = Math.max(0, lines.length - 4096)
-    while (start < lines.length && (lines[start] & 0xc0) === 0x80) start++
-    return lines.subarray(start).toString('utf8')
+    const lines = Buffer.from(whole(buffer).toString('utf8').split('\n').slice(-40).join('\n'))
+    return whole(lines.subarray(-4096)).toString('utf8')
   } finally {
     await handle.close()
   }
@@ -104,19 +112,18 @@ const Run = defineTask<Input, Checkpoint, null>({
     poll: async (task, runtime, ctx) => {
       const { pid, began } = task.state.checkpoint
       const files = paths(task)
-      /** Stop the whole group, through the pid file that proves it ours; a note when part of it is left. */
-      const stop = async () => {
-        const stopped = await stopGroup(pid, { pidFile: files.pid }).then(
-          () => undefined,
+      /**
+       * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
+       * proves nothing any more, and a group id may since name another group: nothing is signalled, the card says so.
+       */
+      const stop = () =>
+        stopGroup(pid, { pidFile: files.pid }).then(
+          () =>
+            groupAlive(pid)
+              ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
+              : undefined,
           (error: unknown) => (error instanceof Error ? error.message : String(error)),
         )
-        await rm(`${files.pid}.start`, { force: true })
-        await rm(files.pid, { force: true })
-        // A leader killed from outside cannot be verified any more, so its group is not signalled; say so.
-        return groupAlive(pid)
-          ? `${stopped ?? 'Its leader is gone'}: processes of group ${pid} still run; stop them with kill -- -${pid}`
-          : undefined
-      }
       const result = async (
         outcome: BackgroundResult['outcome'],
         code: number | null,
@@ -134,7 +141,7 @@ const Run = defineTask<Input, Checkpoint, null>({
         })
       const now = runtime.now()
       let next
-      // Read before anything is stopped: stopping the leader ends a group whose code is already recorded.
+      // The code first: once it is recorded, stopping the group is the end of a finished run, not of a running one.
       const code = await exitCode(files.status)
       if (code !== undefined) next = await result('finished', code, await stop())
       else if (now - began >= task.input.timeout * 1000)
