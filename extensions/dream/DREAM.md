@@ -9,9 +9,9 @@ itself.
 
 A dream is ordinary work: one branch, its answer, the user's decisions, ordinary branches for what they approve. There
 is no session to track. Dream's actions, called with codemode `ultimate.action('dream', name, args)`: `prepare
-{chapter, learned, handoff}` and `stats` (tool numbers from the trace, no model). The trace keeps only about the last
-7 days, so `stats` and `ultimate.trace` see only that window, and `stats` counts only tool calls; older failures and
-model errors are found in conversation entries.
+{chapter, learned, handoff}` and `stats` (tool and skill numbers from the trace, no model). The trace keeps only about the last
+7 days, so `stats` and `ultimate.trace` see only that window, and `stats` counts only tool calls and skill uses; older
+failures and model errors are found in conversation entries.
 
 ## For @ultimate
 
@@ -105,9 +105,10 @@ tally, `ultimate.entries(<root>)`) are the cheap way in; open a conversation onl
   (the memory review in extensions/lineage/README.md). Never drop or weaken the memory about the user.
 - **failures** — what failed often: `watchdog.failure` cards, tool and action errors in the trace, retries, reactor
   failures, lander rejections, runs the user had to stop. Group by cause; for the top ones propose a fix.
-- **tools** — `stats` gives calls, failures, mean duration and enabled tools never called. Explain the numbers: why a
-  tool fails, which are slow, which unused ones should be taught or removed, what agents did by hand that a tool
-  should do.
+- **tools** — `stats` gives calls, failures, mean duration and enabled tools never called, and per skill its reads,
+  the user's `/skill:` runs and failed reads, with listed skills never used. Explain the numbers: why a tool fails,
+  which are slow, which unused tools or skills should be taught or removed, why agents look for a skill where it is
+  not, what agents did by hand that a tool should do.
 - **corrections** — what the user had to say more than once, corrections of the agents' work, and the wishes: what
   Ultimate itself would like to have or be able to do, from friction seen in old conversations.
 - **codify** — memories that should stop depending on being remembered and become how the harness works. For each

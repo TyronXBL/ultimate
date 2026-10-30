@@ -11,6 +11,7 @@ import type { OpenHost } from '../server/harness.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import type { ActionContext } from '../server/actions.ts'
 import { Metadata } from '../server/metadata.ts'
+import { callTrace } from '../server/trace.ts'
 import { docs as lineageDocs } from '../extensions/lineage/server.ts'
 import { Messages } from '../extensions/messages/api.ts'
 import { Todos } from '../extensions/todos/server.ts'
@@ -265,9 +266,11 @@ it('reads tool numbers from the trace, with unused tools and frequent errors', a
   const file = join(await temp(), 'trace.sqlite')
   const db = new DatabaseSync(file)
   db.exec(
-    'CREATE TABLE calls (id TEXT, at REAL, ms REAL, kind TEXT, name TEXT, ok INTEGER, error TEXT, args TEXT, conversation INTEGER, entry INTEGER)',
+    'CREATE TABLE calls (id TEXT, at REAL, ms REAL, kind TEXT, name TEXT, ok INTEGER, error TEXT, args TEXT, conversation INTEGER, entry INTEGER, caller TEXT)',
   )
-  const insert = db.prepare('INSERT INTO calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const insert = db.prepare(
+    'INSERT INTO calls (id, at, ms, kind, name, ok, error, args, conversation, entry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  )
   insert.run('1', 100, 10, 'tool', 'edit', 1, null, null, null, null)
   insert.run(
     '2',
@@ -284,7 +287,7 @@ it('reads tool numbers from the trace, with unused tools and frequent errors', a
   insert.run('3', 300, 5, 'tool', 'read', 1, null, null, null, null)
   insert.run('4', 50, 5, 'action', 'dream/stats', 1, null, null, null, null)
   db.close()
-  expect(toolStats(file, ['edit', 'read', 'notify'])).toEqual({
+  expect(toolStats(file, ['edit', 'read', 'notify'], [])).toEqual({
     since: 100,
     calls: 3,
     tools: [
@@ -300,6 +303,54 @@ it('reads tool numbers from the trace, with unused tools and frequent errors', a
         examples: [{ at: '#7/42', args: '{"path":"a.ts"}' }],
       },
     ],
+    skills: [],
+    unusedSkills: [],
   })
-  expect(toolStats(join(await temp(), 'none.sqlite'), ['read']).unused).toEqual(['read'])
+  expect(toolStats(join(await temp(), 'none.sqlite'), ['read'], ['ship'])).toMatchObject({
+    unused: ['read'],
+    unusedSkills: ['ship'],
+  })
+})
+
+it('counts skill reads and runs from the trace, with failed reads and listed skills never used', async () => {
+  const file = join(await temp(), 'trace.sqlite')
+  const trace = callTrace(file)
+  trace.open()
+  const [read] = trace.tools({
+    name: 'coding-tools',
+    tools: [
+      {
+        name: 'read',
+        execute: async ({ path }: { path: string }) => {
+          if (path.startsWith('/home/')) throw new Error(`ENOENT: no such file, open '${path}'`)
+          return { output: [] }
+        },
+      } as never,
+    ],
+  }).tools!
+  const api = { conversationId: 1, taskId: 1, callId: 'call', getTask: async () => undefined }
+  const call = (path: string) => read.execute({ path }, api as never, {} as never)
+  await call('/clone/skills/ship/SKILL.md')
+  await call('.ultimate/skills/ship/SKILL.md')
+  await call('docs/README.md')
+  // A project skill looked for in the personal folder.
+  await expect(call('/home/user/.ultimate/skills/audit/SKILL.md')).rejects.toThrow('ENOENT')
+  // `/skill:ship` from the composer, as the submit API marks it.
+  trace
+    .begin({ kind: 'skill', caller: 'user', callee: 'skills', name: 'ship', sealed: true }, null)
+    .finish(true, undefined)
+  trace.close()
+  const stats = toolStats(file, ['read'], ['audit', 'ship', 'tidy'])
+  expect(stats.skills).toEqual([
+    { name: 'ship', reads: 2, runs: 1, failed: 0 },
+    { name: 'audit', reads: 0, runs: 0, failed: 1 },
+  ])
+  expect(stats.unusedSkills).toEqual(['audit', 'tidy'])
+  expect(stats.tools).toMatchObject([{ name: 'read', calls: 4, failed: 1 }])
+  // Only the skill's name is kept, never the path it was read from.
+  const db = new DatabaseSync(file, { readOnly: true })
+  expect(db.prepare('SELECT count(*) AS n FROM calls WHERE args IS NOT NULL').get()).toEqual({
+    n: 0,
+  })
+  db.close()
 })

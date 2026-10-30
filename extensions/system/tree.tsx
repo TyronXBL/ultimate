@@ -1,4 +1,5 @@
 import {
+  BookOpenIcon,
   CircleXIcon,
   MousePointerClickIcon,
   PlugIcon,
@@ -18,9 +19,10 @@ const icons: Record<string, typeof WrenchIcon> = {
   action: MousePointerClickIcon,
   service: PlugIcon,
   reactor: WorkflowIcon,
+  skill: BookOpenIcon,
 }
 
-/** The icon of a row's kind: events, tools, model calls, actions, services and reactors each their own. */
+/** The icon of a row's kind: events, tools, model calls, actions, services, reactors and skills each their own. */
 export function KindIcon({ kind, ok = true }: { kind: string; ok?: boolean }) {
   const Icon = ok ? (icons[kind] ?? PlugIcon) : CircleXIcon
   return (

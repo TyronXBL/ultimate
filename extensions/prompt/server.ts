@@ -339,7 +339,7 @@ export default function prompt(host: ExtensionHost) {
         const reader = (['read', 'bash'] as const).find((name) => names.has(name))
         const listed = reader ? formatSkillsForPrompt(skills, reader).trim() : ''
         return listed
-          ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects.`
+          ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name.`
           : undefined
       }),
       section('building_blocks', () => {
