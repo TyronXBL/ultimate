@@ -1240,10 +1240,19 @@ const EntryView = memo(function EntryView({ entry, blocks, results, slots, busy 
 
 const noResults = new Map<string, ToolResult>()
 const noSlots = new Map<string, ToolSlot>()
-/** A stored entry as its transcript row shows it, outside the transcript: no tool results, nothing running. */
+/**
+ * A stored entry as its transcript row shows it, outside the transcript: no tool results, nothing running. Its
+ * renderers run as in a row, effects included, and `useTranscript()` inside still sees the surrounding transcript.
+ */
 export const TranscriptEntry = ({ entry }: { entry: EntryRecord }) => (
   <EntryView busy={false} entry={entry} results={noResults} slots={noSlots} />
 )
+
+/** Inside `transcript.top`: the transcript's scroller and rows' container, and whether it follows the newest row. */
+export function useTranscriptScroll() {
+  const { isAtBottom, scrollRef, contentRef } = useStickToBottomContext()
+  return { isAtBottom, scrollRef, contentRef }
+}
 
 /** The tool calls a row shows: an assistant's calls, or the call of a result shown on its own. */
 function rowCalls(entry: EntryRecord): string[] {

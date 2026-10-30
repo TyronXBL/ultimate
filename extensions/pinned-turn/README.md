@@ -12,7 +12,9 @@ A `transcript.top` component, so it sits in every transcript's reading column, a
 - **Below the loaded history** (core's `data-earlier-history` sentinel is present and no bubble is loaded above): it
   reads `inputs` and renders that page unseen through `TranscriptEntry`, as the transcript would, to find the newest
   input that shows as a user bubble, paging on until one does. Meanwhile the line says "finding your message…". In a
-  thread pane (`useThread()`) it skips this: the stored inputs are the whole conversation's.
+  thread pane (`useThread()`) it skips this: the stored inputs are the whole conversation's. The probe runs the real
+  renderers, their effects included (a message card may read its images), and they see the loaded transcript, not the
+  probed page. A failed read shows no pin below that entry for the rest of the view; it is not retried.
 - **Look**: one 32 px line shaped like the user bubble (`border-border/70 bg-secondary/60`, `rounded-lg`), over a short
   fade so no cut-off text shows around it; the text is the first phrase, its first sentences up to 20 characters or
   else its first line.

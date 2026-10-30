@@ -88,7 +88,11 @@ function PinnedTurn() {
   const read = useEffectEvent((before: number, from = before) => {
     api.action(InputsAction, { conversation: id!, before: from }).then(
       (page) => setLookup({ before, entries: page.entries, next: page.before }),
-      () => setFound({ before, turn: null }),
+      // Unreadable stored inputs leave this view without a pin below `before`; nothing is retried.
+      () => {
+        setLookup(undefined)
+        setFound({ before, turn: null })
+      },
     )
   })
   useLayoutEffect(() => {
