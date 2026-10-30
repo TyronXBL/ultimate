@@ -117,7 +117,9 @@ export async function loadExtensions(
   const log = eventLog(runtime.harness, trace.run, trace.keep)
   const roots = discoveryRoots(host.ultimateRoot, host.projectRoot, host.userHome)
   const directories = roots.map((root) => join(root.path, 'extensions'))
-  const loader = extensionLoader(host.ultimateRoot)
+  // Vite watched every file its SSR graph loaded; now the loader names them, such as an outside extension's helpers.
+  let watcher: ViteDevServer['watcher'] | undefined
+  const loader = extensionLoader(host.ultimateRoot, (file) => watcher?.add(file))
   const provided = new Map<ExtensionHost, Map<string, unknown>>()
   const providers = new Map<string, { owner: ExtensionHost; value: unknown }>()
   const facetHosts = new Map<string, ExtensionHost>()
@@ -664,8 +666,8 @@ export async function loadExtensions(
     )
   }
   await reload()
-  /** Changed code files waiting for the queued reload. */
-  const pending = new Set<string>()
+  /** Files waiting for the queued reload; true when one was added or removed, which reloads its folder's server. */
+  const pending = new Map<string, boolean>()
   /** Reload every extension whose server facet imports a pending file, or whose folder holds one. */
   async function reloadChanged() {
     const files = [...pending]
@@ -673,7 +675,7 @@ export async function loadExtensions(
     try {
       const selected = new Set<string>()
       const servers = new Set<string>()
-      for (const file of files) {
+      for (const [file, structural] of files) {
         const stale = loader.invalidate(file)
         for (const name of records.keys())
           if (stale.has(join(targets.get(name)!, 'server.ts'))) {
@@ -684,13 +686,18 @@ export async function loadExtensions(
         if (!directory) continue
         const name = file.slice(directory.length + 1).split('/')[0]
         selected.add(name)
-        if (file === join(directory, name, 'server.ts')) servers.add(name)
+        if (structural || file === join(directory, name, 'server.ts')) servers.add(name)
       }
       await reload(selected, servers)
     } catch (error) {
       for (const record of records.values()) if (record.server) record.server.error = String(error)
       throw error
     }
+  }
+  /** Queue `file` for the next reload; one that arrives while a reload is queued joins it, so a landing reloads each extension once. */
+  const queue = (file: string, structural: boolean) => {
+    if (!pending.size) enqueue(reloadChanged)
+    pending.set(file, structural || (pending.get(file) ?? false))
   }
   const onChange = (file: string) => {
     if (
@@ -707,38 +714,33 @@ export async function loadExtensions(
     }
     const directory = directories.find((root) => file.startsWith(root + '/'))
     if (!directory && !/\.[cm]?[jt]s$/.test(file)) return
-    // A change that arrives while a reload is queued joins it: a landing reloads each extension once.
-    if (!pending.size) enqueue(reloadChanged)
-    pending.add(file)
+    queue(file, false)
   }
   const onStructure = (file: string) => {
-    const directory = directories.find((root) => file.startsWith(root + '/'))
-    if (!directory) return onChange(file)
-    const name = file.slice(directory.length + 1).split('/')[0]
-    enqueue(async () => {
-      // A removed file's importers must not keep its old module.
-      loader.invalidate(file)
-      await reload(new Set([name]), new Set([name]))
-    })
+    if (directories.some((root) => file.startsWith(root + '/'))) queue(file, true)
+    else onChange(file)
   }
   const structure = ['add', 'unlink', 'addDir', 'unlinkDir'] as const
-  const unwatch = watch((watcher) => {
+  const unwatch = watch((current) => {
+    watcher = current
+    current.add([...loader.files()])
     const watchedRoots = [
       ...directories,
       ...settingsFiles,
       ...roots.slice(1).map((root) => join(root.path, 'skills')),
     ]
-    watcher.add(watchedRoots)
+    current.add(watchedRoots)
     const stopRoots = watchRoots(watchedRoots, (root) => {
-      watcher.add(root)
+      current.add(root)
       enqueue(() => (settingsFiles.includes(root) ? reloadSettings() : reload()))
     })
-    watcher.on('change', onChange)
-    for (const event of structure) watcher.on(event, onStructure)
+    current.on('change', onChange)
+    for (const event of structure) current.on(event, onStructure)
     return () => {
       stopRoots()
-      watcher.off('change', onChange)
-      for (const event of structure) watcher.off(event, onStructure)
+      if (watcher === current) watcher = undefined
+      current.off('change', onChange)
+      for (const event of structure) current.off(event, onStructure)
     }
   })
   return {
