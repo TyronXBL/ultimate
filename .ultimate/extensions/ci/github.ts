@@ -64,33 +64,31 @@ export async function repository(cwd: string, remote: string) {
 
 /** Commits a push of `sha` to `remote` would publish that look like they carry a secret: `<commit> <file>`, never what. */
 export async function secretsIn(cwd: string, sha: string, remote: string) {
-  // `--cc` adds what a merge's own resolution introduced, which plain `-p` leaves out of merge commits. A combined diff
-  // gives each line one prefix column per parent (its hunk header one `@` more than that): a line is added when some
-  // column says `+` and none says `-`.
-  const patch = await git(cwd, [
-    'log',
-    '-p',
-    '--cc',
-    '--format=commit %H%n%B',
-    sha,
-    '--not',
-    `--remotes=${remote}`,
-  ])
+  const range = [sha, '--not', `--remotes=${remote}`]
   const found: string[] = []
+  // Messages are read apart from the patches, so no message line can pass for a diff header.
   let commit = ''
-  let file = '(message)'
-  let columns = 1
-  for (const line of patch.split('\n')) {
-    const hunk = file === '(message)' ? null : /^(@{2,}) /.exec(line)
+  for (const line of (await git(cwd, ['log', '--format=commit %H%n%B', ...range])).split('\n')) {
+    if (line.startsWith('commit ')) commit = line.slice(7, 14)
+    else if (SECRETS.test(line)) found.push(`${commit} (message)`)
+  }
+  // `--cc` adds what a merge's own resolution introduced, which plain `-p` leaves out of merge commits. A combined diff
+  // gives each hunk line one prefix column per parent (its hunk header one `@` more than that): a line is added when
+  // some column says `+` and none says `-`. Every hunk line starts with such a column, so a hunk ends only at the next
+  // `diff ` or `commit ` line, and lines outside hunks (headers, file names) are scanned whole.
+  let file = ''
+  let columns = 0
+  for (const line of (await git(cwd, ['log', '-p', '--cc', '--format=commit %H', ...range])).split(
+    '\n',
+  )) {
+    const hunk = /^(@{2,}) /.exec(line)
     const prefix = line.slice(0, columns)
-    if (line.startsWith('commit ')) [commit, file] = [line.slice(7, 14), '(message)']
-    else if (line.startsWith('+++ ')) file = line.slice(6)
+    if (line.startsWith('commit ')) [commit, file, columns] = [line.slice(7, 14), '', 0]
+    else if (line.startsWith('diff ')) columns = 0
+    else if (!columns && line.startsWith('+++ ')) file = line.slice(6)
     else if (hunk) columns = hunk[1].length - 1
-    else if (
-      (file === '(message)' || (prefix.includes('+') && !prefix.includes('-'))) &&
-      SECRETS.test(line)
-    )
-      found.push(`${commit} ${file}`)
+    else if ((!columns || (prefix.includes('+') && !prefix.includes('-'))) && SECRETS.test(line))
+      found.push(`${commit} ${file || '(header)'}`)
   }
   return [...new Set(found)]
 }
