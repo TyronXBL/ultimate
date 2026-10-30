@@ -14,6 +14,7 @@ import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionLanded } from './api.ts'
 import { setup } from './setup.ts'
+import { failedTests, failingTestsFromLog } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
 import type { Landed, LanderEntry, LanderOutcome, QueueEntry, WorkspaceIndex } from './types.ts'
 
@@ -399,6 +400,26 @@ export function createLander(
         const finish = (text: string, outcome: LanderOutcome) =>
           runtime.commit(async (tx) => {
             const draft = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
+            if (outcome.outcome === 'failed' && outcome.output) {
+              const tests = failedTests(outcome.output)
+              const history = await failingTestsFromLog(
+                tx,
+                Object.values(draft.landerConversations),
+                { tests, except: entry.conversationId },
+              )
+              outcome.repeats = history
+                .filter((item) => item.landings.length > 0)
+                .slice(0, 5)
+                .map((item) => ({
+                  test: item.test,
+                  landings: item.landings.length,
+                  branches: [
+                    ...new Set(item.landings.map((landing) => landing.conversationId)),
+                  ].slice(0, 5),
+                }))
+              if (outcome.repeats.length)
+                text += `\nAlso failed at other branches' landings (check these before investigating from scratch):\n${outcome.repeats.map((repeat) => `- ${repeat.test}: ${repeat.landings} landings, ${repeat.branches.map((branch) => `#${branch}`).join(' ')}`).join('\n')}`
+            }
             const steps = draft.queue.find((item) => item.id === id)!.steps
             draft.queue = draft.queue.filter((item) => item.id !== id)
             if (outcome.sha) draft.items[String(entry.conversationId)].landed = outcome.sha

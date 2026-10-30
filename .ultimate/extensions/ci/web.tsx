@@ -7,6 +7,7 @@ import {
   XIcon,
 } from 'lucide-react'
 import { defineWebExtension, Fold } from '@/sdk'
+import { useUltimate } from '@/sdk'
 import type { EntryRecord } from '@/sdk'
 import type { CiResult } from './refs.ts'
 
@@ -28,6 +29,7 @@ const duration = (seconds: number) =>
 /** One CI run's outcome as a card that folds to one line: outcome, commit, duration. */
 function CiResultCard({ entry }: { entry: EntryRecord }) {
   const result = entry.data as CiResult
+  const { switchConversation } = useUltimate()
   const [border, color, Icon, label] = tones[result.conclusion]
   const sha = result.sha.slice(0, 7)
   return (
@@ -89,6 +91,20 @@ function CiResultCard({ entry }: { entry: EntryRecord }) {
                     <span className="min-w-0 break-words">{failure.title}</span>
                   </div>
                   <p className="pl-4.5 break-words text-muted-foreground">{failure.message}</p>
+                  {failure.earlier && (
+                    <p className="pl-4.5 text-muted-foreground">
+                      also failed in {failure.earlier.landings} earlier landings{' '}
+                      {failure.earlier.branches.map((id, index) => (
+                        <button
+                          className="hover:text-foreground hover:underline"
+                          key={id}
+                          onClick={() => switchConversation(id)}
+                        >
+                          {index ? ' ' : ''}#{id}
+                        </button>
+                      ))}
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>

@@ -15,6 +15,8 @@ and returns at once. A durable `ci.run` task then:
 5. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it. A
    ref that could not be deleted is named on the card.
 
+Failed test titles are compared with the lander's recorded failures. Matching history appears in the model report and under each failure in the result card, with buttons to earlier branches. This lookup is best-effort and never prevents delivery of a CI result.
+
 Aborting the task (its conversation concluded; Stop leaves it running) deletes the ref too and wakes nobody; a ref that stays behind then goes to
 the host's error report. It never runs the suites on this machine.
 

@@ -52,6 +52,7 @@ function headline(outcome: LanderOutcome, target?: string) {
 
 /** What the outcome holds beyond its headline: commits, flaky checks, the output tail. */
 function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
+  const { switchConversation } = useUltimate()
   return (
     <>
       {outcome.commits && outcome.commits.length > 0 && (
@@ -67,6 +68,20 @@ function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
       {outcome.flaky?.map((command) => (
         <p className="text-warning" key={command}>
           flaky: {command}
+        </p>
+      ))}
+      {outcome.repeats?.map((repeat) => (
+        <p className="text-warning" key={repeat.test}>
+          flaky: {repeat.test} also failed in {repeat.landings} earlier landings{' '}
+          {repeat.branches.map((id, index) => (
+            <button
+              className="text-muted-foreground hover:text-foreground hover:underline"
+              key={id}
+              onClick={() => switchConversation(id)}
+            >
+              {index ? ' ' : ''}#{id}
+            </button>
+          ))}
         </p>
       ))}
       {outcome.needsRestart && <p className="text-warning">Needs restart.</p>}

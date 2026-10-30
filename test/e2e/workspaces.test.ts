@@ -2,12 +2,14 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { access, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { afterEach, expect, it } from 'vitest'
 import { context, prepareHarness } from '../../server/harness.ts'
 import { Metadata } from '../../server/metadata.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import workspaceExtension from '../../extensions/workspaces/server.ts'
+import workspaceExtension, { actions } from '../../extensions/workspaces/server.ts'
+import { Workspaces } from '../../extensions/workspaces/workspaces.ts'
 import { workspaces } from '../../extensions/workspaces/workspaces.ts'
 import { git } from '../../lib/git.ts'
 import { temp, until } from '../helpers.ts'
@@ -67,6 +69,49 @@ async function reopen(
   const service = workspaces(host)
   return {
     service,
+    failing(args: Record<string, unknown> = {}) {
+      return actions.failing(args as never, { host } as never)
+    },
+    async seedLander(
+      entries: {
+        submission: string
+        conversationId: number
+        at: number
+        output: string
+        outcome?: 'failed'
+      }[],
+    ) {
+      const id = (
+        await opened.harness.createConversation({ ownership: { kind: 'ownerless' } }, context)
+      ).id
+      await opened.harness.commit(async (tx) => {
+        const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
+        index.landerConversations[`test-${id}`] = id
+        for (const item of entries) {
+          const shared = {
+            submission: item.submission,
+            conversationId: item.conversationId,
+            tip: 'tip',
+            target: 'main',
+            at: item.at,
+          }
+          await tx.appendEntry(id, {
+            kind: 'ultimate.lander',
+            data: {
+              ...shared,
+              check: { command: 'pnpm test', result: 'failed' },
+              output: item.output,
+            },
+          })
+          if (item.outcome)
+            await tx.appendEntry(id, {
+              kind: 'ultimate.lander',
+              data: { ...shared, outcome: 'failed', output: item.output },
+            })
+        }
+      }, context)
+      return id
+    },
     async create(cwd: string) {
       const conversation = await opened.harness.createConversation(
         {
@@ -80,6 +125,51 @@ async function reopen(
     },
   }
 }
+it('derives repeat test failures through the workspaces failing action', async () => {
+  const paths = await repository()
+  const opened = await reopen(paths, [])
+  const ansi = '\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m test/a.test.ts > suite > case'
+  await opened.seedLander([
+    {
+      submission: 'one',
+      conversationId: 41,
+      at: 100,
+      output: `${ansi}\nFAIL test/only.test.ts [ test/only.test.ts ]\nFAIL test (2/4): failure`,
+      outcome: 'failed',
+    },
+    {
+      submission: 'two',
+      conversationId: 42,
+      at: 200,
+      output: 'FAIL test/a.test.ts > suite > case\nFAIL Unhandled error',
+      outcome: 'failed',
+    },
+  ])
+  const result = await opened.failing({ limit: 20 })
+  expect(result).toEqual([
+    {
+      test: 'test/a.test.ts > suite > case',
+      landings: [
+        { submission: 'two', conversationId: 42, at: 200, sank: true },
+        { submission: 'one', conversationId: 41, at: 100, sank: true },
+      ],
+      branches: 2,
+    },
+    {
+      test: 'test/only.test.ts',
+      landings: [{ submission: 'one', conversationId: 41, at: 100, sank: true }],
+      branches: 1,
+    },
+  ])
+  expect(await opened.failing({ except: 41 })).toEqual([
+    {
+      test: 'test/a.test.ts > suite > case',
+      landings: [{ submission: 'two', conversationId: 42, at: 200, sank: true }],
+      branches: 1,
+    },
+  ])
+})
+
 it('clears and reruns a configured add command a crash interrupted', async () => {
   const paths = await repository()
   const started = join(paths.directory, 'started')

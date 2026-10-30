@@ -21,6 +21,7 @@ import { ConversationsApi, Release } from '../conversations/api.ts'
 import { Branches, WorkspacesApi } from './api.ts'
 import {
   DiskAction,
+  FailingAction,
   GithubAction,
   InfoAction,
   IsolationAction,
@@ -31,6 +32,7 @@ import {
 import { githubRepo } from '../../lib/project-identity.ts'
 import { sweepChecks } from './lander.ts'
 import { Workspaces, workspaces } from './workspaces.ts'
+import { failingTestsFromLog } from './failing.ts'
 export const order = -200
 export const docs = [Workspaces]
 export const userActions = ['setupGit']
@@ -133,6 +135,29 @@ export const actions = {
   },
   stats: implementAction(StatsAction, (_args, { host }) => workspaces(host).stats(context)),
   disk: implementAction(DiskAction, (_args, { host }) => workspaces(host).disk()),
+  failing: implementAction(FailingAction, async (args, { host }) => {
+    const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+    if (
+      input.tests !== undefined &&
+      (!Array.isArray(input.tests) || input.tests.some((test) => typeof test !== 'string'))
+    )
+      throw new Error('tests must be an array of strings')
+    if (
+      input.except !== undefined &&
+      (typeof input.except !== 'number' || !Number.isSafeInteger(input.except) || input.except < 1)
+    )
+      throw new Error('except must be a conversation id')
+    if (
+      input.limit !== undefined &&
+      (typeof input.limit !== 'number' || !Number.isSafeInteger(input.limit) || input.limit < 0)
+    )
+      throw new Error('limit must be a non-negative integer')
+    const options = input as { tests?: string[]; except?: number; limit?: number }
+    return host.harness().commit(async (tx) => {
+      const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
+      return failingTestsFromLog(tx, Object.values(index.landerConversations), options)
+    }, context)
+  }),
 }
 export default function workspaceExtension(host: ExtensionHost) {
   // What a landing asks about its branch is an extension point, wanted where the lander calls it.
@@ -141,6 +166,11 @@ export default function workspaceExtension(host: ExtensionHost) {
   const service = workspaces(host)
   host.implement(WorkspacesApi, {
     ...service,
+    failing: async (options, ctx) =>
+      host.harness().commit(async (tx) => {
+        const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
+        return failingTestsFromLog(tx, Object.values(index.landerConversations), options)
+      }, ctx),
     git,
     doc: Workspaces,
     setupGit: () => setupGit(host),

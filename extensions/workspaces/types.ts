@@ -50,6 +50,7 @@ export type LanderStep = {
 }
 /** How a submission ended. A push that failed after landing locally is `landed` with a `reason`. */
 export type LanderOutcome = {
+  repeats?: { test: string; landings: number; branches: number[] }[]
   outcome: 'landed' | 'failed'
   divergence?: string
   sha?: string
@@ -68,6 +69,14 @@ export type LanderOutcome = {
   hint?: string
 }
 /** One line of a lander conversation's log (entry kind `ultimate.lander`): a step, a check result, or the outcome. */
+type FailingLanding = {
+  submission: string
+  conversationId: number
+  sourceEntry?: number
+  at: number
+  sank: boolean
+}
+export type FailingTest = { test: string; landings: FailingLanding[]; branches: number }
 export type LanderEntry = {
   submission: string
   conversationId: number

@@ -1,7 +1,11 @@
 /** One job of a run: its name, conclusion and seconds from start to end. */
 export type JobResult = { name: string; conclusion: string; seconds?: number }
 /** A failing test (Vitest's `file > test` annotation title) or a failed job without one, with its first error line. */
-export type Failure = { title: string; message: string }
+export type Failure = {
+  title: string
+  message: string
+  earlier?: { landings: number; branches: number[] }
+}
 
 /** The data of a `ci.result` entry: one CI run's outcome, as its card shows it. */
 export type CiResult = {
