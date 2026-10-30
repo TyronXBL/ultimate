@@ -1,4 +1,4 @@
-import type { JsonValue } from '@earendil-works/chord'
+import type { Context, JsonValue } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { Type } from '@earendil-works/pi-ai'
 import {
@@ -21,6 +21,7 @@ import { ConversationsApi, Release } from '../conversations/api.ts'
 import { Branches, WorkspacesApi } from './api.ts'
 import {
   DiskAction,
+  FailingAction,
   GithubAction,
   InfoAction,
   IsolationAction,
@@ -31,6 +32,7 @@ import {
 import { githubRepo } from '../../lib/project-identity.ts'
 import { sweepChecks } from './lander.ts'
 import { Workspaces, workspaces } from './workspaces.ts'
+import { failingTests } from './failing.ts'
 export const order = -200
 export const docs = [Workspaces]
 export const userActions = ['setupGit']
@@ -133,6 +135,35 @@ export const actions = {
   },
   stats: implementAction(StatsAction, (_args, { host }) => workspaces(host).stats(context)),
   disk: implementAction(DiskAction, (_args, { host }) => workspaces(host).disk()),
+  failing: implementAction(FailingAction, async (args, { host }) => {
+    const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+    if (
+      input.tests !== undefined &&
+      (!Array.isArray(input.tests) || input.tests.some((test) => typeof test !== 'string'))
+    )
+      throw new Error('tests must be an array of strings')
+    if (
+      input.except !== undefined &&
+      (typeof input.except !== 'number' || !Number.isSafeInteger(input.except) || input.except < 1)
+    )
+      throw new Error('except must be a conversation id')
+    if (
+      input.limit !== undefined &&
+      (typeof input.limit !== 'number' || !Number.isSafeInteger(input.limit) || input.limit < 0)
+    )
+      throw new Error('limit must be a non-negative integer')
+    return failing(host, input as FailingOptions, context)
+  }),
+}
+type FailingOptions = Parameters<typeof failingTests>[2]
+/** The tests that failed at landing, from every lander conversation's log. */
+const failing = async (
+  host: Pick<ExtensionHost, 'harness'>,
+  options: FailingOptions,
+  ctx: Context,
+) => {
+  const index = await host.harness().snapshot(Workspaces, ROOT_CONVERSATION_ID, ctx)
+  return failingTests(host.harness(), Object.values(index?.landerConversations ?? {}), options, ctx)
 }
 export default function workspaceExtension(host: ExtensionHost) {
   // What a landing asks about its branch is an extension point, wanted where the lander calls it.
@@ -141,6 +172,7 @@ export default function workspaceExtension(host: ExtensionHost) {
   const service = workspaces(host)
   host.implement(WorkspacesApi, {
     ...service,
+    failing: (options, ctx) => failing(host, options, ctx),
     git,
     doc: Workspaces,
     setupGit: () => setupGit(host),

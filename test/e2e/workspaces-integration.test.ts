@@ -1437,6 +1437,42 @@ it.concurrent('reruns only the failing command of a group, reports its output tw
   expect(runs(submissions[0])).toEqual(['if [ failed', 'if [ flaky', 'true passed'])
   for (const event of checks) expect(event.data.ms).toEqual(expect.any(Number))
 })
+it.concurrent("names the failed tests that also failed at other branches' landings, never the submitter's own", async () => {
+  const f = await lander({
+    checks: [
+      "printf ' FAIL  test/a.test.ts > keeps failing\\n FAIL  test/b.test.ts > once\\n'; exit 1",
+    ],
+  })
+  const branch = async (name: string) => {
+    const id = await f.create()
+    await f.service.ready(id, context)
+    await commit((await f.service.get(id, context))!.path, name)
+    await f.service.submit(id, 'None', context)
+    return id
+  }
+  const first = await branch('first.txt')
+  expect((await submitted(f, first))[0]).not.toContain('other branches')
+  // Only test/a also fails for another branch: its report names that one and the first branch.
+  f.host.projectSettings = async () => ({
+    lander: { checks: ["printf ' FAIL  test/a.test.ts > keeps failing\\n'; exit 1"] },
+  })
+  const second = await branch('second.txt')
+  const [report] = await submitted(f, second)
+  expect(report).toContain(
+    `Also failed at other branches' landings; check whether it is flaky before investigating from scratch:\\n- test/a.test.ts > keeps failing: 1 earlier landing (#${first})`,
+  )
+  expect((await landerLog(f)).log.at(-1)).toMatchObject({
+    outcome: 'failed',
+    repeats: [{ test: 'test/a.test.ts > keeps failing', landings: 1, branches: [first] }],
+  })
+  // The first branch submitting again counts the second's landing, not its own earlier one.
+  await commit((await f.service.get(first, context))!.path, 'again.txt')
+  await f.service.submit(first, 'None', context)
+  const reports = await submitted(f, first)
+  expect(reports.at(-1)).toContain(
+    `- test/a.test.ts > keeps failing: 1 earlier landing (#${second})`,
+  )
+})
 it.concurrent('fast-forwards the worktree that has the target checked out, past unrelated dirty files but not over overlapping ones', async () => {
   const f = await lander({})
   const id = await f.create()
