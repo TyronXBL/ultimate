@@ -144,6 +144,10 @@ it('treats a removed and re-added tool as unchanged unless its declaration chang
   expect(promptAt(entries, 1).tools.map((tool) => tool.name)).toEqual(['read', 'bash'])
   const diff = diffAt(entries, 2)
   expect(diff.tools.map((tool) => [tool.name, tool.change])).toEqual([['read', 'changed']])
+  expect(diff.tools[0].delta).toBe(
+    Math.ceil(JSON.stringify(changedRead).length / 3.5) -
+      Math.ceil(JSON.stringify(read).length / 3.5),
+  )
   expect(promptAt(entries, 2).tools.map((tool) => tool.name)).toEqual(['bash', 'read'])
 })
 
@@ -158,6 +162,23 @@ it('folds a remove-all patch into the re-add after it, so a reorder shows only r
   ])
 })
 
+it('does not fold ordinary adjacent system patches into one context opening', () => {
+  const mixed = system({ removed: null, kept: 'updated' })
+  const following = system({ added: 'later' })
+  const entries = [mixed, following]
+  expect(opensContext(entries, 0, 0)).toBe(true)
+  expect(opensContext(entries, 1, 0)).toBe(false)
+})
+
+it('ignores malformed system entries and empty remove-all patches', () => {
+  const malformed = entry('pi.system', {
+    model: [{ role: 'user', content: 'not a system prompt' }],
+  })
+  const empty = system({})
+  expect(promptAt([malformed, empty], 1)).toEqual({ sections: [], tools: [] })
+  expect(opensContext([malformed, empty], 1, 0)).toBe(true)
+})
+
 it('takes a fork start’s snapshot after a remove-all and its reordered re-add', () => {
   const inheritedBaseline = { ...system({ a: 'one', b: 'two' }, [read]), conversationId: 1 }
   const own = user('go')
@@ -170,6 +191,20 @@ it('takes a fork start’s snapshot after a remove-all and its reordered re-add'
   expect(breakdown.prompt?.tools.map((tool) => tool.name)).toEqual(['read'])
   expect(opensContext(entries, 3, 1)).toBe(true)
   expect(opensContext(entries, 2, 1)).toBe(false)
+})
+
+it('counts added and removed tool declarations in the diff total', () => {
+  const entries = [system(undefined, [read]), system(undefined, undefined, [{ name: 'read' }])]
+  const added = diffAt(entries, 0)
+  expect(added.tools.map(({ change, delta }) => [change, delta])).toEqual([
+    ['added', Math.ceil(JSON.stringify(read).length / 3.5)],
+  ])
+  const removed = diffAt(entries, 1)
+  expect(removed.tools.map(({ change, delta }) => [change, delta])).toEqual([
+    ['removed', -Math.ceil(JSON.stringify(read).length / 3.5)],
+  ])
+  expect(added.delta).toBe(added.tools[0].delta)
+  expect(removed.delta).toBe(removed.tools[0].delta)
 })
 
 it('shows the recorded model, and the configured one marked as such only before any response', () => {
