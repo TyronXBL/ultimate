@@ -1,5 +1,5 @@
 // Pi upstream: @earendil-works/pi-durable@1.4.0 src/tools/read.ts — the read tool loads a file's content only through env.openBinaryReader, which atRevision replaces. Drop when Pi's read tool accepts a reader or a revision.
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, relative } from 'node:path'
 import type { Context } from '@earendil-works/chord'
 import {
@@ -31,11 +31,26 @@ export async function atRevision(
   // The file, or even its folder, may be gone from the working tree; git runs in the nearest folder that remains.
   let cwd = absolute
   while (!(await isDirectory(cwd))) cwd = dirname(cwd)
-  const prefix = await git(cwd, 'rev-parse', '--show-prefix').catch((error: unknown) => {
-    throw new Error(`${path} is not in a Git repository, so it has no revision ${rev}`, {
-      cause: error,
+  const outside = (cause?: unknown) =>
+    new Error(`${path} is not in a Git repository, so it has no revision ${rev}`, { cause })
+  // Not the trimming `git` helper: a top folder's name may start or end with a space.
+  const shown = await exec('git', ['rev-parse', '--show-toplevel'], { cwd, timeout: TIMEOUT })
+    .then(({ stdout }) => stdout.replace(/\n$/, ''))
+    .catch((error: unknown) => {
+      throw outside(error)
     })
-  })
+  // The path within the repository as written, not through the working tree's links (whose targets may have changed
+  // since the revision): the folder above it that is the repository's top, compared resolved.
+  let top = absolute
+  while (
+    (await realpath(top).catch(
+      // A folder gone from the working tree is not the top; the walk goes on above it.
+      () => undefined,
+    )) !== shown
+  ) {
+    if (dirname(top) === top) throw outside()
+    top = dirname(top)
+  }
   const commit = await git(
     cwd,
     'rev-parse',
@@ -48,15 +63,14 @@ export async function atRevision(
       cause: error,
     })
   })
-  // Relative to the repository's top; empty for the top itself.
-  const inRepo = (prefix + relative(cwd, absolute)).replace(/\/$/, '')
-  // --follow-symlinks resolves links inside the commit, as a read of the working tree follows them.
-  const lookup = exec('git', ['cat-file', '--batch-check', '--follow-symlinks'], {
+  // --follow-symlinks resolves links inside the commit, as a read of the working tree follows them; -Z separates
+  // records with NUL, which no path contains.
+  const lookup = exec('git', ['cat-file', '--batch-check', '--follow-symlinks', '-Z'], {
     cwd,
     timeout: TIMEOUT,
   })
-  lookup.child.stdin?.end(`${commit}:${inRepo}\n`)
-  const found = (await lookup).stdout.split('\n')[0]
+  lookup.child.stdin?.end(`${commit}:${relative(top, absolute)}\0`)
+  const found = (await lookup).stdout.split('\0')[0]
   const [oid, type, size] = found.split(' ')
   if (type === 'tree') throw new Error(`${path} is a directory at ${rev}`)
   if (type !== 'blob')
