@@ -13,6 +13,8 @@ type Graph = {
   versions: Map<string, number>
   importers: Map<string, Set<string>>
   imports: Map<string, Set<string>>
+  /** The version of each importer whose imports `imports` holds; a new version records them afresh. */
+  recorded: Map<string, number>
   /** A local file the graph reaches for the first time, including one an import names that does not exist yet. */
   found: (file: string) => void
 }
@@ -29,6 +31,7 @@ const graphOf = (url: string | undefined) => {
   const tag = new URL(url).searchParams.get('ultimate')
   return tag ? graphs.get(tag.slice(0, tag.indexOf('.'))) : undefined
 }
+const versionOf = (url: string) => Number(new URL(url).searchParams.get('ultimate')!.split('.')[1])
 const bare = (specifier: string) => !/^(\.|\/|#|[a-z][a-z0-9+.-]*:)/i.test(specifier)
 const tagged = (file: string, graph: Graph) => {
   const url = pathToFileURL(file)
@@ -44,8 +47,33 @@ function real(file: string): string {
   const folder = dirname(file)
   return folder === file ? file : join(real(folder), basename(file))
 }
-/** Record that `parent` imports `file`; returns whether the graph had not seen `file` before. */
-function link(graph: Graph, parent: string, file: string) {
+/**
+ * Every key `file` may have been recorded under: a missing import is keyed through the folders that existed then, so
+ * when it, or a folder on its way, appears as a symlink, its resolved path alone no longer finds the importer.
+ */
+function spellings(file: string) {
+  const keys = new Set<string>()
+  for (
+    let prefix = file, rest = '';
+    ;
+    rest = join(basename(prefix), rest), prefix = dirname(prefix)
+  ) {
+    if (existsSync(prefix)) keys.add(join(realpathSync(prefix), rest))
+    if (dirname(prefix) === prefix) return keys
+  }
+}
+/** Start recording `file`'s imports at `version`, dropping those of an older version. */
+function record(graph: Graph, file: string, version: number) {
+  if (graph.recorded.get(file) === version) return
+  for (const child of graph.imports.get(file) ?? []) graph.importers.get(child)?.delete(file)
+  graph.imports.delete(file)
+  graph.recorded.set(file, version)
+}
+/** Record that `parent`, at `version`, imports `file`; returns whether the graph had not seen `file` before. */
+function link(graph: Graph, parent: string, version: number, file: string) {
+  // Imports are recorded afresh per version, so a dropped import stops reloading its former importer; until the new
+  // version resolves its imports (it may fail to parse first), the old ones stay.
+  record(graph, parent, version)
   const added = !known(graph, file)
   const importers = graph.importers.get(file) ?? new Set()
   importers.add(parent)
@@ -59,12 +87,18 @@ function link(graph: Graph, parent: string, file: string) {
 function register() {
   if (registered) return
   registered = true
-  ;(globalThis as Record<symbol, unknown>)[EVALUATED] = (url: string) => evaluated.add(url)
+  ;(globalThis as Record<symbol, unknown>)[EVALUATED] = (url: string) => {
+    evaluated.add(url)
+    // A version that imports nothing never resolves, so its old imports are dropped once it ran.
+    const graph = graphOf(url)
+    if (graph) record(graph, fileURLToPath(url), versionOf(url))
+  }
   registerHooks({
     resolve(specifier, context, next) {
       const graph = graphOf(context.parentURL)
       if (!graph) return next(specifier, context)
       const parent = fileURLToPath(context.parentURL!)
+      const version = versionOf(context.parentURL!)
       let result
       try {
         // Ultimate's packages first, as Vite deduped them, so an extension outside the clone shares its pi-durable.
@@ -80,7 +114,7 @@ function register() {
           // it is removed, so it is handed over on every failure, not only when new.
           if (specifier.startsWith('.') || specifier.startsWith('/')) {
             const missing = real(fileURLToPath(new URL(specifier, context.parentURL)))
-            link(graph, parent, missing)
+            link(graph, parent, version, missing)
             graph.found(missing)
           }
           throw error
@@ -88,7 +122,7 @@ function register() {
       }
       if (!result.url.startsWith('file:') || result.url.includes('/node_modules/')) return result
       const file = fileURLToPath(result.url)
-      if (link(graph, parent, file)) graph.found(file)
+      if (link(graph, parent, version, file)) graph.found(file)
       return { ...result, url: tagged(file, graph), shortCircuit: true }
     },
     load(url, context, next) {
@@ -124,24 +158,20 @@ export function extensionLoader(ultimateRoot: string, found: (file: string) => v
     versions: new Map(),
     importers: new Map(),
     imports: new Map(),
+    recorded: new Map(),
     found,
   }
   graphs.set(id, graph)
-  /** Load `files` anew under new versions; with `forget`, their imports are recorded again as they load. */
-  const renew = (files: Set<string>, forget: boolean) => {
-    for (const file of files) {
-      graph.versions.set(file, (graph.versions.get(file) ?? 0) + 1)
-      if (!forget) continue
-      for (const child of graph.imports.get(file) ?? []) graph.importers.get(child)?.delete(file)
-      graph.imports.delete(file)
-    }
+  /** Load `files` anew under new versions. */
+  const renew = (files: Set<string>) => {
+    for (const file of files) graph.versions.set(file, (graph.versions.get(file) ?? 0) + 1)
     return files
   }
   return {
     /** Local files the graph knows, for the watcher. */
     files: () => new Set([...graph.importers.keys(), ...graph.imports.keys()]),
     /** Whether an extension imports `file`, or tried to before it existed. */
-    knows: (file: string) => known(graph, real(file)),
+    knows: (file: string) => [...spellings(file)].some((key) => known(graph, key)),
     /** The module of `file`: the same instance until `file` or a module it imports is invalidated. */
     // oxlint-disable-next-line typescript/no-explicit-any -- an extension module's exports are validated by the caller.
     async load(file: string): Promise<Record<string, any>> {
@@ -157,22 +187,20 @@ export function extensionLoader(ultimateRoot: string, found: (file: string) => v
           for (const child of graph.imports.get(current) ?? []) visit(child)
         }
         visit(file)
-        // Their edges stay: a missing import's edge is how its file appearing reloads them.
-        renew(failed, false)
+        renew(failed)
         throw error
       }
     },
     /** `file` changed, appeared or went away: it and every module importing it load anew; returns those files. */
     invalidate(file: string) {
-      const resolved = real(file)
       const stale = new Set<string>()
       const visit = (current: string) => {
         if (stale.has(current)) return
         stale.add(current)
         for (const importer of graph.importers.get(current) ?? []) visit(importer)
       }
-      visit(resolved)
-      return renew(stale, true)
+      for (const key of spellings(file)) visit(key)
+      return renew(stale)
     },
     close() {
       graphs.delete(id)
