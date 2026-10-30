@@ -4,7 +4,8 @@
  * outcome), and Vitest names each failed test on a `FAIL <file> > <test>` line.
  */
 import { stripVTControlCharacters } from 'node:util'
-import type { ConversationId, Tx } from '@earendil-works/pi-durable'
+import type { Context } from '@earendil-works/chord'
+import type { ConversationId, Cursor, Harness } from '@earendil-works/pi-durable'
 import type { FailingTest, LanderEntry } from './types.ts'
 
 /**
@@ -16,7 +17,7 @@ export function failedTests(output: string) {
   for (const line of stripVTControlCharacters(output).split('\n')) {
     const match = /^\s*FAIL\s+(.+)$/.exec(line)
     if (!match) continue
-    // Vitest marks a failed file `<file> [ <file> ]`; the CI gate once printed `FAIL <file>: <message>`.
+    // Vitest marks a failed file `<file> [ <file> ]`; the CI gate once printed a failed file as `FAIL <file>: <message>`.
     let name = match[1].trim().replace(/\s+\[\s*[^\]]+\s*\]$/, '')
     if (!name.includes(' > ')) name = name.split(': ', 1)[0].trim()
     if (/^[\w./@-]+\.[cm]?[jt]sx?( > |$)/.test(name)) tests.add(name)
@@ -24,14 +25,19 @@ export function failedTests(output: string) {
   return [...tests]
 }
 
+/** How many of each lander conversation's newest log lines are read: months of landings, a bounded read. */
+const RECENT = 5000
+
 /**
- * The failed tests of the lander conversations' logs, most branches first: only `tests` when given, and without the
- * submissions of conversation `except`, so a branch never counts its own repeated failures.
+ * The failed tests of the lander conversations' recent logs, most branches first: only `tests` when given, and without
+ * the submissions of conversation `except`, so a branch never counts its own repeated failures. It reads outside any
+ * transaction, so no commit waits for it.
  */
 export async function failingTests(
-  tx: Tx,
+  harness: Harness,
   conversations: number[],
-  options: { tests?: string[]; except?: number; limit?: number } = {},
+  options: { tests?: string[]; except?: number; limit?: number },
+  context: Context,
 ): Promise<FailingTest[]> {
   const wanted = options.tests && new Set(options.tests)
   const submissions = new Map<
@@ -39,13 +45,13 @@ export async function failingTests(
     { entry: LanderEntry; failed: Set<string>; sank: Set<string> }
   >()
   for (const conversationId of conversations) {
-    let cursor: Parameters<Tx['scanEntries']>[2]
+    const log = await harness.conversation(conversationId as ConversationId, context)
+    let cursor: Cursor | undefined
+    let read = 0
     do {
-      const page = await tx.scanEntries(
-        { conversationId: conversationId as ConversationId },
-        256,
-        cursor,
-      )
+      if (!log) break
+      const page = await log.entries({}, 256, cursor, context)
+      read += page.items.length
       for (const raw of page.items) {
         if (raw.kind !== 'ultimate.lander') continue
         const entry = raw.data as LanderEntry
@@ -65,7 +71,7 @@ export async function failingTests(
         }
       }
       cursor = page.next
-    } while (cursor)
+    } while (cursor && read < RECENT)
   }
   const grouped = new Map<string, FailingTest>()
   for (const [submission, { entry, failed, sank }] of submissions)

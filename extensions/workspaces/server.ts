@@ -157,11 +157,14 @@ export const actions = {
 }
 type FailingOptions = Parameters<typeof failingTests>[2]
 /** The tests that failed at landing, from every lander conversation's log. */
-const failing = (host: Pick<ExtensionHost, 'harness'>, options: FailingOptions, ctx: Context) =>
-  host.harness().commit(async (tx) => {
-    const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
-    return failingTests(tx, Object.values(index.landerConversations), options)
-  }, ctx)
+const failing = async (
+  host: Pick<ExtensionHost, 'harness'>,
+  options: FailingOptions,
+  ctx: Context,
+) => {
+  const index = await host.harness().snapshot(Workspaces, ROOT_CONVERSATION_ID, ctx)
+  return failingTests(host.harness(), Object.values(index?.landerConversations ?? {}), options, ctx)
+}
 export default function workspaceExtension(host: ExtensionHost) {
   // What a landing asks about its branch is an extension point, wanted where the lander calls it.
   host.want(Branches)

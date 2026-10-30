@@ -63,7 +63,7 @@ function summary(result: CiResult) {
       `CI ${result.conclusion === 'failure' ? 'failed' : 'was cancelled'} for ${sha}${time}: ${result.url}${note}`,
       ...result.failures.map((failure) => {
         const earlier = failure.earlier
-          ? ` (also failed in ${failure.earlier.landings} earlier landings: ${failure.earlier.branches.map((id) => `#${id}`).join(' ')})`
+          ? ` (also failed in ${failure.earlier.landings} earlier ${failure.earlier.landings === 1 ? 'landing' : 'landings'}: ${failure.earlier.branches.map((id) => `#${id}`).join(' ')})`
           : ''
         return `FAIL ${failure.title}: ${failure.message}${earlier}`
       }),

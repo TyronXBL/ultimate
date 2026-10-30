@@ -126,6 +126,7 @@ export const limitsFor = (check: Check, limits: CheckLimits): CheckLimits =>
     : { stall: Math.min(limits.stall, check.timeout), total: check.timeout }
 /** Lines naming failed tests (vitest's `FAIL`, `×` and `✗` marks), kept from a check's whole output. */
 const failedLine = /^\s*(FAIL|×|✗)\s/
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 const seconds = (value: number) => (value < 60 ? `${value} s` : `${+(value / 60).toFixed(1)} min`)
 
 /** Where running checks record their process groups, so a host that crashed mid-check stops them on its next open. */
@@ -400,23 +401,6 @@ export function createLander(
         const finish = (text: string, outcome: LanderOutcome) =>
           runtime.commit(async (tx) => {
             const draft = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
-            // Failed tests that also failed at other branches' landings, so the submitter checks those first.
-            const tests = outcome.outcome === 'failed' ? failedTests(outcome.output ?? '') : []
-            const repeats = tests.length
-              ? await failingTests(tx, Object.values(draft.landerConversations), {
-                  tests,
-                  except: entry.conversationId,
-                  limit: 5,
-                })
-              : []
-            if (repeats.length) {
-              outcome.repeats = repeats.map((item) => ({
-                test: item.test,
-                landings: item.landings.length,
-                branches: item.branches.slice(0, 5),
-              }))
-              text += `\nAlso failed at other branches' landings; check whether it is flaky before investigating from scratch:\n${outcome.repeats.map((repeat) => `- ${repeat.test}: ${repeat.landings} earlier landings (${repeat.branches.map((branch) => `#${branch}`).join(', ')})`).join('\n')}`
-            }
             const steps = draft.queue.find((item) => item.id === id)!.steps
             draft.queue = draft.queue.filter((item) => item.id !== id)
             if (outcome.sha) draft.items[String(entry.conversationId)].landed = outcome.sha
@@ -493,12 +477,50 @@ export function createLander(
             ...(output ? { output } : {}),
             ...(hint ? { hint } : {}),
           }
-          return landed
-            ? finish(`${summary(landed, landed.sha, ' locally')}\nPush failed: ${detail}`, {
-                ...landedOutcome(landed),
-                ...facts,
-              })
-            : finish(`was not landed: ${detail}`, { outcome: 'failed', ...facts })
+          if (landed)
+            return finish(`${summary(landed, landed.sha, ' locally')}\nPush failed: ${detail}`, {
+              ...landedOutcome(landed),
+              ...facts,
+            })
+          const repeats = await repeated(output)
+          return finish(
+            [
+              `was not landed: ${detail}`,
+              ...(repeats.length
+                ? [
+                    "Also failed at other branches' landings; check whether it is flaky before investigating from scratch:",
+                    ...repeats.map(
+                      (repeat) =>
+                        `- ${repeat.test}: ${plural(repeat.landings, 'earlier landing')} (${repeat.branches.map((branch) => `#${branch}`).join(', ')})`,
+                    ),
+                  ]
+                : []),
+            ].join('\n'),
+            { outcome: 'failed', ...facts, ...(repeats.length ? { repeats } : {}) },
+          )
+        }
+        /** The tests `output` names as failed that also failed at other branches' landings, read before the commit. */
+        const repeated = async (output = '') => {
+          const tests = failedTests(output)
+          if (!tests.length) return []
+          try {
+            const current = await runtime.snapshot(Workspaces, ROOT_CONVERSATION_ID, context)
+            const found = await failingTests(
+              host.harness(),
+              Object.values(current?.landerConversations ?? {}),
+              { tests, except: entry.conversationId, limit: 5 },
+              context,
+            )
+            return found.map((item) => ({
+              test: item.test,
+              landings: item.landings.length,
+              branches: item.branches.slice(0, 5),
+            }))
+          } catch (error) {
+            // The failure is the report; without the history it only lacks the hint, so the lander goes on.
+            host.notice(`Reading earlier landing failures failed: ${String(error)}`)
+            return []
+          }
         }
         const retry = (retried = pushRetried) =>
           runtime.commit(
