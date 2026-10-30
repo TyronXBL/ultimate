@@ -6,7 +6,7 @@ import { createBashTool } from '@earendil-works/pi-durable/tools'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
 import type { ToolExecutionApi } from '@earendil-works/pi-durable'
 import { afterEach, expect, it, vi } from 'vitest'
-import codingTools from '../extensions/coding-tools/server.ts'
+import codingTools, { bashHints } from '../extensions/coding-tools/server.ts'
 import { context } from '../server/harness.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 
@@ -36,6 +36,29 @@ it('uses a 600-second default tripwire and leaves explicit timeouts unchanged', 
     'the 42 s default limit',
   )
   expect(execute.mock.calls[2][0]).toEqual({ command: 'sleep', timeout: 42 })
+})
+
+it('hints at a cd into its own directory and a one-file read, never at real shell work', () => {
+  const cwd = '/work/app'
+  const cd = 'bash already starts in /work/app; leave out the leading cd.'
+  const read = (program: string) =>
+    `Read files with the read tool (offset and limit for a range), not ${program}.`
+  expect(bashHints('cd /work/app && git status', cwd)).toEqual([cd])
+  expect(bashHints("cd '/work/app/'; sed -n '8,30p' src/a.ts", cwd)).toEqual([cd, read('sed')])
+  expect(bashHints('cat -n src/a.ts', cwd)).toEqual([read('cat')])
+  expect(bashHints('head -n 40 /tmp/check.log', cwd)).toEqual([read('head')])
+  for (const command of [
+    'cd /work/other && git status',
+    'cd /work/app',
+    'sed -n 1,40p src/a.ts | grep x',
+    'cat src/a.ts src/b.ts',
+    'head -8 skills/*/SKILL.md',
+    'head -c 300 out.bin',
+    'tail -60 /tmp/test.log',
+    "sed -i 's/a/b/' src/a.ts",
+    "cat > src/a.ts <<'EOF'\nx\nEOF",
+  ])
+    expect(bashHints(command, cwd)).toEqual([])
 })
 
 /** A grey 8-bit grayscale PNG of `width`x`height`. */
