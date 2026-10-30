@@ -1,0 +1,43 @@
+name: Mutation report
+
+# A weekly report of the mutants no test notices (scripts/mutate.ts), read by the weekly test audit; never a gate.
+on:
+  schedule:
+    # Monday 03:00 UTC, before the test audit at 09:00 Europe/Berlin.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Tests commit in scratch repositories, which needs a git identity as on a developer machine.
+      - run: git config --global user.name CI && git config --global user.email ci@example.com
+      # The previous week's results: only mutants in changed code, or covered by changed tests, run again.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-${{ github.run_id }}
+          restore-keys: mutation-
+      - run: node scripts/mutate.ts
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-${{ github.run_id }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation/

@@ -5,6 +5,8 @@ dist/
 .DS_Store
 *.tsbuildinfo
 .vitest/
+reports/
+.stryker-tmp/
 .dev.vars
 .wrangler/
 cloud/wrangler.deploy.json

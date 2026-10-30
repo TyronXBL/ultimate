@@ -10,9 +10,11 @@
     ".ultimate/extensions/*/{server,api,refs}.ts",
     ".ultimate/extensions/*/{web,ui}.tsx",
     "web/src/sdk/index.ts",
-    "test/**/*.test.ts"
+    "test/**/*.test.ts",
+    "test/mutation.config.ts"
   ],
   "project": ["**/*.{ts,tsx,css}"],
-  "ignoreBinaries": ["loginctl"],
+  "ignoreBinaries": ["loginctl", "bsdtar"],
+  "ignoreDependencies": ["@stryker-mutator/vitest-runner"],
   "ignore": ["web/src/lib/utils.ts", ".ultimate/skills/preview-demo/fixture/**"]
 }
