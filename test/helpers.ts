@@ -162,7 +162,11 @@ export async function trimmedSourceCopy(parent: string, used: string[]) {
     await rm(join(root, 'extensions', name), { recursive: true })
   return root
 }
-export async function sourceCopy(parent: string) {
+/**
+ * A copy of the checkout to boot a server from. With `web`, it optimizes its dependencies and warms the app up at boot
+ * as the host does, for a test that loads the page.
+ */
+export async function sourceCopy(parent: string, { web = false } = {}) {
   await mkdir(parent, { recursive: true })
   const root = await temp('source-', parent)
   // One cp per top-level entry: a `filter` makes Node walk the tree in JS, more than ten times slower.
@@ -174,18 +178,19 @@ export async function sourceCopy(parent: string) {
   await linkDependencies(root)
   const config = join(root, 'vite.config.ts')
   // Optimize on page requests, not fixture boot; React's plugin otherwise eagerly includes deps.
-  await writeFile(
-    config,
-    (await readFile(config, 'utf8'))
-      .replace(
-        'export default defineConfig({',
-        "export default defineConfig({ cacheDir: '.vite-cache', optimizeDeps: { entries: [] },",
-      )
-      .replace(
-        'plugins: [react(), tailwindcss()],',
-        "plugins: [react(), tailwindcss(), { name: 'test:lazy-deps', configResolved(config) { config.optimizeDeps.include = [] } }],",
-      ),
-  )
+  if (!web)
+    await writeFile(
+      config,
+      (await readFile(config, 'utf8'))
+        .replace(
+          'export default defineConfig({',
+          "export default defineConfig({ cacheDir: '.vite-cache', optimizeDeps: { entries: [] },",
+        )
+        .replace(
+          'plugins: [react(), tailwindcss()],',
+          "plugins: [react(), tailwindcss(), { name: 'test:lazy-deps', configResolved(config) { config.optimizeDeps.include = [] } }],",
+        ),
+    )
   new ProjectTrustStore(join(parent, '.ultimate')).set(root, true)
   return root
 }
@@ -214,11 +219,15 @@ type FixtureOptions = ServerOptions & {
   localSetup?: boolean
   /** Keep the first-run welcome; by default it is marked done so it does not cover the UI under test. */
   firstRun?: boolean
+  /** The test loads the page: the source copy prepares the web app at boot (`sourceCopy`). */
+  web?: boolean
 }
 async function isolated(options: FixtureOptions) {
   const { home, userHome } = options
   const ultimateRoot =
-    options.ultimateRoot === resolve('.') ? await sourceCopy(home) : options.ultimateRoot
+    options.ultimateRoot === resolve('.')
+      ? await sourceCopy(home, { web: options.web })
+      : options.ultimateRoot
   const projectRoot =
     !options.projectRoot || options.projectRoot === resolve('.')
       ? ultimateRoot
@@ -229,7 +238,7 @@ async function isolated(options: FixtureOptions) {
     await mkdir(join(userHome, '.ultimate'), { recursive: true })
     await writeFile(join(userHome, '.ultimate/onboarding.json'), '{"firstRunDone":true}\n')
   }
-  const { firstRun: _firstRun, ...server } = options
+  const { firstRun: _firstRun, web: _web, ...server } = options
   return {
     ...server,
     ultimateRoot,

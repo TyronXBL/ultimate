@@ -32,7 +32,7 @@ export function extensionModules(
       watchers.delete(this.environment)
     },
     enforce: 'pre',
-    async config() {
+    async config(config) {
       const modules = join(ultimateRoot, 'node_modules')
       const entries = await readdir(modules)
       const packages = (
@@ -46,7 +46,22 @@ export function extensionModules(
             ),
         )
       ).flat()
-      return { resolve: { dedupe: packages } }
+      // A config that picks its own entries or turns discovery off keeps that choice, and the boot stays as light.
+      if (config.optimizeDeps?.entries || config.optimizeDeps?.noDiscovery)
+        return { resolve: { dedupe: packages } }
+      // Facets load through the dynamic imports of the virtual module, which neither the dependency scanner nor the
+      // warm-up follows from index.html. Naming them optimizes every dependency at boot, instead of reloading the first
+      // page for each one found late, and transforms the app before the first page asks for it.
+      const facets = (await discoverExtensions(ultimateRoot, projectRoot, userHome))
+        .filter((entry) => entry.enabled && entry.files.includes('web.tsx'))
+        .map((entry) => join(entry.target, 'web.tsx'))
+      return {
+        resolve: { dedupe: packages },
+        optimizeDeps: { entries: [join(ultimateRoot, 'web/index.html'), ...facets] },
+        server: {
+          warmup: { clientFiles: [join(ultimateRoot, 'web/src/main.tsx'), ...facets] },
+        },
+      }
     },
     async resolveId(id, importer, options) {
       if (id === virtual) return resolved

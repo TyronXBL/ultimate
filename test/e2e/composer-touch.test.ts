@@ -14,7 +14,6 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close()
 })
 
-// The first page load transforms the whole web app on a cold Vite cache, as in questions-keyboard.test.ts.
 it('queues and steers from a touch composer while a run is busy', async () => {
   const home = await temp('ultimate-composer-touch-')
   cleanup.push(() => removeTemp(home))
@@ -24,6 +23,7 @@ it('queues and steers from a touch composer while a run is busy', async () => {
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   server.host.faux!.setResponses([held])
@@ -50,14 +50,10 @@ it('queues and steers from a touch composer while a run is busy', async () => {
   const composer = page.locator('[data-composer-target="conversation"]')
   const button = (name: string) => composer.getByRole('button', { name, exact: true })
   await button('Stop').waitFor()
-  // A cold Vite cache can still reload the page once its dependencies are optimized, which drops a draft typed
-  // before it: type again until the draft holds.
-  const draft = async (text: string, shows: string) =>
-    until(async () => {
-      const editor = composer.locator('#composer-input')
-      if ((await editor.inputValue()) !== text) await editor.fill(text)
-      return button(shows).isVisible()
-    }, 60000)
+  const draft = async (text: string, shows: string) => {
+    await composer.locator('#composer-input').fill(text)
+    await button(shows).waitFor()
+  }
 
   await draft('Queued note', 'Queue')
   expect(await button('Stop').count()).toBe(0)
@@ -76,4 +72,4 @@ it('queues and steers from a touch composer while a run is busy', async () => {
     ['followUp', 'Queued note'],
     ['steer', 'Steering note'],
   ])
-}, 120_000)
+})
