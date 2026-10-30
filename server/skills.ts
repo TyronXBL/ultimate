@@ -56,15 +56,19 @@ export function projectSkills(
 
 /**
  * `/skill:name args` as Pi's AgentSession expands it: the skill's body in a `<skill>` block, then the arguments as the
- * request. Any other text, or an unknown skill, comes back as it was.
+ * request, with the skill named and whether it is known. Any other text, or an unknown skill, comes back as it was.
  */
-export function expandSkillCommand(text: string, skills: readonly Skill[]) {
+export function expandSkillCommand(
+  text: string,
+  skills: readonly Skill[],
+): { text: string; skill?: { name: string; known: boolean } } {
   // Pi upstream: @earendil-works/pi-coding-agent@1.4.0 src/core/agent-session.ts _expandSkillCommand — copied block format. Drop when Pi exports the expansion.
   const match = /^\/skill:(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim())
-  const skill = match && skills.find((candidate) => candidate.name === match[1])
-  if (!match || !skill) return text
+  if (!match) return { text }
+  const skill = skills.find((candidate) => candidate.name === match[1])
+  if (!skill) return { text, skill: { name: match[1], known: false } }
   const body = stripFrontmatter(readFileSync(skill.filePath, 'utf8')).trim()
   const block = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`
   const args = match[2]?.trim()
-  return args ? `${block}\n\n${args}` : block
+  return { text: args ? `${block}\n\n${args}` : block, skill: { name: skill.name, known: true } }
 }

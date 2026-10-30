@@ -610,13 +610,29 @@ export async function createApi(
               })
               if (!data.text.trim() && !blocks.length)
                 throw new HttpError(400, 'Expected text or images')
-              // `/skill:name args` sends the skill's instructions with the request, as Pi does.
-              const expanded = data.text.startsWith('/skill:')
+              // `/skill:name args` sends the skill's instructions with the request, as Pi does, and counts as a use of
+              // the skill in the trace; an unknown name as a failed one.
+              const command = data.text.startsWith('/skill:')
                 ? expandSkillCommand(
                     data.text,
                     host.skills((await conversation.agent(context)).cwd ?? host.projectRoot),
                   )
-                : data.text
+                : undefined
+              if (command?.skill)
+                host.callTrace
+                  .begin(
+                    {
+                      kind: 'skill',
+                      caller: 'user',
+                      callee: 'skills',
+                      name: command.skill.name,
+                      conversationId: conversation.id,
+                      sealed: true,
+                    },
+                    null,
+                  )
+                  .finish(command.skill.known, 'Unknown skill')
+              const expanded = command?.text ?? data.text
               const content = blocks.length
                 ? [
                     ...(expanded.trim() ? [{ type: 'text' as const, text: expanded }] : []),

@@ -73,10 +73,14 @@ it('expands /skill:name args as Pi does and leaves anything else alone', async (
   const host = await setup()
   const { skills } = projectSkills(host)
   const path = join(host.userHome, '.ultimate/skills/ship/SKILL.md')
-  expect(expandSkillCommand('/skill:ship  to staging ', skills)).toBe(
-    `<skill name="ship" location="${path}">\nReferences are relative to ${dirname(path)}.\n\nDo the thing.\n</skill>\n\nto staging`,
-  )
-  expect(expandSkillCommand('/skill:ship', skills)).toMatch(/<\/skill>$/)
-  expect(expandSkillCommand('/skill:unknown go', skills)).toBe('/skill:unknown go')
-  expect(expandSkillCommand('please /skill:ship', skills)).toBe('please /skill:ship')
+  expect(expandSkillCommand('/skill:ship  to staging ', skills)).toEqual({
+    text: `<skill name="ship" location="${path}">\nReferences are relative to ${dirname(path)}.\n\nDo the thing.\n</skill>\n\nto staging`,
+    skill: { name: 'ship', known: true },
+  })
+  expect(expandSkillCommand('/skill:ship', skills).text).toMatch(/<\/skill>$/)
+  expect(expandSkillCommand('/skill:unknown go', skills)).toEqual({
+    text: '/skill:unknown go',
+    skill: { name: 'unknown', known: false },
+  })
+  expect(expandSkillCommand('please /skill:ship', skills)).toEqual({ text: 'please /skill:ship' })
 })
