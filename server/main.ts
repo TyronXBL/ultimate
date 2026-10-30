@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve as resolvePath } from 'node:path'
-import { createServer as createViteServer } from 'vite-plus'
+import { createServer as createViteServer, isFileLoadingAllowed } from 'vite-plus'
 import type { ViteDevServer } from 'vite-plus'
 import { createApi, Events } from './api.ts'
 import { loadExtensions } from './extensions.ts'
@@ -18,7 +18,7 @@ import { alive } from './lock.ts'
 import { realpath } from 'node:fs/promises'
 import { extensionModules } from './vite-extensions.ts'
 import { admit, createAccess } from './request-security.ts'
-import { writeProject } from './project.ts'
+import { discoveryRoots, writeProject } from './project.ts'
 import { reportCore } from './supervisor-protocol.ts'
 import { viteLogger } from './vite-logger.ts'
 import type { Notice } from '../shared/protocol.ts'
@@ -84,6 +84,11 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
         return
       }
       if (await api.handle(request, response)) return
+      if (await linkedOutside(vite, request.url)) {
+        response.writeHead(403)
+        response.end('Forbidden')
+        return
+      }
       vite.middlewares(request, response)
     })().catch(() => {
       if (!response.headersSent) response.writeHead(500)
@@ -107,6 +112,7 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
   // A vite.config.ts change restarts Vite with a new watcher; listeners move to each new one.
   const restarted = new Set<(watcher: ViteDevServer['watcher']) => void>()
   reportCore({ type: 'web', state: 'preparing' })
+  const cacheDir = resolvePath(host.home, 'vite')
   const vite = await createViteServer({
     customLogger: viteLogger(),
     clearScreen: false,
@@ -116,13 +122,37 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
       middlewareMode: true,
       allowedHosts: true,
       hmr: { server: hmr },
+      // `/@fs/` serves any allowed file to an admitted browser: allow only the web sources, never the rest of
+      // `~/.ultimate` (secrets, credentials, databases) or a project's files. A symlinked extension outside these
+      // folders still loads, as Vite allows each module it reached through an import.
       fs: {
-        allow: [ultimateRoot, projectRoot, resolvePath(host.userHome, '.ultimate')],
+        allow: [
+          ultimateRoot,
+          ...discoveryRoots(ultimateRoot, projectRoot, host.userHome)
+            .slice(1)
+            .map((root) => resolvePath(root.path, 'extensions')),
+          cacheDir,
+        ],
+        deny: [
+          // Vite's defaults, which a list here replaces.
+          '.env',
+          '.env.*',
+          '*.{crt,pem,key,p12,pfx,cer,der}',
+          '.npmrc',
+          '.yarnrc.yml',
+          '**/.git/**',
+          'secrets.json',
+          'auth.json',
+          '*credentials*',
+          '.netrc',
+          '**/.ssh/**',
+          'id_{rsa,dsa,ecdsa,ed25519}*',
+        ],
       },
     },
     appType: 'spa',
     // One dependency cache per state home, so tests and instances never re-optimize the live instance's page.
-    cacheDir: resolvePath(host.home, 'vite'),
+    cacheDir,
     resolve: { alias: { '@': resolvePath(ultimateRoot, 'web/src') } },
     plugins: [
       extensionModules(ultimateRoot, projectRoot, host.userHome),
@@ -256,6 +286,17 @@ export async function prepareServer(options: Partial<ServerOptions> = {}) {
       await opened?.close()
     },
   }
+}
+/**
+ * Vite checks a `/@fs/` path as written, then follows its links: a link inside an allowed folder must not serve a
+ * file Vite refuses by its real path, one no allowed module imported.
+ */
+async function linkedOutside(vite: ViteDevServer, url = '') {
+  if (!url.startsWith('/@fs/')) return false
+  const path = decodeURIComponent(url.slice('/@fs'.length).split(/[?#]/)[0])
+  // A missing file has no link to follow; Vite answers it.
+  const real = await realpath(path).catch(() => path)
+  return real !== path && !isFileLoadingAllowed(vite.config, real)
 }
 export async function createServer(options: Partial<ServerOptions> = {}) {
   const prepared = await prepareServer(options)
