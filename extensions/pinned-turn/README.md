@@ -2,7 +2,7 @@ Pins the user turn an answer replies to at the top of the transcript while the r
 
 ## Web (`web.tsx`)
 
-A `transcript.top` component, so it sits in every transcript's reading column, a thread pane's included.
+A `transcript.top` component, so it sits in every transcript's reading column.
 
 - **When**: while the reader is scrolled up and the top row on screen answers a user turn whose own start is off
   screen. At the bottom, or with that turn's start in view, nothing shows.
@@ -11,8 +11,7 @@ A `transcript.top` component, so it sits in every transcript's reading column, a
   carry the user's words all count, and cards do not.
 - **Below the loaded history** (core's `data-earlier-history` sentinel is present and no bubble is loaded above): it
   reads `inputs` and renders that page unseen through `TranscriptEntry`, as the transcript would, to find the newest
-  input that shows as a user bubble, paging on until one does. Meanwhile the line says "finding your message…". In a
-  thread pane (`useThread()`) it skips this: the stored inputs are the whole conversation's. The probe runs the real
+  input that shows as a user bubble, paging on until one does. Meanwhile the line says "finding your message…". The probe runs the real
   renderers, their effects included (a message card may read its images), and they see the loaded transcript, not the
   probed page. A failed read shows no pin below that entry for the rest of the view; it is not retried.
 - **Look**: one 32 px line shaped like the user bubble (`border-border/70 bg-secondary/60`, `rounded-lg`), over a short
