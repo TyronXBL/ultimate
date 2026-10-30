@@ -46,10 +46,10 @@ export async function failingTests(
   >()
   for (const conversationId of conversations) {
     const log = await harness.conversation(conversationId as ConversationId, context)
+    if (!log) continue
     let cursor: Cursor | undefined
     let read = 0
     do {
-      if (!log) break
       const page = await log.entries({}, 256, cursor, context)
       read += page.items.length
       for (const raw of page.items) {
