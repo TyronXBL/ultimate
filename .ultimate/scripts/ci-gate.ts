@@ -79,7 +79,7 @@ async function gate(repo: string, sha: string) {
         if (run.conclusion === 'success') return 0
         // Vitest titles a failure with its test, `file > name`; the message's first line is the error.
         for (const failure of await failuresOf(cwd, repo, state.jobs))
-          console.log(`FAIL ${failure.title}: ${failure.message}`)
+          console.log(`FAIL ${failure.title}\n  ${failure.message}`)
         log(`CI ${run.conclusion} for ${sha.slice(0, 7)}: ${run.html_url}`)
         return 1
       }

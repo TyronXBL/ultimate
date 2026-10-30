@@ -15,6 +15,10 @@ and returns at once. A durable `ci.run` task then:
 5. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it. A
    ref that could not be deleted is named on the card.
 
+Each failing test is looked up in the lander's record (`workspaces.failing`, without the caller's own submissions): one
+that also failed at other branches' landings says so in the model text and on the card, with links to those branches.
+A failed lookup leaves that out and delivers the result as it is.
+
 Aborting the task (its conversation concluded; Stop leaves it running) deletes the ref too and wakes nobody; a ref that stays behind then goes to
 the host's error report. It never runs the suites on this machine.
 

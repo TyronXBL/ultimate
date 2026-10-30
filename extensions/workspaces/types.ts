@@ -66,6 +66,25 @@ export type LanderOutcome = {
   output?: string
   /** What the submitter does next, for a failure. */
   hint?: string
+  /** Failed tests of a failed check that also failed at other branches' landings: how often, and which branches. */
+  repeats?: Repeat[]
+}
+/** A failed test's earlier landings elsewhere: their count and the first few submitting branches, newest first. */
+type Repeat = { test: string; landings: number; branches: number[] }
+/**
+ * A test as the lander log records its failures: one landing per submission whose check run failed it (`sank` when
+ * it also failed the rerun, so the submission did not land), newest first, and the distinct submitting branches.
+ */
+export type FailingTest = {
+  test: string
+  landings: {
+    submission: string
+    conversationId: number
+    sourceEntry?: number
+    at: number
+    sank: boolean
+  }[]
+  branches: number[]
 }
 /** One line of a lander conversation's log (entry kind `ultimate.lander`): a step, a check result, or the outcome. */
 export type LanderEntry = {
