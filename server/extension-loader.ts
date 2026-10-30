@@ -1,6 +1,6 @@
 // Loads extension server facets with Node's own import(). Vitest loads this file natively (`test.server.deps.external`
 // in vite.config.ts), so tests take the same path; keep it free of imports from other core files.
-import { existsSync, realpathSync } from 'node:fs'
+import { realpathSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -41,9 +41,23 @@ const tagged = (file: string, graph: Graph) => {
 /** A file still imported, or importing: one whose importers all reloaded without it no longer counts. */
 const known = (graph: Graph, file: string) =>
   !!graph.importers.get(file)?.size || graph.imports.has(file)
+/**
+ * `path` resolved, or undefined when it does not exist: a folder can go between a check and the resolve (a watcher
+ * reporting a removal while the tree is deleted), so it is not checked first.
+ */
+function resolved(path: string) {
+  try {
+    return realpathSync(path)
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined
+    throw error
+  }
+}
 /** How the graph keys `file`: Node's resolved path, or for a missing file its nearest existing folder's. */
 function real(file: string): string {
-  if (existsSync(file)) return realpathSync(file)
+  const path = resolved(file)
+  if (path !== undefined) return path
   const folder = dirname(file)
   return folder === file ? file : join(real(folder), basename(file))
 }
@@ -58,7 +72,8 @@ function spellings(file: string) {
     ;
     rest = join(basename(prefix), rest), prefix = dirname(prefix)
   ) {
-    if (existsSync(prefix)) keys.add(join(realpathSync(prefix), rest))
+    const path = resolved(prefix)
+    if (path !== undefined) keys.add(join(path, rest))
     if (dirname(prefix) === prefix) return keys
   }
 }
