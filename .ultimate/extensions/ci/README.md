@@ -15,7 +15,7 @@ and returns at once. A durable `ci.run` task then:
 5. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it. A
    ref that could not be deleted is named on the card.
 
-Aborting the task (its conversation stopped) deletes the ref too and wakes nobody; a ref that stays behind then goes to
+Aborting the task (its conversation concluded; Stop leaves it running) deletes the ref too and wakes nobody; a ref that stays behind then goes to
 the host's error report. It never runs the suites on this machine.
 
 The lander's gate, `.ultimate/scripts/ci-gate.ts`, uses the same `github.ts`: the secret scan, the remote's repository

@@ -226,7 +226,7 @@ const CiRun = defineTask<Input, Checkpoint, null>({
       )
     },
   },
-  // A stopped conversation stops its run's polling; the ref it pushed goes with it.
+  // A concluded conversation stops its run's polling (Stop leaves background tasks running); the ref goes with it.
   // From `start` too: a crash between the push and the poll checkpoint leaves the task there with its ref pushed.
   abort: async (task, runtime, ctx) => {
     const left = await drop(task.input.cwd, refOf(task))
