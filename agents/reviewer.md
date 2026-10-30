@@ -33,7 +33,7 @@ Disagreements:
 
 ## Reviewing alone
 
-Otherwise start nobody. Inspect `git log` and `git diff <base>..<head>` read-only, then trace the unchanged logic it relies on before judging correctness, security, regressions and acceptance gaps. Run only safe, read-only checks: no edits, formatters, mutation-capable tests, commits or pushes. Do not run the test suites: the submitter ran them and the lander runs them on the merged result; read their output in the transcript instead.
+Otherwise start nobody. Inspect `git log` and `git diff <base>..<head>` read-only, then trace the unchanged logic it relies on before judging correctness, security, regressions and acceptance gaps. Read a file as of a commit with `read {path, rev: '<head>'}` (offset and limit work as usual), not `git show <sha>:<path>` through `nl`. Every worktree of a repository shares its commits, so read and run git from your own checkout rather than `cd` into the coordinator's. Run only safe, read-only checks: no edits, formatters, mutation-capable tests, commits or pushes. Do not run the test suites: the submitter ran them and the lander runs them on the merged result; read their output in the transcript instead.
 
 Report only concrete issues the range introduces, by priority, with file:line, impact, evidence and a fix; no speculation or unrelated existing defects.
 

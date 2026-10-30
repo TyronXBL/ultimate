@@ -78,10 +78,24 @@ export function prepare(args: unknown, now: number): Prepared {
   }
 }
 
-/** Tool calls in `trace.sqlite`: per tool, the most frequent errors, and `enabled` tools never called in its window. */
-export function toolStats(database: string, enabled: readonly string[]): ToolStats {
+/**
+ * Tool calls in `trace.sqlite`: per tool, the most frequent errors, and `enabled` tools never called in its window; and
+ * per skill its reads, runs and failures, and the `listed` skills never used.
+ */
+export function toolStats(
+  database: string,
+  enabled: readonly string[],
+  listed: readonly string[],
+): ToolStats {
   if (!existsSync(database))
-    return { calls: 0, tools: [], unused: [...enabled].toSorted(), errors: [] }
+    return {
+      calls: 0,
+      tools: [],
+      unused: [...enabled].toSorted(),
+      errors: [],
+      skills: [],
+      unusedSkills: [...listed].toSorted(),
+    }
   const db = new DatabaseSync(database, { readOnly: true })
   try {
     const window = db
@@ -115,13 +129,24 @@ export function toolStats(database: string, enabled: readonly string[]): ToolSta
         args: row.args ?? '',
       })),
     }))
+    // A `skill` row whose caller is `user` is a `/skill:` run; any other is a read of its SKILL.md.
+    const skills = db
+      .prepare(
+        "SELECT name, sum(ok = 1 AND caller <> 'user') AS reads, sum(ok = 1 AND caller = 'user') AS runs, sum(ok = 0) AS failed FROM calls WHERE kind = 'skill' GROUP BY name ORDER BY reads + runs DESC, name",
+      )
+      .all() as { name: string; reads: number; runs: number; failed: number }[]
     const used = new Set(tools.map((tool) => tool.name))
+    const usedSkills = new Set(
+      skills.filter((skill) => skill.reads + skill.runs > 0).map((skill) => skill.name),
+    )
     return {
       ...(window.since === null ? {} : { since: window.since }),
       calls: window.calls,
       tools,
       unused: enabled.filter((name) => !used.has(name)).toSorted(),
       errors,
+      skills,
+      unusedSkills: listed.filter((name) => !usedSkills.has(name)).toSorted(),
     }
   } finally {
     db.close()
@@ -355,6 +380,7 @@ export const actions = {
         .extensions()
         .filter((item) => item.enabled)
         .flatMap((item) => item.server?.tools.map((tool) => tool.name) ?? []),
+      host.skills(host.projectRoot).map((skill) => skill.name),
     ),
   ),
 }

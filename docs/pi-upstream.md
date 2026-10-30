@@ -22,6 +22,7 @@
 - `extensions/backup/server.ts` — uses the patched transactional beforeInput hook to switch a conversation from its backup model back to its primary before the run its input starts, with the note saying so. Drop the coupling when Pi ships input-placement hooks.
 - `extensions/pause/server.ts` — uses the patched Harness.hold()/release() for the user's soft pause. Drop the patch when Pi Durable ships a scheduler hold.
 - `extensions/dream/server.ts` — uses the patched Harness.hold() after approving a chapter switch so no new tasks start before the replacement core takes over. Drop the coupling when Pi Durable ships a scheduler hold.
+- `extensions/coding-tools/revision.ts` — `read {rev}` runs Pi's read tool over an environment whose openBinaryReader returns the committed bytes, relying on the tool loading content only through it. Drop when Pi's read tool accepts a reader or a revision.
 - `extensions/coding-tools/diff.tsx` — internal untyped details.patch/details.diff formats drive the diff renderer. Drop when Pi exports structured diff rows for rendering.
 - `extensions/prompt/server.ts` — tool guidance adapted from unexported prompt contributions, not Ultimate's personality. Drop when Pi exports buildSystemPromptSections and the per-tool system prompt contributions.
 - `web/src/app/model.ts` — internal trailing <harness> text block duplicates diagnostics and is stripped for display. Drop when Pi exports a diagnostic-free tool-result content accessor.

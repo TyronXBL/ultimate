@@ -52,6 +52,7 @@ export function skillOf(path: string) {
   return parts.at(-1) === 'SKILL.md' && parts.length > 1 ? parts.at(-2) : undefined
 }
 
+/** Opens the file in the app's file viewer when one provides `OpenFile`; nothing otherwise. */
 function OpenFileButton({ path, line }: { path: string; line?: number }) {
   const conversation = useConversation((current) => current.id)
   if (!path) return null
@@ -77,6 +78,12 @@ function OpenFileButton({ path, line }: { path: string; line?: number }) {
   )
 }
 
+/** The revision a read shows its file at, a full sha shortened, as ` @ abc1234`; empty for the working tree. */
+function revOf(call: ToolCallView) {
+  const rev = text(call.args.rev)
+  return rev ? ` @ ${/^[0-9a-f]{40,64}$/.test(rev) ? rev.slice(0, 7) : rev}` : ''
+}
+
 function Read({ call }: { call: ToolCallView }) {
   const path = text(call.args.path)
   const shown = usePath(path)
@@ -86,6 +93,7 @@ function Read({ call }: { call: ToolCallView }) {
   const limit = typeof call.args.limit === 'number' ? call.args.limit : undefined
   const range =
     offset || limit ? `:${offset ?? 1}${limit ? `-${(offset ?? 1) + limit - 1}` : '+'}` : ''
+  const rev = revOf(call)
   const failed = call.status === 'error'
   const count = call.status === 'done' ? lineCount(call.output) : 0
   const image = call.images[0]
@@ -108,16 +116,24 @@ function Read({ call }: { call: ToolCallView }) {
           skill ? (
             <>
               <span className="text-brand">{skill}</span>
-              <span className="text-muted-foreground/60"> · {shown}</span>
+              <span className="text-muted-foreground/60">
+                {' '}
+                · {shown}
+                {rev}
+              </span>
             </>
           ) : (
             <>
               {shown}
-              <span className="text-muted-foreground/60">{range}</span>
+              <span className="text-muted-foreground/60">
+                {range}
+                {rev}
+              </span>
             </>
           )
         }
-        action={<OpenFileButton line={offset} path={path} />}
+        // The viewer shows working trees: a read at a revision has no file there to open.
+        action={rev ? undefined : <OpenFileButton line={offset} path={path} />}
       />
       <ToolContent>
         {failed ? (
@@ -486,13 +502,20 @@ function ReadLine({ call }: { call: ToolCallView }) {
   const path = text(call.args.path)
   const shown = usePath(path)
   const skill = skillOf(path)
-  return skill ? (
+  const rev = revOf(call)
+  return (
     <>
-      <span className="text-foreground/80">skill</span> <span className="text-brand">{skill}</span>
-    </>
-  ) : (
-    <>
-      <span className="text-foreground/80">read</span> {shown}
+      {skill ? (
+        <>
+          <span className="text-foreground/80">skill</span>{' '}
+          <span className="text-brand">{skill}</span>
+        </>
+      ) : (
+        <>
+          <span className="text-foreground/80">read</span> {shown}
+        </>
+      )}
+      {rev && <span className="text-muted-foreground/60">{rev}</span>}
     </>
   )
 }

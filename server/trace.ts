@@ -5,7 +5,8 @@
 // conversation. Rows are buffered and written to `<home>/trace.sqlite` off the call path, never inside a Pi commit;
 // tracing never changes or fails a call. A successful action or service call that starts its trace and repeats one
 // written within the last minute, with the same name and arguments (a UI poll), is only counted (`polls()`), as are
-// the calls it makes.
+// the calls it makes. A skill an agent reads (`<name>/SKILL.md` through `read`) or the user runs (`/skill:name`) gets a
+// sealed `skill` row named after it, so skill use is counted without any arguments.
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
@@ -18,7 +19,7 @@ import type {
 import type { EventContext } from '../shared/events.ts'
 
 export type TraceContext = EventContext & { traceId: string; parentCall: string }
-type CallKind = 'service' | 'action' | 'reactor' | 'tool' | 'model'
+type CallKind = 'service' | 'action' | 'reactor' | 'tool' | 'model' | 'skill'
 /** What a traced call is; ids given here override those of the enclosing work. */
 export interface Call {
   kind: CallKind
@@ -81,6 +82,14 @@ const SECRET = /secret|token|password|key|auth/i
 // Calls into these extensions carry credentials (secret values; API keys and OAuth codes answering a model login), so
 // they keep no arguments, results or error messages, which may echo them; only the error's class.
 const SEALED = new Set(['secrets', 'models'])
+
+/** The skill a `read` of `<folder>/SKILL.md` loads: the folder's name, which Pi's skill list requires to be its name. */
+function skillRead(tool: string, args: unknown) {
+  const path = tool === 'read' ? (args as { path?: unknown } | undefined)?.path : undefined
+  if (typeof path !== 'string') return undefined
+  const parts = path.split(/[\\/]/)
+  return parts.at(-1) === 'SKILL.md' && parts.length > 1 ? parts.at(-2) : undefined
+}
 
 /** What a failed call stored: the error message, or for a call carrying credentials only the error's class. */
 function failure(error: unknown, credentials: boolean) {
@@ -396,7 +405,20 @@ CREATE INDEX IF NOT EXISTS calls_at ON calls (at);`)
             entryId: input?.kind === 'model' ? input.assistant : undefined,
             sealed: true,
           }
-          const { context: self, finish } = begin(call, parent ?? null)
+          const { context: self, finish: finishTool } = begin(call, parent ?? null)
+          const skill = skillRead(tool.name, args)
+          // The skill row is a child of the read's, written first, with the same outcome; a failure keeps no path, only
+          // that the read failed (the read's own row has its error).
+          const mark =
+            skill &&
+            begin(
+              { kind: 'skill', caller: 'agent', callee: 'skills', name: skill, sealed: true },
+              self,
+            )
+          const finish = (ok: boolean, value: unknown) => {
+            if (mark) mark.finish(ok, 'Read failed')
+            finishTool(ok, value)
+          }
           const key = `${api.taskId}/${api.callId}`
           const state = { extension: extension.name, done: false }
           toolRuns.set(self, state)

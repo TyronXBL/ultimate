@@ -50,7 +50,11 @@ export const ChaptersAction = actionRef<
 /** `{ chapter }`: restart into an existing, idle chapter. User-only; a returned error means restart failed. */
 export const SwitchAction = actionRef<{ chapter: string }, never>('dream', 'switch')
 
-/** Calls per tool over the trace's window: how often, how often failing, how slow; and enabled tools never called. */
+/**
+ * Calls per tool over the trace's window: how often, how often failing, how slow; and enabled tools never called. Uses
+ * per skill over the same window: reads of its SKILL.md, the user's `/skill:` runs and failed ones of either; and listed
+ * skills never used.
+ */
 export type ToolStats = {
   since?: number
   calls: number
@@ -63,6 +67,8 @@ export type ToolStats = {
     count: number
     examples: { at: string; args: string }[]
   }[]
+  skills: { name: string; reads: number; runs: number; failed: number }[]
+  unusedSkills: string[]
 }
 /** No arguments → tool statistics from `trace.sqlite`, no model involved. */
 export const StatsAction = actionRef<null, ToolStats>('dream', 'stats')
