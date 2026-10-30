@@ -177,7 +177,7 @@ export async function sourceCopy(parent: string, { web = false } = {}) {
   )
   await linkDependencies(root)
   const config = join(root, 'vite.config.ts')
-  // Optimize on page requests, not fixture boot; React's plugin otherwise eagerly includes deps.
+  // Without `web`, optimize on page requests, not fixture boot; React's plugin otherwise eagerly includes deps.
   if (!web)
     await writeFile(
       config,
