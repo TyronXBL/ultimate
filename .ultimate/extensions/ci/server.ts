@@ -112,6 +112,7 @@ const CiRun = defineTask<Input, Checkpoint, null>({
           }
         }
       } catch (error) {
+        // A prior invocation may have crashed after pushing, even if this one failed before reaching the push.
         const left = await drop(cwd, ref)
         next = deliver({
           sha,
@@ -226,10 +227,15 @@ const CiRun = defineTask<Input, Checkpoint, null>({
     },
   },
   // A stopped conversation stops its run's polling; the ref it pushed goes with it.
+  // From `start` too: a crash between the push and the poll checkpoint leaves the task there with its ref pushed.
   abort: async (task, runtime, ctx) => {
-    if (task.state.checkpoint.phase === 'poll')
-      await drop(task.input.cwd, task.state.checkpoint.ref)
-    await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx)
+    const left = await drop(task.input.cwd, refOf(task))
+    // Nobody is woken for an aborted run, so a ref that stayed behind is reported to the host instead.
+    if (left) runtime.report(new Error(left))
+    await runtime.commit(
+      () => ({ status: 'terminal', outcome: { status: 'aborted', reason: left } }),
+      ctx,
+    )
   },
 })
 

@@ -64,8 +64,9 @@ export async function repository(cwd: string, remote: string) {
 
 /** Commits a push of `sha` to `remote` would publish that look like they carry a secret: `<commit> <file>`, never what. */
 export async function secretsIn(cwd: string, sha: string, remote: string) {
-  // `--cc` adds what a merge's own resolution introduced, which plain `-p` leaves out of merge commits; a combined diff
-  // marks an added line `++`, `+ ` or ` +`.
+  // `--cc` adds what a merge's own resolution introduced, which plain `-p` leaves out of merge commits. A combined diff
+  // gives each line one prefix column per parent (its hunk header one `@` more than that): a line is added when some
+  // column says `+` and none says `-`.
   const patch = await git(cwd, [
     'log',
     '-p',
@@ -78,10 +79,17 @@ export async function secretsIn(cwd: string, sha: string, remote: string) {
   const found: string[] = []
   let commit = ''
   let file = '(message)'
+  let columns = 1
   for (const line of patch.split('\n')) {
+    const hunk = file === '(message)' ? null : /^(@{2,}) /.exec(line)
+    const prefix = line.slice(0, columns)
     if (line.startsWith('commit ')) [commit, file] = [line.slice(7, 14), '(message)']
     else if (line.startsWith('+++ ')) file = line.slice(6)
-    else if ((/^[+ ]?\+/.test(line) || file === '(message)') && SECRETS.test(line))
+    else if (hunk) columns = hunk[1].length - 1
+    else if (
+      (file === '(message)' || (prefix.includes('+') && !prefix.includes('-'))) &&
+      SECRETS.test(line)
+    )
       found.push(`${commit} ${file}`)
   }
   return [...new Set(found)]
@@ -126,9 +134,9 @@ async function call<T>(cwd: string, repo: string, path: string, tries = 3): Prom
         signal: AbortSignal.timeout(30_000),
       })
       if (response.ok) return (await response.json()) as T
-      const body = (await response.text()).slice(0, 200)
-      // A body that echoed the request would carry the token: it never leaves this function.
-      failure = `HTTP ${response.status} ${secret ? body.replaceAll(secret, '***') : body}`
+      const body = await response.text()
+      // A body that echoed the request would carry the token: masked before it is cut, so no part of it leaves here.
+      failure = `HTTP ${response.status} ${(secret ? body.replaceAll(secret, '***') : body).slice(0, 200)}`
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error)
     }
