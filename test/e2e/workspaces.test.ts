@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { afterEach, expect, it } from 'vitest'
@@ -64,7 +64,21 @@ async function reopen(
     for (const close of closers) await close()
     await opened.close()
   })
-  return workspaces(host)
+  const service = workspaces(host)
+  return {
+    service,
+    async create(cwd: string) {
+      const conversation = await opened.harness.createConversation(
+        {
+          ownership: { kind: 'ownerless' },
+          init: (tx, id) => service.create(tx, id, cwd).then(() => undefined),
+        },
+        context,
+      )
+      await service.ready(conversation.id, context)
+      return { id: conversation.id, workspace: (await service.get(conversation.id, context))! }
+    },
+  }
 }
 it('clears and reruns a configured add command a crash interrupted', async () => {
   const paths = await repository()
@@ -115,7 +129,7 @@ it('clears and reruns a configured add command a crash interrupted', async () =>
     await once(child, 'exit')
     const id = Number(await readFile(idFile, 'utf8')) as ConversationId
     await writeFile(gate, '')
-    const service = await reopen(paths, [], worktree)
+    const { service } = await reopen(paths, [], worktree)
     await service.ready(id, context)
     const workspace = (await service.get(id, context))!
     expect(workspace.state).toBe('ready')
@@ -205,7 +219,7 @@ exec /usr/bin/git "$@"
       await once(child, 'exit')
       const id = Number(await readFile(idFile, 'utf8')) as ConversationId
       await writeFile(gate, '')
-      const service = await reopen(paths, commands)
+      const { service } = await reopen(paths, commands)
       await service.ready(id, context)
       const workspace = (await service.get(id, context))!
       expect(workspace.state).toBe('ready')
@@ -220,3 +234,17 @@ exec /usr/bin/git "$@"
     }
   },
 )
+
+it('refuses dirty discard unless forced, then removes the worktree', async () => {
+  const paths = await repository()
+  const fixture = await reopen(paths, [])
+  const { id, workspace } = await fixture.create(paths.projectRoot)
+  const file = join(workspace.path, 'uncommitted.txt')
+  await writeFile(file, 'keep until forced')
+
+  await expect(fixture.service.discard(id, context)).rejects.toThrow(/uncommitted\.txt/)
+  expect(await readFile(file, 'utf8')).toBe('keep until forced')
+
+  await fixture.service.discard(id, context, { force: true })
+  await expect(access(workspace.path)).rejects.toThrow('ENOENT')
+})

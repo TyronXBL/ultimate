@@ -81,6 +81,8 @@ export function prepareBash(
     execution.env[`GIT_CONFIG_VALUE_${count++}`] = command
   }
   execution.env.GIT_CONFIG_COUNT = String(count)
+  execution.env.NO_COLOR = '1'
+  execution.env.FORCE_COLOR = '0'
   if (log) execution.env.ULTIMATE_COMMIT_LOG = log
 }
 

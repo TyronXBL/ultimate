@@ -62,5 +62,8 @@ describe('automation schedules', () => {
     ])
       expect(() => parseSchedule(input)).toThrow(/.+/)
     expect(() => nextAt(parseSchedule('cron "0 9 31 2 *" UTC'), time)).toThrow('8 years')
+    expect(() => parseSchedule('0 9 * * 1 Europe/Berlin')).toThrow(
+      'Use cron "0 9 * * 1" Europe/Berlin',
+    )
   })
 })

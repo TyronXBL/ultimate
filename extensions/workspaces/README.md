@@ -37,7 +37,7 @@ refuses worktrees outside one folder, or a team that keeps every tree in one pla
   fails, or a crash interrupts it, Ultimate clears its half-made checkout and runs it again on the next attempt, so
   it must be safe to repeat.
 - `remove` removes it instead of `git worktree remove`. Ultimate runs it only on a checkout without modified or
-  untracked files, as Git would, and it must leave `{path}` unregistered.
+  untracked files unless discard is called with `force: true`, and it must leave `{path}` unregistered.
 
 The commands get five minutes each. A conversation started in a subfolder of its repository opens in the same
 subfolder of its checkout.
@@ -85,9 +85,9 @@ returns the kept record and retains the reason in workspace info.
 On open, a background reconciliation releases concluded conversations' eligible checkouts; failures become notices.
 `release(ids, ctx, signal?)` stops between checkouts when aborted. Closing aborts reconciliation and waits only
 for the current checkout to finish, not the remaining batch.
-`discard {id}` explicitly removes a clean checkout and keeps its branch until reuse (the `subagent` tool's
-`discard` covers worktree children). All removed checkouts follow the same recreation rule above, preserving
-unlanded branch history, including after explicit discard.
+`discard {id, force?}` explicitly removes a checkout and keeps its branch until reuse. Dirty files require
+`force: true` to delete; the `subagent` tool's `discard` covers worktree children. All removed checkouts follow the
+same recreation rule above, preserving unlanded branch history, including after explicit discard.
 `stats` counts checkouts by state, ready ones by commits (landed on the target, ahead, none yet) and uncommitted
 changes; `disk` measures the worktrees directory with `du`, and on btrfs also the real size with shared blocks counted
 once (`btrfs filesystem du`). Measuring takes seconds, so one runs at a time and its result is reused for a minute.

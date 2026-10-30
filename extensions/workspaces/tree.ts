@@ -140,13 +140,22 @@ export async function removeCheckout(
   source: string,
   path: string,
   name: string,
+  force = false,
 ) {
+  const nestedGit = await exec('find', [path, '-mindepth', '2', '-name', '.git', '-print'], {
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  })
+  if (nestedGit.stdout.trim())
+    throw new Error(
+      `Cannot remove worktree ${path}; nested Git metadata found:\n${nestedGit.stdout.trim()}`,
+    )
   const { remove } = layout(settings)
   if (remove === undefined) {
-    await git(source, 'worktree', 'remove', path)
+    await git(source, 'worktree', 'remove', ...(force ? ['--force'] : []), path)
     return
   }
-  if (await git(path, 'status', '--porcelain', '--untracked-files=all'))
+  if (!force && (await git(path, 'status', '--porcelain', '--untracked-files=all')))
     throw new Error(
       `'${path}' contains modified or untracked files; isolates.worktree.remove was not run`,
     )

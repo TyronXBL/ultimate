@@ -456,6 +456,64 @@ it('reserves trust and secret writes for the UI while allowing normal actions', 
   ])
 })
 
+it('pairs tool calls with their results and filters tool runs', async () => {
+  const { server } = await fixture()
+  server.host.registry.install(
+    defineExtension({
+      name: 'tool-runs-test',
+      tools: [
+        defineTool({
+          name: 'probe',
+          description: 'Records a probe result',
+          parameters: Type.Object({ value: Type.String(), fail: Type.Boolean() }),
+          execute: async ({ value, fail }) => ({
+            output: [{ type: 'text', text: `prefix ${'x'.repeat(2200)} ${value}` }],
+            isError: fail,
+          }),
+        }),
+      ],
+    }),
+  )
+  server.host.faux!.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall('probe', { value: 'kept-tail', fail: false }),
+        fauxToolCall('probe', { value: 'failed-tail', fail: true }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Complete'),
+  ])
+  await server.root.submit({ type: 'input', content: 'run probes' }, context)
+  await server.harness.waitForIdle(context)
+  const result = await run(
+    server,
+    `return {
+      all: await ultimate.toolRuns(${server.root.id}, { tool: 'probe', match: 'kept-tail' }),
+      failed: await ultimate.toolRuns(${server.root.id}, { tool: 'probe', errorsOnly: true }),
+    }`,
+  )
+  expect(result.data.isError).not.toBe(true)
+  const value = result.data.details.value as {
+    all: { args: unknown; isError: boolean; output: string }[]
+    failed: { args: unknown; isError: boolean }[]
+  }
+  expect(value.all).toHaveLength(1)
+  expect(value.all[0]).toMatchObject({ args: { value: 'kept-tail', fail: false }, isError: false })
+  expect(value.all[0].output).toContain('kept-tail')
+  expect(value.all[0].output.length).toBeLessThanOrEqual(2000)
+  expect(value.failed).toEqual([
+    {
+      entry: expect.any(Number),
+      tool: 'probe',
+      args: { value: 'failed-tail', fail: true },
+      isError: true,
+      ms: expect.any(Number),
+      output: expect.any(String),
+    },
+  ])
+})
+
 it('logs ultimate helper calls and labels a one-call script by its call id, with an event', async () => {
   const { server } = await fixture()
   const result = await run(server, `return (await ultimate.conversations()).length`)
