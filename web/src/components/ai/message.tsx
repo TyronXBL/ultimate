@@ -24,7 +24,14 @@ import {
   linkRenderers,
 } from '../../sdk/registry.ts'
 import { codePlugin } from './code-block.tsx'
-import { mentionHref, parseMention, remarkMentions, splitMentions } from './mentions.ts'
+import {
+  mentionHref,
+  parseMention,
+  parseRelative,
+  remarkMentions,
+  remarkRelativeLinks,
+  splitMentions,
+} from './mentions.ts'
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & { from: 'user' | 'assistant' }
 
@@ -55,9 +62,17 @@ const CoreLink = defaultComponents.a
 /** A link as the `link` renderers compose it, starting with Streamdown's, which asks before opening a new tab. */
 function Link(props: ComponentProps<'a'> & ExtraProps) {
   const renderers = linkRenderers(useExtensions())
-  const { href, children } = props
-  // A `#id` mention stays its text unless a renderer knows the conversation.
-  const core = href && parseMention(href) ? <>{children}</> : <CoreLink {...props} />
+  const { children } = props
+  // Renderers see a relative link's path as written, not the fragment that carried it.
+  const relative = props.href && parseRelative(props.href)
+  const href = relative ?? props.href
+  // A `#id` mention or a relative path stays its text unless a renderer knows what it points at.
+  const core =
+    relative !== undefined || (href && parseMention(href)) ? (
+      <>{children}</>
+    ) : (
+      <CoreLink {...props} />
+    )
   // Streamdown marks a link whose Markdown is still streaming.
   if (!href || href === 'streamdown:incomplete-link') return core
   return renderers.reduce<ReactNode>(
@@ -168,7 +183,7 @@ function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: stri
 
 const components = { a: Link, code: Code }
 // After GFM, so autolinked URLs are links already and keep their `#fragment`.
-const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkMentions]
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkMentions, remarkRelativeLinks]
 
 /** A fenced code block as the `codeBlocks` renderers of its language compose it, starting with the core block. */
 function ExtensionCodeBlock({ code, language, isIncomplete }: CustomRendererProps) {

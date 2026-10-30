@@ -26,6 +26,9 @@ beforeAll(async () => {
   await writeFile(join(root, 'untracked.md'), 'untracked')
   await symlink('inside/file.txt', join(root, 'inside-link'))
   await symlink('/etc/passwd', join(root, 'outside-link'))
+  await symlink('.env.local', join(root, 'notes.txt'))
+  await symlink('ignored.txt', join(root, 'readme.txt'))
+  await symlink('.git/config', join(root, 'settings.txt'))
 })
 
 describe('file access rules', () => {
@@ -37,6 +40,10 @@ describe('file access rules', () => {
     for (const path of ['.env.local', 'config/secrets.json'])
       await expect(read(root, path)).rejects.toThrow('Hidden: the name suggests secrets')
     await expect(read(root, 'outside-link')).rejects.toThrow('Outside the scope')
+    // A listed link with an innocent name is judged by what it points at too.
+    await expect(read(root, 'notes.txt')).rejects.toThrow('Hidden: the name suggests secrets')
+    for (const path of ['readme.txt', 'settings.txt'])
+      await expect(read(root, path)).rejects.toThrow('Not found in this scope')
   })
 
   it('omits secret names without hiding directories whose names merely mention secrets', async () => {

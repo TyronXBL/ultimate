@@ -18,30 +18,44 @@ const hidden = (path: string) =>
     .split('/')
     .some(
       (name) =>
-        name === '.ssh' ||
-        name === '.netrc' ||
-        name === '.npmrc' ||
-        /^\.env(?:\.|$)/i.test(name) ||
+        ['.ssh', '.netrc', '.npmrc', '.pgpass', '.htpasswd'].includes(name) ||
+        /^\.env(?:rc)?(?:\.|$)/i.test(name) ||
         /^(?:secrets|auth)\.json$/i.test(name) ||
         /credentials/i.test(name) ||
         /\.pem$/i.test(name) ||
-        /\.key$/i.test(name) ||
+        /\.(?:key|p12|pfx)$/i.test(name) ||
         (/^id_/i.test(name) && !/\.pub$/i.test(name)),
     )
 
 /** What Git lists in `root` (tracked, and untracked but not ignored), sorted, without secret-like names. */
 export async function tree(root: string) {
-  const listing = await git(root, 'ls-files', '-co', '--exclude-standard', '-z')
+  // Room for about 250k paths; a bigger listing fails with git's error instead of buffering without bound.
+  const listing = await git(
+    { cwd: root, maxBuffer: 16 * 1024 * 1024 },
+    'ls-files',
+    '-co',
+    '--exclude-standard',
+    '-z',
+  )
   return [...new Set(listing.split('\0').filter((path) => path && !hidden(path)))].toSorted()
 }
 
-/** The real path of relative `path` in `root` if the rule allows it; throws the reason otherwise. */
-async function listed(root: string, path: string) {
-  if (!path || isAbsolute(path) || path.includes('\0') || path.split(/[\\/]/).includes('..'))
-    throw new Error('Outside the scope')
+/** Throws unless relative `path` has no secret-like name and Git lists it in `root`. */
+async function allowed(root: string, path: string) {
   if (hidden(path)) throw new Error('Hidden: the name suggests secrets')
   const entries = await git(root, 'ls-files', '-co', '--exclude-standard', '-z', '--', path)
   if (!entries.split('\0').includes(path)) throw new Error('Not found in this scope')
+}
+
+/**
+ * The real path of relative `path` in `root` if the rule allows it; throws the reason otherwise. A symlink must pass
+ * the rule twice: by its own name, and by the path it resolves to, so a listed link cannot reach `.env` or an ignored
+ * file.
+ */
+async function listed(root: string, path: string) {
+  if (!path || isAbsolute(path) || path.includes('\0') || path.split(/[\\/]/).includes('..'))
+    throw new Error('Outside the scope')
+  await allowed(root, path)
   const rootReal = await realpath(root)
   const fileReal = await realpath(resolve(root, path)).catch(() => {
     throw new Error('Not found in this scope')
@@ -49,6 +63,8 @@ async function listed(root: string, path: string) {
   const rel = relative(rootReal, fileReal)
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel))
     throw new Error('Outside the scope')
+  const target = rel.split(sep).join('/')
+  if (target !== path) await allowed(root, target)
   return fileReal
 }
 

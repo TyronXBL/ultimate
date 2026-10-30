@@ -63,23 +63,9 @@ export const actions = {
     const value = input(args)
     if (typeof value.path !== 'string') throw new Error('Expected { path }')
     const all = await scopes(host)
-    if (
-      value.conversation !== undefined &&
-      (typeof value.conversation !== 'number' ||
-        !Number.isSafeInteger(value.conversation) ||
-        value.conversation < 1)
-    )
-      throw new Error('conversation must be a conversation id')
-    const candidates = value.path.startsWith('/')
-      ? all
-      : [
-          ...all.filter((s) => s.conversation === value.conversation),
-          all[0],
-          ...all.filter(
-            (s) => s.conversation !== value.conversation && s.conversation !== undefined,
-          ),
-        ]
-    for (const scope of candidates) {
+    // The writing conversation's own worktree first, then the checkout and the other worktrees in order.
+    const own = all.find((item) => item.conversation === value.conversation)
+    for (const scope of own ? [own, ...all.filter((item) => item !== own)] : all) {
       const found = await locate(scope.root, value.path)
       if (found)
         return {

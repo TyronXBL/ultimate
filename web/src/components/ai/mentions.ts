@@ -60,3 +60,26 @@ export function remarkMentions() {
   }
   return visit
 }
+
+// A relative link carried as a bare fragment, which Streamdown's hardening keeps, as it keeps mentions.
+const relativePrefix = '#relative:'
+
+/** The path a relative link was written with (`docs/guide.md`, `../x.md:12`), or undefined for any other href. */
+export const parseRelative = (href: string) =>
+  href.startsWith(relativePrefix) ? href.slice(relativePrefix.length) : undefined
+
+/**
+ * Remark plugin: a link to a relative path (`docs/guide.md`, `./a.md`, `../b.md:12`) keeps its path past Streamdown's
+ * hardening, which blocks such links, by becoming a `#relative:` fragment that `parseRelative` reads back. URLs with a
+ * scheme, absolute paths and fragments stay as written.
+ */
+export function remarkRelativeLinks() {
+  const visit = (node: Node) => {
+    if ((node.type === 'link' || node.type === 'definition') && node.url) {
+      const path = node.url.replace(/:\d+(?:-\d+)?$/, '')
+      if (path && !/^[a-z][a-z\d+.-]*:|^[#/]/i.test(path)) node.url = relativePrefix + node.url
+    }
+    node.children?.forEach(visit)
+  }
+  return visit
+}

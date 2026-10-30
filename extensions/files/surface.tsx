@@ -213,6 +213,10 @@ export default function FilesViewer() {
   const files = tree.data?.files
   // Nothing chosen yet: the project's README, as a repository page opens.
   const path = shown.path ?? (files?.includes('README.md') ? 'README.md' : undefined)
+  // Record the default as the shown file, so the address and other tabs follow it as they follow a pick.
+  useEffect(() => {
+    if (shown.path === undefined && path !== undefined) setShown({ ...shown, path })
+  }, [shown, path, setShown])
   const read = useAction(
     ReadAction,
     { ...scope, path: path ?? '' },

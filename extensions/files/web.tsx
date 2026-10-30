@@ -2,7 +2,8 @@ import { FolderOpenIcon } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { defineWebExtension, provide } from '@/sdk'
 import { FilesLink } from './link.tsx'
-import { FilePathLink, InlineFilePath, OpenFile, provideOpenFile } from './paths.tsx'
+import { OpenFile } from '../coding-tools/ui.tsx'
+import { FilePathLink, InlineFilePath, provideOpenFile } from './paths.tsx'
 
 // The viewer and its highlighter load with the surface, not with the app.
 const Viewer = lazy(() => import('./surface.tsx'))

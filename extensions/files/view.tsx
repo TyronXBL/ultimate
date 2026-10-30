@@ -168,7 +168,8 @@ function imagesIn(path: string, text: string) {
   ]
     .map((match) => inScope(match[1], baseOf(path))?.path)
     .filter((found) => found !== undefined)
-  return [...new Set(paths)].slice(0, 40)
+  // At most 12, each up to the read's 10 MB: a document's pictures, not a gallery.
+  return [...new Set(paths)].slice(0, 12)
 }
 
 /** Each relative image of a Markdown file as a data URL, read through the scope as the file itself was. */

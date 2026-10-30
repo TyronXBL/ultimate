@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { api, useConversation } from '@/sdk'
-import { OpenFile } from '../coding-tools/ui.tsx'
 import type { FileTarget } from './link.tsx'
 import { openFile } from './link.tsx'
 import { LocateAction } from './refs.ts'
@@ -31,6 +30,8 @@ function isFilePath(value: string) {
   if (path.startsWith('-')) return false
   const extension = /\.([a-z\d]{1,8})$/i.exec(path.slice(path.lastIndexOf('/') + 1))?.[1]
   if (!extension) return false
+  // A capitalised bare name ending in `.js` is a project (`Node.js`, `Vue.js`), not a file.
+  if (!path.includes('/') && /^[A-Z][a-z]+\.js$/.test(path)) return false
   return path.includes('/') || bareExtensions.has(extension.toLowerCase())
 }
 
@@ -99,4 +100,3 @@ export function FilePathLink({
 
 /** Files' value for coding-tools' open-file point: the read, write and edit cards' open button. */
 export const provideOpenFile = (target: FileTarget) => () => open(target)
-export { OpenFile }
