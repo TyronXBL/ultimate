@@ -35,6 +35,12 @@ const pinned: AgentDefinition = {
 it('overrides a pinned definition in a preview and leaves it alone outside one', async () => {
   const runtime = await ModelRuntime.create()
   expect(previewModel({})).toBeUndefined()
+  for (const value of ['provider', '/model', 'provider/'])
+    expect(previewModel({ ULTIMATE_MODEL: value })).toBeUndefined()
+  expect(previewModel({ ULTIMATE_MODEL: 'provider/model/variant' })).toEqual({
+    provider: 'provider',
+    modelId: 'model/variant',
+  })
   expect(definitionAgent(pinned, parent, runtime).model).toEqual(pinned.model)
 
   vi.stubEnv('ULTIMATE_MODEL', DEFAULT_PREVIEW_MODEL)

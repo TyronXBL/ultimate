@@ -1,7 +1,7 @@
 import type { Agent } from '@earendil-works/pi-durable'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { expect, it } from 'vitest'
-import { defaultModel, definitionAgent } from '../lib/agents.ts'
+import { configuredModel, defaultModel, definitionAgent } from '../lib/agents.ts'
 
 const opus = { provider: 'claude-code', modelId: 'claude-opus-5-5' }
 
@@ -17,6 +17,9 @@ it('starts a branch on the configured default whose login is gone, never on the 
     getDefaultProvider: () => opus.provider,
     getDefaultModel: () => opus.modelId,
   }
+  expect(
+    configuredModel([{ provider: opus.provider, id: 'different-model' }], settings),
+  ).toBeUndefined()
   const runtime = {
     getAvailableSnapshot: () => available,
     getModel: () => undefined,
