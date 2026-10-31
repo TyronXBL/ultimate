@@ -8,12 +8,13 @@ one. Its models then work like any other provider's: picker, families, backups.
   `select` prompt lists workspaces by name, with indexes as option ids so no workspace id reaches the login document.
   The credential (`~/.pi/agent/auth.json`, as every Pi login) keeps the token, refresh token and workspace id; Pi
   refreshes it under its lock five minutes before it expires.
-- **Requests** stay Pi's: same catalogue (with Pi's remote updates), same `x-opencode-session` header and same client
-  identity. The login only supplies the bearer token and `x-opencode-org-id`.
+- **Requests** stay Pi's: same catalogue, same `x-opencode-session` header and same client identity, with
+  `models.json` applied on top as before. The login only supplies the bearer token and `x-opencode-org-id`. The
+  catalogue is the one Pi ships (`opencodeGoProvider()`), so it changes with Pi upgrades; Pi's between-release
+  catalogue updates from pi.dev do not reach this provider.
 - **Subscription:** the login counts as a subscription (`isSubscription`), so a conversation on it only falls back to
   another subscription. An API key stays pay-per-token as before.
-- **Reload:** the built-in provider is captured once per process; each facet registers the wrapped copy, and the last
-  one to close restores Pi's own.
+- **Reload:** each facet registers the provider again; the last one to close unregisters it, which restores Pi's own.
 
 OpenCode documents API keys for other agents; this login borrows its CLI's and may stop working if OpenCode
 restricts it. The API key login keeps working either way. Go's own free models (such as `beam-free`) run through

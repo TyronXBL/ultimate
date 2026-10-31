@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises'
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from '@earendil-works/pi-ai'
 
 /**
@@ -43,10 +44,7 @@ async function workspaces(access: string, signal: AbortSignal): Promise<Workspac
     signal,
   })
   if (!response.ok) throw new Error(`OpenCode workspaces could not be read (${response.status})`)
-  const data = (await response.json()) as Workspace[] | { orgs?: Workspace[] }
-  return (Array.isArray(data) ? data : (data.orgs ?? [])).filter(
-    (org) => typeof org?.id === 'string',
-  )
+  return (await response.json()) as Workspace[]
 }
 
 /** The workspace the Console scoped the grant to, the only one there is, or the one the user picks by name. */
@@ -68,20 +66,6 @@ async function pickWorkspace(
   const picked = list[Number(index)]
   if (!picked) throw new Error('No OpenCode workspace was picked')
   return picked.id
-}
-
-function sleep(ms: number, signal: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        reject(signal.reason)
-      },
-      { once: true },
-    )
-  })
 }
 
 const tokens = (value: TokenResponse) => ({
@@ -115,7 +99,10 @@ export const opencodeLogin: OAuthAuth = {
     let interval = (start.interval ?? 5) * 1000
     const deadline = Date.now() + (start.expires_in ?? 600) * 1000
     while (Date.now() < deadline) {
-      await sleep(interval, interaction.signal)
+      await sleep(Math.min(interval, deadline - Date.now()), undefined, {
+        signal: interaction.signal,
+      })
+      if (Date.now() >= deadline) break
       const value = await post<TokenResponse>(
         '/auth/device/token',
         {
