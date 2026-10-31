@@ -18,6 +18,7 @@ function quotaHost(keys: Record<string, string>) {
   const resources = new Map<string, unknown>()
   const host = {
     ...services,
+    react: () => {},
     resource: <T>(name: string, init: () => T) => {
       if (!resources.has(name)) resources.set(name, init())
       return resources.get(name) as T

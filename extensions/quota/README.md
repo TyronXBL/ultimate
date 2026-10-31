@@ -21,12 +21,15 @@ through the Claude CLI, outside Pi's auth, so it is not listed either.
 ## When it reads
 
 Only when asked: the status-line chip asks every minute and when its popover opens. A provider is read again when its
-numbers are 5 minutes old, 1 minute after one of its answers (a `GenerationTask` `afterResponse` hook notes each one),
-at once after an answer that is a limit (`limited` in `lib/rate-limit.ts`, as backup and pause classify it), and after
-30 seconds when the popover opens. Readings live in memory, kept across reloads; nothing is written to disk.
+numbers are 5 minutes old, 1 minute after one of its answers (a `GenerationTask` `afterResponse` hook notes each one)
+or a failed read, at once after an answer that is a limit (`limited` in `lib/rate-limit.ts`, as backup and pause
+classify it), and after 30 seconds when the popover opens. Readings live in memory, kept across reloads; nothing is
+written to disk. A login or logout through Ultimate (`models.login-changed`) drops that provider's reading, so another
+account's numbers never show under the new login.
 
-A failed read keeps the numbers from the read before and says why in a fixed phrase ("HTTP 401", "network error",
-"login could not be refreshed"): an error that could quote a response or a token never reaches the UI or the trace.
+A failed read keeps the numbers from the read before and says why in a fixed phrase: "HTTP 401", "network error",
+"timed out", "no login", "login could not be refreshed" or "unexpected response". No other message passes, a
+registered source's included, so nothing that could quote a response or a token reaches the UI or the trace.
 
 ## Action
 

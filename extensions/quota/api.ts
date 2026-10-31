@@ -16,13 +16,16 @@ export type QuotaSource = {
   name: string
   /**
    * Read the limits with `apiKey`, the request key Pi's auth resolves for the login (refreshed when due). Throw on
-   * failure; the message is shown, so keep credentials and response bodies out of it.
+   * failure: an `Error` whose message is `HTTP <status>` is shown as it is, any other as "unexpected response".
    */
   read(apiKey: string, signal: AbortSignal): Promise<QuotaReading>
 }
 
 export type QuotaService = {
-  /** Add or replace the source for `source.provider`; returns its removal, for the caller's `onClose`. */
+  /**
+   * Add the source for `source.provider`, replacing an earlier or built-in one; returns its removal, for the caller's
+   * `onClose`.
+   */
   register(source: QuotaSource): () => void
 }
 /** Subscription limits; `want` it, quota is optional. */

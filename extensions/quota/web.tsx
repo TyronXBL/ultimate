@@ -110,8 +110,9 @@ function Section({ provider, now }: { provider: QuotaProvider; now: number }) {
         <div className={cn(group && 'mt-1.5')} key={group ?? ''}>
           {group && <div className="text-[10.5px] text-muted-foreground">{group}</div>}
           <ul className="mt-0.5">
-            {windows.map((window) => (
-              <Row key={window.label} now={now} window={window} />
+            {windows.map((window, index) => (
+              // oxlint-disable-next-line react/no-array-index-key -- a source may report one label twice; the order is the source's.
+              <Row key={`${index}-${window.label}`} now={now} window={window} />
             ))}
           </ul>
         </div>
