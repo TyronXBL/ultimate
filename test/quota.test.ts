@@ -28,7 +28,7 @@ function quotaHost(keys: Record<string, string>) {
       getAuth: async (provider: string) => ({ auth: { apiKey: keys[provider] } }),
     },
   } as unknown as ExtensionHost
-  const hooks = quotaExtension(host).hooks![0]!.handlers as GenerationHooks
+  const hooks = quotaExtension(host).hooks![0].handlers as GenerationHooks
   const state = () => actions.state(null, { host } as ActionContext)
   return { services, hooks, state }
 }
@@ -127,13 +127,17 @@ it('lists registered sources of subscription logins and reads them again only wh
   vi.setSystemTime(4 * 60_000)
   await state()
   expect(reads).toBe(1)
-  hooks.afterResponse!(answer('antigravity'), {} as never, {} as never)
+  await hooks.afterResponse(answer('antigravity'), {} as never, {} as never)
   vi.setSystemTime(5 * 60_000 - 1)
   await state()
   expect(reads).toBe(2)
   // A limit error reads again at once.
   vi.setSystemTime(5 * 60_000)
-  hooks.afterResponse!(answer('antigravity', '429 Too Many Requests'), {} as never, {} as never)
+  await hooks.afterResponse(
+    answer('antigravity', '429 Too Many Requests'),
+    {} as never,
+    {} as never,
+  )
   fail = new SyntaxError('Unexpected token in JSON at "secret-body"')
   const failed = await state()
   expect(reads).toBe(3)

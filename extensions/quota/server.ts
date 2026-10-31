@@ -36,14 +36,14 @@ type Quota = { sources: Map<string, QuotaSource>; cache: Map<string, Cached> }
 const quota = (host: Pick<ExtensionHost, 'resource'>) =>
   host.resource<Quota>('quota', () => ({ sources: new Map(), cache: new Map() }))
 
-const cached = (state: Quota, provider: string) => {
-  let entry = state.cache.get(provider)
-  if (!entry) state.cache.set(provider, (entry = {}))
+const cached = (current: Quota, provider: string) => {
+  let entry = current.cache.get(provider)
+  if (!entry) current.cache.set(provider, (entry = {}))
   return entry
 }
 
 /** Whether `entry` should be read again at `now`: never read, a limit hit since, or older than its allowance. */
-export function due(entry: Cached, now: number, fresh: boolean) {
+function due(entry: Cached, now: number, fresh: boolean) {
   if (entry.tried === undefined) return true
   if (entry.limitedAt !== undefined && entry.limitedAt > entry.tried) return true
   const allowance = fresh
@@ -96,11 +96,11 @@ async function state(host: ExtensionHost, fresh: boolean): Promise<QuotaState> {
   )
   const now = Date.now()
   await Promise.all(
-    sources.map((source) => {
+    sources.flatMap((source) => {
       const entry = cached(current, source.provider)
       if (!entry.inflight && due(entry, now, fresh))
         entry.inflight = read(host, source, entry).finally(() => delete entry.inflight)
-      return entry.inflight
+      return entry.inflight ? [entry.inflight] : []
     }),
   )
   return {
