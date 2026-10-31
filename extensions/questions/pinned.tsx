@@ -44,7 +44,7 @@ function Row({
   }
   return (
     <div className="border-border/60 not-first:border-t" data-waiting-message={message.id}>
-      <header className="flex min-w-0 items-center gap-2 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+      <header className="flex min-w-0 items-center gap-2 px-3 py-2 font-mono max-md:py-1 text-[11px] text-muted-foreground">
         <MessageCircleQuestionIcon className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
         <span
           className={cn('flex min-w-0 max-w-24 shrink-0 overflow-hidden sm:max-w-48', accent.name)}
@@ -83,7 +83,7 @@ function Row({
         )}
       </header>
       {open && (
-        <div className="max-h-[50dvh] overflow-y-auto overscroll-contain border-t border-border/60 max-md:max-h-[60dvh]">
+        <div className="max-h-[40dvh] overflow-y-auto overscroll-contain border-t border-border/60 max-md:max-h-[50dvh]">
           <Body text={message.text} />
           <MessageQuestions className="border-t border-border/60" keys={keys} message={message} />
         </div>
