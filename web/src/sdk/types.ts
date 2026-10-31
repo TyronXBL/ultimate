@@ -14,6 +14,7 @@ export type SlotName =
   | 'header.right'
   | 'statusline.left'
   | 'statusline.right'
+  | 'composer.top'
   | 'composer.toolbar'
   | 'composer.status'
   | 'composer.actions'

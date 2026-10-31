@@ -319,6 +319,7 @@ title bar the host shows above every surface.
 | `header.right`         | Right side of the header, before the panel toggle (`<Header>`)                                               |
 | `statusline.left`      | Bottom status line, left; monospace, one line (`<StatusLine />`)                                             |
 | `statusline.right`     | Bottom status line, right (`<StatusLine />`); on a phone only `phone: true` items stay, the rest go behind ⋯ |
+| `composer.top`         | Above the composer and what wraps it, in the conversation's column: what waits on the reader's answer        |
 | `composer.toolbar`     | Left of the composer's footer; a size container, condense with `@max-md:` (`<Conversation />`)               |
 | `composer.status`      | Line under the composer; conversation-specific, monospace, one line (`<Conversation />`)                     |
 | `composer.actions`     | Composer footer, beside Send; input helpers that write into the draft with `insertIntoComposer`              |

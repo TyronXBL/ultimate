@@ -174,7 +174,14 @@ export function Composer({ dock }: { dock?: boolean }) {
     },
     <ConversationComposer dock={dock} key={id ?? scoped ?? requested} />,
   )
-  return <TranscriptContext value={entries}>{core}</TranscriptContext>
+  return (
+    <TranscriptContext value={entries}>
+      <div className={column(dock)}>
+        <Slot name="composer.top" />
+      </div>
+      {core}
+    </TranscriptContext>
+  )
 }
 
 type Draft = {

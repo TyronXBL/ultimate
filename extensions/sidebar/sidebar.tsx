@@ -52,7 +52,7 @@ import type { KeptWork } from '../conversations/types.ts'
 import { LanderState } from './lander.tsx'
 import { StandingPhase, WaitingOnUser } from './ultimate.tsx'
 import { useShell, useSidebarState } from './state.tsx'
-import { topLevelRows } from './listed.ts'
+import { listedInFlight, topLevelRows } from './listed.ts'
 import { UnderUltimate, Unlisted } from './ui.tsx'
 
 /**
@@ -281,13 +281,17 @@ function Tree({
     (branchesBySource.get(id) ?? [])
       .filter((branch) => !hiddenIds.has(branch.id))
       .flatMap((branch) => [branch, ...branchesBelow(branch.id)])
-  // Every branch of a tree is in flight until it landed after its latest input; landed ones wait in Earlier.
+  // Every branch of a tree is in flight until it landed after its latest input, or later while it asks the user;
+  // landed ones wait in Earlier.
   const openBranches = rootRows
     .flatMap((root) => branchesBelow(root.id))
-    .filter(
-      (branch) =>
+    .filter((branch) =>
+      listedInFlight(
+        branch.id,
         inFlight(branch, workspaceIndex) &&
-        stillOpen({ conversation: branch, working: working.has(branch.id) }, landings),
+          stillOpen({ conversation: branch, working: working.has(branch.id) }, landings),
+        log.messages,
+      ),
     )
     .toSorted(byInput)
   const rest = listed.filter(

@@ -1,6 +1,7 @@
 import { defineWebExtension, provide } from '@/sdk'
 import { MessageAnswers } from '../messages/ui.tsx'
 import { MessageQuestions } from './card.tsx'
+import { WaitingOnYou } from './pinned.tsx'
 
 export default defineWebExtension({
   entries: {
@@ -15,5 +16,6 @@ export default defineWebExtension({
       run: (context) => context.openPanel('todos'),
     },
   ],
+  slots: { 'composer.top': [WaitingOnYou] },
   provides: [provide(MessageAnswers, (message) => <MessageQuestions message={message} />)],
 })
