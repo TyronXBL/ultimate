@@ -102,6 +102,94 @@ it('starts the replay again at a reset and reads the brief it injects as the con
   expect(opensContext(entries, 0, 0)).toBe(true)
 })
 
+it('labels what each context start injects, and a bare reset injects nothing', () => {
+  const summary = { role: 'user', content: 'summary', timestamp: 0 }
+  const compaction = entry('pi.compaction', { model: [summary] })
+  const tally = entry('pi.reset', { data: { lineage: { tally: 1 } }, model: [summary] })
+  const handoff = entry('pi.reset', { model: [summary] })
+  const bare = entry('pi.reset')
+  expect(breakdownAt([compaction], 0).injected?.label).toBe('compaction summary')
+  expect(breakdownAt([tally], 0).injected?.label).toBe('tally')
+  expect(breakdownAt([handoff], 0).injected?.label).toBe('handoff')
+  expect(breakdownAt([bare], 0)).toEqual({
+    start: bare,
+    tokens: { prompt: 0, tools: 0, injected: 0, total: 0 },
+  })
+})
+
+it('leaves out the system prompt and model of the next context', () => {
+  const entries = [
+    user('hello'),
+    entry('pi.reset'),
+    system({ later: 'x' }),
+    entry('pi.assistant', { model: [{ role: 'assistant', provider: 'p', model: 'm' }] }),
+  ]
+  expect(breakdownAt(entries, 0)).toEqual({
+    tokens: { prompt: 0, tools: 0, injected: 0, total: 0 },
+  })
+})
+
+it('takes the model of the first response, past the inputs before it', () => {
+  const entries = [
+    system({ a: 'x' }),
+    user('go'),
+    entry('pi.assistant', { model: [{ role: 'assistant', provider: 'p', model: 'first' }] }),
+    entry('pi.assistant', { model: [{ role: 'assistant', provider: 'p', model: 'second' }] }),
+  ]
+  const breakdown = breakdownAt(entries, 0)
+  expect(breakdown.system).toBe(entries[0])
+  expect(breakdown.model).toEqual({ provider: 'p', model: 'first' })
+})
+
+it('carries a fork its source’s history since the last reset, as plain text', () => {
+  const entries = [
+    source(user('before the reset')),
+    source(entry('pi.reset', { model: [{ role: 'user', content: 'handoff', timestamp: 0 }] })),
+    source(system({ a: 'x' })),
+    source(user('question')),
+    source(entry('lineage.note')),
+    source(
+      entry('pi.assistant', {
+        model: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'hidden' },
+              { type: 'text', text: 'answer' },
+              { type: 'toolCall', id: 't', name: 'read', arguments: { path: 'a.ts' } },
+            ],
+          },
+        ],
+      }),
+    ),
+    source(
+      entry('pi.tool', {
+        model: [
+          {
+            role: 'toolResult',
+            content: [
+              { type: 'text', text: 'file' },
+              { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+            ],
+          },
+        ],
+      }),
+    ),
+    user('mine'),
+  ]
+  expect(breakdownAt(entries, 7).injected).toMatchObject({
+    label: 'inherited history · 4 messages',
+    content: [
+      'user: handoff',
+      'user: question',
+      'assistant: answer\nread({"path":"a.ts"})',
+      'toolResult: file\n[image]',
+    ].join('\n\n'),
+  })
+  // A source that never reset carries everything from its first entry.
+  expect(breakdownAt(entries.slice(3), 4).injected?.label).toBe('inherited history · 3 messages')
+})
+
 it('counts an image as a fixed size, never its base64 length', () => {
   const reset = entry('pi.reset', {
     model: [
@@ -144,6 +232,10 @@ it('treats a removed and re-added tool as unchanged unless its declaration chang
   expect(promptAt(entries, 1).tools.map((tool) => tool.name)).toEqual(['read', 'bash'])
   const diff = diffAt(entries, 2)
   expect(diff.tools.map((tool) => [tool.name, tool.change])).toEqual([['read', 'changed']])
+  expect(diff.tools[0].delta).toBe(
+    Math.ceil(JSON.stringify(changedRead).length / 3.5) -
+      Math.ceil(JSON.stringify(read).length / 3.5),
+  )
   expect(promptAt(entries, 2).tools.map((tool) => tool.name)).toEqual(['bash', 'read'])
 })
 
@@ -158,6 +250,23 @@ it('folds a remove-all patch into the re-add after it, so a reorder shows only r
   ])
 })
 
+it('does not fold ordinary adjacent system patches into one context opening', () => {
+  const mixed = system({ removed: null, kept: 'updated' })
+  const following = system({ added: 'later' })
+  const entries = [mixed, following]
+  expect(opensContext(entries, 0, 0)).toBe(true)
+  expect(opensContext(entries, 1, 0)).toBe(false)
+})
+
+it('ignores malformed system entries and empty remove-all patches', () => {
+  const malformed = entry('pi.system', {
+    model: [{ role: 'user', content: 'not a system prompt' }],
+  })
+  const empty = system({})
+  expect(promptAt([malformed, empty], 1)).toEqual({ sections: [], tools: [] })
+  expect(opensContext([malformed, empty], 1, 0)).toBe(true)
+})
+
 it('takes a fork start’s snapshot after a remove-all and its reordered re-add', () => {
   const inheritedBaseline = { ...system({ a: 'one', b: 'two' }, [read]), conversationId: 1 }
   const own = user('go')
@@ -166,10 +275,24 @@ it('takes a fork start’s snapshot after a remove-all and its reordered re-add'
   const entries = [inheritedBaseline, own, removeAll, reAdd] as unknown as EntryRecord[]
   const breakdown = breakdownAt(entries, 1)
   expect(breakdown.system).toBe(reAdd)
+  expect(breakdown.injected).toBeUndefined()
   expect(breakdown.prompt?.sections.map((section) => section.key)).toEqual(['b', 'a'])
   expect(breakdown.prompt?.tools.map((tool) => tool.name)).toEqual(['read'])
   expect(opensContext(entries, 3, 1)).toBe(true)
   expect(opensContext(entries, 2, 1)).toBe(false)
+})
+
+it('counts added and removed tool declarations in the diff total', () => {
+  const entries = [system(undefined, [read]), system(undefined, undefined, [{ name: 'read' }])]
+  const readTokens = Math.ceil(JSON.stringify(read).length / 3.5)
+  const added = diffAt(entries, 0)
+  expect(added.tools.map(({ change, delta }) => [change, delta])).toEqual([['added', readTokens]])
+  const removed = diffAt(entries, 1)
+  expect(removed.tools.map(({ change, delta }) => [change, delta])).toEqual([
+    ['removed', -readTokens],
+  ])
+  expect(added.delta).toBe(readTokens)
+  expect(removed.delta).toBe(-readTokens)
 })
 
 it('shows the recorded model, and the configured one marked as such only before any response', () => {

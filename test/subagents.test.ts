@@ -1775,6 +1775,10 @@ describe('subagents', () => {
       ['tools: [read, bash]', 'tool: [read]', 'Unknown field: tool'],
       ['tools: [read, bash]', 'isolate: remote', 'isolate must be none or worktree'],
       ['tools: [read, bash]', 'summaries: never', 'summaries must be a boolean'],
+      ['tools: [read, bash]', 'fast: yes', 'fast must be a boolean'],
+      ['tools: [read, bash]', 'family: Not a family', 'family must be a family name'],
+      ['tools: [read, bash]', 'fallback: [a/b, " "]', 'fallback must be a model or a list'],
+      ['tools: [read, bash]', 'fallback: 42', 'fallback must be a model or a list'],
       ['Original instructions', '', 'Instructions are required'],
     ])
       expect(() => parseDefinition(definition().replace(from, to), 'test')).toThrow(error)
