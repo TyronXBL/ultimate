@@ -284,16 +284,15 @@ it('takes a fork start’s snapshot after a remove-all and its reordered re-add'
 
 it('counts added and removed tool declarations in the diff total', () => {
   const entries = [system(undefined, [read]), system(undefined, undefined, [{ name: 'read' }])]
+  const readTokens = Math.ceil(JSON.stringify(read).length / 3.5)
   const added = diffAt(entries, 0)
-  expect(added.tools.map(({ change, delta }) => [change, delta])).toEqual([
-    ['added', Math.ceil(JSON.stringify(read).length / 3.5)],
-  ])
+  expect(added.tools.map(({ change, delta }) => [change, delta])).toEqual([['added', readTokens]])
   const removed = diffAt(entries, 1)
   expect(removed.tools.map(({ change, delta }) => [change, delta])).toEqual([
-    ['removed', -Math.ceil(JSON.stringify(read).length / 3.5)],
+    ['removed', -readTokens],
   ])
-  expect(added.delta).toBe(added.tools[0].delta)
-  expect(removed.delta).toBe(removed.tools[0].delta)
+  expect(added.delta).toBe(readTokens)
+  expect(removed.delta).toBe(-readTokens)
 })
 
 it('shows the recorded model, and the configured one marked as such only before any response', () => {
