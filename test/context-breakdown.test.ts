@@ -102,6 +102,94 @@ it('starts the replay again at a reset and reads the brief it injects as the con
   expect(opensContext(entries, 0, 0)).toBe(true)
 })
 
+it('labels what each context start injects, and a bare reset injects nothing', () => {
+  const summary = { role: 'user', content: 'summary', timestamp: 0 }
+  const compaction = entry('pi.compaction', { model: [summary] })
+  const tally = entry('pi.reset', { data: { lineage: { tally: 1 } }, model: [summary] })
+  const handoff = entry('pi.reset', { model: [summary] })
+  const bare = entry('pi.reset')
+  expect(breakdownAt([compaction], 0).injected?.label).toBe('compaction summary')
+  expect(breakdownAt([tally], 0).injected?.label).toBe('tally')
+  expect(breakdownAt([handoff], 0).injected?.label).toBe('handoff')
+  expect(breakdownAt([bare], 0)).toEqual({
+    start: bare,
+    tokens: { prompt: 0, tools: 0, injected: 0, total: 0 },
+  })
+})
+
+it('leaves out the system prompt and model of the next context', () => {
+  const entries = [
+    user('hello'),
+    entry('pi.reset'),
+    system({ later: 'x' }),
+    entry('pi.assistant', { model: [{ role: 'assistant', provider: 'p', model: 'm' }] }),
+  ]
+  expect(breakdownAt(entries, 0)).toEqual({
+    tokens: { prompt: 0, tools: 0, injected: 0, total: 0 },
+  })
+})
+
+it('takes the model of the first response, past the inputs before it', () => {
+  const entries = [
+    system({ a: 'x' }),
+    user('go'),
+    entry('pi.assistant', { model: [{ role: 'assistant', provider: 'p', model: 'first' }] }),
+    entry('pi.assistant', { model: [{ role: 'assistant', provider: 'p', model: 'second' }] }),
+  ]
+  const breakdown = breakdownAt(entries, 0)
+  expect(breakdown.system).toBe(entries[0])
+  expect(breakdown.model).toEqual({ provider: 'p', model: 'first' })
+})
+
+it('carries a fork its source’s history since the last reset, as plain text', () => {
+  const entries = [
+    source(user('before the reset')),
+    source(entry('pi.reset', { model: [{ role: 'user', content: 'handoff', timestamp: 0 }] })),
+    source(system({ a: 'x' })),
+    source(user('question')),
+    source(entry('lineage.note')),
+    source(
+      entry('pi.assistant', {
+        model: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'hidden' },
+              { type: 'text', text: 'answer' },
+              { type: 'toolCall', id: 't', name: 'read', arguments: { path: 'a.ts' } },
+            ],
+          },
+        ],
+      }),
+    ),
+    source(
+      entry('pi.tool', {
+        model: [
+          {
+            role: 'toolResult',
+            content: [
+              { type: 'text', text: 'file' },
+              { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+            ],
+          },
+        ],
+      }),
+    ),
+    user('mine'),
+  ]
+  expect(breakdownAt(entries, 7).injected).toMatchObject({
+    label: 'inherited history · 4 messages',
+    content: [
+      'user: handoff',
+      'user: question',
+      'assistant: answer\nread({"path":"a.ts"})',
+      'toolResult: file\n[image]',
+    ].join('\n\n'),
+  })
+  // A source that never reset carries everything from its first entry.
+  expect(breakdownAt(entries.slice(3), 4).injected?.label).toBe('inherited history · 3 messages')
+})
+
 it('counts an image as a fixed size, never its base64 length', () => {
   const reset = entry('pi.reset', {
     model: [
@@ -187,6 +275,7 @@ it('takes a fork start’s snapshot after a remove-all and its reordered re-add'
   const entries = [inheritedBaseline, own, removeAll, reAdd] as unknown as EntryRecord[]
   const breakdown = breakdownAt(entries, 1)
   expect(breakdown.system).toBe(reAdd)
+  expect(breakdown.injected).toBeUndefined()
   expect(breakdown.prompt?.sections.map((section) => section.key)).toEqual(['b', 'a'])
   expect(breakdown.prompt?.tools.map((tool) => tool.name)).toEqual(['read'])
   expect(opensContext(entries, 3, 1)).toBe(true)
