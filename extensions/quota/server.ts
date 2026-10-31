@@ -46,7 +46,11 @@ const cached = (state: Quota, provider: string) => {
 export function due(entry: Cached, now: number, fresh: boolean) {
   if (entry.tried === undefined) return true
   if (entry.limitedAt !== undefined && entry.limitedAt > entry.tried) return true
-  const allowance = fresh ? FRESH : entry.used !== undefined && entry.used > entry.tried ? USED : IDLE
+  const allowance = fresh
+    ? FRESH
+    : entry.used !== undefined && entry.used > entry.tried
+      ? USED
+      : IDLE
   return now - entry.tried >= allowance
 }
 
