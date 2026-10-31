@@ -212,6 +212,7 @@ conventions. Everything that is not core plumbing is an extension folder with a 
 ```bash
 pnpm dev                          # the server alone, without the supervisor
 pnpm check                        # format, lint, types
+pnpm fix                          # format, then pnpm check
 pnpm test                         # fast in-process tests on scripted model responses
 pnpm test:e2e                     # tests that spawn real supervisors and instances
 ```
