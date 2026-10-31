@@ -100,7 +100,7 @@ describe('automation schedules', () => {
       ['30 10 */2 1-6 1-5 Europe/Berlin', 'Use cron "30 10 */2 1-6 1-5" Europe/Berlin'],
       ['0 9 * * 1', /^Use cron "0 9 \* \* 1"$/],
     ] as const)
-      expect(() => parseSchedule(input), input).toThrow(error)
+      expect(() => parseSchedule(input)).toThrow(error)
     expect(() => parseSchedule({ kind: 'every', ms: 500 })).toThrow('at least 1s')
     expect(() => nextAt(parseSchedule('cron "0 9 31 2 *" UTC'), time)).toThrow('8 years')
   })
