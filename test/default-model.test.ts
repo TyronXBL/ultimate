@@ -5,6 +5,22 @@ import { configuredModel, defaultModel, definitionAgent } from '../lib/agents.ts
 
 const opus = { provider: 'claude-code', modelId: 'claude-opus-5-5' }
 
+it('runs on the default family, else Pi’s default, whichever has a login, not the first listed', () => {
+  const sol = { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }
+  const available = [
+    { provider: 'anthropic', id: 'claude-fable-5' },
+    { provider: 'anthropic', id: opus.modelId },
+    { provider: sol.provider, id: sol.modelId },
+  ]
+  const settings = { getDefaultProvider: () => sol.provider, getDefaultModel: () => sol.modelId }
+  const opusLogin = { provider: opus.provider, id: opus.modelId }
+  expect(configuredModel([...available, opusLogin], settings, opus)).toEqual(opus)
+  expect(configuredModel(available, settings)).toEqual(sol)
+  // Neither another provider's model of the same id nor the provider's other models are a login for it.
+  expect(configuredModel(available, settings, opus)).toEqual(sol)
+  expect(configuredModel(available, settings, { ...sol, modelId: 'gone' })).toEqual(sol)
+})
+
 it('starts a branch on the configured default whose login is gone, never on the first model with a login', () => {
   // omarchy-config, 2026-10-29: Claude Code's default login logged out while a paid Anthropic key stayed; the dream
   // branch @ultimate started then ran on anthropic/claude-fable-5, the first model in the available list.
@@ -17,9 +33,6 @@ it('starts a branch on the configured default whose login is gone, never on the 
     getDefaultProvider: () => opus.provider,
     getDefaultModel: () => opus.modelId,
   }
-  expect(
-    configuredModel([{ provider: opus.provider, id: 'different-model' }], settings),
-  ).toBeUndefined()
   const runtime = {
     getAvailableSnapshot: () => available,
     getModel: () => undefined,
