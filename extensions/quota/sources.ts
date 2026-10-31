@@ -26,7 +26,7 @@ const ANTHROPIC_KINDS: Record<string, string> = { session: '5-hour', weekly_all:
  * Claude's limits from `/api/oauth/usage`: its `limits` list, each `{ kind, percent, resets_at, scope }`. A weekly
  * limit scoped to one model is labelled with the model's name.
  */
-export function anthropicReading(body: unknown): QuotaReading {
+function anthropicReading(body: unknown): QuotaReading {
   const limits = record(body).limits
   if (!Array.isArray(limits)) throw new Error('unexpected response')
   const windows = limits.flatMap((entry): QuotaWindow[] => {
@@ -54,7 +54,7 @@ const windowLabel = (seconds: number) =>
         : `${Math.round(seconds / 3600)}-hour`
 
 /** Codex's limits from `/backend-api/wham/usage`: `rate_limit`'s primary and secondary windows, and the plan. */
-export function codexReading(body: unknown): QuotaReading {
+function codexReading(body: unknown): QuotaReading {
   const { plan_type: plan, rate_limit: rateLimit } = record(body)
   const limit = record(rateLimit)
   const windows = [limit.primary_window, limit.secondary_window].flatMap((value): QuotaWindow[] => {
