@@ -123,7 +123,8 @@ function Section({ provider, now }: { provider: QuotaProvider; now: number }) {
 
 /**
  * The status-line chip: how full the subscription logins' usage limits are. Quiet while every limit is under 70 %;
- * amber with the fullest share above it, red once a limit is used up. The popover lists every limit with its reset.
+ * amber with the fullest share above it, or with how many limits are used up. Never red: a used-up pool may be one the
+ * user never runs, so red stays in the popover, beside the limit and its reset. The popover lists every limit.
  */
 function Chip() {
   const { data, refetch } = useAction(
@@ -150,7 +151,8 @@ function Chip() {
   const top = worst(providers)
   const used = top?.window.used ?? 0
   const failed = providers.some((provider) => provider.error)
-  const blocked = providers.flatMap((provider) => provider.windows).filter((w) => w.used >= 100)
+  const full = providers.flatMap((provider) => provider.windows).filter((w) => w.used >= 100)
+  const near = used >= NEAR
   return (
     <Popover onOpenChange={readFresh}>
       <PopoverTrigger asChild>
@@ -158,17 +160,18 @@ function Chip() {
           aria-label="Subscription limits"
           className={cn(
             '-mx-1 flex cursor-pointer items-center gap-1.5 rounded-sm px-1 transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground',
-            used >= NEAR && tone(used),
+            near && 'text-warning',
           )}
-          data-quota={used >= 100 ? 'blocked' : used >= NEAR ? 'near' : 'ok'}
+          data-quota={full.length ? 'full' : near ? 'near' : 'ok'}
           type="button"
         >
-          <GaugeIcon className={cn('size-3', failed && used < NEAR && 'text-error')} />
-          {used >= NEAR && top ? (
+          <GaugeIcon className={cn('size-3', failed && !near && 'text-error')} />
+          {full.length ? (
+            <span className="tabular-nums">{full.length} full</span>
+          ) : near && top ? (
             <>
               <span className="max-md:hidden">{top.provider.name}</span>
               <span className="tabular-nums">{percent(used)}</span>
-              {blocked.length > 1 && <span className="max-md:hidden">· {blocked.length} full</span>}
             </>
           ) : (
             <span className="max-md:hidden">limits</span>

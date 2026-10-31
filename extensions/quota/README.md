@@ -38,7 +38,8 @@ registered source's included, so nothing that could quote a response or a token 
 ## UI
 
 A status-line chip (`web.tsx`), also on a phone's line. While every limit is under 70 % it is a quiet gauge with
-"limits"; from 70 % it turns amber and shows the fullest limit's provider and share, and red once a limit is used up
-(its pool is blocked until it resets). Its popover lists each login with its plan and how old its numbers are, then
+"limits"; from 70 % it turns amber and shows the fullest limit's provider and share, and "1 full" once a limit is
+used up (its pool is blocked until it resets). The chip is never red: a used-up pool may be one the user never runs,
+so red stays in the popover, on the full limit and its reset time. Its popover lists each login with its plan and how old its numbers are, then
 every limit, grouped by pool, with a bar, the used share and the reset time ("in 4h 12m"; the date and time on
 hover). A failed read says why, and how old the numbers still shown are.
