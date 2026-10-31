@@ -117,12 +117,10 @@ function InstanceCall({ call }: { call: ToolCallView }) {
         )}
         {done && action === 'logs' && typeof value === 'string' && (
           <Collapsible className="group/logs" defaultOpen>
-            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[10px] tracking-wider text-muted-foreground/80 uppercase hover:text-foreground">
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2.5 py-1.5 section-label hover:text-foreground">
               <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/logs:rotate-90" />
               Logs
-              <span className="tracking-normal normal-case text-muted-foreground/60">
-                {value.split('\n').length} lines
-              </span>
+              <span className="text-muted-foreground/60">{value.split('\n').length} lines</span>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <pre className="max-h-80 overflow-auto bg-terminal px-3 py-2 leading-[1.55] whitespace-pre-wrap text-foreground/85">
