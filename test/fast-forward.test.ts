@@ -8,8 +8,17 @@ it('swaps a GitHub remote to the other transport and leaves others alone', () =>
   expect(otherTransport('https://github.com/o/r.git')).toBe('git@github.com:o/r.git')
   expect(otherTransport('https://github.com/o/r/')).toBe('git@github.com:o/r.git')
   expect(otherTransport('https://user@github.com/o/r')).toBe('git@github.com:o/r.git')
+  expect(otherTransport('git@github.com:owner/my-repo.git')).toBe(
+    'https://github.com/owner/my-repo.git',
+  )
+  expect(otherTransport('https://github.com/owner/my.repo')).toBe(
+    'git@github.com:owner/my.repo.git',
+  )
   expect(otherTransport('git@gitlab.com:o/r.git')).toBeUndefined()
   expect(otherTransport('/srv/repo.git')).toBeUndefined()
+  // A remote that only mentions GitHub is not on GitHub.
+  expect(otherTransport('https://gitlab.example/git@github.com:o/r.git')).toBeUndefined()
+  expect(otherTransport('git+https://github.com/o/r.git')).toBeUndefined()
 })
 
 /** A git that fails the commands `fail` matches and records every call. */
@@ -75,6 +84,23 @@ it('names both causes when both transports fail', async () => {
   await expect(fetchOrigin(git)).rejects.toThrow(
     /denied fetch --quiet origin\nRetry over https:\/\/github\.com\/o\/r\.git: .*denied fetch --quiet https/,
   )
+})
+
+it('keeps the fetched refs when the other transport cannot name its HEAD', async () => {
+  const { git, calls } = stub(
+    { 'remote get-url origin': 'git@github.com:o/r.git' },
+    (args) =>
+      ['fetch --quiet origin', 'symbolic-ref --quiet refs/remotes/origin/HEAD'].includes(
+        args.join(' '),
+      ) || args[0] === 'ls-remote',
+  )
+  await fetchOrigin(git)
+  expect(calls.at(-1)).toBe('ls-remote --symref https://github.com/o/r.git HEAD')
+})
+
+it('rethrows the fetch failure when origin has no URL', async () => {
+  const { git } = stub({}, (args) => args[0] === 'fetch' || args[0] === 'remote')
+  await expect(fetchOrigin(git)).rejects.toThrow('denied fetch --quiet origin')
 })
 
 it('rethrows the first failure for a remote off GitHub', async () => {

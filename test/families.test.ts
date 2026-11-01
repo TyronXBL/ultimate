@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { definitionRuns, mergeFamilies, parseFamilies } from '../lib/families.ts'
+import { definitionRuns, mergeFamilies, parseFamilies, refOf } from '../lib/families.ts'
 import { readFamilies, readFamilyLayers, writeFamilies } from '../lib/families-settings.ts'
 import { temp } from './helpers.ts'
 
@@ -10,7 +10,11 @@ const families = (value: unknown, project?: unknown) =>
 
 it('runs a definition on its pin, else its family, else the default family', () => {
   const config = families({
-    families: { fast: { model: 'acme/quick' }, local: { model: 'vllm/current', thinking: 'low' } },
+    families: {
+      default: { model: 'acme/main' },
+      fast: { model: 'acme/quick' },
+      local: { model: 'vllm/current', thinking: 'low' },
+    },
     // An agent's family lives in its definition: an old settings assignment no longer moves it.
     assign: { 'agent/worker': 'local' },
   })
@@ -38,12 +42,41 @@ it('runs a definition on its pin, else its family, else the default family', () 
 it('merges the project over the user over the built-ins, field by field', () => {
   const config = families(
     { families: { tiny: { model: 'acme/mini' }, local: { model: 'vllm/current' } } },
-    { families: { tiny: { thinking: 'high' } } },
+    { families: { tiny: { thinking: 'high', color: 'teal' } }, assign: { summaries: 'local' } },
   )
-  expect(config.families.tiny).toEqual({ model: 'acme/mini', thinking: 'high', color: 'emerald' })
+  expect(config.families.tiny).toEqual({ model: 'acme/mini', thinking: 'high', color: 'teal' })
   expect(config.families.local.model).toBe('vllm/current')
   expect(config.families.local.color).toBeTruthy()
-  expect(() => parseFamilies({ families: { Bad: {} } })).toThrow('lowercase')
+  expect(config.assign).toEqual({ summaries: 'local' })
+})
+
+it.each([
+  ['a list', [], 'modelFamilies must be an object'],
+  ['null families', { families: null }, 'modelFamilies.families must be an object'],
+  ['a list of families', { families: [] }, 'modelFamilies.families must be an object'],
+  ['an uppercase name', { families: { Bad: {} } }, 'families.Bad: lowercase letters'],
+  ['punctuation after a name', { families: { 'fast!!': {} } }, 'families.fast!!: lowercase'],
+  ['a name over 24 characters', { families: { ['a'.repeat(25)]: {} } }, 'lowercase'],
+  ['a spec that is no object', { families: { fast: 'acme/x' } }, 'families.fast must be an object'],
+  ['a model without provider', { families: { fast: { model: '/x' } } }, 'fast.model must be'],
+  ['a model with a space', { families: { fast: { model: 'acme/x y' } } }, 'fast.model must be'],
+  ['a provider with a space', { families: { fast: { model: 'my acme/x' } } }, 'model must be'],
+  ['a model that is no string', { families: { fast: { model: 1 } } }, 'fast.model must be'],
+  ['an unknown thinking level', { families: { fast: { thinking: 'huge' } } }, 'one of off,'],
+  ['a thinking level that is no string', { families: { fast: { thinking: 1 } } }, 'thinking'],
+  ['an unknown color', { families: { fast: { color: 'red' } } }, 'color must be one of sky,'],
+  ['assign that is no object', { assign: 'fast' }, 'modelFamilies.assign must be an object'],
+  ['assign to a bad name', { assign: { summaries: 'Fast' } }, 'assign.summaries must be a family'],
+  ['assign to a non-string', { assign: { summaries: 1 } }, 'assign.summaries must be a family'],
+])('rejects a modelFamilies setting with %s, naming the field', (_, value, error) => {
+  expect(() => parseFamilies(value)).toThrow(error)
+})
+
+it('reads a model reference only with a provider and an id', () => {
+  expect(refOf('acme/org/big')).toEqual({ provider: 'acme', modelId: 'org/big' })
+  expect(refOf('/big')).toBeUndefined()
+  expect(refOf('big')).toBeUndefined()
+  expect(refOf(undefined)).toBeUndefined()
 })
 
 it("keeps each project's families and starts a project without its own from the ones saved last", async () => {
