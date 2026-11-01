@@ -23,7 +23,7 @@ onboarding offers it too.
 
 ## How to work with it
 
-See [the work model](../AGENTS.md#how-work-is-organised-a-forest-of-conversation-trees) for coordination and
+See [the work model](../docs/work.md) for coordination and
 [Surfaces](../README.md#surfaces) for apps beside the conversation.
 
 ## How it runs

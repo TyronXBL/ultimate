@@ -844,7 +844,8 @@ export default function automations(host: ExtensionHost) {
       }),
     ],
     sections: [
-      section('automations', async ({ read }, context) => {
+      section('automations', async ({ read, agent }, context) => {
+        if (!agent.tools.some((tool) => tool.name === 'automation')) return undefined
         const state = await read.snapshot(Automations, context)
         const lines = Object.values(state?.automations ?? {})
           .filter((a) => a.enabled)

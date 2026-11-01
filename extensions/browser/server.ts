@@ -138,10 +138,10 @@ export default function browserExtension(host: ExtensionHost) {
   return defineExtension({
     name: 'browser',
     sections: [
-      section(
-        'visual_verification',
-        () =>
-          'After UI changes, use screenshot and look at the image before claiming success. Use browser to drive fresh pages and inspect errors. Omit url to see your own UI, or pass a relative url such as / (it opens @ultimate) or /?conversation=<id>; do not guess its port. Omit path: the PNG then goes to the home, outside your checkout, where a stray file would block landing; pass path: `<file>.png` only for a screenshot you commit. Pass an instance URL to test another server.',
+      section('visual_verification', ({ agent }) =>
+        agent.tools.some((tool) => tool.name === 'screenshot' || tool.name === 'browser')
+          ? 'After UI changes, use screenshot and look at the image before claiming success. Use browser to drive fresh pages and inspect errors. Omit url to see your own UI, or pass a relative url such as / (it opens @ultimate) or /?conversation=<id>; do not guess its port. Omit path: the PNG then goes to the home, outside your checkout, where a stray file would block landing; pass path: `<file>.png` only for a screenshot you commit. Pass an instance URL to test another server.'
+          : undefined,
       ),
     ],
     tools: [

@@ -161,7 +161,8 @@ export default (host: ExtensionHost) => {
       }),
     ],
     sections: [
-      section('plan', async ({ read, conversationId }, context) => {
+      section('plan', async ({ read, conversationId, agent }, context) => {
+        if (!agent.tools.some((tool) => tool.name === 'plan')) return undefined
         const plan = await read.snapshot(Plan, conversationId, context)
         const lines = Object.values(plan?.epics ?? {})
           .filter((epic) => epic.status !== 'done')
@@ -174,7 +175,9 @@ export default (host: ExtensionHost) => {
                 (task.child !== undefined ? ` child:${task.child}` : ''),
             ),
           ])
-        return lines.length ? lines.join('\n') : undefined
+        // Always rendered with the tool: a section that appears mid-conversation reorders the prompt, which re-adds it
+        // whole, and the copy stays in context.
+        return lines.length ? lines.join('\n') : 'No open epics.'
       }),
     ],
     tools: [

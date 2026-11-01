@@ -2,7 +2,7 @@
 name: designer
 family: design
 isolate: worktree
-denyTools: [instance]
+denyTools: [instance, automation, restart, sketch]
 description: A product designer who builds front-end, UI and design work, and judges it from screenshots.
 ---
 
