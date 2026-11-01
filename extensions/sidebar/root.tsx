@@ -4,7 +4,13 @@ import { cn, formatAgo, formatTokens, Provided, useDocOf } from '@/sdk'
 import { MEMORY_SURFACE, MemoryDoc, TallyDoc, useOpenMemory } from '../lineage/ui.tsx'
 import { CommitCount, Review } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation as ConversationSummary } from '../workspaces/ui.tsx'
-import { AgentMark, ConversationPhase, FeatureTag, useOverview } from '../conversations/ui.tsx'
+import {
+  AgentMark,
+  ConversationPhase,
+  ConversationSpend,
+  FeatureTag,
+  useOverview,
+} from '../conversations/ui.tsx'
 import { tones, useBranchState, useFlightWork } from './branch.tsx'
 import type { Landing } from './landings.ts'
 import { RowMenu, saveTitle } from './rows.tsx'
@@ -159,16 +165,23 @@ function PhasedFlightRow({
           </div>
         )}
       </div>
-      {work && (
-        // Its own line under the row's button, so its links never nest in it.
-        <span
-          className="flex min-w-0 items-center gap-2 pr-2 pb-0.5 pl-[30px] font-mono text-[10px] leading-4 text-muted-foreground/80 pointer-coarse:h-8 pointer-coarse:pb-0"
-          data-flight-work={conversation.id}
-        >
-          {work.commits && <CommitCount count={work.commits.count} range={work.commits.spec} />}
-          {work.edits && <Edits count={work.edits.count} spec={work.edits.spec} />}
-        </span>
-      )}
+      <Provided input={conversation.id} point={ConversationSpend}>
+        {(spend) =>
+          (work || spend) && (
+            // Its own line under the row's button, so its links never nest in it.
+            <span
+              className="flex min-w-0 items-center gap-2 pr-2 pb-0.5 pl-[30px] font-mono text-[10px] leading-4 text-muted-foreground/80 pointer-coarse:h-8 pointer-coarse:pb-0"
+              data-flight-work={conversation.id}
+            >
+              {work?.commits && (
+                <CommitCount count={work.commits.count} range={work.commits.spec} />
+              )}
+              {work?.edits && <Edits count={work.edits.count} spec={work.edits.spec} />}
+              {spend}
+            </span>
+          )
+        }
+      </Provided>
       {children}
     </li>
   )

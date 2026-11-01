@@ -1,18 +1,28 @@
+import { copyJson } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineExtension, LiveDoc, UsageDoc } from '@earendil-works/pi-durable'
 import type { Cursor, LiveState, UsageState } from '@earendil-works/pi-durable'
 import type { ActionContext } from '../../server/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { createRateSampler, keys, zero, type Rates, type RateSample } from './rates.ts'
-import { usageTotals } from './context.ts'
+import { treeSpend, usageTotals } from './context.ts'
 import { implementAction } from '../../lib/actions.ts'
-import { RatesAction } from './refs.ts'
+import { RatesAction, TreesAction } from './refs.ts'
 
 type Totals = ReturnType<typeof usageTotals>
-const snapshots = new WeakMap<object, () => (RateSample & { totals: Totals }) | null>()
+const snapshots = new WeakMap<
+  object,
+  {
+    rates: () => (RateSample & { totals: Totals }) | null
+    trees: () => ReturnType<typeof treeSpend> | null
+  }
+>()
 export const actions = {
   rates: implementAction(RatesAction, (_args, { host }: Pick<ActionContext, 'host'>) => {
-    return snapshots.get(host)?.() ?? null
+    return snapshots.get(host)?.rates() ?? null
+  }),
+  trees: implementAction(TreesAction, (_args, { host }: Pick<ActionContext, 'host'>) => {
+    return snapshots.get(host)?.trees() ?? null
   }),
 }
 
@@ -41,13 +51,21 @@ export default function statusLine(host: Host) {
   let unsubscribe: (() => void) | undefined
   let timer: ReturnType<typeof setInterval> | undefined
   let epoch = 0
-  snapshots.set(host, () => latest && { ...latest, totals: { ...spend } })
+  // Every conversation's owner and `pi.usage`, for each tree's spend; null until the seed has read them all.
+  let owners: Map<number, number | undefined> | null = null
+  const usages = new Map<number, UsageState>()
+  snapshots.set(host, {
+    rates: () => latest && { ...latest, totals: { ...spend } },
+    trees: () => owners && treeSpend(owners, usages),
+  })
   const stop = () => {
     epoch++
     clearInterval(timer)
     unsubscribe?.()
     unsubscribe = undefined
     latest = null
+    owners = null
+    usages.clear()
   }
   host.onClose(async () => stop())
   host.onOpen(async () => {
@@ -74,6 +92,11 @@ export default function statusLine(host: Host) {
       before[part] = next
       documents.set(id, before)
     }
+    const seen = new Map<number, number | undefined>()
+    const adopt = (id: number, usage: UsageState | null | undefined) => {
+      if (usage) usages.set(id, usage)
+      else usages.delete(id)
+    }
     try {
       await harness.commit(async (tx) => {
         let cursor: Cursor | undefined
@@ -81,6 +104,9 @@ export default function statusLine(host: Host) {
           const page = await tx.scanConversations({}, 256, cursor)
           for (const conversation of page.items) {
             const usage = await tx.doc(UsageDoc, conversation.id)
+            seen.set(conversation.id, conversation.owner?.conversationId)
+            // A copy: the draft read here is unusable once the seed's transaction settles.
+            adopt(conversation.id, copyJson(usage) as UsageState)
             replace(conversation.id, 'settled', settled(usage))
             replaceSpend(conversation.id, usage)
             replace(conversation.id, 'partial', partial(await tx.doc(LiveDoc, conversation.id)))
@@ -92,11 +118,15 @@ export default function statusLine(host: Host) {
         // Subscribe while this atomic seed still holds the commit boundary. Its own publication
         // is safe to adopt again (absolute counters); no following commit can slip past the seed.
         // Not a reactor: token rates follow Pi's usage and live documents, not domain events.
+        owners = seen
         unsubscribe = harness.subscribeCommits((publication) => {
           for (const change of publication.changes) {
+            if (change.type === 'conversation')
+              seen.set(change.value.id, change.value.owner?.conversationId)
             if (change.type !== 'document' || change.conversationId === undefined) continue
             if (change.record.kind === UsageDoc.definition.kind) {
               const usage = change.value as UsageState | null
+              adopt(change.conversationId, usage)
               replace(change.conversationId, 'settled', settled(usage))
               replaceSpend(change.conversationId, usage)
             }

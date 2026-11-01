@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatTime,
   formatTokens,
+  provide,
   shortenPath,
   useConnection,
   useConversation,
@@ -19,9 +20,10 @@ import {
 } from '@/sdk'
 import type { AssistantMessage, EntryRecord, Usage } from '@/sdk'
 import { useWorkspaceConversations as useConversations } from '../workspaces/ui.tsx'
-import { ContextDoc } from '../conversations/ui.tsx'
+import { ContextDoc, ConversationSpend } from '../conversations/ui.tsx'
 import { lastAssistant, promptTokens as prompt } from '../../lib/context-usage.ts'
 import { usageTotals } from './context.ts'
+import { HeaderSpend, useSpendChip } from './spend.tsx'
 import { RatesAction } from './refs.ts'
 import type { RateSample } from './refs.ts'
 import { responseAfter, turnOf } from './turns.ts'
@@ -368,7 +370,9 @@ function Connection() {
 
 export default defineWebExtension({
   messageDetails: [MessageUsage],
+  provides: [provide(ConversationSpend, (id) => useSpendChip(id))],
   slots: {
+    'header.right': [HeaderSpend],
     'composer.status': [Cwd, Tokens, Context],
     'statusline.left': [GlobalUsage],
     'statusline.right': [{ component: Connection, phone: true }],

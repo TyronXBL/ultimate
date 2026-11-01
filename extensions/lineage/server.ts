@@ -193,9 +193,12 @@ async function ask(
     const key = `${answer.provider}/${answer.model}`
     const total = Object.hasOwn(usage, key) ? usage[key] : undefined
     if (!total) usage[key] = answer.usage
-    else
+    else {
       for (const counter of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'] as const)
         total[counter] += answer.usage[counter]
+      for (const counter of ['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const)
+        total.cost[counter] += answer.usage.cost[counter]
+    }
   })
   const result = contentText(answer.content).trim()
   if (answer.stopReason !== 'stop' && answer.stopReason !== 'length')
