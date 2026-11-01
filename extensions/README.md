@@ -625,9 +625,10 @@ check their handlers against them with `implementAction` (see [Extension APIs](#
 Call actions from the UI in one of two ways:
 
 - `useAction(ref, args?, { enabled?, onError? })` reads. It calls on mount and again whenever the action or `args`
-  (compared as JSON) change, unless `enabled` is false; a newer call aborts the older one. It returns
-  `{ data, error, loading, refetch }`: `data` stays while a refetch runs and resets when the args change; `refetch()`
-  calls again, also when not `enabled`. A failure shows as a notice unless you pass `onError`.
+  (compared as JSON) change, unless `enabled` is false; a newer call aborts the older one. Hooks that call the same
+  action with the same args at the same time share one request. It returns `{ data, error, loading, refetch }`: `data`
+  stays while a refetch runs and resets when the args change; `refetch()` calls again with a request of its own, also
+  when not `enabled`. A failure shows as a notice unless you pass `onError`.
 - `api.action(ref, args?, { conversationId?, signal?, keepalive? })` acts, once: a click that saves,
   closes, or labels something; `keepalive` lets a call sent on `pagehide` outlive the page. It returns a promise of
   the result; afterwards, `refetch()` what changed. A rejection (an `ActionError` with `extension`, `action`,

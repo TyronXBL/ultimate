@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
@@ -19,6 +19,8 @@ it('uses a 600-second default tripwire and leaves explicit timeouts unchanged', 
     .mockRejectedValue(new Error('Command timed out after 600 seconds'))
   const wrapper = codingTools({
     emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
+    projectRoot: tmpdir(),
+    skills: () => [],
   }).wraps!.find((wrap) => 'tool' in wrap && wrap.tool === 'bash')!
   if (!('tool' in wrapper)) throw new Error('Missing bash wrapper')
   const bash = wrapper.wrap({ ...createBashTool(), execute })
@@ -119,6 +121,8 @@ it('reads an image past the 2000 px limit shrunk to fit, keeping its aspect rati
     await writeFile(join(dir, 'wide.png'), png(3000, 30))
     const read = codingTools({
       emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
+      projectRoot: dir,
+      skills: () => [],
     }).tools!.find((tool) => tool.name === 'read')!
     const api = {
       env: new NodeExecutionEnv({ cwd: dir }),
@@ -131,6 +135,28 @@ it('reads an image past the 2000 px limit shrunk to fit, keeping its aspect rati
     ])
     expect(result.diagnostics?.[0].message).toContain(
       'Resized from 3000x30 to 2000x20. Multiply coordinates by 1.50',
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+it('names where a listed skill is when a read guessed its folder', async () => {
+  // Workers read ~/.ultimate/skills/test-audit/SKILL.md, a project skill that lives in .ultimate/skills/.
+  const dir = await mkdtemp(join(tmpdir(), 'ultimate-read-'))
+  try {
+    const filePath = join(dir, '.ultimate/skills/test-audit/SKILL.md')
+    await mkdir(join(dir, '.ultimate/skills/test-audit'), { recursive: true })
+    await writeFile(filePath, '# Test audit\n')
+    const read = codingTools({
+      emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
+      projectRoot: dir,
+      skills: () => [{ name: 'test-audit', filePath }] as ReturnType<ExtensionHost['skills']>,
+    }).tools!.find((tool) => tool.name === 'read')!
+    const api = { env: new NodeExecutionEnv({ cwd: dir }) } as unknown as ToolExecutionApi
+    const guessed = join(dir, 'home/skills/test-audit/SKILL.md')
+    await expect(read.execute({ path: guessed }, api, context)).rejects.toThrow(
+      `no such file or directory, open '${guessed}'. The skill "test-audit" is at ${filePath}.`,
     )
   } finally {
     await rm(dir, { recursive: true, force: true })
