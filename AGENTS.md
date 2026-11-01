@@ -4,64 +4,49 @@ Ultimate is a local coding agent with a web UI, built on Pi Durable (`@earendil-
 repository while it edits it: you are probably reading this as Ultimate, about to change yourself. Everything below
 tells you which change reloads how, so the conversation you are in keeps running.
 
-## How work is organised: a forest of conversation trees
+## How work is organised
 
-A project is a forest of conversation trees, like commit histories.
+A project is a forest of conversation trees, like commit histories. [docs/work.md](docs/work.md) has the whole
+picture, the UI included, for explaining Ultimate to a user; `extensions/lineage/README.md` has the mechanics.
 
-- **Roots** run no turns. Each keeps a project memory (decisions, facts, lessons by slug); a branch starts from the
-  root's memory index and recent landings. The root's read-only tally stays the browsable project context: branch
-  intents, latest conversation abstracts and landings with divergence and `#conversation/entry` breadcrumbs. The UI
-  calls a tally **context** and shows it as the read-only **History** page (the sidebar's project path opens it), with **Open in Zed** and **Back to
-  @ultimate**; the sidebar's Memory row shows the memory's estimated tokens (what a branch starts from) and opens the
-  Memory surface, and each root heads its tree with its last three events (landings, notes, branches, compactions).
-  Start a project with @ultimate: Continue on Get ready, or **Set up with @ultimate** on the Start here card that
-  @ultimate's conversation shows until onboarding has run. It walks the user through Ultimate, handles setup
-  cards, reads the project and writes its first memories with `remember`; the user's answer about the project
-  becomes instructions, kept verbatim as a memory. The tally then builds up from branches and landings. @ultimate maintains memory with
-  `remember` and the memory review (`extensions/lineage/README.md`); the user can compact a tally with ⌘K
-  Compact while it is shown. A project has one root: independent work goes into branches.
-  Roots and standing agents are never concluded or cleared, only compacted.
-- **A branch** is a feature, a fix, an experiment. @ultimate picks a root by reading its tally, then starts a
-  coordinator branch that starts from its memory brief (or, without memories, its tally) before its prompt. A branch is never a subagent.
-- **Talk to @ultimate in its conversation.** The user's standing agent starts and steers branches there.
-  The first sidebar row (on phones, the top-bar **@ultimate** button) opens it; its messages and questions to you appear in that transcript.
-  Conversations and roots are not created by hand.
-- **Branches ask you in their own conversation.** A coordinator sends its decisions to @ultimate, which weighs in
-  (its picks, or deciding itself on a hands-off goal); the branch then asks you with a card there. @ultimate's
-  conversation shows a pointer to it, and your answer reaches @ultimate as a note.
-- **Coordinators carry the work.** A branch is the conversation; the coordinator is the agent that runs it, so the UI
-  labels it `branch · coordinator`. A branch plans, decides and verifies; subagents are for bounded execution and
-  reconnaissance, and the lander is the final gate on main.
-- **Zoom out when you need to.** Read any root or sibling with codemode `ultimate.entries(id)` and
-  `ultimate.search()`; commits name the conversation that made them (`Ultimate-Conversation` trailer).
-- **Talk across the tree without waking anyone.** `note` leaves context in another conversation for its next turn;
-  `notify` tells you when another conversation finishes. Resuming a branch brings a catch-up of its tree's tally
-  (older updates collapse when needed), then new target commits, overlaps first.
+- **Roots** run no turns. Each keeps the project memory and a read-only tally of branches, abstracts and landings
+  (the History page). A project has one root; independent work goes into branches.
+- **A branch** is a feature, a fix, an experiment. @ultimate starts it from the root's memory brief, run by a
+  coordinator that plans, decides and verifies; subagents do bounded execution and reconnaissance, and the lander is
+  the final gate on main. A branch is never a subagent.
+- **Decisions** go from a coordinator to @ultimate, which weighs in; the branch then asks the user with a card in its
+  own conversation.
+- **Zoom out** with codemode `ultimate.entries(id)` and `ultimate.search()`; commits name the conversation that made
+  them (`Ultimate-Conversation` trailer). `note` leaves context in another conversation without waking it; `notify`
+  tells you when one finishes.
 - **State divergence.** Reports and `workspace submit` say how the result differs from the task as given: new
   agreements, a different approach or changed scope. Say "None" when it matches.
-- **Conclude** a conversation when its work is done; it stays readable and can be resumed. A branch whose submission
-  lands is concluded by the landing, unless work is still under way (a subagent, a reply it waits for, queued input),
-  and whoever started it wakes with the landing card. A failed submission wakes the branch to fix it and submit again.
+- **Conclude** a conversation when its work is done. A landing concludes its branch unless work is still under way;
+  a failed submission wakes the branch to fix it and submit again.
 - **UI polish lands when the user says so.** For small look-and-feel work (an animation, a loading state, spacing,
   a card), run preview rounds (the `ui-preview-round` skill) and do not `workspace submit` until the user has clicked
   around and approved it. Larger UI features and anything with behaviour behind it land as usual.
 - **Hands-off goals.** ⌘K Go hands-off… puts @ultimate on a goal while the user is away: it gives the go, decisions
-  and preview approvals in their place and records each with its reason (`extensions/goal/README.md`).
-
-`extensions/lineage/README.md` has the mechanics.
+  and preview approvals in their place (`extensions/goal/README.md`).
 
 ## Layers and how they reload
 
-| Path                          | What lives there                                                                                                                                                                                      | How a change goes live                                                                                                                                                                                 |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `extensions/<name>/web.tsx`   | UI of an extension: slots, panels, surfaces, tool and entry renderers, commands                                                                                                                       | Vite hot reload, instantly, without a page reload. A broken facet shows an error card; the rest keeps running.                                                                                         |
-| `extensions/<name>/server.ts` | Agent behaviour: system prompt, tools, hooks (Pi Durable extensions)                                                                                                                                  | Reinstalled on save. Running tool calls finish on the old code; the next call uses the new code.                                                                                                       |
-| `extensions/<name>/api.ts`    | Its contract for other extensions; `export const tier = 'core'` puts it in the always-on core tier, which depends only on the core tier, one way ([docs/extensions.md](docs/extensions.md#core-tier)) | With the facets that import it.                                                                                                                                                                        |
-| `lib/`                        | Pure helpers extensions share (exec, git, JSON and settings files, secret reads); no state, no extension imports                                                                                      | Like the extensions that import it: hot reload or reinstall on save.                                                                                                                                   |
-| `web/`                        | The web core: surface host with primitives, SDK (`web/src/sdk`), transcript, composer, palette                                                                                                        | Vite hot reload, instantly. Nothing else to do.                                                                                                                                                        |
-| `agents/`                     | Subagent definitions (Markdown with frontmatter)                                                                                                                                                      | Read at each use.                                                                                                                                                                                      |
-| `server/`, `shared/`          | Core plumbing: harness, storage, API, Vite hookup                                                                                                                                                     | Call the `restart` tool. A new process boots and type-checks next to the old one; if it fails you get the error and the old process keeps running. If it succeeds, the run resumes in the new process. |
-| `bin/`                        | The supervisor                                                                                                                                                                                        | Only a human restart (`pnpm start`) applies it. Keep it tiny and change it rarely.                                                                                                                     |
+- `extensions/<name>/web.tsx`: UI of an extension (slots, panels, surfaces, tool and entry renderers, commands). Vite
+  hot reload, instantly, without a page reload; a broken facet shows an error card, the rest keeps running.
+- `extensions/<name>/server.ts`: agent behaviour (system prompt, tools, hooks; Pi Durable extensions). Reinstalled on
+  save: running tool calls finish on the old code, the next call uses the new code.
+- `extensions/<name>/api.ts`: its contract for other extensions; `export const tier = 'core'` puts it in the
+  always-on core tier, which depends only on the core tier, one way
+  ([docs/extensions.md](docs/extensions.md#core-tier)). Goes live with the facets that import it.
+- `lib/`: pure helpers extensions share (exec, git, JSON and settings files, secret reads); no state, no extension
+  imports. Goes live like the extensions that import it.
+- `web/`: the web core (surface host with primitives, SDK in `web/src/sdk`, transcript, composer, palette). Vite hot
+  reload, instantly.
+- `agents/`: subagent definitions (Markdown with frontmatter), read at each use.
+- `server/`, `shared/`: core plumbing (harness, storage, API, Vite hookup). Call the `restart` tool: a new process
+  boots and type-checks next to the old one; if it fails you get the error and the old process keeps running, if it
+  succeeds the run resumes in the new process.
+- `bin/`: the supervisor. Only a human restart (`pnpm start`) applies it; keep it tiny and change it rarely.
 
 Put behaviour in `extensions/` rather than `server/` whenever you can: it reloads without a restart.
 A surface is a full-screen app the user switches to (header, ⌘K, `mod+1…9`); the conversation itself is the built-in
@@ -84,11 +69,11 @@ New UI is a new extension folder, not a change to `web/`: follow the `write-exte
 
 The top-level agent may commit verified work, land it and normally push the destination branch to `origin`
 (`HazAT/ultimate`), public or private, without asking. `workspace submit` runs checks and pushes. Subagents commit
-and report, never push. Preserve remote advancement with a
-non-destructive merge in an isolate, inspect it and rerun checks; stop for ambiguous conflicts, failed checks,
-security concerns or any force push/history rewrite. Never push secrets or unrelated unverified work.
-This permission does not cover other repositories, releases, publishing, deployments or GitHub issue/PR changes.
-See [integration details](docs/worktrees.md#standing-permission-to-push-this-repository) before pushing.
+and report, never push. Preserve remote advancement with a non-destructive merge in an isolate, inspect it and rerun
+checks; stop for ambiguous conflicts, failed checks, security concerns or any force push/history rewrite. Never push
+secrets or unrelated unverified work. This permission does not cover other repositories, releases, publishing,
+deployments or GitHub issue/PR changes. See [integration details](docs/worktrees.md#standing-permission-to-push-this-repository)
+before pushing.
 
 ## Conventions
 
@@ -98,19 +83,24 @@ See [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 - Public docs, READMEs, prompts, agent definitions, skills and code comments use generic names and examples ("the
   user", `my-app`, example addresses), never a real person's name, machine names, private repos or real IPs. LICENSE,
   upstream attributions and real repo URLs are exempt.
-- `pnpm check` enforces import boundaries; see `lint/ultimate.ts` and `vite.config.ts`. It also runs `pnpm deps`,
-  which prints the dependency graph between extensions (imports plus `need`/`want`) and fails on a cycle or on a
-  core-tier extension that depends on an optional one, and `knip`, which fails on unused files, exports and
+- `pnpm check` enforces import boundaries (`lint/ultimate.ts`, `vite.config.ts`). Its `pnpm deps` prints the
+  dependency graph between extensions (imports plus `need`/`want`) and fails on a cycle, a loose `@earendil-works/*`
+  pin or a core-tier extension that depends on an optional one; its `knip` fails on unused files, exports and
   dependencies: drop an `export` nothing imports, and add a new convention-loaded entry file to `knip.json`.
 - Plain TypeScript, ESM, Node 26 runs `.ts` directly: erasable syntax only (no enums, namespaces, or parameter
   properties), relative imports end in `.ts`.
 - Core server/web contracts live in `shared/protocol.ts`; extension-local types live with their extension.
-- Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental. `pnpm deps` fails on a loose pin.
-- Checks: `pnpm check` (format, lint, types) and the tests covering your change must pass before a commit; the lander runs every suite. Run `pnpm fix` instead of `pnpm check` while you work: it formats first, so formatting never fails a check run. There is no prettier here: `vp fmt` (Vite+) formats and `pnpm fix` runs it; never run `pnpm exec prettier` or `npx prettier`, which downloads a prettier with the wrong config. Keep `pnpm test` fast: no real-time waits, no spawned processes (those go to `test/e2e`), and fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this with `ultimate/no-test-timeout` and `ultimate/no-real-wait-in-fast-tests` (`test/e2e` is exempt); justified exceptions need a `fast-test-reason:` comment. Use the real-deadline `until` from `test/helpers.ts` (`ultimate/no-local-test-polling`). `ultimate/no-retired-ui` keeps retired UI labels and surfaces out of extensions and web code.
-- A scratch checkout of your own (a baseline to compare against, a throwaway experiment) gets `git worktree add` and
-  its own `pnpm install --frozen-lockfile --offline` (a few seconds: packages hardlink from the store), as Ultimate's
-  worktree setup does. Never symlink `node_modules` from another checkout: pnpm records the checkout path it installed
-  for, so every `pnpm <script>` there tries to purge and reinstall the shared folder and aborts.
+- Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental.
+- Checks: `pnpm check` (format, lint, types) and the tests covering your change must pass before a commit; the lander
+  runs every suite. Run `pnpm fix` while you work: it formats with `vp fmt` (Vite+) first, so formatting never fails a
+  check run. There is no prettier here: never run `pnpm exec prettier` or `npx prettier`, which downloads a prettier
+  with the wrong config. Keep `pnpm test` fast: no real-time waits, no spawned processes (those go to `test/e2e`), and
+  fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this outside `test/e2e`
+  (justified exceptions need a `fast-test-reason:` comment); poll with the real-deadline `until` from
+  `test/helpers.ts`.
+- A scratch checkout of your own (a baseline, a throwaway experiment) gets `git worktree add` and its own
+  `pnpm install --frozen-lockfile --offline` (seconds: packages hardlink from the store). Never symlink `node_modules`
+  from another checkout: pnpm records the checkout it installed for and aborts trying to reinstall the shared folder.
 - Every user-visible result is designed, not dumped: status and outcomes (a subagent report, a landing, a failure) get a
   renderer that matches the existing cards (see `extensions/subagents/messages.tsx`, `extensions/workspaces/log.tsx`),
   never plain Markdown in a message. Look at the running app and recent screenshots first, write the expected look into
@@ -121,9 +111,8 @@ See [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 Rules about how agents behave live in prompts and agent definitions, not in code. Code checks protect only safety and
 invalid states: data loss, security, impossible states. Lint enforces only rules the user explicitly approved. Where a
 convention can be checked cheaply and with little noise, propose a check for it; once the user approves the rule,
-`pnpm check` enforces it mechanically instead of a prompt asking for it.
-
-A swallowed error needs a reason comment explaining why ignoring it is correct; `ultimate/no-silent-catch` enforces this for empty catch blocks and empty or `undefined`-returning `.catch` handlers.
+`pnpm check` enforces it mechanically instead of a prompt asking for it. A swallowed error needs a reason comment
+explaining why ignoring it is correct (`ultimate/no-silent-catch`).
 
 Reject slop and jargon: keep code and explanations direct, minimal, and grounded in evidence. No backward-compatibility
 shims or speculative fallbacks; move forward and update callers. Commit tests for a feature's core path and one

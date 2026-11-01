@@ -1194,7 +1194,17 @@ describe('subagents', () => {
             (message) =>
               message.role === 'system' && Object.hasOwn(message.sections ?? {}, 'subagent_state'),
           ),
-      ).toMatchObject({ sections: { subagent_state: null } })
+      ).toMatchObject({
+        sections: { subagent_state: '<subagent_state>\nNo subagents running.\n</subagent_state>' },
+      })
+      // A section appearing mid-conversation reordered the prompt, which re-added every section after removing them.
+      expect(
+        f.requests
+          .at(-1)
+          ?.messages.some(
+            (message) => message.role === 'system' && message.sections?.subagents === null,
+          ),
+      ).toBe(false)
       await call(f.opened, { action: 'wait', id })
       expect(await reports(f.opened)).toHaveLength(1)
     },

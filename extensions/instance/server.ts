@@ -550,7 +550,8 @@ export default function instanceExtension(
   return defineExtension({
     name: 'instance',
     sections: [
-      section('test_core_changes', async () => {
+      section('test_core_changes', async ({ agent }) => {
+        if (!agent.tools.some((tool) => tool.name === 'instance')) return undefined
         const model = await previewModelSetting(host)
         const runs = model
           ? `every agent on ${model} (the \`instance.model\` setting)`

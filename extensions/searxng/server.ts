@@ -488,7 +488,13 @@ export default function searxng(host: ExtensionHost) {
 
   return defineExtension({
     name: 'searxng',
-    sections: [section('web_tools', () => guidance)],
+    sections: [
+      section('web_tools', (input) =>
+        input.agent.tools.some((tool) => tool.name === 'web_search' || tool.name === 'web_fetch')
+          ? guidance
+          : undefined,
+      ),
+    ],
     tools: [
       defineTool({
         name: 'web_search',
