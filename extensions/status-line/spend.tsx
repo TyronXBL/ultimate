@@ -9,31 +9,48 @@ import {
   useConversations,
   useNow,
   useUltimate,
+  useViewport,
 } from '@/sdk'
+import { add, empty } from './context.ts'
 import { TreesAction } from './refs.ts'
 import type { Spend, TreeSpend } from './refs.ts'
 
 let trees: Record<string, TreeSpend> | undefined
 let readAt = 0
 let reading = false
+let again = false
+/** The running conversations the last read was asked for, shared by every chip. */
+let seen: string | undefined
 const listeners = new Set<() => void>()
 
-/** Read every tree's spend again unless a read is under way or one finished within `fresh` ms; one for every chip. */
-function read(fresh: number) {
-  if (reading || Date.now() - readAt < fresh) return
+/**
+ * Read every tree's spend, one read for every chip. A call during a read reads once more after it, so a run that ends
+ * while a read is under way is never left out.
+ */
+function read() {
+  if (reading) {
+    again = true
+    return
+  }
   reading = true
   api
     .action(TreesAction)
     .then((next) => {
-      if (!next) return
-      trees = next
-      for (const listener of listeners) listener()
+      // Null while the server is still reading every conversation's usage.
+      if (!next) again = true
+      else {
+        trees = next
+        for (const listener of listeners) listener()
+      }
     })
     // The last numbers stay; the next run start or end reads again.
     .catch((error: unknown) => console.warn('Spend', error))
     .finally(() => {
       reading = false
       readAt = Date.now()
+      if (!again) return
+      again = false
+      setTimeout(read, trees ? 0 : 2000)
     })
 }
 
@@ -46,16 +63,22 @@ const subscribe = (listener: () => void) => {
  * Conversation `id`'s tree spend, read again when any conversation starts or ends a run, and every 15 seconds while
  * one runs, since every model call of a run adds to it.
  */
-function useTreeSpend(id: number | undefined) {
+function useTreeSpend(id: number) {
   const running = useConversations()
     .filter((conversation) => conversation.busy)
     .map((conversation) => conversation.id)
     .join(',')
   const now = useNow(15_000, running !== '')
-  useEffect(() => read(1000), [running])
-  useEffect(() => read(10_000), [now])
+  useEffect(() => {
+    if (running === seen && trees) return
+    seen = running
+    read()
+  }, [running])
+  useEffect(() => {
+    if (Date.now() - readAt >= 10_000) read()
+  }, [now])
   const all = useSyncExternalStore(subscribe, () => trees)
-  return id === undefined ? undefined : all?.[String(id)]
+  return all?.[String(id)]
 }
 
 const tokensOf = (spend: Spend) => spend.input + spend.output + spend.cacheRead + spend.cacheWrite
@@ -63,15 +86,6 @@ const dollars = (cost: number) => `$${cost < 10 ? cost.toFixed(2) : cost.toFixed
 /** Dollars, or tokens where no model of it has a price. */
 const amount = (spend: Spend) =>
   spend.cost > 0 ? dollars(spend.cost) : `${formatTokens(tokensOf(spend))} tok`
-
-function add(sum: Spend, spend: Spend) {
-  sum.input += spend.input
-  sum.output += spend.output
-  sum.cacheRead += spend.cacheRead
-  sum.cacheWrite += spend.cacheWrite
-  sum.cost += spend.cost
-}
-const empty = (): Spend => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
 
 /** The tree's models grouped by provider (`tools` for tools), the costliest first. */
 function byProvider(tree: TreeSpend) {
@@ -115,9 +129,9 @@ function Line({ label, spend, strong }: { label: string; spend: Spend; strong?: 
 }
 
 /** Conversation `id`'s chip, a hook: undefined until its tree has spent anything. */
-export function useSpendChip(id: number | undefined, className?: string) {
+export function useSpendChip(id: number, className?: string) {
   const tree = useTreeSpend(id)
-  return id !== undefined && tree && <SpendChip className={className} id={id} tree={tree} />
+  return tree && <SpendChip className={className} id={id} tree={tree} />
 }
 
 /** The chip: the tree's dollars at API prices, opening its breakdown. */
@@ -179,11 +193,16 @@ function SpendChip({ id, tree, className }: { id: number; tree: TreeSpend; class
  */
 export function HeaderSpend() {
   const id = useConversation((conversation) => conversation.id)
-  const agent = useUltimate().surface === 'agent'
+  const { surface } = useUltimate()
+  const phone = useViewport() === 'phone'
+  return surface === 'agent' && !phone && id !== undefined ? <HeaderChip id={id} /> : null
+}
+
+function HeaderChip({ id }: { id: number }) {
   return (
     useSpendChip(
-      agent ? id : undefined,
-      'rounded px-2 py-1 font-mono text-[11px] text-muted-foreground hover:bg-muted hover:no-underline max-md:hidden',
+      id,
+      'rounded px-2 py-1 font-mono text-[11px] text-muted-foreground hover:bg-muted hover:no-underline',
     ) ?? null
   )
 }
