@@ -310,6 +310,22 @@ export async function previewWorkspace(
   return undefined
 }
 
+/**
+ * The workspace of conversation `id` once its checkout is usable: waits for a preparing one (a subagent started just
+ * before), and otherwise throws why it is not, after the service retried a failed setup or recreated a released one.
+ */
+export async function readyWorkspace(
+  workspaces: Pick<WorkspaceService, 'get' | 'ready' | 'unavailable'>,
+  id: ConversationId,
+  context: Context,
+) {
+  if ((await workspaces.get(id, context))?.state === 'preparing')
+    await workspaces.ready(id, context)
+  const reason = await workspaces.unavailable(id, context)
+  if (reason) throw new Error(`Preview needs a ready workspace. ${reason}`)
+  return (await workspaces.get(id, context))!
+}
+
 export default function instanceExtension(
   host: Pick<
     ExtensionHost,
@@ -503,15 +519,10 @@ export default function instanceExtension(
       workspace = found?.workspace
       if (found) workspaceConversationId = found.conversationId
     } else workspace = await workspaces.get(conversationId, context)
-    if (workspace?.state === 'preparing') {
-      await workspaces.ready(workspaceConversationId, context)
-      workspace = await workspaces.get(workspaceConversationId, context)
-    }
     if (args.subagent !== undefined && !workspace)
       throw new Error('Subagent must have an active worktree isolate')
     if (workspace) {
-      if (workspace.state !== 'ready')
-        throw new Error('Preview requires an active, ready workspace')
+      workspace = await readyWorkspace(workspaces, workspaceConversationId, context)
       project = workspace.path
       // In another project the workspace holds that project, so the host's Ultimate runs it.
       if (ownSource) {

@@ -333,6 +333,23 @@ it.concurrent('requires nonempty divergence for submit before queuing anything',
   ).toHaveLength(0)
 })
 
+it.concurrent('submit on a detached HEAD names the commit and how to get back onto the branch', async () => {
+  // A coordinator committed on a detached HEAD; submit used to fail with git's raw symbolic-ref error.
+  const f = await lander({})
+  const id = await f.create()
+  await f.service.ready(id, context)
+  const workspace = (await f.service.get(id, context))!
+  await git(workspace.path, 'checkout', '-q', '--detach')
+  const tip = await commit(workspace.path)
+  const result = await f.call(id, 'workspace', { action: 'submit', divergence: 'None' })
+  expect(JSON.stringify(result)).toContain(
+    `Workspace HEAD is detached at ${tip.slice(0, 7)}, which contains ${workspace.branch}; run \`git checkout -B ${workspace.branch}\``,
+  )
+  expect(
+    (await f.opened.harness.snapshot(Workspaces, ROOT_CONVERSATION_ID, context))!.queue,
+  ).toHaveLength(0)
+})
+
 it.concurrent('refuses dirty workspaces, overlapping dirty targets, changed branches and diverged targets', async () => {
   const f = await fixture()
   const id = await f.create()

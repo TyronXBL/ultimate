@@ -16,6 +16,11 @@ export type WorkspaceService = {
   get: Implementation['get']
   /** Wait for a preparing checkout to finish; failed preparation remains failed. */
   ready: Implementation['ready']
+  /**
+   * Why conversation `id` cannot use its worktree now, or undefined when it can; retries a failed setup and recreates a
+   * released checkout first.
+   */
+  unavailable: Implementation['unavailable']
   /** Give conversation `id` a new worktree of `cwd`'s repository inside `tx`; throws when `cwd` cannot be isolated. */
   create: Implementation['create']
   /** Fast-forward the worktree of `id`'s owner to the worktree tip of subagent `id`; returns what landed. */
