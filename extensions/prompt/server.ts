@@ -343,9 +343,15 @@ export default function prompt(host: ExtensionHost) {
           ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name.`
           : undefined
       }),
-      section('building_blocks', () => {
+      section('building_blocks', (input) => {
+        // Enabling one is a settings edit, so a read-only agent is not told about them.
+        const writes = (input.agent.tools ?? []).some(
+          (tool) => tool.name === 'edit' || tool.name === 'write',
+        )
+        if (!writes) return undefined
         const off = host.extensions().filter((extension) => !extension.enabled)
-        if (!off.length) return undefined
+        // Always rendered: a section that appears mid-conversation reorders the prompt, which re-adds it whole.
+        if (!off.length) return 'Every building block is on.'
         return [
           `Available but off building blocks live in ${host.ultimateRoot}/extensions/:`,
           ...off.map((extension) => {
@@ -355,8 +361,7 @@ export default function prompt(host: ExtensionHost) {
               ?.replace(/\s+/g, ' ')
             return `- ${extension.name}: ${sentence ?? ''}`
           }),
-          'Enable names with "extensions": { "enable": [...] } in ~/.ultimate/settings.json (this machine) or <project>/.ultimate/settings.json (the host project). Changes apply live with no restart.',
-          `The running host uses ${host.projectRoot}/.ultimate/settings.json and ${host.projectRoot}/.ultimate/extensions/; editing these in a separate work checkout does not change the host's configuration or hot-reload its extensions.`,
+          `Enable names with "extensions": { "enable": [...] } in ~/.ultimate/settings.json (this machine) or ${host.projectRoot}/.ultimate/settings.json (the host project; a copy in a work checkout does not change the running host). Changes apply live with no restart.`,
         ].join('\n')
       }),
       section('environment', (input) => {

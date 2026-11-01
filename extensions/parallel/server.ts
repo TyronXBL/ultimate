@@ -55,7 +55,13 @@ export default function parallel(host: ExtensionHost) {
   }
   return defineExtension({
     name: 'parallel',
-    sections: [section('web_tools', () => guidance)],
+    sections: [
+      section('web_tools', ({ agent }) =>
+        agent.tools.some((tool) => tool.name === 'web_search' || tool.name === 'web_fetch')
+          ? guidance
+          : undefined,
+      ),
+    ],
     tools: [
       defineTool({
         name: 'web_search',

@@ -50,7 +50,7 @@ Paste this into Claude Code (or any agent) to get set up:
 Set up Ultimate (https://github.com/HazAT/ultimate) on this machine and get me to my first prompt.
 
 Read these first; they are the source of truth, so follow them and don't invent steps: README.md (sections
-"Start", "Recommended models" and "In your project"), AGENTS.md ("How work is organised"), docs/running.md,
+"Start", "Recommended models" and "In your project"), docs/work.md (how work is organised), docs/running.md,
 and extensions/claude-code/README.md.
 
 Then:
@@ -64,7 +64,7 @@ Then:
 4. Start it: `pnpm start` runs Ultimate on its own repository, `ultimate` inside one of my projects runs it there.
    Tell me to open the URL it prints (http://127.0.0.1:4747 for the first one), where Get ready asks for a login
    and a model the first time.
-5. In a few sentences, using AGENTS.md "How work is organised", explain what I'll see: @ultimate in the first
+5. In a few sentences, using docs/work.md, explain what I'll see: @ultimate in the first
    sidebar row, the command palette, and branches doing the work. Then suggest a first prompt, such as "Walk me through how you
    work" or a small real task in my project.
 

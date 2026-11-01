@@ -834,6 +834,7 @@ export default function subagents(
     ],
     sections: [
       section('subagent_state', async (input, context) => {
+        if (!input.agent.tools.some((tool) => tool.name === 'subagent')) return undefined
         const state = await input.read.snapshot(Subagents, input.conversationId, context)
         const running: string[] = []
         const pending = new Set<ConversationId>()
@@ -852,7 +853,9 @@ export default function subagents(
             running.push(label)
           else if (pending.has(agent.conversationId)) queued.push(label)
         }
-        if (!running.length && !queued.length) return undefined
+        // Always rendered for an agent that delegates: a section that appears mid-conversation reorders the prompt,
+        // which re-adds it whole, and the copy stays in context.
+        if (!running.length && !queued.length) return 'No subagents running.'
         return [
           ...(running.length ? [`Still running subagents: ${running.join(', ')}.`] : []),
           ...(queued.length ? [`Pending subagent inputs: ${queued.join(', ')}.`] : []),
