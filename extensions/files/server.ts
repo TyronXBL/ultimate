@@ -29,15 +29,18 @@ async function scopes(host: ExtensionHost): Promise<Scope[]> {
     .toSorted(([a], [b]) => Number(b) - Number(a))
   const titles = new Map(host.conversations().map((item) => [item.id, item.title]))
   const removed = items.filter(([, item]) => item.state === 'removed')
-  // Branches with commits the checkout's branch lacks, by name, with their last commit's time. Asked only when a
-  // worktree was released: before the first commit there is no HEAD to compare with.
+  // Branches with commits the checkout's branch lacks, by name, with their last commit's time, asked only when a
+  // worktree was released. A checkout on a branch without commits (an orphan) lacks every branch's commits.
+  const head =
+    removed.length > 0 &&
+    (await git(host.projectRoot, 'rev-parse', '--verify', '--quiet', 'HEAD').catch(() => ''))
   const unlanded = new Map(
     (removed.length === 0
       ? ''
       : await git(
           host.projectRoot,
           'for-each-ref',
-          '--no-merged=HEAD',
+          ...(head ? [`--no-merged=${head}`] : []),
           '--format=%(committerdate:unix) %(refname)',
           'refs/heads/',
         )
