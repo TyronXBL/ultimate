@@ -66,6 +66,35 @@ const reporter = defineTask<{ delivered: boolean }, { phase: 'deliver' }, null>(
   abort: (_task, runtime, caller) =>
     runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
 })
+/**
+ * Stands in for the branch's own `background` command: it runs until the test releases it, then stays in its `deliver`
+ * phase, where the real job has submitted its result but not ended yet, until the test releases that too.
+ */
+const jobDone = Promise.withResolvers<void>()
+const jobDelivered = Promise.withResolvers<void>()
+const job = defineTask<null, { phase: 'run' } | { phase: 'deliver' }, null>({
+  name: 'background.run',
+  version: 1,
+  initial: () => ({ phase: 'run' }),
+  phases: {
+    run: async (_task, runtime, caller) => {
+      await awaitWithContext(jobDone.promise, caller)
+      await runtime.commit(
+        () => ({ status: 'running', checkpoint: { phase: 'deliver' as const } }),
+        caller,
+      )
+    },
+    deliver: async (_task, runtime, caller) => {
+      await awaitWithContext(jobDelivered.promise, caller)
+      await runtime.commit(
+        () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
+        caller,
+      )
+    },
+  },
+  abort: (_task, runtime, caller) =>
+    runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
+})
 const anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'messages-test.anchor',
   version: 1,
@@ -220,7 +249,7 @@ async function fixture(
   prepared.registry.install(
     defineExtension({
       name: 'test-hold',
-      tasks: [anchor, reporter],
+      tasks: [anchor, reporter, job],
       tools: [
         defineTool({
           name: 'hold',
@@ -1581,6 +1610,43 @@ it("leaves a branch's answer as a note while a subagent's report is still on its
   await until(async () => (await b.from()).length === 2)
   expect((await b.from())[1].report).toBeUndefined()
   pendingReport.resolve()
+})
+it("leaves a branch's answer as a note while its own background command runs, and reports once it delivered", async () => {
+  const f = await fixture()
+  const b = await branched(f)
+  await f.opened.harness.commit(
+    (tx) =>
+      tx.createTask(job, null, {
+        conversationId: b.id as ConversationId,
+        ownership: { kind: 'conversation' },
+        background: true,
+      }),
+    context,
+  )
+  await b.later('Waiting on the tests')
+  await until(async () => (await b.from()).length === 2)
+  const waiting = (await b.from())[1]
+  expect(waiting.report).toBeUndefined()
+  const view = await f.opened.root.viewState(context)
+  const note = view.value.entries.find(
+    (e) => e.kind === 'board.message' && (e.data as { id?: number })?.id === waiting.id,
+  )
+  view.dispose()
+  expect(note?.data).toMatchObject({ delivery: 'note' })
+  expect(note?.input).toBeUndefined()
+  // The job has submitted its result and not ended yet: the branch's answer to that result is its report.
+  jobDone.resolve()
+  await until(async () =>
+    (await f.opened.harness.inspect(context)).tasks.some(
+      (t) =>
+        t.record.kind === job.definition.name &&
+        (t.record.state as { checkpoint?: { phase?: string } }).checkpoint?.phase === 'deliver',
+    ),
+  )
+  await b.later('Tests pass')
+  await until(async () => (await b.from()).length === 3)
+  expect((await b.from())[2]).toMatchObject({ text: 'Answer: Tests pass', report: true })
+  jobDelivered.resolve()
 })
 it("places a branch's one-way message to its starter as a note", async () => {
   const f = await fixture()
