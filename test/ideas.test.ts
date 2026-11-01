@@ -10,7 +10,10 @@ const ULTIMATE = 5
  * running them submits.
  */
 function fakeHost() {
-  const docs = new Map<string, object>()
+  const docs = new Map<string, object>([
+    ['ultimate.metadata:40', { title: 'Phone board' }],
+    ['ultimate.metadata:41', { title: 'Mutation gaps' }],
+  ])
   const tasks: { task: Task<unknown, { phase: string }, unknown, object>; input: unknown }[] = []
   const entries: { id: number; conversation: number; kind: string; data: unknown }[] = []
   const submitted: {
@@ -53,6 +56,7 @@ function fakeHost() {
     }),
   }
   const host = {
+    metadata: { definition: { kind: 'ultimate.metadata', initial: () => ({}) } },
     doc: () => undefined,
     need: () => ({ standing: async () => ULTIMATE }),
     harness: () => runtime,
@@ -115,7 +119,7 @@ it('launches an idea into one input for @ultimate, which links the branch it sta
     )
   await expect(run(9, { action: 'link', id: 1, branch: 40 })).rejects.toThrow('Only @ultimate')
   expect(await run(ULTIMATE, { action: 'link', id: 1, branch: 40 })).toEqual({
-    output: [{ type: 'text', text: 'Linked idea 1 to #40' }],
+    output: [{ type: 'text', text: 'Linked idea 1 "Phone board" to #40 "Phone board"' }],
   })
   expect(await run(ULTIMATE, { action: 'list' })).toEqual({
     output: [{ type: 'text', text: '- 1 [#40] Phone board (ui)' }],
@@ -125,4 +129,35 @@ it('launches an idea into one input for @ultimate, which links the branch it sta
     size: 'assess',
     branch: 40,
   })
+})
+
+const ideaTool = (host: ExtensionHost, tx: Tx) => {
+  const tool = ideasExtension(host).tools!.find((candidate) => candidate.name === 'idea')!
+  return async (args: object) =>
+    (
+      (await tool.execute(
+        args as never,
+        { conversationId: ULTIMATE, commit: (fn: (tx: Tx) => unknown) => fn(tx) } as never,
+        undefined as never,
+      )) as { output: { text: string }[] }
+    ).output[0].text
+}
+
+it('relinks two launched ideas whose branches were swapped', async () => {
+  const { host, tx } = fakeHost()
+  const run = ideaTool(host, tx)
+  for (const title of ['Phone board', 'Mutation gaps']) {
+    const { id } = await call(host, 'add', { title })
+    await call(host, 'launch', { id, size: 'build' })
+  }
+  await run({ action: 'link', id: 1, branch: 41 })
+  await run({ action: 'link', id: 2, branch: 40 })
+
+  expect(await run({ action: 'link', id: 1, branch: 40 })).toBe(
+    'Linked idea 1 "Phone board" to #40 "Phone board"\nIdea 2 "Mutation gaps" no longer has a branch.',
+  )
+  expect(await run({ action: 'link', id: 2, branch: 41 })).toBe(
+    'Linked idea 2 "Mutation gaps" to #41 "Mutation gaps"',
+  )
+  expect(await run({ action: 'list' })).toBe('- 1 [#40] Phone board\n- 2 [#41] Mutation gaps')
 })

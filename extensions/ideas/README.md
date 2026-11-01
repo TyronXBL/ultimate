@@ -68,6 +68,9 @@ changed. The entry itself renders as nothing in conversation 1's transcript, the
 
 `idea {action: 'add', title, notes?, tags?, from?} | {action: 'link', id, branch} | {action: 'list'}` belongs to
 @ultimate: it is deferred and named in `agents/ultimate.md`, and any other caller is refused. `add` keeps an idea a
-branch, dream or survey proposed for later; `link` records the branch it started for a launched idea; `list` gives one
+branch, dream or survey proposed for later; `link` records the branch it started for a launched idea, replacing a link
+set before. A branch belongs to one idea, so linking it to another unlinks the first (back to launching): swapping two
+links takes two calls, in either order. Its result names the idea's and the branch's titles, so a wrong pairing shows
+at once. `list` gives one
 line per idea, `- <id> [idea | launching | parked | #<branch>] <title> (<tags>)`. A coordinator that wants an idea on
 the board asks @ultimate.

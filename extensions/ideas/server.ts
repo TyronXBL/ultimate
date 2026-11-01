@@ -261,19 +261,24 @@ export async function launch(
   return copy(idea)
 }
 
+/**
+ * Link launched idea `id` to `branch`, replacing its link. A branch belongs to one idea, so taking it from another
+ * idea unlinks that one (returned as `moved`): two calls fix a swap, in either order.
+ */
 export async function link(tx: Tx, id: unknown, branch: unknown) {
   if (typeof branch !== 'number' || !Number.isSafeInteger(branch) || branch < 1)
     throw new Error('branch must be a conversation id')
   if (!(await tx.conversation(branch as ConversationId)))
     throw new Error(`No conversation #${branch}`)
-  const doc = await board(tx)
-  const other = doc.items.find((item) => item.id !== id && item.launch?.branch === branch)
-  if (other) throw new Error(`#${branch} is already idea ${other.id}'s branch`)
   const idea = await find(tx, id)
   if (!idea.launch) throw new Error(`Idea ${idea.id} was not launched`)
+  const other = (await board(tx)).items.find(
+    (item) => item.id !== idea.id && item.launch?.branch === branch,
+  )
+  if (other) delete other.launch!.branch
   // A park the user chose meanwhile stays: the board shows the branch under Parked.
   idea.launch.branch = branch
-  return copy(idea)
+  return { idea: copy(idea), ...(other ? { moved: copy(other) } : {}) }
 }
 
 const SIZES: Record<LaunchSize, string> = {
@@ -353,7 +358,7 @@ export default function ideasExtension(host: ExtensionHost) {
         name: 'idea',
         deferred: true,
         description:
-          "The user's idea board: add {title, notes?, tags?, from?} an idea a branch, dream or survey proposed for later (from: its #<conversation>/<entry>); link {id, branch} the branch you started for a launched idea; list. Ideas are the user's backlog of work to launch, not open loops: those are to-dos.",
+          "The user's idea board: add {title, notes?, tags?, from?} an idea a branch, dream or survey proposed for later (from: its #<conversation>/<entry>); link {id, branch} the branch you started for a launched idea, replacing its link (a branch belongs to one idea, so linking it elsewhere unlinks the other: check both titles in the result); list. Ideas are the user's backlog of work to launch, not open loops: those are to-dos.",
         parameters: Type.Object({
           action: Type.Union([Type.Literal('add'), Type.Literal('link'), Type.Literal('list')]),
           title: Type.Optional(Type.String()),
@@ -378,8 +383,13 @@ export default function ideasExtension(host: ExtensionHost) {
               return `Added idea ${idea.id}: ${idea.title}`
             }
             if (args.action === 'link') {
-              const idea = await link(tx, args.id, args.branch)
-              return `Linked idea ${idea.id} to #${args.branch}`
+              const { idea, moved } = await link(tx, args.id, args.branch)
+              const branch = idea.launch!.branch!
+              const named = (await tx.doc(host.metadata, branch as ConversationId)).title
+              return [
+                `Linked idea ${idea.id} "${idea.title}" to #${branch}${named ? ` "${named}"` : ''}`,
+                ...(moved ? [`Idea ${moved.id} "${moved.title}" no longer has a branch.`] : []),
+              ].join('\n')
             }
             return listText((await board(tx)).items) ?? 'The idea board is empty.'
           }, ctx)
