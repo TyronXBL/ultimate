@@ -348,8 +348,10 @@ export default function prompt(host: ExtensionHost) {
         const writes = (input.agent.tools ?? []).some(
           (tool) => tool.name === 'edit' || tool.name === 'write',
         )
+        if (!writes) return undefined
         const off = host.extensions().filter((extension) => !extension.enabled)
-        if (!writes || !off.length) return undefined
+        // Always rendered: a section that appears mid-conversation reorders the prompt, which re-adds it whole.
+        if (!off.length) return 'Every building block is on.'
         return [
           `Available but off building blocks live in ${host.ultimateRoot}/extensions/:`,
           ...off.map((extension) => {

@@ -10,7 +10,8 @@ A project is a forest of conversation trees, like commit histories. [docs/work.m
 picture, the UI included, for explaining Ultimate to a user; `extensions/lineage/README.md` has the mechanics.
 
 - **Roots** run no turns. Each keeps the project memory and a read-only tally of branches, abstracts and landings
-  (the History page). A project has one root; independent work goes into branches.
+  (the History page). A project has one root; independent work goes into branches. Roots and standing agents are
+  never concluded or cleared, only compacted.
 - **A branch** is a feature, a fix, an experiment. @ultimate starts it from the root's memory brief, run by a
   coordinator that plans, decides and verifies; subagents do bounded execution and reconnaissance, and the lander is
   the final gate on main. A branch is never a subagent.
@@ -21,7 +22,7 @@ picture, the UI included, for explaining Ultimate to a user; `extensions/lineage
   tells you when one finishes.
 - **State divergence.** Reports and `workspace submit` say how the result differs from the task as given: new
   agreements, a different approach or changed scope. Say "None" when it matches.
-- **Conclude** a conversation when its work is done. A landing concludes its branch unless work is still under way;
+- **Conclude** a conversation when its work is done; it stays readable and can be resumed. A landing concludes its branch unless work is still under way;
   a failed submission wakes the branch to fix it and submit again.
 - **UI polish lands when the user says so.** For small look-and-feel work (an animation, a loading state, spacing,
   a card), run preview rounds (the `ui-preview-round` skill) and do not `workspace submit` until the user has clicked
