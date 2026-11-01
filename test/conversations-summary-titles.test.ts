@@ -1,3 +1,4 @@
+// First: helpers mocks the faux provider's token pacing, which must apply before the server modules load.
 import { post, until } from './helpers.ts'
 import { Type } from '@earendil-works/pi-ai'
 import type { ConversationId } from '@earendil-works/pi-durable'

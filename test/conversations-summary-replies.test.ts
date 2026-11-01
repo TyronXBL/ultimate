@@ -1,3 +1,4 @@
+// First: helpers mocks the faux provider's token pacing, which must apply before the server modules load.
 import { until } from './helpers.ts'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import { Subagents } from '../extensions/subagents/api.ts'
