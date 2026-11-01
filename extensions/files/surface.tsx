@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import {
   cn,
   errorMessage,
+  formatAgo,
   formatBytes,
   Header,
   StatusLine,
@@ -238,6 +239,9 @@ export default function FilesViewer() {
     if (target !== undefined && (failed || (file && file.kind !== 'text'))) reachedTarget()
   }, [target, failed, file])
   const label = scopeLabel(scopes.data, conversation)
+  const concluded = scopes.data?.find(
+    (item) => item.conversation === conversation && item.concluded,
+  )
   const pick = (next: string) => {
     setSheet(false)
     setShown({ ...scope, path: next })
@@ -408,6 +412,13 @@ export default function FilesViewer() {
           // Each file opens at its top, not where the last one was scrolled to.
           key={`${conversation ?? ''}:${path ?? ''}`}
         >
+          {concluded?.concluded && (
+            <p className="shrink-0 border-b border-border/70 bg-muted/40 px-4 py-1.5 font-mono text-[11.5px] text-muted-foreground">
+              Last commit on {concluded.branch},{' '}
+              {formatAgo(concluded.concluded, Date.now(), { ago: true })}: the branch concluded
+              without landing.
+            </p>
+          )}
           {file?.kind === 'text' && file.truncated && (
             <p className="shrink-0 border-b border-border/70 bg-warning/10 px-4 py-1.5 font-mono text-[11.5px] text-warning">
               Truncated at 2 MB: showing the start of {formatBytes(file.size)}.

@@ -8,10 +8,13 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from '@/sdk'
+import { cn, formatAgo } from '@/sdk'
 import type { FileScope } from './refs.ts'
 
-/** The scope on screen as a button; it lists the project checkout and every ready worktree to switch to. */
+/**
+ * The scope on screen as a button; it lists the project checkout and every ready worktree to switch to, then the
+ * branches that concluded without landing.
+ */
 export function ScopePicker({
   scopes,
   current,
@@ -37,6 +40,13 @@ export function ScopePicker({
         text.toLowerCase().includes(needle),
       ),
   )
+  const groups = [
+    { heading: undefined, items: shown.filter((item) => item.concluded === undefined) },
+    {
+      heading: 'Concluded, not landed',
+      items: shown.filter((item) => item.concluded !== undefined),
+    },
+  ].filter((group) => group.items.length > 0)
   const choose = (conversation: number | undefined) => {
     onOpenChange(false)
     setQuery('')
@@ -50,7 +60,7 @@ export function ScopePicker({
             'flex h-7 min-w-0 shrink cursor-pointer items-center gap-1.5 rounded-md border border-border/70 px-2 font-mono text-[12px] hover:bg-accent/60',
             compact && 'h-8 shrink-0',
           )}
-          title={`Reading ${current === undefined ? (scope?.branch ?? 'the project checkout') : `#${current}`}: choose the project checkout or a branch’s worktree`}
+          title={`Reading ${current === undefined ? (scope?.branch ?? 'the project checkout') : `#${current}`}${scope?.concluded ? ' at its last commit' : ''}: choose the project checkout, a branch’s worktree or a concluded branch`}
           type="button"
         >
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -93,9 +103,9 @@ export function ScopePicker({
             {!scopes && (
               <p className="px-3 py-3 font-mono text-[11.5px] text-muted-foreground">loading…</p>
             )}
-            {shown.length > 0 && (
-              <CommandGroup>
-                {shown.map((item) => (
+            {groups.map((group) => (
+              <CommandGroup heading={group.heading} key={group.heading ?? 'live'}>
+                {group.items.map((item) => (
                   <CommandItem
                     className="gap-2 py-1.5 pointer-coarse:py-2.5"
                     key={item.conversation ?? 'project'}
@@ -120,10 +130,18 @@ export function ScopePicker({
                     <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-muted-foreground">
                       {item.branch}
                     </span>
+                    {item.concluded !== undefined && (
+                      <span
+                        className="w-12 shrink-0 text-right font-mono text-[11px] text-muted-foreground/70"
+                        title={`Last commit ${new Date(item.concluded).toLocaleString()}`}
+                      >
+                        {formatAgo(item.concluded)}
+                      </span>
+                    )}
                   </CommandItem>
                 ))}
               </CommandGroup>
-            )}
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
