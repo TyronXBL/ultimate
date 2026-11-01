@@ -107,6 +107,10 @@ See [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 - Core server/web contracts live in `shared/protocol.ts`; extension-local types live with their extension.
 - Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental. `pnpm deps` fails on a loose pin.
 - Checks: `pnpm check` (format, lint, types) and the tests covering your change must pass before a commit; the lander runs every suite. Run `pnpm fix` instead of `pnpm check` while you work: it formats first, so formatting never fails a check run. Keep `pnpm test` fast: no real-time waits, no spawned processes (those go to `test/e2e`), and fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this with `ultimate/no-test-timeout` and `ultimate/no-real-wait-in-fast-tests` (`test/e2e` is exempt); justified exceptions need a `fast-test-reason:` comment. Use the real-deadline `until` from `test/helpers.ts` (`ultimate/no-local-test-polling`). `ultimate/no-retired-ui` keeps retired UI labels and surfaces out of extensions and web code.
+- A scratch checkout of your own (a baseline to compare against, a throwaway experiment) gets `git worktree add` and
+  its own `pnpm install --frozen-lockfile --offline` (a few seconds: packages hardlink from the store), as Ultimate's
+  worktree setup does. Never symlink `node_modules` from another checkout: pnpm records the checkout path it installed
+  for, so every `pnpm <script>` there tries to purge and reinstall the shared folder and aborts.
 - Every user-visible result is designed, not dumped: status and outcomes (a subagent report, a landing, a failure) get a
   renderer that matches the existing cards (see `extensions/subagents/messages.tsx`, `extensions/workspaces/log.tsx`),
   never plain Markdown in a message. Look at the running app and recent screenshots first, write the expected look into
