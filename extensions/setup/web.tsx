@@ -74,8 +74,9 @@ function Setup() {
   const { data, refetch } = useAction(
     CheckAction,
     null,
-    // A failed poll keeps the last state; the next one tries again.
-    { onError: () => {} },
+    // A failed poll keeps the last state; the next one tries again. The effect below makes the first call: a check costs
+    // the server a scan of agents and models, so mounting sends one, not one per trigger.
+    { enabled: false, onError: () => {} },
   )
   const signature = JSON.stringify(
     system?.extensions.map((extension) => [
@@ -84,15 +85,14 @@ function Setup() {
       extension.server?.error,
     ]),
   )
-  useEffect(() => void refetch(), [signature, refetch])
+  // A login or provider health change re-checks at once; the minute poll covers the file-backed areas.
+  const latest = useEvents({ events: [LoginChanged, HealthChanged], limit: 1 })?.[0]?.id
+  useEffect(() => void refetch(), [signature, latest, refetch])
   useEffect(() => {
     const timer = setInterval(() => void refetch(), 60_000)
     return () => clearInterval(timer)
   }, [refetch])
   useEvent('secrets:changed', () => void refetch())
-  // A login or provider health change re-checks at once; the minute poll covers the file-backed areas.
-  const latest = useEvents({ events: [LoginChanged, HealthChanged], limit: 1 })?.[0]?.id
-  useEffect(() => void refetch(), [latest, refetch])
   const warnings = data?.filter((issue) => issue.status === 'warn') ?? []
   if (!warnings.length) return null
   return (

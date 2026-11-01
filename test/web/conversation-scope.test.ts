@@ -362,6 +362,22 @@ function Action() {
   useAction(actionRef<null, unknown>('test', 'scoped'))
   return null
 }
+it('sends one useAction request for hooks that mount together, StrictMode remounts included', async () => {
+  renderToStaticMarkup(h(Fragment, null, scoped(21, h(Action)), scoped(21, h(Action))))
+  const mounted = harness.effects.splice(0)
+  // StrictMode runs every effect, its cleanup and the effect again before the browser gets back to the page.
+  for (const effect of mounted) effect()?.()
+  for (const effect of mounted) {
+    const release = effect()
+    if (release) effects.push(release)
+  }
+  await tick()
+  const calls = harness.fetch.mock.calls.filter(
+    ([path]) => path === '/api/extensions/test/actions/scoped',
+  )
+  expect(calls).toHaveLength(1)
+  expect(calls[0][1]?.signal?.aborted).toBe(false)
+})
 it('runs useAction on the scope even before its snapshot arrives', async () => {
   renderToStaticMarkup(scoped(21, h(Action)))
   commitEffects()
