@@ -81,6 +81,8 @@ it('reads a file as committed at a revision, after the working tree dropped it',
     await git('commit', '-m', 'remove')
     const read = codingTools({
       emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
+      projectRoot: cwd,
+      skills: () => [],
     }).tools!.find((tool) => tool.name === 'read')!
     const api = {
       env: new NodeExecutionEnv({ cwd }),

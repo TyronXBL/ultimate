@@ -39,6 +39,8 @@ async function bash(command: string, dir = cwd) {
       emitted.push(data as Event)
       return undefined as never
     },
+    projectRoot: dir,
+    skills: () => [],
   })
   const tool = extension.tools!.find((candidate) => candidate.name === 'bash') as ReturnType<
     typeof createBashTool

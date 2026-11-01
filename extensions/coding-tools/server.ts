@@ -24,19 +24,38 @@ import {
   createReadTool,
   createWriteTool,
 } from '@earendil-works/pi-durable/tools'
+import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { CancelAction, CancelledDoc, Committed } from './refs.ts'
+import { listedSkills } from '../../lib/skills.ts'
 import { atRevision } from './revision.ts'
 
 /** Lets Pi's read tool shrink an image past the model's limits (2000x2000 by default) instead of refusing it. */
 const images = await createNodePhotonImages()
 
-/** Pi's read tool, with `rev` to read a file as committed there. */
-function readTool() {
+/**
+ * Pi's read tool, with `rev` to read a file as committed there. A missing `<name>/SKILL.md` names where the listed
+ * skill of that name is, so an agent that guessed its folder finds it with the next read.
+ */
+function readTool(host: Pick<ExtensionHost, 'projectRoot' | 'skills'>) {
   const read = createReadTool({ images })
+  const execute: typeof read.execute = async (args, api, context) => {
+    try {
+      return await read.execute(args, api, context)
+    } catch (error) {
+      const name = /(?:^|\/)([^/]+)\/SKILL\.md$/.exec(args.path)?.[1]
+      if (!(error instanceof FileError) || error.code !== 'not_found' || !name || !api.env)
+        throw error
+      const listed = listedSkills(host, api.env.cwd).find((skill) => skill.name === name)
+      if (!listed) throw error
+      throw new Error(`${error.message}. The skill "${name}" is at ${listed.filePath}.`, {
+        cause: error,
+      })
+    }
+  }
   return defineTool({
     ...read,
     description: `${read.description} Pass rev (a commit, branch or tag) to read the file as of that commit instead of the working tree; a relative path resolves in the cwd's repository, whose commits every worktree shares.`,
@@ -49,9 +68,9 @@ function readTool() {
       ),
     }),
     async execute({ rev, ...args }, api, context) {
-      if (rev === undefined || !api.env) return read.execute(args, api, context)
+      if (rev === undefined || !api.env) return execute(args, api, context)
       const env = await atRevision(api.env, args.path, rev, context)
-      return read.execute(args, { ...api, env }, context)
+      return execute(args, { ...api, env }, context)
     },
   })
 }
@@ -331,7 +350,7 @@ async function madeCommits(path: string, conversation: number) {
   return events
 }
 
-export default function codingTools(host: Pick<ExtensionHost, 'emit'>) {
+export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectRoot' | 'skills'>) {
   const shell = createBashTool()
   const parameters = Type.Object({
     ...shell.parameters.properties,
@@ -382,7 +401,7 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit'>) {
   return defineExtension({
     name: 'coding-tools',
     // Each tool keeps its own parameters; the list is only read through the base registration.
-    tools: [readTool(), createWriteTool(), editTool(), bashTool] as ToolRegistration[],
+    tools: [readTool(host), createWriteTool(), editTool(), bashTool] as ToolRegistration[],
     wraps: [
       wrapTool(createBashTool(), (bash) => ({
         ...bash,
