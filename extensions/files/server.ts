@@ -28,16 +28,19 @@ async function scopes(host: ExtensionHost): Promise<Scope[]> {
     .filter(([, item]) => item.state === 'ready')
     .toSorted(([a], [b]) => Number(b) - Number(a))
   const titles = new Map(host.conversations().map((item) => [item.id, item.title]))
-  // Branches with commits the checkout's branch lacks, by name, with their last commit's time.
+  const removed = items.filter(([, item]) => item.state === 'removed')
+  // Branches with commits the checkout's branch lacks, by name, with their last commit's time. Asked only when a
+  // worktree was released: before the first commit there is no HEAD to compare with.
   const unlanded = new Map(
-    (
-      await git(
-        host.projectRoot,
-        'for-each-ref',
-        '--no-merged=HEAD',
-        '--format=%(committerdate:unix) %(refname)',
-        'refs/heads/',
-      )
+    (removed.length === 0
+      ? ''
+      : await git(
+          host.projectRoot,
+          'for-each-ref',
+          '--no-merged=HEAD',
+          '--format=%(committerdate:unix) %(refname)',
+          'refs/heads/',
+        )
     )
       .split('\n')
       .filter(Boolean)
@@ -49,8 +52,8 @@ async function scopes(host: ExtensionHost): Promise<Scope[]> {
         ]
       }),
   )
-  const released = items
-    .filter(([, item]) => item.state === 'removed' && unlanded.has(item.branch))
+  const released = removed
+    .filter(([, item]) => unlanded.has(item.branch))
     .map(([id, item]) => ({
       root: item.path,
       repo: host.projectRoot,

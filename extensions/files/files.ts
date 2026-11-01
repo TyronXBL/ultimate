@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { open, realpath, stat } from 'node:fs/promises'
-import { extname, isAbsolute, posix, relative, resolve, sep } from 'node:path'
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { exec } from '../../lib/exec.ts'
 import { git } from '../../lib/git.ts'
 
@@ -93,15 +93,16 @@ async function allowed(root: string, path: string) {
   if (!entries.split('\0').includes(path)) throw new Error('Not found in this scope')
 }
 
+function checkPath(path: string) {
+  if (!path || isAbsolute(path) || path.includes('\0') || path.split(/[\\/]/).includes('..'))
+    throw new Error('Outside the scope')
+}
+
 /**
  * The real path of relative `path` in `root` if the rule allows it; throws the reason otherwise. A symlink must pass
  * the rule twice: by its own name, and by the path it resolves to, so a listed link cannot reach `.env` or an ignored
  * file.
  */
-function checkPath(path: string) {
-  if (!path || isAbsolute(path) || path.includes('\0') || path.split(/[\\/]/).includes('..'))
-    throw new Error('Outside the scope')
-}
 async function listed(root: string, path: string) {
   checkPath(path)
   await allowed(root, path)
@@ -122,25 +123,43 @@ const textCap = 2 * 1024 * 1024
 
 /**
  * The blob committed at relative `path` of `rev` if the rule allows it; throws the reason otherwise. Like a symlink on
- * disk, a committed one must pass the rule by its own name and by each path it points to, all inside the tree.
+ * disk, a committed one must pass the rule by its own name and by what it resolves to: its target is walked one name
+ * at a time, through committed links to files or folders, and every name on the way must stay inside the tree and
+ * not suggest secrets.
  */
 async function committedFile(repo: string, rev: string, path: string) {
   checkPath(path)
+  if (hidden(path)) throw new Error('Hidden: the name suggests secrets')
   const files = await committed(repo, rev)
-  let current = path
+  if (!files.has(path)) throw new Error('Not found in this scope')
+  const pending = path.split('/')
+  const done: string[] = []
   // A chain longer than this is a loop, as the kernel's own limit treats it.
-  for (let hops = 0; hops < 40; hops++) {
+  let hops = 0
+  while (pending.length) {
+    const name = pending.shift()!
+    if (name === '' || name === '.') continue
+    if (name === '..') {
+      if (!done.pop()) throw new Error('Outside the scope')
+      continue
+    }
+    const current = [...done, name].join('/')
     if (hidden(current)) throw new Error('Hidden: the name suggests secrets')
     const file = files.get(current)
-    if (!file) break
-    if (file.mode !== '120000') return file
+    if (file?.mode !== '120000') {
+      done.push(name)
+      continue
+    }
+    if (++hops > 40) throw new Error('Not found in this scope')
     // Not the trimming `git` helper: a link's target is its blob's bytes exactly.
     const { stdout: target } = await exec('git', ['cat-file', 'blob', file.oid], { cwd: repo })
-    current = posix.normalize(posix.join(posix.dirname(current), target))
-    if (isAbsolute(target) || current === '..' || current.startsWith('../'))
-      throw new Error('Outside the scope')
+    if (isAbsolute(target)) throw new Error('Outside the scope')
+    // The target replaces the link's name, resolved from the folder holding the link.
+    pending.unshift(...target.split('/'))
   }
-  throw new Error('Not found in this scope')
+  const file = files.get(done.join('/'))
+  if (!file) throw new Error('Not found in this scope')
+  return file
 }
 
 /** The first `length` bytes of blob `oid`, without loading the rest. */

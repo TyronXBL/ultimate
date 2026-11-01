@@ -31,7 +31,18 @@ beforeAll(async () => {
   await symlink('../../outside', join(root, 'inside/up.txt'))
   await symlink('.env', join(root, 'env.txt'))
   await symlink('../branch.md', join(root, 'inside/branch-link.md'))
-  await git(root, 'add', 'escape.txt', 'inside/up.txt', 'env.txt', 'inside/branch-link.md')
+  await symlink('inside', join(root, 'alias'))
+  await symlink('alias/file.txt', join(root, 'via-alias.txt'))
+  await git(
+    root,
+    'add',
+    'escape.txt',
+    'inside/up.txt',
+    'env.txt',
+    'inside/branch-link.md',
+    'alias',
+    'via-alias.txt',
+  )
   await git(root, 'commit', '-q', '-m', 'branch')
   await git(root, 'switch', '-q', 'main')
   await writeFile(join(root, 'ignored.txt'), 'ignored')
@@ -71,6 +82,8 @@ describe('file access rules', () => {
     expect(files).not.toContain('untracked.md')
     expect(await read(gone, 'branch.md')).toMatchObject({ kind: 'text', text: '# Branch' })
     expect(await read(gone, 'inside/branch-link.md')).toMatchObject({ text: '# Branch' })
+    // A link through a committed folder link, as a link on disk resolves.
+    expect(await read(gone, 'via-alias.txt')).toMatchObject({ text: 'inside' })
     await expect(read(gone, '.env')).rejects.toThrow('Hidden: the name suggests secrets')
     await expect(read(gone, 'env.txt')).rejects.toThrow('Hidden: the name suggests secrets')
     for (const path of ['escape.txt', 'inside/up.txt'])

@@ -60,7 +60,7 @@ export function ScopePicker({
             'flex h-7 min-w-0 shrink cursor-pointer items-center gap-1.5 rounded-md border border-border/70 px-2 font-mono text-[12px] hover:bg-accent/60',
             compact && 'h-8 shrink-0',
           )}
-          title={`Reading ${current === undefined ? (scope?.branch ?? 'the project checkout') : `#${current}`}${scope?.concluded ? ` at its last commit` : ''}: choose the project checkout, a branch’s worktree or a concluded branch`}
+          title={`Reading ${current === undefined ? (scope?.branch ?? 'the project checkout') : `#${current}`}${scope?.concluded ? ' at its last commit' : ''}: choose the project checkout, a branch’s worktree or a concluded branch`}
           type="button"
         >
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
