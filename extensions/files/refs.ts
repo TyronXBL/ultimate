@@ -2,8 +2,9 @@
 import { actionRef } from '../../shared/extension-api.ts'
 
 /**
- * Where files are read from: the project checkout (`conversation` absent, labelled by its branch, usually `main`), or
- * the working tree of conversation `conversation`'s ready worktree. Uncommitted files show as they are on disk.
+ * Where files are read from: the project checkout (`conversation` absent, labelled by its branch, usually `main`), the
+ * working tree of conversation `conversation`'s ready worktree, where uncommitted files show as they are on disk, or,
+ * once that worktree is released without landing, its branch's last commit.
  */
 export type FileScope = {
   conversation?: number
@@ -11,6 +12,8 @@ export type FileScope = {
   branch: string
   /** The conversation's title for a worktree; absent for the project checkout. */
   title?: string
+  /** Its worktree is released and its branch unlanded: files come from the branch's last commit, made at this time (ms). */
+  concluded?: number
 }
 
 /** One file read: text (Markdown and code), an image as base64, or another binary file by its size only. */
@@ -29,12 +32,16 @@ export type FileContent = {
   | { kind: 'binary' }
 )
 
-/** No arguments → the project checkout first, then every ready worktree, newest first. */
+/**
+ * No arguments → the project checkout first, then every ready worktree, newest first, then every released worktree
+ * whose branch has not landed, most recently committed first.
+ */
 export const ScopesAction = actionRef<null, FileScope[]>('files', 'scopes')
 
 /**
  * `{ conversation? }` → the files of that scope as Git lists them (tracked, and untracked but not ignored), sorted,
- * without the ones whose names may hold secrets. Throws when the conversation has no ready worktree.
+ * without the ones whose names may hold secrets. Throws when the conversation has neither a ready worktree nor an
+ * unlanded branch.
  */
 export const TreeAction = actionRef<{ conversation?: number }, { files: string[] }>('files', 'tree')
 
@@ -50,8 +57,9 @@ export const ReadAction = actionRef<{ conversation?: number; path: string }, Fil
 
 /**
  * `{ path, conversation? }` → the scope a path written in conversation `conversation` points at, or null. An absolute
- * path maps to the scope whose root contains it. A relative one is tried in that conversation's worktree, then the
- * project checkout, then every other ready worktree; the first that lists it wins.
+ * path maps to the scope whose root contains it. A relative one is tried in that conversation's worktree (or its
+ * unlanded branch, once the worktree is released), then the project checkout, then every other ready worktree; the
+ * first that lists it wins.
  */
 export const LocateAction = actionRef<
   { path: string; conversation?: number },
