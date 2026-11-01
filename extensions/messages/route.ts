@@ -51,9 +51,14 @@ async function busy(tx: Tx, id: ConversationId) {
   )
 }
 /**
+ * Jobs that deliver their result to the conversation that started them as input: a `background` command and a `ci`
+ * run. Matched by kind, so messages needs neither extension.
+ */
+const JOBS = ['background.run', 'ci.run']
+/**
  * Whether branch `id` still has work under way that will wake it again: a run or queued input, a waking task, a
- * subagent at any depth that is busy, a submission the lander has not reported yet, or a reply-enabled message still
- * waiting on its answer. While the lander reports a landing it decides, once, whether the branch is done: it
+ * subagent at any depth that is busy, a background command or CI run of its own, a submission the lander has not
+ * reported yet, or a reply-enabled message still waiting on its answer. While the lander reports a landing it decides, once, whether the branch is done: it
  * concludes it and wakes the starter, or leaves it open to report when it stops. Until then a report waits as a note.
  */
 async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promise<boolean> {
@@ -68,6 +73,8 @@ async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promis
       .checkpoint
     if (checkpoint?.phase === 'report' && checkpoint.conversationId === id) return true
   }
+  // Not part of `working`: a landing still concludes a branch that waits on a job, which stops the job.
+  for (const kind of JOBS) if ((await live(tx, kind, id)).length) return true
   return working(tx, id)
 }
 /**
