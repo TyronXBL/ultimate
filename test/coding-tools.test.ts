@@ -55,6 +55,8 @@ it('says a command killed by SIGTERM or SIGKILL was stopped from outside, and le
   const execute = vi.fn<ReturnType<typeof createBashTool>['execute']>()
   const wrapper = codingTools({
     emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
+    projectRoot: tmpdir(),
+    skills: () => [],
   }).wraps!.find((wrap) => 'tool' in wrap && wrap.tool === 'bash')!
   if (!('tool' in wrapper)) throw new Error('Missing bash wrapper')
   const bash = wrapper.wrap({ ...createBashTool(), execute })
