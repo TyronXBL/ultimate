@@ -87,6 +87,7 @@ describe('automation schedules', () => {
       ['in nope', 'Use a duration'],
       ['at nope', 'Use an ISO time'],
       ['at Dec 1, 2026', 'Use an ISO time'],
+      ['at Dec 1 2026 09:00', 'Use an ISO time'],
       ['cron "60 * * * *"', 'Invalid cron field: 60'],
       ['cron "*/0 * * * *"', 'Invalid cron field: */0'],
       ['cron "1x * * * *"', 'Invalid cron field: 1x'],

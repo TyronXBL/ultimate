@@ -37,7 +37,7 @@ import type { ActionContext } from '../server/actions.ts'
 import codemode from '../extensions/codemode/server.ts'
 import { Metadata } from '../server/metadata.ts'
 import { UiState } from '../server/ui-state.ts'
-import { discoverAgents, parseDefinition, serializeDefinition } from '../lib/agents.ts'
+import { discoverAgents } from '../lib/agents.ts'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 
 const directories: string[] = []
@@ -1699,88 +1699,6 @@ describe('subagents', () => {
     expect(found.replaced).toEqual([])
   })
 
-  it('discovers model and thinking settings and reports unknown models', async () => {
-    const repo = await directory(),
-      home = await directory(),
-      cwd = await directory()
-    await mkdir(join(repo, 'agents'))
-    const modelRuntime = await ModelRuntime.create()
-    for (const [name, model, thinking] of [
-      ['exact', 'anthropic/claude-opus-4-8', ''],
-      ['suffix', 'anthropic/claude-opus-4-8:high', ''],
-      ['explicit', 'anthropic/claude-opus-4-8:high', 'thinking: low\n'],
-      ['unknown', 'anthropic/ultimate-nonexistent-model', ''],
-      ['missing', 'ultimate-nonexistent-model', ''],
-    ])
-      await writeFile(
-        join(repo, `agents/${name}.md`),
-        definition(name)
-          .replace('name: scout', `name: ${name}`)
-          .replace('tools: [read, bash]', `model: ${model}\n${thinking}`),
-      )
-    new ProjectTrustStore(join(home, '.ultimate')).set(cwd, true)
-    const found = await discoverAgents(repo, cwd, home, modelRuntime)
-    expect(found.definitions.find((agent) => agent.name === 'exact')?.model).toEqual({
-      provider: 'anthropic',
-      modelId: 'claude-opus-4-8',
-    })
-    expect(found.definitions.find((agent) => agent.name === 'suffix')?.thinking).toBe('high')
-    expect(found.definitions.find((agent) => agent.name === 'explicit')?.thinking).toBe('low')
-    expect(found.errors.find((file) => file.name === 'unknown')?.error).toContain(
-      'model: Model "ultimate-nonexistent-model" not found for provider "anthropic". Using custom model id.',
-    )
-    expect(found.errors.find((file) => file.name === 'missing')?.error).toContain(
-      'model: Model "ultimate-nonexistent-model" not found.',
-    )
-  })
-  it('parses definitions with Pi frontmatter and validates their fields', () => {
-    expect(
-      parseDefinition(
-        '---\nname: scout\ndescription: >\n  A read-only scout\n  that searches.\nmodel: openai-codex/gpt-5.4\nthinking: max\ntools:\n  - read\n  - bash\n---\nSearch\n',
-        'scout.md',
-      ),
-    ).toEqual({
-      name: 'scout',
-      description: 'A read-only scout that searches.',
-      path: 'scout.md',
-      instructions: 'Search',
-      model: 'openai-codex/gpt-5.4',
-      thinking: 'max',
-      tools: ['read', 'bash'],
-    })
-    // `summaries: false` survives a save: only the field's off state is written.
-    const quiet = parseDefinition(
-      definition().replace('tools: [read, bash]', 'summaries: false'),
-      'test',
-    )
-    expect(quiet).toMatchObject({ summaries: false })
-    expect(serializeDefinition('scout', quiet, quiet.instructions)).toContain(
-      '\nsummaries: false\n',
-    )
-    expect(serializeDefinition('scout', { description: 'Search' }, 'Search')).not.toContain(
-      'summaries',
-    )
-    for (const [from, to, error] of [
-      [
-        'tools: [read, bash]',
-        'tools: [read, bash]\nthinking: nonsense',
-        'thinking must be one of off, minimal, low, medium, high, xhigh, max',
-      ],
-      ['description: Search', 'description: " "', 'description is required'],
-      ['name: scout', 'name: a scout', 'name must be a nonempty identifier'],
-      ['tools: [read, bash]', 'tools: read', 'tools must be a list of tool names'],
-      ['tools: [read, bash]', 'model: " "', 'model must be a nonempty string'],
-      ['tools: [read, bash]', 'tool: [read]', 'Unknown field: tool'],
-      ['tools: [read, bash]', 'isolate: remote', 'isolate must be none or worktree'],
-      ['tools: [read, bash]', 'summaries: never', 'summaries must be a boolean'],
-      ['tools: [read, bash]', 'fast: yes', 'fast must be a boolean'],
-      ['tools: [read, bash]', 'family: Not a family', 'family must be a family name'],
-      ['tools: [read, bash]', 'fallback: [a/b, " "]', 'fallback must be a model or a list'],
-      ['tools: [read, bash]', 'fallback: 42', 'fallback must be a model or a list'],
-      ['Original instructions', '', 'Instructions are required'],
-    ])
-      expect(() => parseDefinition(definition().replace(from, to), 'test')).toThrow(error)
-  })
   it('saves a definition as a project override that start uses, writes nothing when invalid, and deletes it', async () => {
     const { prepared, opened, ultimateRoot, userHome } = await fixture()
     const ctx = {

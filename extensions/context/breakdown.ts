@@ -159,8 +159,7 @@ const sum = (items: readonly { tokens: number }[] = []) =>
 
 /** The text of a message as one block, for history a fork inherited into its context. */
 function plain(entry: EntryRecord) {
-  const message = entry.model?.[0]
-  if (!message || message.role === 'system') return ''
+  const message = entry.model![0]
   const blocks = typeof message.content === 'string' ? [message.content] : message.content
   const text = blocks
     .flatMap((block) =>
@@ -184,7 +183,6 @@ function plain(entry: EntryRecord) {
  * compaction's summary: Pi shows only the newest. Empty when the fork starts its own context.
  */
 function inherited(entries: readonly EntryRecord[], own: number): Injected | undefined {
-  if (own <= 0 || startsContext(entries[own])) return undefined
   let from = own - 1
   while (from > 0 && !startsContext(entries[from])) from--
   const start = entries[from]
