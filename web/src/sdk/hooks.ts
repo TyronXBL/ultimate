@@ -350,12 +350,16 @@ function useCompactConfig() {
   }, [kinds])
   // Only the kinds compact reads: the root's other documents arrive and change all the time (a page load brings dozens),
   // and each new object would recompute and re-render the whole transcript.
+  const names = useMemo(() => (kinds ? kinds.split(',') : []), [kinds])
   const picked = useRef<CompactDocs>(noDocs)
   const docs = useStore((state) => {
     const all = state.docsOf[1]
-    const names = kinds ? kinds.split(',') : []
     const previous = picked.current
-    if (names.every((kind) => previous[kind] === all?.[kind])) return previous
+    if (
+      Object.keys(previous).length === names.length &&
+      names.every((kind) => kind in previous && previous[kind] === all?.[kind])
+    )
+      return previous
     picked.current = Object.fromEntries(names.map((kind) => [kind, all?.[kind]]))
     return picked.current
   })
@@ -470,6 +474,11 @@ const inFlight = new Map<
   string,
   { result: Promise<unknown>; controller: AbortController; callers: number }
 >()
+/** The conversation an unscoped action acts on, as `api.action` resolves it. */
+function shownId() {
+  const { view, requested } = store.getState()
+  return view?.conversation.id ?? requested ?? ROOT
+}
 function joinCall<T>(
   key: string,
   signal: AbortSignal,
@@ -551,17 +560,24 @@ export function useAction<Args, T>(
       setState((previous) => ({ ...(previous.key === key ? previous : { key }), loading: true }))
       try {
         // Rebuilt from its strings, so a ref made during render does not refetch on every render.
-        const start = (signal: AbortSignal) =>
+        const start = (signal: AbortSignal, target: number | undefined) =>
           api.action(
             actionRef<Args, T>(extension, name),
-            ...([latest.current.args, { signal, conversationId }] as ActionArgs<
+            ...([latest.current.args, { signal, conversationId: target }] as ActionArgs<
               Args,
               ActionOptions
             >),
           )
+        // Outside a scope the call acts on the shown conversation: shared calls key on it, so a hook mounted after a
+        // switch never joins the previous conversation's request.
+        const target = conversationId ?? shownId()
         const data = await (share
-          ? joinCall(key, controller.signal, start)
-          : start(controller.signal))
+          ? joinCall(
+              JSON.stringify([extension, name, latest.current.args ?? null, target]),
+              controller.signal,
+              (signal) => start(signal, target),
+            )
+          : start(controller.signal, conversationId))
         if (controller.signal.aborted) return undefined
         setState({ key, data, loading: false })
         return data

@@ -378,6 +378,18 @@ it('sends one useAction request for hooks that mount together, StrictMode remoun
   expect(calls).toHaveLength(1)
   expect(calls[0][1]?.signal?.aborted).toBe(false)
 })
+it('never shares an unscoped useAction request across a switch of the shown conversation', async () => {
+  renderToStaticMarkup(h(Action))
+  commitEffects()
+  store.show(5)
+  renderToStaticMarkup(h(Action))
+  commitEffects()
+  await tick()
+  const bodies = harness.fetch.mock.calls
+    .filter(([path]) => path === '/api/extensions/test/actions/scoped')
+    .map(([, init]) => JSON.parse(init!.body as string).conversationId)
+  expect(bodies).toEqual([1, 5])
+})
 it('runs useAction on the scope even before its snapshot arrives', async () => {
   renderToStaticMarkup(scoped(21, h(Action)))
   commitEffects()
