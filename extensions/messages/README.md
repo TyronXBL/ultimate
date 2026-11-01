@@ -60,9 +60,9 @@ conversation that started you is a note, and stopping with nothing under way is 
   them only. If that run left the branch with nothing under way and the starter's latest message from it was a note,
   that note's text goes again as the report, so the starter still wakes. Otherwise, if nothing of the branch is
   still under way (no run or queued input in it or a subagent at any depth, no subagent report or waking `notify`
-  on its way, no `background` command or `ci` run of its own still running, no submission in the lander's queue or a failure being reported, no reply-enabled message of its own
-  still waiting), the answer goes to the starter as a one-way message with
-  `report: true`, which wakes it as a follow-up. While something is still under way it goes as a note: the branch
+  on its way, no `background` command or `ci` run of its own that has not yet delivered its result, no submission
+  in the lander's queue or a failure being reported, no reply-enabled message of its own still waiting), the answer
+  goes to the starter as a one-way message with `report: true`, which wakes it as a follow-up. While something is still under way it goes as a note: the branch
   will run again when that work wakes it. A landing ends a branch's work without a run: the lander concludes it
   unless `underway` says otherwise and wakes the starter itself (`extensions/workspaces/README.md`), asking through
   the `workspaces.branches` extension point that this extension provides (`starter`, `underway`).
