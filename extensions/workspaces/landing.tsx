@@ -11,7 +11,7 @@ import type { ReactNode } from 'react'
 import { MentionText } from '@/components/ai/message'
 import { Button } from '@/components/ui/button'
 import { api, definePoint, Fold, Provided, useConversations, useUltimate } from '@/sdk'
-import { FeatureTag, useStandingName } from '../conversations/ui.tsx'
+import { ConversationSpend, FeatureTag, useStandingName } from '../conversations/ui.tsx'
 import { GithubAction } from './refs.ts'
 import type { ConversationSubject } from '../conversations/types.ts'
 
@@ -247,6 +247,9 @@ export function LandingCard({
         <div className="space-y-1.5 px-3 py-2.5 pl-8.5">
           <div className="flex items-start gap-2">
             <span className="min-w-0 flex-1 break-words text-foreground/90">{headline}</span>
+            <Provided input={from} point={ConversationSpend}>
+              {(spend) => spend && <span className="text-muted-foreground">{spend}</span>}
+            </Provided>
             {at}
           </div>
           {divergence && (

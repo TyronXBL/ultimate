@@ -31,7 +31,7 @@ import {
 import { useAgentRows, useChoices } from '../branch-setup/ui.tsx'
 import type { Choice } from '../branch-setup/ui.tsx'
 import type { Agents } from '../branch-setup/refs.ts'
-import { ConversationPhase, useOverview } from '../conversations/ui.tsx'
+import { ConversationPhase, ConversationSpend, useOverview } from '../conversations/ui.tsx'
 import { MessageAnswers } from '../messages/ui.tsx'
 import type { Message } from '../messages/refs.ts'
 import { tones as sidebarTones, useBranchState } from '../sidebar/ui.tsx'
@@ -135,6 +135,11 @@ export function IdeaCard({ row, now, pill }: { row: Row; now: number; pill?: boo
           <Status row={row} />
         )}
         {branch && <BranchLink id={branch.id} />}
+        {branch && (
+          <Provided input={branch.id} point={ConversationSpend}>
+            {(spend) => spend}
+          </Provided>
+        )}
         <span className="min-w-0 flex-1 truncate text-muted-foreground/80">
           {[
             ...idea.tags.map((tag) => `#${tag}`),
@@ -221,7 +226,8 @@ function StateWord({
   phase?: { word: string; waiting: boolean }
 }) {
   const state = useBranchState(branch, working, phase)
-  return <span className={cn('shrink-0', tones[state.tone])}>{state.label}</span>
+  // It gives way first on a narrow card, before the branch link, its spend and the age.
+  return <span className={cn('min-w-0 truncate', tones[state.tone])}>{state.label}</span>
 }
 
 /** The sidebar's branch colours, but waiting on @ultimate stays quiet here: the waiting tone means the user. */

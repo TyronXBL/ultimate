@@ -11,3 +11,17 @@ export type RateSample = { rates: Tokens; elapsed: number; totals: Tokens & { co
 
 /** No arguments → the latest rate sample, or null until two samples within 5 seconds of each other exist. */
 export const RatesAction = actionRef<null, RateSample | null>('status-line', 'rates')
+
+/** What one model used, with its cost in dollars at the model's API price (0 when it has none). */
+export type Spend = Tokens & { cost: number }
+/**
+ * What a top-level conversation and everything it owns (its subagents and theirs) used: how many conversations, and
+ * the spend per `provider/model`; tools that report usage count under `tools/<name>`.
+ */
+export type TreeSpend = { conversations: number; models: Record<string, Spend> }
+
+/**
+ * No arguments → each top-level conversation's tree spend that has any, by conversation id; null until the server has
+ * read every conversation's usage.
+ */
+export const TreesAction = actionRef<null, Record<string, TreeSpend> | null>('status-line', 'trees')

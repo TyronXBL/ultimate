@@ -75,6 +75,7 @@ async function fixture() {
     stop: () => close(),
     notices,
     rate: () => actions.rates(null, { host: host as ExtensionHost }),
+    trees: () => actions.trees(null, { host: host as ExtensionHost }),
     async cleanup() {
       await close()
       await opened.close()
@@ -175,6 +176,47 @@ describe('instance commit collector', () => {
       for (let index = 0; index < 30; index++) await vi.advanceTimersByTimeAsync(1000)
       expect(f.rate()?.rates.output).toBe(0)
       expect(f.notices).toEqual([])
+    } finally {
+      await f.cleanup()
+    }
+  })
+
+  it("sums each top-level conversation's spend with its subagents at any depth, as they appear", async () => {
+    const f = await fixture()
+    try {
+      const root = f.root.id
+      const spawn = async (tx: Tx, owner: ConversationId) => {
+        const task = await tx.createTask(anchor, null, {
+          ownership: { kind: 'conversation' },
+          conversationId: owner,
+          background: true,
+        })
+        return (await tx.createConversation({ ownership: { kind: 'task', taskId: task } })).id
+      }
+      const ids = await f.harness.commit(async (tx) => {
+        const child = await spawn(tx, root)
+        const grandchild = await spawn(tx, child)
+        const other = await tx.createConversation({ ownership: { kind: 'ownerless' } })
+        await settled(tx, root, 250)
+        await settled(tx, child, 250)
+        await settled(tx, grandchild, 500)
+        await settled(tx, other.id, 400)
+        return { child, other: other.id }
+      }, context)
+      expect(f.trees()).toBeNull()
+      await f.open()
+      expect(f.trees()?.[root]).toEqual({
+        conversations: 3,
+        models: {
+          'faux/model': { ...counters(1000), cost: 1 },
+          'tools/expensive': { ...counters(150000), cost: 150 },
+        },
+      })
+      expect(f.trees()?.[ids.other]?.models['faux/model']).toEqual({ ...counters(400), cost: 0.4 })
+      expect(f.trees()?.[ids.child]).toBeUndefined()
+      await f.harness.commit(async (tx) => settled(tx, await spawn(tx, ids.child), 125), context)
+      expect(f.trees()?.[root]?.conversations).toBe(4)
+      expect(f.trees()?.[root]?.models['faux/model']).toEqual({ ...counters(1125), cost: 1.125 })
     } finally {
       await f.cleanup()
     }
