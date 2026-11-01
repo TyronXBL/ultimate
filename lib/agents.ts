@@ -46,6 +46,8 @@ export interface AgentDefinition {
   fast?: boolean
   /** `false`: its conversations get no automatic summaries (intent, title, reply activity, spawn refresh, abstract). */
   summaries?: boolean
+  /** `false`: only supplies a model to an extension's own call; never started as a subagent or automation run. */
+  subagent?: boolean
   /** Overlay files whose settings, `addTools` and body discovery merged into this definition, in order. */
   overlays?: string[]
 }
@@ -210,6 +212,7 @@ const fields = new Set([
   'resident',
   'fast',
   'summaries',
+  'subagent',
 ])
 
 /** The settings a definition or overlay may set; `denyTools` is additive when merged. */
@@ -223,6 +226,7 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     | 'resident'
     | 'fast'
     | 'summaries'
+    | 'subagent'
     | 'denyTools'
   >
 > & {
@@ -239,6 +243,7 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     resident,
     fast,
     summaries,
+    subagent,
     denyTools,
   } = frontmatter
   if (family !== undefined && (typeof family !== 'string' || !isFamilyName(family)))
@@ -260,6 +265,8 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
   if (fast !== undefined && typeof fast !== 'boolean') throw new Error('fast must be a boolean')
   if (summaries !== undefined && typeof summaries !== 'boolean')
     throw new Error('summaries must be a boolean')
+  if (subagent !== undefined && typeof subagent !== 'boolean')
+    throw new Error('subagent must be a boolean')
   return {
     ...(description !== undefined ? { description: description.trim() } : {}),
     ...(model !== undefined ? { model } : {}),
@@ -272,6 +279,7 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     ...(resident !== undefined ? { resident: resident } : {}),
     ...(fast !== undefined ? { fast } : {}),
     ...(summaries !== undefined ? { summaries } : {}),
+    ...(subagent !== undefined ? { subagent } : {}),
     ...(denyTools !== undefined ? { denyTools } : {}),
   }
 }
@@ -556,6 +564,7 @@ export interface DefinitionFields {
   resident?: boolean
   fast?: boolean
   summaries?: boolean
+  subagent?: boolean
 }
 
 /** A flow list of names; in a flow list, commas and brackets end an item too. */
@@ -595,6 +604,7 @@ export function serializeDefinition(
     ...(frontmatter.resident !== undefined ? [`resident: ${frontmatter.resident}`] : []),
     ...(frontmatter.fast ? ['fast: true'] : []),
     ...(frontmatter.summaries === false ? ['summaries: false'] : []),
+    ...(frontmatter.subagent === false ? ['subagent: false'] : []),
   ]
   return `---\n${lines.join('\n')}\n---\n\n${instructions.trim()}\n`
 }

@@ -177,20 +177,23 @@ export async function sourceCopy(parent: string, { web = false } = {}) {
   )
   await linkDependencies(root)
   const config = join(root, 'vite.config.ts')
+  // This config is immutable after boot: ignore stale native events replayed from the initial copy.
+  let source = (await readFile(config, 'utf8')).replace(
+    'export default defineConfig({',
+    'export default defineConfig({ server: { watch: { ignored: [(file) => file === fileURLToPath(import.meta.url)] } },',
+  )
   // Without `web`, optimize on page requests, not fixture boot; React's plugin otherwise eagerly includes deps.
   if (!web)
-    await writeFile(
-      config,
-      (await readFile(config, 'utf8'))
-        .replace(
-          'export default defineConfig({',
-          "export default defineConfig({ cacheDir: '.vite-cache', optimizeDeps: { entries: [] },",
-        )
-        .replace(
-          'plugins: [react(), tailwindcss()],',
-          "plugins: [react(), tailwindcss(), { name: 'test:lazy-deps', configResolved(config) { config.optimizeDeps.include = [] } }],",
-        ),
-    )
+    source = source
+      .replace(
+        'export default defineConfig({',
+        "export default defineConfig({ cacheDir: '.vite-cache', optimizeDeps: { entries: [] },",
+      )
+      .replace(
+        'plugins: [react(), tailwindcss()],',
+        "plugins: [react(), tailwindcss(), { name: 'test:lazy-deps', configResolved(config) { config.optimizeDeps.include = [] } }],",
+      )
+  await writeFile(config, source)
   new ProjectTrustStore(join(parent, '.ultimate')).set(root, true)
   return root
 }

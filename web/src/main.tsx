@@ -8,6 +8,12 @@ import { followVisualViewport } from './sdk/viewport.ts'
 
 store.start()
 followVisualViewport()
+// A file dropped anywhere on the page would make the browser navigate to it, replacing the shell; a handler that takes
+// drops still gets them, since cancelling the default does not stop the event.
+for (const name of ['dragover', 'drop'] as const)
+  document.addEventListener(name, (event) => {
+    if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
+  })
 // oxlint-disable-next-line typescript/no-floating-promises -- setLoaders settles loaders and records each facet's error in the registry.
 void loadExtensions()
 createRoot(document.getElementById('app')!).render(

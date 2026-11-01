@@ -1,6 +1,6 @@
 ---
 name: reviewer-architecture
-description: Advisory architecture review (Terra 6.1); asks whether a range uses Ultimate's own architecture instead of building beside it. Never blocks.
+description: Advisory architecture review; asks whether a range uses Ultimate's own architecture instead of building beside it. Never blocks.
 model: openai-codex/gpt-6.1-terra
 fallback: [anthropic/claude-opus-5-5]
 thinking: high
