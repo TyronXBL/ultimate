@@ -291,7 +291,11 @@ it('selects shared, isolated main and owned child checkouts with the main projec
     }
     await f.service.discard(child.conversationId, context)
     await f.service.discard(main.id, context)
-    expect(await f.run({ action: 'start' }, main.id)).toContain('active, ready')
+    // A preview recreates a released checkout, as the conversation's next tool call would.
+    const recreated = JSON.parse(await f.call('instance', { action: 'start' }, main.id)) as Preview
+    await assertProject(recreated, main.workspace.path, true)
+    await f.run({ action: 'stop', id: recreated.id })
+    await removeTemp(recreated.home)
   } finally {
     await f.close()
   }
