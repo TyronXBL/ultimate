@@ -186,6 +186,24 @@ async function registeredCheckout(workspace: WorkspaceIndex['items'][string]) {
     .split('\n\n')
     .some((entry) => entry.split('\n').includes(`worktree ${workspace.path}`))
 }
+/** Throws unless the checkout has its own branch checked out, saying how to get back onto it. */
+async function onBranch({ path, branch }: WorkspaceIndex['items'][string]) {
+  const current = await git(path, 'symbolic-ref', '--quiet', '--short', 'HEAD').catch(
+    // A detached HEAD has no symbolic ref; it is named below.
+    () => '',
+  )
+  if (current === branch) return
+  if (current)
+    throw new Error(
+      `Workspace has ${current} checked out instead of ${branch}; run \`git checkout ${branch}\` in ${path}, then try again`,
+    )
+  const head = await git(path, 'rev-parse', '--short', 'HEAD')
+  throw new Error(
+    (await contains(path, branch, 'HEAD'))
+      ? `Workspace HEAD is detached at ${head}, which contains ${branch}; run \`git checkout -B ${branch}\` in ${path} to move the branch onto it, then try again`
+      : `Workspace HEAD is detached at ${head}, which ${branch} does not contain; run \`git checkout ${branch}\` in ${path} and cherry-pick any commits you need from ${head}, then try again`,
+  )
+}
 export function workspaces(host: Host) {
   const queues = host.resource('workspaces.land', () => new Map<string, Promise<unknown>>())
   /** Runs writes to one source checkout one at a time, across synchronous landing and the lander. */
@@ -732,8 +750,7 @@ export function workspaces(host: Host) {
         (await git(source, 'symbolic-ref', '--short', 'HEAD').catch(() => '')) !== workspace.target
       )
         throw new Error(`Target branch changed; check out ${workspace.target} first`)
-      if ((await git(workspace.path, 'symbolic-ref', '--short', 'HEAD')) !== workspace.branch)
-        throw new Error('Workspace branch changed')
+      await onBranch(workspace)
       const tip = await git(workspace.path, 'rev-parse', 'HEAD')
       const head = await git(source, 'rev-parse', 'HEAD')
       const integrated = await git(source, 'merge-base', '--is-ancestor', tip, head).then(
@@ -802,8 +819,7 @@ export function workspaces(host: Host) {
     if (workspace.state !== 'ready') throw new Error(`Workspace is ${workspace.state}`)
     const dirty = await git(workspace.path, 'status', '--porcelain')
     if (dirty) throw new Error(`Worktree is dirty:\n${dirty}`)
-    if ((await git(workspace.path, 'symbolic-ref', '--short', 'HEAD')) !== workspace.branch)
-      throw new Error('Workspace branch changed')
+    await onBranch(workspace)
     const tip = await git(workspace.path, 'rev-parse', 'HEAD')
     const path = await landerPath(host.home, workspace.source, await host.projectSettings())
     const subject = await host.need(ConversationsApi).subject(id, context)

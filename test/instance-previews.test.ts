@@ -8,6 +8,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import {
   previewEnv,
   previewWorkspace,
+  readyWorkspace,
   remember,
   seedUserHome,
   stopped,
@@ -57,6 +58,30 @@ it('previews the nearest owner worktree of a subagent, else the host checkout', 
   expect(await resolve(11)).toEqual({ workspace: branch, conversationId: 10 })
   expect(await resolve(12)).toEqual({ workspace: branch, conversationId: 10 })
   expect(await resolve(21)).toBeUndefined()
+})
+
+it("waits for a subagent's preparing worktree and names why an unusable one cannot preview", async () => {
+  // Previewing a subagent started a moment before failed with "Preview requires an active, ready workspace".
+  const workspace = {
+    path: '/worktrees/11',
+    state: 'preparing',
+    error: undefined as string | undefined,
+  }
+  const workspaces = {
+    get: async () => workspace,
+    ready: async () => {
+      workspace.state = 'ready'
+    },
+    unavailable: async () =>
+      workspace.state === 'ready' ? undefined : `Workspace setup failed: ${workspace.error}`,
+  }
+  const resolve = () =>
+    readyWorkspace(workspaces as never, 11 as ConversationId, BACKGROUND_CONTEXT)
+  expect(await resolve()).toBe(workspace)
+  Object.assign(workspace, { state: 'failed', error: 'pnpm install exited with code 1' })
+  await expect(resolve()).rejects.toThrow(
+    'Preview needs a ready workspace. Workspace setup failed: pnpm install exited with code 1',
+  )
 })
 
 it('isolates preview cloud environment and host identity', () => {
