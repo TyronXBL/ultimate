@@ -36,12 +36,18 @@ it('times out a hung step, closes its page and keeps later calls working', async
       const hung = await drive([{ eval: '1 + 1' }, { eval: hang }], 5000)
       expect(hung.result.isError).toBe(true)
       expect(hung.text).toContain('Step 1: OK 2')
-      expect(hung.text).toContain('Step 2: TimeoutError: timed out after 5s')
+      expect(hung.text).toContain('Step 2: TimeoutError: eval timed out after 5s')
       expect(hung.ms).toBeLessThan(15_000)
       const next = await drive([{ eval: 'document.title' }])
       expect(next.result.isError).toBeFalsy()
       expect(next.text).toContain('Step 1: OK \\"Hang\\"')
     }
+    // A selector that matches nothing reports Playwright's own error, naming what it waited for, once.
+    const missing = await drive([{ click: 'text=Nowhere' }], 2000)
+    expect(missing.result.isError).toBe(true)
+    expect(missing.text).toContain('Step 1: TimeoutError: locator.click: Timeout 2000ms exceeded.')
+    expect(missing.text).toContain("waiting for locator('text=Nowhere')")
+    expect(missing.text.split('Timeout 2000ms exceeded').length).toBe(2)
   } finally {
     for (const close of closers) await close()
     await removeTemp(directory)

@@ -75,6 +75,25 @@ function defaultBashTimeout() {
 const bashTripwireMessage = (seconds: number) =>
   `Tripwire: bash ran past the ${seconds} s default limit and was stopped. Pass timeout for longer commands.`
 
+/** The signal behind an exit code of 128 + its number. This tool's own stops throw or exit 130, so these came from outside. */
+const killedBy: Record<number, string> = { 137: 'SIGKILL', 143: 'SIGTERM' }
+
+/** `result`, with a note when its exit code says a process was killed from outside the call. */
+function killedHint(result: ToolExecutionResult): ToolExecutionResult {
+  const exitCode = (result.structuredOutput as { exitCode?: number } | undefined)?.exitCode
+  const signal = exitCode === undefined ? undefined : killedBy[exitCode]
+  if (!signal) return result
+  const example =
+    signal === 'SIGKILL'
+      ? 'kill -9, or the out-of-memory killer'
+      : 'a `pkill -f` whose pattern also matches this command line'
+  const message = `Exit code ${exitCode}: a process got ${signal} from outside this call, not from its timeout (for example ${example}).`
+  return {
+    ...result,
+    diagnostics: [...(result.diagnostics ?? []), { severity: 'info', code: 'killed', message }],
+  }
+}
+
 /**
  * Process-local Git hooks for one bash call. Each appends tab-separated lines (kind, sha, branch, worktree, git common
  * dir, extra) to `$ULTIMATE_COMMIT_LOG` and swallows every failure, so it can never fail a commit; the trailing `#`
@@ -387,10 +406,10 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit'>) {
       wrapTool(createBashTool(), (bash) => ({
         ...bash,
         async execute(args, api, context) {
-          if (args.timeout !== undefined) return bash.execute(args, api, context)
+          if (args.timeout !== undefined) return killedHint(await bash.execute(args, api, context))
           const timeout = defaultBashTimeout()
           try {
-            return await bash.execute({ ...args, timeout }, api, context)
+            return killedHint(await bash.execute({ ...args, timeout }, api, context))
           } catch (error) {
             if (
               error instanceof Error &&

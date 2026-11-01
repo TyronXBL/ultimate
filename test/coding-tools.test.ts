@@ -38,6 +38,34 @@ it('uses a 600-second default tripwire and leaves explicit timeouts unchanged', 
   expect(execute.mock.calls[2][0]).toEqual({ command: 'sleep', timeout: 42 })
 })
 
+it('says a command killed by SIGTERM or SIGKILL was stopped from outside, and leaves other exits alone', async () => {
+  const exited = (exitCode: number) => ({
+    structuredOutput: { output: '', truncated: false, exitCode },
+    isError: true,
+    diagnostics: [
+      {
+        severity: 'error' as const,
+        code: 'exit_code',
+        message: `Command exited with code ${exitCode}`,
+      },
+    ],
+  })
+  const execute = vi.fn<ReturnType<typeof createBashTool>['execute']>()
+  const wrapper = codingTools({
+    emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
+  }).wraps!.find((wrap) => 'tool' in wrap && wrap.tool === 'bash')!
+  if (!('tool' in wrapper)) throw new Error('Missing bash wrapper')
+  const bash = wrapper.wrap({ ...createBashTool(), execute })
+  const messages = async (exitCode: number) => {
+    execute.mockResolvedValueOnce(exited(exitCode))
+    const result = await bash.execute({ command: 'x' }, {} as ToolExecutionApi, context)
+    return result.diagnostics?.map((item) => item.message)
+  }
+  expect((await messages(143))?.[1]).toContain('Exit code 143: a process got SIGTERM from outside')
+  expect((await messages(137))?.[1]).toContain('Exit code 137: a process got SIGKILL from outside')
+  expect(await messages(1)).toEqual(['Command exited with code 1'])
+})
+
 it('hints at a cd into its own directory and a one-file read, never at real shell work', () => {
   const cwd = '/work/app'
   const cd = 'bash already starts in /work/app; leave out the leading cd.'

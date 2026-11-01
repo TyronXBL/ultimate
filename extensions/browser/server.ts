@@ -63,9 +63,23 @@ const stepTimeoutMs = 30_000
 const untilTimeoutMs = 300_000
 /** How long closing a context, or the browser after it, may take before it counts as wedged. */
 const closeTimeoutMs = 5_000
+/**
+ * Extra time for an operation Playwright times itself (click, fill, press, waitFor, goto, screenshot): its own timeout
+ * error, which says what it waited for (no match, hidden, covered), then arrives before the backstop's bare one.
+ */
+const ownTimeoutMs = 2_000
+/** Lines of an error kept in the result; Playwright's call log for a long wait runs on. */
+const errorLines = 12
 
 function timeout(ms: number) {
   return Object.assign(new Error(`timed out after ${ms / 1000}s`), { name: 'TimeoutError' })
+}
+
+function describe(error: unknown) {
+  const lines = String(error).split('\n')
+  return lines.length <= errorLines
+    ? lines.join('\n')
+    : [...lines.slice(0, errorLines), `  … ${lines.length - errorLines} more lines`].join('\n')
 }
 
 /** `work`, unless `ms` pass first; a promise Playwright never settles (evaluate has no timeout) cannot hang the call. */
@@ -150,7 +164,7 @@ export default function browserExtension(host: ExtensionHost) {
           const waitMs = args.waitMs ?? 1500
           return run(args, waitMs, api, context, async (page, _outcomes, png, guard) => {
             await guard(page.waitForTimeout(waitMs), waitMs)
-            return guard(capture(page, png, args.selector, args.fullPage))
+            return guard(capture(page, png, args.selector, args.fullPage), ownTimeoutMs)
           })
         },
       }),
@@ -216,13 +230,14 @@ export default function browserExtension(host: ExtensionHost) {
               api.output(`Step ${index + 1}: ${JSON.stringify(step)}\n`)
               try {
                 let value: unknown
-                if ('click' in step) await guard(page.locator(step.click).click())
-                else if ('fill' in step) await guard(page.locator(step.fill[0]).fill(step.fill[1]))
-                else if ('press' in step) await guard(page.keyboard.press(step.press))
+                if ('click' in step) await guard(page.locator(step.click).click(), ownTimeoutMs)
+                else if ('fill' in step)
+                  await guard(page.locator(step.fill[0]).fill(step.fill[1]), ownTimeoutMs)
+                else if ('press' in step) await guard(page.keyboard.press(step.press), ownTimeoutMs)
                 else if ('wait' in step) {
                   if (typeof step.wait === 'number')
                     await guard(page.waitForTimeout(step.wait), step.wait)
-                  else await guard(page.locator(step.wait).waitFor())
+                  else await guard(page.locator(step.wait).waitFor(), ownTimeoutMs)
                 } else if ('send' in step || 'until' in step) {
                   // `window.ultimate` (web/src/sdk/test-hook.ts) appears once the page's SDK has loaded.
                   const hook = () =>
@@ -286,16 +301,22 @@ export default function browserExtension(host: ExtensionHost) {
                     if ('error' in outcome) throw new Error(outcome.error.replace(/^Error: /, ''))
                     value = outcome.result
                   }
-                } else value = await guard(page.evaluate(step.eval))
+                } else
+                  value = await guard(page.evaluate(step.eval)).catch((error: unknown) => {
+                    // Playwright gives evaluate no timeout, so only the backstop ends a script that never settles.
+                    if (error instanceof Error && error.name === 'TimeoutError')
+                      error.message = `eval ${error.message}: the script never settled or the page is busy; pass timeoutMs for a longer script`
+                    throw error
+                  })
                 outcomes.push(
                   `Step ${index + 1}: OK${value === undefined ? '' : ` ${JSON.stringify(value)}`}`,
                 )
               } catch (error) {
-                outcomes.push(`Step ${index + 1}: ${String(error)}`)
+                outcomes.push(`Step ${index + 1}: ${describe(error)}`)
                 throw error
               }
             }
-            return args.screenshot === false ? undefined : guard(capture(page, png))
+            return args.screenshot === false ? undefined : guard(capture(page, png), ownTimeoutMs)
           })
         },
       }),
@@ -391,7 +412,7 @@ export default function browserExtension(host: ExtensionHost) {
         await guard(page.addInitScript(() => sessionStorage.setItem('ultimate.detached', '1')))
       }
       api.output(`Loading ${url}\n`)
-      await guard(page.goto(url, { waitUntil: 'domcontentloaded' }))
+      await guard(page.goto(url, { waitUntil: 'domcontentloaded' }), ownTimeoutMs)
       const result = await action(page, outcomes, png, guard)
       const title = await guard(page.title())
       context.abortSignal?.throwIfAborted()
@@ -420,9 +441,14 @@ export default function browserExtension(host: ExtensionHost) {
         ],
       }
     } catch (error) {
+      // A failed step already ends the outcomes with its error.
+      const failure = describe(error)
+      const said = outcomes.at(-1)?.endsWith(failure)
       return {
         isError: true,
-        output: [{ type: 'text' as const, text: [...outcomes, String(error)].join('\n') }],
+        output: [
+          { type: 'text' as const, text: [...outcomes, ...(said ? [] : [failure])].join('\n') },
+        ],
       }
     } finally {
       context.abortSignal?.removeEventListener('abort', abort)
