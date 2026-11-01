@@ -52,6 +52,12 @@ card, on another control or in the panel, whose cards take no global keys.
 
 ## Where open questions wait
 
+Above @ultimate's composer (the `composer.top` slot, `pinned.tsx`), a strip lists every message that waits on the user,
+newest first, one line each: who asks, how many questions and the first. A branch's line opens its text and this card in
+place (its ↗ opens the branch at the message); @ultimate's own line says Show and scrolls to its card in the transcript,
+so no card is on a page twice. A line goes once the message is answered or dismissed; other conversations show no strip.
+An open card in the strip takes the desktop keys unless one of @ultimate's own cards has them.
+
 The To-dos tab lists every message that waits on the user at its top, newest first, named by its first question; a
 row opens the asking conversation at the message, where this card answers or dismisses it. ⌘K “Show open
 questions" opens the tab; meanwhile @ultimate's mark is amber, and an asking branch's row says `waits on you`.

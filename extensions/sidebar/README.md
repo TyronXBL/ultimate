@@ -63,7 +63,8 @@ section of the `sidebar.top` slot draws the same heading. Top to bottom:
   bottom rule. Each hides while it has nothing active.
 - **In flight · N** (`InFlight`, `root.tsx`): every open branch of every tree, newest input first. A branch is open
   until it is concluded or it landed after its latest input (the lander's results, or a root landing note from it;
-  a landed branch that gets new work is open again). Each shows its title, its feature tag, a state (`submitted` or
+  a landed branch that gets new work is open again), and also while a question of it waits on the user, so it never
+  folds into Landed before they answer. Each shows its title, its feature tag, a state (`submitted` or
   `landing` while the lander has it, the working phase while it works, amber `awaiting @ultimate` while a
   reply-enabled message it sent @ultimate is open, red `failed`, else `idle`) and its age; clicking opens it, and its `…` menu is the same as an Earlier row's (Rename, Compact
   context, Conclude with the pending-work check). A branch
