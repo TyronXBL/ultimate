@@ -413,7 +413,7 @@ export default function FilesViewer() {
           key={`${conversation ?? ''}:${path ?? ''}`}
         >
           {concluded?.concluded && (
-            <p className="shrink-0 truncate border-b border-border/70 bg-muted/40 px-4 py-1.5 font-mono text-[11.5px] text-muted-foreground">
+            <p className="shrink-0 border-b border-border/70 bg-muted/40 px-4 py-1.5 font-mono text-[11.5px] text-muted-foreground">
               Last commit on {concluded.branch},{' '}
               {formatAgo(concluded.concluded, Date.now(), { ago: true })}: the branch concluded
               without landing.

@@ -132,6 +132,15 @@ async function committedFile(repo: string, rev: string, path: string) {
   if (hidden(path)) throw new Error('Hidden: the name suggests secrets')
   const files = await committed(repo, rev)
   if (!files.has(path)) throw new Error('Not found in this scope')
+  // Every folder of the tree, so a walk passes only through folders that exist, as it must on disk.
+  const folders = new Set(
+    [...files.keys()].flatMap((file) =>
+      file
+        .split('/')
+        .slice(0, -1)
+        .map((_, index, parts) => parts.slice(0, index + 1).join('/')),
+    ),
+  )
   const pending = path.split('/')
   const done: string[] = []
   // A chain longer than this is a loop, as the kernel's own limit treats it.
@@ -147,6 +156,7 @@ async function committedFile(repo: string, rev: string, path: string) {
     if (hidden(current)) throw new Error('Hidden: the name suggests secrets')
     const file = files.get(current)
     if (file?.mode !== '120000') {
+      if (pending.length && !folders.has(current)) throw new Error('Not found in this scope')
       done.push(name)
       continue
     }

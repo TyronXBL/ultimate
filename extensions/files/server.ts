@@ -67,7 +67,10 @@ async function scopes(host: ExtensionHost): Promise<Scope[]> {
   return [
     {
       root: host.projectRoot,
-      branch: await git(host.projectRoot, 'rev-parse', '--abbrev-ref', 'HEAD'),
+      // symbolic-ref names the branch before its first commit too; a detached checkout has none.
+      branch: await git(host.projectRoot, 'symbolic-ref', '--quiet', '--short', 'HEAD').catch(
+        () => 'HEAD',
+      ),
     },
     ...worktrees.map(([id, item]) => ({
       root: item.path,
