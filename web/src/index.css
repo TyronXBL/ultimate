@@ -179,6 +179,24 @@
   @apply font-mono text-[11px] font-normal tracking-normal text-muted-foreground normal-case;
 }
 
+/* A small control's tap area on a touch screen: at least 32 px each way, centred on it, without changing how it looks or
+   where it sits. For controls in dense lines (a checkbox, a switch, an inline link); rows grow with pointer-coarse:h-*
+   instead. It positions the control, so it does not go on one that is absolutely positioned. */
+@utility touch-target {
+  @media (pointer: coarse) {
+    position: relative;
+    &::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 2rem);
+      height: max(100%, 2rem);
+      translate: -50% -50%;
+    }
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

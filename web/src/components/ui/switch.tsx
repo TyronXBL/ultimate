@@ -14,7 +14,7 @@ function Switch({
       aria-busy={busy || undefined}
       data-slot="switch"
       className={cn(
-        'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 data-[state=checked]:bg-brand data-[state=unchecked]:bg-input',
+        'relative inline-flex h-4 w-7 shrink-0 touch-target items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 data-[state=checked]:bg-brand data-[state=unchecked]:bg-input',
         busy && 'animate-pulse cursor-progress',
         className,
       )}

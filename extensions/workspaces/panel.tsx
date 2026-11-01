@@ -135,7 +135,7 @@ function Copyable({ value, shown = value }: { value: string; shown?: string }) {
   return (
     <button
       aria-label={`Copy ${value}`}
-      className="group/copy flex min-w-0 items-center gap-1 text-left hover:text-foreground"
+      className="group/copy flex min-w-0 items-center gap-1 text-left hover:text-foreground pointer-coarse:min-h-8"
       onClick={() => void navigator.clipboard.writeText(value)}
       title={`${value}\nclick to copy`}
       type="button"

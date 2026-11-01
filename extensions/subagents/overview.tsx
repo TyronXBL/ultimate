@@ -231,7 +231,7 @@ function FamilyGroup({
     <section className="pt-3 first-of-type:pt-1">
       <FamilyPopover family={family} view={view}>
         <button
-          className="group/family flex w-full min-w-0 items-center gap-1.5 px-3 py-1 text-left font-mono text-[11.5px] transition-colors hover:bg-accent/50 data-[state=open]:bg-accent/50"
+          className="group/family flex w-full min-w-0 items-center gap-1.5 px-3 py-1 text-left font-mono text-[11.5px] transition-colors pointer-coarse:h-9 hover:bg-accent/50 data-[state=open]:bg-accent/50"
           title={`${model ?? 'No model'}${thinking ? ` · thinking ${thinking}` : ''}${family.name === DEFAULT_FAMILY && family.follows ? " (Pi's default)" : ''} · click to change`}
           type="button"
         >
@@ -382,7 +382,7 @@ function MoveMenu({
       <DropdownMenuTrigger asChild disabled={disabled}>
         <button
           aria-label={`Move ${label} to another family`}
-          className="flex h-5 items-center gap-1 rounded px-1 font-mono text-[10.5px] text-muted-foreground/0 transition-colors group-hover/row:text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:text-muted-foreground disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-foreground pointer-coarse:text-muted-foreground"
+          className="flex h-5 items-center gap-1 rounded px-1 font-mono text-[10.5px] text-muted-foreground/0 pointer-coarse:h-8 pointer-coarse:px-2 transition-colors group-hover/row:text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:text-muted-foreground disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-foreground pointer-coarse:text-muted-foreground"
           title={disabled ? "The project's settings decide it" : 'Run it on another family'}
           type="button"
         >

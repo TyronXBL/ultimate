@@ -58,7 +58,7 @@ export function More({
 }) {
   return (
     <button
-      className="mx-2 h-5 cursor-pointer rounded-md pl-[26px] text-left font-mono text-[10px] text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+      className="mx-2 h-5 cursor-pointer rounded-md pl-[26px] pointer-coarse:h-9 text-left font-mono text-[10px] text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       onClick={onToggle}
       type="button"
     >

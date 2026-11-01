@@ -56,15 +56,15 @@ export function AutomationsSection() {
       onOpenChange={setExpanded}
       open={expanded}
     >
-      <div className="mx-2 flex h-6 items-center gap-1">
-        <CollapsibleTrigger className="group/automations flex h-6 cursor-pointer items-center gap-1 rounded-md px-1 section-label outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
+      <div className="mx-2 flex h-6 items-center gap-1 pointer-coarse:h-9">
+        <CollapsibleTrigger className="group/automations flex h-6 cursor-pointer items-center pointer-coarse:h-9 gap-1 rounded-md px-1 section-label outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
           <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/automations:rotate-90" />
           Automations
         </CollapsibleTrigger>
         <button
           aria-label={`${list.length} active${failing ? `, ${failing} need attention` : ''}: show all automations`}
           className={cn(
-            'cursor-pointer rounded-sm px-0.5 font-mono text-[11px] tabular-nums outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+            'cursor-pointer rounded-sm px-0.5 font-mono text-[11px] tabular-nums touch-target outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
             failing ? 'text-error' : 'text-muted-foreground/60',
           )}
           data-automations-open
@@ -83,7 +83,7 @@ export function AutomationsSection() {
         ))}
         {list.length > FIRST && (
           <button
-            className="mx-2 h-5 cursor-pointer rounded-md pl-[26px] text-left font-mono text-[10px] text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            className="mx-2 h-5 cursor-pointer rounded-md pl-[26px] pointer-coarse:h-9 text-left font-mono text-[10px] text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
             onClick={() => setAll(!all)}
             type="button"
           >
@@ -105,7 +105,7 @@ function Row({ automation, now }: { automation: Automation; now: number }) {
     last && (last.status === 'running' || look === 'failed') ? last.conversationId : undefined
   return (
     <button
-      className="group/row mx-2 flex h-7 min-w-0 cursor-pointer items-center gap-2 rounded-md pr-2 pl-2.5 text-left outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+      className="group/row mx-2 flex h-7 min-w-0 cursor-pointer pointer-coarse:h-10 items-center gap-2 rounded-md pr-2 pl-2.5 text-left outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
       data-sidebar-automation={automation.id}
       onClick={() => {
         if (automation.script) return openAutomation(automation.id)

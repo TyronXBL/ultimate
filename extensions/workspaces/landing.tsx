@@ -76,7 +76,7 @@ export const Review = definePoint<string, (() => void) | undefined>('workspaces.
 const external = (href: string, children: ReactNode, className?: string) => (
   <a
     className={cn(
-      'inline-flex shrink-0 items-center gap-0.5 hover:text-foreground hover:underline',
+      'inline-flex shrink-0 touch-target items-center gap-0.5 hover:text-foreground hover:underline',
       className,
     )}
     href={href}
@@ -117,7 +117,7 @@ export function CommitCount({
         open ? (
           <span className={cn('inline-flex shrink-0 items-center gap-1', className)}>
             <button
-              className="cursor-pointer hover:text-foreground hover:underline"
+              className="cursor-pointer touch-target hover:text-foreground hover:underline"
               onClick={open}
               title={`Review ${range.replace(/\b([0-9a-f]{7})[0-9a-f]{33}\b/g, '$1')}`}
               type="button"

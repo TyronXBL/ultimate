@@ -33,7 +33,7 @@ function Edits({ count, spec }: { count: number; spec: string }) {
       {(open) =>
         open ? (
           <button
-            className="shrink-0 cursor-pointer hover:text-foreground hover:underline"
+            className="shrink-0 cursor-pointer touch-target hover:text-foreground hover:underline"
             onClick={open}
             title="Review uncommitted changes"
             type="button"
@@ -162,7 +162,7 @@ function PhasedFlightRow({
       {work && (
         // Its own line under the row's button, so its links never nest in it.
         <span
-          className="flex min-w-0 items-center gap-2 pr-2 pb-0.5 pl-[30px] font-mono text-[10px] leading-4 text-muted-foreground/80"
+          className="flex min-w-0 items-center gap-2 pr-2 pb-0.5 pl-[30px] font-mono text-[10px] leading-4 text-muted-foreground/80 pointer-coarse:h-8 pointer-coarse:pb-0"
           data-flight-work={conversation.id}
         >
           {work.commits && <CommitCount count={work.commits.count} range={work.commits.spec} />}

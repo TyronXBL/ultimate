@@ -51,7 +51,7 @@ export function Copy({
   return (
     <button
       className={cn(
-        'group/copy flex min-w-0 items-center gap-1 text-left transition-colors hover:text-foreground',
+        'group/copy flex min-w-0 items-center gap-1 text-left transition-colors hover:text-foreground pointer-coarse:min-h-8',
         className,
       )}
       onClick={() => copy(value)}

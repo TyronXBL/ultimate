@@ -49,7 +49,7 @@ function Node({
   return (
     <>
       <button
-        className="flex w-full min-w-0 items-center gap-0.5 text-left hover:bg-accent/40"
+        className="flex w-full min-w-0 items-center gap-0.5 text-left hover:bg-accent/40 pointer-coarse:min-h-8"
         onClick={() => setOpen(!open)}
         style={{ paddingLeft: `${depth * 0.9}rem` }}
         type="button"

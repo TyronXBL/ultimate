@@ -214,7 +214,7 @@ function RunRow({ run, now }: { run: Run; now: number }) {
   return (
     <li
       className={cn(
-        'flex h-6 min-w-0 items-center gap-1.5 rounded-sm pr-0.5 pl-1.5',
+        'flex h-6 min-w-0 items-center gap-1.5 rounded-sm pr-0.5 pl-1.5 pointer-coarse:h-8',
         shown && 'bg-accent/70',
       )}
       data-run={run.id}
@@ -269,7 +269,7 @@ function Runs({ runs, now }: { runs: Run[]; now: number }) {
       </ol>
       {newest.length > FIRST && (
         <button
-          className="mt-0.5 ml-1.5 font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
+          className="mt-0.5 ml-1.5 touch-target font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
           onClick={() => setAll(!all)}
           type="button"
         >
@@ -775,11 +775,11 @@ function ScriptDetail({
   return (
     <div className="flex h-full min-h-80 flex-col" data-automation-panel={automation.id}>
       <header className="shrink-0 px-3 pt-1.5 pb-2.5">
-        <div className="-ml-1.5 flex h-7 items-center gap-2">
+        <div className="-ml-1.5 flex h-7 items-center gap-2 pointer-coarse:h-8">
           <button
             className={cn(
               heading,
-              'flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+              'flex h-6 cursor-pointer items-center pointer-coarse:h-8 gap-1 rounded-md px-1.5 transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
             )}
             onClick={onBack}
             title="All automations"
@@ -896,7 +896,7 @@ function Script({
             <button
               aria-pressed={view === name}
               className={cn(
-                'h-6 cursor-pointer rounded-md px-2 text-[11px] text-muted-foreground transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring',
+                'h-6 cursor-pointer rounded-md px-2 text-[11px] text-muted-foreground transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring pointer-coarse:h-8',
                 view === name ? 'bg-accent text-foreground' : 'hover:text-foreground',
               )}
               key={name}

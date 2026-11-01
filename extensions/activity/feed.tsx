@@ -127,7 +127,7 @@ function Row({
   return (
     <li
       className={cn(
-        'flex min-w-0 items-start gap-1.5 border-l-2 border-transparent py-[3px] pr-3 pl-2.5 font-mono pointer-coarse:py-1.5 text-[10.5px] leading-[18px] text-muted-foreground hover:bg-muted/40',
+        'flex min-w-0 items-start gap-1.5 border-l-2 border-transparent py-[3px] pr-3 pl-2.5 font-mono pointer-coarse:py-[7px] text-[10.5px] leading-[18px] text-muted-foreground hover:bg-muted/40',
         loud === 'error' && 'border-error/70 bg-error/[0.06]',
         loud === 'warning' && 'border-warning/60 bg-warning/[0.04]',
       )}
@@ -136,7 +136,7 @@ function Row({
     >
       {target ? (
         <button
-          className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 cursor-pointer touch-target items-start gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
           onClick={() => open(target)}
           title={`${title} · open #${target.conversation}${target.entry !== undefined ? `/${target.entry}` : ''}`}
           type="button"
