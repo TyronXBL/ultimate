@@ -127,7 +127,7 @@ export function Segmented<T extends string>({
         <button
           aria-pressed={option.value === value}
           className={cn(
-            'flex h-6 flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 whitespace-nowrap text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground',
+            'flex h-6 flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 whitespace-nowrap pointer-coarse:h-8 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground',
             option.value === value && 'bg-accent text-foreground shadow-xs',
           )}
           disabled={option.disabled}

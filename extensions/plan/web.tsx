@@ -311,7 +311,7 @@ function TaskRow({
       open={open}
       ref={row}
     >
-      <CollapsibleTrigger className="group/task flex h-7 w-full min-w-0 items-center gap-1.5 px-3 text-left hover:bg-accent/40">
+      <CollapsibleTrigger className="group/task flex h-7 w-full min-w-0 items-center gap-1.5 px-3 text-left hover:bg-accent/40 pointer-coarse:h-9">
         <StatusIcon status={task.status} />
         <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{task.key}</span>
         <span
@@ -326,7 +326,7 @@ function TaskRow({
         <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/70 transition-transform group-data-[state=open]/task:rotate-90" />
       </CollapsibleTrigger>
       <div className="space-y-0.5 pr-3 pb-1.5 pl-8">
-        <div className="flex h-5 min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+        <div className="flex h-5 min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground pointer-coarse:h-8">
           <StatusChip status={task.status} />
           <Tag>{task.role}</Tag>
           {task.deps.length > 0 && (

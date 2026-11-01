@@ -19,7 +19,7 @@ const ranges = { '24h': 86_400_000, '7d': 7 * 86_400_000, all: undefined } as co
 type Range = keyof typeof ranges
 
 const chip =
-  'h-6 shrink-0 cursor-pointer rounded-md px-2 font-mono text-[10.5px] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring'
+  'h-6 shrink-0 cursor-pointer rounded-md px-2 font-mono text-[10.5px] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring pointer-coarse:h-8 pointer-coarse:px-2.5'
 
 const loud = (event: ActivityEvent) => tone(event) === 'error' || tone(event) === 'warning'
 
@@ -55,7 +55,7 @@ function ActivityPanel() {
         Activity
         {problems > 0 && filter !== 'problems' && (
           <button
-            className="ml-auto cursor-pointer text-warning hover:underline"
+            className="ml-auto cursor-pointer touch-target text-warning hover:underline"
             onClick={() => setFilter('problems')}
             title="Show only problems"
             type="button"
@@ -66,7 +66,7 @@ function ActivityPanel() {
         {system && (
           <button
             className={cn(
-              'cursor-pointer text-muted-foreground/70 hover:text-foreground',
+              'cursor-pointer touch-target text-muted-foreground/70 hover:text-foreground',
               !(problems > 0 && filter !== 'problems') && 'ml-auto',
             )}
             onClick={() => actions.showSurface('system')}
@@ -105,7 +105,7 @@ function ActivityPanel() {
             <button
               aria-checked={range === option}
               className={cn(
-                'h-5 cursor-pointer rounded-[5px] px-1.5 font-mono text-[10.5px] text-muted-foreground transition-colors hover:text-foreground',
+                'h-5 cursor-pointer rounded-[5px] px-1.5 font-mono text-[10.5px] text-muted-foreground transition-colors hover:text-foreground pointer-coarse:h-8 pointer-coarse:px-2.5',
                 range === option && 'bg-accent text-foreground',
               )}
               key={option}
@@ -209,7 +209,7 @@ function Older({
           )
         ) : (
           <button
-            className="-ml-1.5 flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-default"
+            className="-ml-1.5 flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-muted-foreground pointer-coarse:h-8 transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-default"
             disabled={loading}
             onClick={() => void more()}
             type="button"

@@ -359,12 +359,15 @@ function PanelTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem 
  */
 function PhoneTabs({ panels, active }: { panels: PanelItem[]; active: PanelItem }) {
   const shownTab = useRef<HTMLButtonElement>(null)
-  useLayoutEffect(
-    () => shownTab.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }),
-    [active.id],
-  )
+  // Braces, not an expression body: Chromium's scrollIntoView returns a promise, which React would call as cleanup.
+  useLayoutEffect(() => {
+    shownTab.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [active.id])
   return (
-    <div className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/70 px-2 font-mono text-[12px] [scrollbar-width:none]">
+    <div
+      className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/70 px-2 font-mono text-[12px] [scrollbar-width:none]"
+      data-ui="phone-panel-tabs"
+    >
       {panels.map((panel) => {
         const Icon = panel.icon
         const shown = panel.id === active.id

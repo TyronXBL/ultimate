@@ -136,7 +136,7 @@ function Row({
     >
       {target ? (
         <button
-          className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 cursor-pointer touch-target items-start gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
           onClick={() => open(target)}
           title={`${title} · open #${target.conversation}${target.entry !== undefined ? `/${target.entry}` : ''}`}
           type="button"

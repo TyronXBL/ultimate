@@ -126,7 +126,7 @@ function ProjectSetup({ system }: { system: SystemInfo }) {
           <>
             {' '}
             <button
-              className="text-brand outline-none hover:underline focus-visible:underline"
+              className="touch-target text-brand outline-none hover:underline focus-visible:underline"
               onClick={() => ui.open(projectDialog)}
               type="button"
             >
@@ -287,7 +287,7 @@ function RowSecrets({ secrets }: { secrets: readonly Secret[] }) {
             {secret.set ? 'set' : secret.via ? `via ${secret.via}` : 'missing'}
           </span>
           <button
-            className="ml-auto shrink-0 text-[11px] text-brand outline-none hover:underline focus-visible:underline"
+            className="ml-auto shrink-0 touch-target text-[11px] text-brand outline-none hover:underline focus-visible:underline"
             onClick={() => openSecrets(secret.name)}
             type="button"
           >

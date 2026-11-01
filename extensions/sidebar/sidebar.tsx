@@ -135,7 +135,7 @@ function MemoryHint({ root }: { root: number }) {
       aria-current={shown ? 'page' : undefined}
       aria-label="Open the project memory"
       className={cn(
-        'mr-0.5 flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] font-normal text-muted-foreground/50 outline-none hover:bg-sidebar-accent/50 hover:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring',
+        'mr-0.5 flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono pointer-coarse:h-8 text-[10px] font-normal text-muted-foreground/50 outline-none hover:bg-sidebar-accent/50 hover:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring',
         shown && 'bg-sidebar-accent text-foreground hover:bg-sidebar-accent hover:text-foreground',
       )}
       data-memory-hint={root}
@@ -505,7 +505,7 @@ function Tree({
       >
         <CollapsibleTrigger
           aria-label={`Sub-agents of conversation ${conversation.id}`}
-          className="group/agents ml-5 flex cursor-pointer items-center gap-1 py-1 text-[10.5px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="group/agents ml-5 flex cursor-pointer items-center gap-1 py-1 text-[10.5px] pointer-coarse:h-8 pointer-coarse:pr-3 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/agents:rotate-90" />
           Sub-agents · {children.length}
@@ -677,7 +677,7 @@ function Tree({
       <div className="mt-auto pt-3">
         {earlier.length > 0 && (
           <Collapsible className="pt-1" open={earlierOpen} onOpenChange={setEarlierOpen}>
-            <CollapsibleTrigger className="group/earlier flex w-full cursor-pointer items-center gap-1 px-4 py-1 section-label outline-none hover:text-foreground">
+            <CollapsibleTrigger className="group/earlier flex w-full cursor-pointer items-center gap-1 px-4 py-1 section-label pointer-coarse:h-9 outline-none hover:text-foreground">
               <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/earlier:rotate-90" />
               Earlier · {earlier.length}
             </CollapsibleTrigger>
@@ -692,7 +692,7 @@ function Tree({
         )}
         {hidden.length > 0 && (
           <Collapsible className="pt-1" open={concludedOpen} onOpenChange={setConcludedOpen}>
-            <CollapsibleTrigger className="group/concluded flex w-full cursor-pointer items-center gap-1 px-4 py-1 section-label outline-none hover:text-foreground focus-visible:text-foreground">
+            <CollapsibleTrigger className="group/concluded flex w-full cursor-pointer items-center gap-1 px-4 py-1 section-label pointer-coarse:h-9 outline-none hover:text-foreground focus-visible:text-foreground">
               <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/concluded:rotate-90" />
               Concluded · {hidden.length}
             </CollapsibleTrigger>

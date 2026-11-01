@@ -118,7 +118,7 @@ export function Todos() {
       )}
       {done.length > 0 && (
         <details className="group/done mt-2" data-todos-done>
-          <summary className="flex cursor-pointer list-none items-center gap-1 px-3 py-1.5 section-label hover:text-foreground">
+          <summary className="flex cursor-pointer list-none items-center gap-1 px-3 py-1.5 section-label hover:text-foreground pointer-coarse:h-9">
             <ChevronRightIcon className="size-3 transition-transform group-open/done:rotate-90" />
             Done · {done.length}
           </summary>
@@ -178,7 +178,7 @@ function TodoRow({
     todo.owner === 'user' ? 'Ask @ultimate to help with this' : 'Have @ultimate work on this'
   return (
     <li className="group/todo flex items-start rounded hover:bg-muted/50" data-todo={todo.id}>
-      <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5 py-1.5 pl-2">
+      <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5 py-1.5 pl-2 pointer-coarse:py-2.5">
         <Checkbox
           aria-label={todo.done ? `Reopen: ${todo.text}` : `Done: ${todo.text}`}
           checked={!!todo.done}
@@ -327,7 +327,7 @@ function AddTodo({ add }: { add: (text: string, owner: Todo['owner']) => Promise
           <button
             aria-checked={owner === option.id}
             className={cn(
-              'cursor-pointer rounded-[3px] px-1.5 py-0.5 text-muted-foreground hover:text-foreground',
+              'cursor-pointer touch-target rounded-[3px] px-1.5 py-0.5 text-muted-foreground hover:text-foreground',
               owner === option.id && 'bg-muted text-foreground',
             )}
             key={option.id}
