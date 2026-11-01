@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { formatSkillsForPrompt, loadProjectContextFiles } from '@earendil-works/pi-coding-agent'
@@ -333,7 +334,16 @@ export default function prompt(host: ExtensionHost) {
           .join('\n\n'),
       ),
       section('skills', (input) => {
-        const skills = host.skills(input.env?.cwd ?? input.agent.cwd ?? host.projectRoot)
+        const cwd = input.env?.cwd ?? input.agent.cwd ?? host.projectRoot
+        // A skill inside the host project is listed at the work checkout's copy when it has one (a worktree): that is
+        // the copy the agent reads and edits; the host's copy can be older or newer and is not its to change.
+        const skills = host.skills(cwd).map((skill) => {
+          const inProject = relative(host.projectRoot, skill.filePath)
+          const copy = join(cwd, inProject)
+          return cwd !== host.projectRoot && !inProject.startsWith('..') && existsSync(copy)
+            ? { ...skill, filePath: copy }
+            : skill
+        })
         // As Pi's buildSystemPromptSections: name the tool the agent can load a skill with, and list none without one.
         const names = new Set((input.agent.tools ?? []).map((tool) => tool.name))
         const reader = (['read', 'bash'] as const).find((name) => names.has(name))

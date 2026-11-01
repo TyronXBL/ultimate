@@ -6,7 +6,8 @@ Disabling the extension removes its definitions too.
 Skills ([Agent Skills](https://agentskills.io) folders with a `SKILL.md`, as Pi loads them) come from clone `skills/`, the
 project's `.pi/skills/`, `~/.ultimate/skills/`, then, once the project is trusted, its `.agents/skills/` and
 `.ultimate/skills/`; a later scope overrides an earlier skill of the same name. Every agent's
-system prompt lists each skill's name, description and path after the project context, and the agent reads `SKILL.md`
+system prompt lists each skill's name, description and path after the project context (a skill inside the host project
+at the work checkout's copy when a worktree has one), and the agent reads `SKILL.md`
 when a task matches (`disable-model-invocation: true` leaves a skill out of that list). The user runs one with
 `/skill:name request` in the composer or ⌘K → Run a skill: the server sends the skill's body in Pi's `<skill>` block
 ahead of the request. The Info tab lists skills with their scope, overrides and Pi's load warnings; a read of a
