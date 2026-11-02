@@ -4,9 +4,15 @@
   },
   "modelFamilies": {
     "families": {
+      "default": { "model": "anthropic/claude-opus-5-5", "thinking": "high" },
       "lead": { "model": "claude-code/claude-opus-5-5", "thinking": "high", "color": "orange" },
-      "review": { "model": "openai-codex/gpt-6-astra", "thinking": "high" },
-      "fast": { "model": "openai-codex/gpt-6.1-sol" }
+      "design": { "model": "anthropic/claude-opus-5-5", "thinking": "medium" },
+      "review": { "model": "openai-codex/gpt-6.1-terra", "thinking": "high" },
+      "critic": { "model": "anthropic/claude-sonnet-5-5", "thinking": "high" },
+      "build": { "model": "openai-codex/gpt-6-luna", "thinking": "medium" },
+      "fast": { "model": "openai-codex/gpt-6.1-sol" },
+      "recon": { "model": "antigravity/gemini-3.8-flash", "thinking": "medium" },
+      "research": { "model": "anthropic/claude-sonnet-5-5", "thinking": "high" }
     },
     "assign": {
       "preview": "fast"

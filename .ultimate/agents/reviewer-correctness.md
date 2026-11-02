@@ -1,9 +1,8 @@
 ---
 name: reviewer-correctness
 description: Correctness, security and regressions review of an immutable commit range.
-model: openai-codex/gpt-6.1-terra
+family: review
 fallback: [anthropic/claude-opus-5-5]
-thinking: high
 tools: [read, bash]
 resident: false
 ---
