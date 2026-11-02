@@ -10,7 +10,7 @@ import { Metadata } from '../server/metadata.ts'
 import { Summaries, SummaryDiscarded } from '../extensions/conversations/summary.ts'
 import { held, launch } from './conversations-summary-fixture.ts'
 
-it('summarizes the first, fourth and seventh completed exchanges, not tools, streams or idle time; persists across reopen', async () => {
+it('summarizes every completed exchange, not tools, streams or idle time; persists across reopen', async () => {
   const fixture = await launch({ own: true })
   const { server } = fixture
   let generation = 0
@@ -53,7 +53,7 @@ it('summarizes the first, fourth and seventh completed exchanges, not tools, str
     await fixture.exchange()
     await until(async () => (await fixture.read())?.exchanges === count)
     await fixture.server.harness.waitForIdle(context)
-    expect((await fixture.read())?.summary).toBe(`Sidebar summary ${count === 4 ? 4 : 1}.`)
+    expect((await fixture.read())?.summary).toBe(`Sidebar summary ${count}.`)
   }
   expect((await server.harness.snapshot(Metadata, fixture.conversation.id, context))?.title).toBe(
     'Improve the conversation sidebar',
@@ -75,12 +75,10 @@ it('summarizes the first, fourth and seventh completed exchanges, not tools, str
   expect(await fixture.titleChanges()).toEqual(changes)
   expect((await fixture.read())?.summary).toBe('Sidebar summary 4.')
   expect((await fixture.read())?.exchanges).toBe(4)
-  for (let count = 5; count <= 7; count++) {
-    await fixture.exchange()
-    await until(async () => (await fixture.read())?.exchanges === count)
-    await fixture.server.harness.waitForIdle(context)
-    expect((await fixture.read())?.summary).toBe(`Sidebar summary ${count === 7 ? 7 : 4}.`)
-  }
+  await fixture.exchange()
+  await until(async () => (await fixture.read())?.exchanges === 5)
+  await fixture.server.harness.waitForIdle(context)
+  expect((await fixture.read())?.summary).toBe('Sidebar summary 5.')
   await fixture.server.harness.waitForIdle(context)
   expect(await fixture.titleChanges()).toEqual(changes)
 })
@@ -158,6 +156,8 @@ it('protects preexisting and in-flight manual titles, and blank rename restores 
     release = done
   })
   for (let count = 2; count <= 3; count++) await fixture.exchange()
+  const changes = await fixture.titleChanges()
+  expect(changes).toHaveLength(1)
   fixture.generated.mockImplementationOnce(async (_models, _input, signal) => {
     await held(gate, signal)
     return {
@@ -182,14 +182,14 @@ it('protects preexisting and in-flight manual titles, and blank rename restores 
     (await fixture.server.harness.snapshot(Metadata, fixture.conversation.id, context))?.title,
   ).toBe('My deliberate title')
   expect((await fixture.read())?.summary).toBe('Updated summary.')
-  expect(await fixture.titleChanges()).toEqual([])
+  expect(await fixture.titleChanges()).toEqual(changes)
   await fixture.action('rename', '')
-  for (let count = 5; count <= 7; count++) await fixture.exchange()
+  await fixture.exchange()
   await until(async () => (await fixture.read())?.status === 'ready')
   expect(
     (await fixture.server.harness.snapshot(Metadata, fixture.conversation.id, context))?.title,
   ).toBe('Improve the conversation sidebar')
-  expect(await fixture.titleChanges()).toHaveLength(1)
+  expect(await fixture.titleChanges()).toHaveLength(2)
 })
 
 it('isolates provider errors', async () => {

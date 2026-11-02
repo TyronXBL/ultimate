@@ -73,7 +73,7 @@ function turnAbove(scroll: HTMLElement, content: HTMLElement): Turn | number | u
  * the loaded history is found from the stored inputs alone, rendered unseen like their rows to read their words.
  */
 function PinnedTurn() {
-  const { isAtBottom, scrollRef, contentRef } = useTranscriptScroll()
+  const { atBottom, scrollRef, contentRef } = useTranscriptScroll()
   const id = useConversation((conversation) => conversation.id)
   const phone = useViewport() === 'phone'
   const [shown, setShown] = useState<Turn | 'earlier'>()
@@ -104,7 +104,7 @@ function PinnedTurn() {
   useEffect(() => {
     const scroll = scrollRef.current
     const content = contentRef.current
-    if (isAtBottom || !scroll || !content || id === undefined) return undefined
+    if (atBottom || !scroll || !content || id === undefined) return undefined
     let frame = 0
     let asked: number | undefined
     const update = () => {
@@ -133,8 +133,8 @@ function PinnedTurn() {
       scroll.removeEventListener('scroll', scrolled)
       resize.disconnect()
     }
-  }, [isAtBottom, scrollRef, contentRef, id, found])
-  const turn = isAtBottom ? undefined : shown
+  }, [atBottom, scrollRef, contentRef, id, found])
+  const turn = atBottom ? undefined : shown
   const reveal = (entryId: number) =>
     events.emit('ultimate:reveal-entry', { conversationId: id, entryId })
   return (

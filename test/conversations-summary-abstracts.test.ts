@@ -38,7 +38,7 @@ it('writes each branch abstract atomically with its accepted answer and reuses i
   await fixture.exchange()
   expect(fixture.abstract).toHaveBeenCalledTimes(2)
   expect(fixture.generated.mock.calls[1][1]).toContain(`Previous abstract:\n${state?.abstract}`)
-  expect(fixture.generated.mock.calls[1][3]).toBe(false)
+  expect(fixture.generated.mock.calls[1][3]).toBe(true)
 })
 
 it.each(['error', 'aborted'] as const)(

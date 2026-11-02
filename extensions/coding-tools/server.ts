@@ -75,15 +75,6 @@ function readTool(host: Pick<ExtensionHost, 'projectRoot' | 'skills'>) {
   })
 }
 
-/** Pi's edit tool, with how to recover from its two common failures. */
-function editTool() {
-  const edit = createEditTool()
-  return {
-    ...edit,
-    description: `${edit.description} After "Could not find", read the region again before retrying; after "Found N occurrences", widen oldText with surrounding lines.`,
-  }
-}
-
 function defaultBashTimeout() {
   const seconds = Number(process.env.ULTIMATE_BASH_TIMEOUT ?? 600)
   if (!Number.isFinite(seconds) || seconds <= 0)
@@ -373,6 +364,12 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectR
   const shell = createBashTool()
   const parameters = Type.Object({
     ...shell.parameters.properties,
+    timeout: Type.Optional(
+      Type.Number({
+        description:
+          'Timeout in seconds (optional; without it a default tripwire, 600 s unless configured, stops the command)',
+      }),
+    ),
     interruptible: Type.Optional(
       Type.Boolean({
         description:
@@ -383,7 +380,6 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectR
   // In the tool itself, not a wrap, so the events carry the call's trace and conversation.
   const bashTool = defineTool({
     ...shell,
-    description: `${shell.description} Set interruptible for a command that only waits or polls, so a steering message can end it early.`,
     parameters,
     async execute({ interruptible, ...args }, api, context) {
       const change = interruptible ? changes(args.command) : undefined
@@ -420,7 +416,7 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectR
   return defineExtension({
     name: 'coding-tools',
     // Each tool keeps its own parameters; the list is only read through the base registration.
-    tools: [readTool(host), createWriteTool(), editTool(), bashTool] as ToolRegistration[],
+    tools: [readTool(host), createWriteTool(), createEditTool(), bashTool] as ToolRegistration[],
     wraps: [
       wrapTool(createBashTool(), (bash) => ({
         ...bash,

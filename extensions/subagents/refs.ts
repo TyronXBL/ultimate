@@ -93,6 +93,13 @@ export type BranchSetupState = { agents?: Record<string, ModelRef & { thinking?:
  * definitions' models; absent on branches started without a setup.
  */
 export const BranchSetupDoc = docRef<BranchSetupState>('subagents.setup')
+/**
+ * What a `subagent start` child was started on: its model id (`gpt-6-astra`) and whether it was made on the fly, without
+ * a definition (`adhoc`).
+ */
+export type Run = { model?: string; adhoc?: true }
+/** `{ [conversationId]: Run }` of the children `subagent start` made, on conversation 1. */
+export const RunsDoc = docRef<Record<string, Run>>('subagents.runs')
 
 /** `{ [name]: conversationId }` of the standing agents, on conversation 1. */
 export const StandingDoc = docRef<Record<string, number>>('ultimate.standing-agents')

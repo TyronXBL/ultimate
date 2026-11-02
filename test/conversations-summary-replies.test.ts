@@ -208,7 +208,6 @@ it.each([false, true])(
       expect((await submission.status(context)).status).toBe('placed')
       expect((await fixture.read())?.exchanges).toBe(0)
       expect((await fixture.read())?.activity).toBeUndefined()
-      expect((await fixture.read())?.summaryOwed).toBeUndefined()
       expect((await fixture.read())?.summary).toBe('Added concise summaries to the sidebar.')
       expect(
         (await server.harness.snapshot(Metadata, fixture.conversation.id, context))?.title,
@@ -304,56 +303,51 @@ it.each(['rename', 'newer'] as const)('protects a held spawn result after %s', a
   expect(state?.exchanges).toBe({ rename: 1, newer: 2 }[change])
 })
 
-it.each([2, 3])(
-  'settles a held spawn superseded by reply-only exchange %s without changing cadence',
-  async (exchange) => {
-    const fixture = await launch()
-    for (let count = 1; count < exchange; count++) await fixture.exchange()
-    const before = (await fixture.read())!
-    let release!: () => void
-    const gate = new Promise<void>((done) => {
-      release = done
-    })
-    fixture.generated.mockImplementationOnce(async (_models, _input, signal) => {
-      await held(gate, signal)
-      return { activity: 'Old spawn', title: 'Old spawn', summary: 'Old spawn' }
-    })
-    await fixture.spawn(before.lastAnswer!)
-    await until(() => fixture.generated.mock.calls.length === exchange)
-    expect((await fixture.read())?.status).toBe('pending')
-    try {
-      await fixture.exchange()
-      const state = await fixture.read()
-      expect(state?.pending).toBeUndefined()
-      expect(state?.assessmentStatus).toBe('ready')
-      expect(state?.exchanges).toBe(exchange)
-      expect(state?.summary).toBe(before.summary)
-      expect(state?.summaryOwed).toBeUndefined()
-      expect(fixture.generated.mock.calls.at(-1)![3]).toBe(false)
-      expect(state?.status).toBe('stale')
-    } finally {
-      release()
-    }
-    await until(async () => (await fixture.server.harness.inspect(context)).tasks.length === 0)
-    expect((await fixture.read())?.status).toBe('stale')
-    const discarded = (await fixture.entries()).filter((entry) => SummaryDiscarded.is(entry))
-    expect(discarded.map((entry) => entry.data)).toEqual([
-      {
-        reason: 'stale',
-        cause: 'superseded',
-        model: 'openai-codex/gpt-6-luna',
-        at: expect.any(Number),
-      },
-    ])
-    const spawnTask = await fixture.server.harness.getTask(discarded[0].byTaskId!, context)
-    expect(spawnTask?.kind).toBe('conversations.summary')
-    expect(spawnTask?.input).toMatchObject({ spawn: { answer: before.lastAnswer } })
-    expect((await fixture.read())?.summary).toBe(before.summary)
-    for (let count = exchange + 1; count <= 4; count++) await fixture.exchange()
-    expect((await fixture.read())?.exchanges).toBe(4)
-    expect((await fixture.read())?.status).toBe('ready')
-    expect(
-      fixture.generated.mock.calls.filter((call) => call[5] === 'reply').map((call) => call[3]),
-    ).toEqual([true, false, false, true])
-  },
-)
+it('settles a held spawn superseded by the next exchange, which publishes its own summary', async () => {
+  const fixture = await launch()
+  await fixture.exchange()
+  const before = (await fixture.read())!
+  let release!: () => void
+  const gate = new Promise<void>((done) => {
+    release = done
+  })
+  fixture.generated.mockImplementationOnce(async (_models, _input, signal) => {
+    await held(gate, signal)
+    return { activity: 'Old spawn', title: 'Old spawn', summary: 'Old spawn' }
+  })
+  await fixture.spawn(before.lastAnswer!)
+  await until(() => fixture.generated.mock.calls.length === 2)
+  expect((await fixture.read())?.status).toBe('pending')
+  fixture.generated.mockResolvedValueOnce({
+    activity: 'Refined the sidebar.',
+    title: 'Refine the sidebar',
+    summary: 'Refined the sidebar.',
+  })
+  try {
+    await fixture.exchange()
+    const state = await fixture.read()
+    expect(state?.pending).toBeUndefined()
+    expect(state?.assessmentStatus).toBe('ready')
+    expect(state?.exchanges).toBe(2)
+    expect(state?.summary).toBe('Refined the sidebar.')
+    expect(fixture.generated.mock.calls.at(-1)![3]).toBe(true)
+    expect(state?.status).toBe('ready')
+  } finally {
+    release()
+  }
+  await until(async () => (await fixture.server.harness.inspect(context)).tasks.length === 0)
+  expect((await fixture.read())?.status).toBe('ready')
+  const discarded = (await fixture.entries()).filter((entry) => SummaryDiscarded.is(entry))
+  expect(discarded.map((entry) => entry.data)).toEqual([
+    {
+      reason: 'stale',
+      cause: 'superseded',
+      model: 'openai-codex/gpt-6-luna',
+      at: expect.any(Number),
+    },
+  ])
+  const spawnTask = await fixture.server.harness.getTask(discarded[0].byTaskId!, context)
+  expect(spawnTask?.kind).toBe('conversations.summary')
+  expect(spawnTask?.input).toMatchObject({ spawn: { answer: before.lastAnswer } })
+  expect((await fixture.read())?.summary).toBe('Refined the sidebar.')
+})

@@ -70,11 +70,9 @@ New UI is a new extension folder, not a change to `web/`: follow the `write-exte
 
 The top-level agent may commit verified work, land it and normally push the destination branch to `origin`
 (`HazAT/ultimate`), public or private, without asking. `workspace submit` runs checks and pushes. Subagents commit
-and report, never push. Preserve remote advancement with a non-destructive merge in an isolate, inspect it and rerun
-checks; stop for ambiguous conflicts, failed checks, security concerns or any force push/history rewrite. Never push
-secrets or unrelated unverified work. This permission does not cover other repositories, releases, publishing,
-deployments or GitHub issue/PR changes. See [integration details](docs/worktrees.md#standing-permission-to-push-this-repository)
-before pushing.
+and report, never push. Never force-push, rewrite history or push secrets. This permission does not cover other
+repositories, releases, publishing, deployments or GitHub issue/PR changes. A rejected push or remote advancement:
+see [integration details](docs/worktrees.md#standing-permission-to-push-this-repository).
 
 ## Conventions
 

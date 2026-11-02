@@ -46,6 +46,7 @@
     "extensions/sounds/agents.ts",
     "extensions/sounds/conductor.ts",
     "extensions/sounds/engine.ts",
+    "extensions/sounds/narration.ts",
     "extensions/instance/links.ts",
     "extensions/update/item.ts",
     "extensions/pause/lasted.ts",
@@ -74,6 +75,7 @@
     "lib/context-usage.ts",
     "lib/entries.ts",
     "lib/families.ts",
+    "lib/marks.ts",
     "extensions/subagents/message-types.ts",
     "test/web"
   ]

@@ -11,10 +11,36 @@ import {
 } from '@earendil-works/pi-durable/env'
 import { exec } from '../../lib/exec.ts'
 import { git } from '../../lib/git.ts'
+import { spawn } from '../../lib/spawn.ts'
 
 /** The largest file `read` loads at a revision, whole; Pi's read shows at most 50 KB of text. */
 const MAX_BLOB = 64 * 1024 * 1024
 const TIMEOUT = 30_000
+
+/**
+ * Git's whole output as bytes, with `input` on its stdin; rejects when it fails, runs past TIMEOUT or writes more than
+ * MAX_BLOB. Spawned through the process helper, whose `exec` returns only text and takes no input.
+ */
+function gitBytes(cwd: string, args: string[], input?: string) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const child = spawn('git', args, { cwd, signal: AbortSignal.timeout(TIMEOUT) })
+    const chunks: Buffer[] = []
+    let size = 0
+    let stderr = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > MAX_BLOB) child.kill()
+      else chunks.push(chunk)
+    })
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0 && size <= MAX_BLOB) resolve(Buffer.concat(chunks))
+      else reject(new Error(`git ${args.join(' ')} failed${stderr ? `: ${stderr.trim()}` : ''}`))
+    })
+    child.stdin.end(input)
+  })
+}
 
 /**
  * `env` with the file at `path` as committed in `rev`: Pi's read tool then opens these bytes instead of the working
@@ -65,12 +91,15 @@ export async function atRevision(
   })
   // --follow-symlinks resolves links inside the commit, as a read of the working tree follows them; -Z separates
   // records with NUL, which no path contains.
-  const lookup = exec('git', ['cat-file', '--batch-check', '--follow-symlinks', '-Z'], {
-    cwd,
-    timeout: TIMEOUT,
-  })
-  lookup.child.stdin?.end(`${commit}:${relative(top, absolute)}\0`)
-  const found = (await lookup).stdout.split('\0')[0]
+  const found = (
+    await gitBytes(
+      cwd,
+      ['cat-file', '--batch-check', '--follow-symlinks', '-Z'],
+      `${commit}:${relative(top, absolute)}\0`,
+    )
+  )
+    .toString()
+    .split('\0')[0]
   const [oid, type, size] = found.split(' ')
   if (type === 'tree') throw new Error(`${path} is a directory at ${rev}`)
   if (type !== 'blob')
@@ -81,14 +110,9 @@ export async function atRevision(
     throw new Error(
       `${path} is ${size} bytes at ${rev}, more than the ${MAX_BLOB / 2 ** 20} MiB a read at a revision loads; use git show in bash`,
     )
-  const { stdout } = await exec('git', ['cat-file', 'blob', oid], {
-    cwd,
-    encoding: 'buffer',
-    maxBuffer: MAX_BLOB,
-    timeout: TIMEOUT,
-  })
+  const blob = await gitBytes(cwd, ['cat-file', 'blob', oid])
   // A plain array, not a Node Buffer: the image processor transfers what `read` returns to its worker.
-  const bytes = new Uint8Array(stdout)
+  const bytes = new Uint8Array(blob)
   const reader: BinaryReader = {
     info: async () =>
       ok({

@@ -26,7 +26,11 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
 })
 const textOf = (content: unknown): string =>
-  typeof content === 'string' ? content : JSON.stringify(content)
+  typeof content === 'string'
+    ? content
+    : Array.isArray(content) && content[0]?.type === 'text'
+      ? content[0].text
+      : JSON.stringify(content)
 
 export async function fixture() {
   const home = await temp('ultimate-sidechat-')

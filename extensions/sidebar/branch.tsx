@@ -1,5 +1,5 @@
 /** Where a branch stands, as its sidebar row shows it: in flight or landed, its state word, and its work so far. */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAction, useDocOf, useEvents } from '@/sdk'
 import { Committed } from '../coding-tools/ui.tsx'
 import { MessagesDoc, conversationState, emptyMessages } from '../messages/ui.tsx'
@@ -82,8 +82,8 @@ export const tones: Record<BranchTone, string> = {
 
 /**
  * Each open branch's work so far, read once for all of them. It is read again only when something can have changed it:
- * an agent commits (`coding-tools.committed`), a worktree changes in the index, or a branch's run starts or ends
- * (edits happen in runs). Never on a timer.
+ * an agent commits (`coding-tools.committed`), a worktree changes in the index, or a branch's run ends (edits happen in
+ * runs). Never on a timer, nor when a run starts: each read runs git per worktree on the host.
  */
 export function useFlightWork(branches: ConversationSummary[]) {
   const ids = branches.filter((branch) => branch.workspace?.state === 'ready').map((b) => b.id)
@@ -95,7 +95,15 @@ export function useFlightWork(branches: ConversationSummary[]) {
   const { refetch } = progress
   // A worktree becoming ready or going changes `ids`, which refetches by itself.
   const commit = useEvents({ events: [Committed], limit: 1 })?.[0]?.id
-  const runs = branches.map((branch) => `${branch.id}:${branch.busy ? 1 : 0}`).join(',')
+  const busy = branches.filter((branch) => branch.busy).map((branch) => branch.id)
+  // Counts the runs that ended: a branch that was working is not anymore.
+  const [runs, setRuns] = useState({ busy, ended: 0 })
+  if (busy.join() !== runs.busy.join())
+    setRuns({
+      busy,
+      ended: runs.ended + (runs.busy.some((id) => !busy.includes(id)) ? 1 : 0),
+    })
+  const { ended } = runs
   const first = useRef(true)
   useEffect(() => {
     if (first.current) {
@@ -105,7 +113,7 @@ export function useFlightWork(branches: ConversationSummary[]) {
     // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
     if (ids.length > 0) void refetch()
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- a changed id set refetches in useAction itself
-  }, [commit, runs, refetch])
+  }, [commit, ended, refetch])
   const byId = new Map((progress.data ?? []).map((item) => [item.id, item]))
   return new Map(
     branches.map((branch) => [

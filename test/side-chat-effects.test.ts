@@ -142,19 +142,38 @@ describe('side chats', () => {
             }),
           context,
         )
-      const screenshot = await appendImage(side, image.data)
       await appendImage(f.main, Buffer.from('main').toString('base64'))
       const target = await f.server.harness.createConversation(
         { ownership: { kind: 'ownerless' } },
         context,
       )
       const text = `image ${tool} ${ref}`
-      await f.call(side, tool, {
-        ...(tool === 'branch'
+      const args =
+        tool === 'branch'
           ? { prompt: text, root: ROOT_CONVERSATION_ID, isolated: false }
-          : { to: `#${target.id}`, text, reply: false }),
-        images: ref === 'latest' ? ref : screenshot.id,
-      })
+          : { to: `#${target.id}`, text, reply: false }
+      let screenshot: { id: number }
+      if (ref === 'latest') {
+        // "latest" forwards this turn's images: the side chat's own input carries the screenshot.
+        const submission = await (await f.server.harness.conversation(side, context))!.submit(
+          {
+            type: 'input',
+            content: [
+              {
+                type: 'text',
+                text: `CALL ${JSON.stringify({ name: tool, args: { ...args, images: ref } })}`,
+              },
+              image,
+            ],
+          },
+          context,
+        )
+        await submission.wait(context)
+        screenshot = { id: (await submission.status(context)).entry! }
+      } else {
+        screenshot = await appendImage(side, image.data)
+        await f.call(side, tool, { ...args, images: screenshot.id })
+      }
       await until(async () =>
         (await f.server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context))!.messages.some(
           (message) => message.text === text && message.entry !== undefined,

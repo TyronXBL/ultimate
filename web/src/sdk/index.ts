@@ -71,7 +71,7 @@ export { AllProvided, Provided } from '../app/boundary.tsx'
 export { ConversationScope } from './conversation-scope.tsx'
 /** A stored entry rendered as its transcript row would show it, outside the transcript. */
 export { TranscriptEntry } from '../app/transcript.tsx'
-/** Inside `transcript.top`: the transcript's `scrollRef`, its rows' `contentRef`, and `isAtBottom`. */
+/** Inside `transcript.*` slots: the transcript's `scrollRef`, its rows' `contentRef`, and `atBottom`. */
 export { useTranscriptScroll } from '../app/transcript.tsx'
 /** Sends what the composer inside it submits somewhere else, such as a new side chat; see `composer` renderers. */
 export { Composer, ComposerRedirect, fillComposer, insertIntoComposer } from '../app/composer.tsx'
@@ -93,6 +93,7 @@ export {
   useConnection,
   useConversation,
   useConversations,
+  useConversationSummary,
   useDialog,
   useDoc,
   useDocKind,

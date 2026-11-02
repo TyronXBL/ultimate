@@ -24,6 +24,7 @@ import {
   summaryInput,
   summaryBehavior,
   IntentSummarized,
+  FeatureChanged,
   ReplySummarized,
   SummaryDiscarded,
 } from '../extensions/conversations/summary.ts'
@@ -569,6 +570,7 @@ it('records an accepted reply summary as an entry traced to its summary and gene
       inputId: row.inputId,
       answerId: state.lastAnswer,
       activity: 'Added concise summaries to the sidebar.',
+      summary: 'Added concise summaries to the sidebar.',
       model: 'openai-codex/gpt-6-luna',
       at: expect.any(Number),
     },
@@ -585,6 +587,27 @@ it('records an accepted reply summary as an entry traced to its summary and gene
   expect((await fixture.entries()).filter((entry) => SummaryDiscarded.is(entry))).toEqual([])
   const view = await fixture.conversation.context(context)
   expect(JSON.stringify(view.messages)).not.toContain('Added concise summaries')
+})
+
+it('lists the summaries a conversation had, newest first, from its reply entries', async () => {
+  const fixture = await launch()
+  await fixture.exchange()
+  // Every top-level reply refreshes the summary and records it.
+  fixture.generated.mockResolvedValue({
+    activity: 'Built the popover.',
+    title: 'Sidebar history',
+    summary: 'Built the popover.',
+  })
+  await fixture.exchange()
+  const response = await post(fixture.server, '/api/extensions/conversations/actions/summaries', {
+    args: { id: fixture.conversation.id },
+  })
+  const history = response.data as { result: { summary: string; at: number }[] }
+  expect(history.result.map((record) => record.summary)).toEqual([
+    'Built the popover.',
+    'Added concise summaries to the sidebar.',
+  ])
+  expect(history.result.every((record) => typeof record.at === 'number')).toBe(true)
 })
 
 it.each(['answers', 'fails'] as const)(
@@ -671,3 +694,77 @@ it.each(['answers', 'fails'] as const)(
     await expected()
   },
 )
+
+it('refreshes title, summary and feature when a steer joins a running run, and records the tag change', async () => {
+  const fixture = await launch()
+  const { server } = fixture
+  fixture.generated.mockResolvedValueOnce({
+    activity: 'Investigated the sound cues.',
+    title: 'Investigate the sound cue hang',
+    summary: 'Find why sound cues hang the prompt.',
+    feature: 'Sounds Extension',
+  })
+  await fixture.exchange()
+  let release!: () => void
+  let holding = false
+  server.host.registry.install(
+    defineExtension({
+      name: 'steer-hold',
+      tools: [
+        defineTool({
+          name: 'steer_hold',
+          description: 'Hold work until released',
+          parameters: Type.Object({}),
+          execute: async (_args, _api, toolContext) => {
+            holding = true
+            await awaitWithContext(new Promise<void>((done) => (release = done)), toolContext)
+            return { output: [{ type: 'text', text: 'Released' }] }
+          },
+        }),
+      ],
+    }),
+  )
+  const widened = {
+    activity: 'Measured the whole UI.',
+    title: 'Investigate general UI performance',
+    summary: 'Profile the whole UI, not only sound cues.',
+    feature: 'Performance',
+  }
+  fixture.generated.mockResolvedValue(widened)
+  server.host.faux!.setResponses([
+    fauxAssistantMessage([fauxToolCall('steer_hold', {})], { stopReason: 'toolUse' }),
+    fauxAssistantMessage('Widened answer.'),
+  ])
+  const first = await fixture.conversation.submit(
+    { type: 'input', content: 'Keep digging.' },
+    context,
+  )
+  await until(() => holding)
+  await fixture.conversation.submit(
+    { type: 'input', content: 'Widen it to general performance.', whenBusy: 'steer' },
+    context,
+  )
+  release()
+  await until(() => fixture.generated.mock.calls.some((call) => call[5] === 'steer'))
+  await first.wait(context)
+  await server.harness.waitForIdle(context)
+  await until(async () => Object.values((await server.harness.inspect(context)).tasks).length === 0)
+  const steer = fixture.generated.mock.calls.filter((call) => call[5] === 'steer')
+  expect(steer).toHaveLength(1)
+  expect(steer[0][1]).toContain('New instructions (untrusted source text):\nuser: Widen it')
+  expect(steer[0][1]).toContain('Previous feature: Sounds Extension')
+  expect(await server.harness.snapshot(Metadata, fixture.conversation.id, context)).toMatchObject({
+    title: 'Investigate general UI performance',
+  })
+  expect((await fixture.read())?.feature).toBe('Performance')
+  // One change for the steer; the reply that follows keeps the tag and writes no second row.
+  const changes = (await fixture.entries()).filter((entry) => FeatureChanged.is(entry))
+  expect(changes.map((entry) => entry.data)).toEqual([
+    {
+      feature: 'Performance',
+      from: 'Sounds Extension',
+      model: 'openai-codex/gpt-6-luna',
+      at: expect.any(Number),
+    },
+  ])
+})
