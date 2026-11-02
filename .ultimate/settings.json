@@ -4,7 +4,6 @@
   },
   "modelFamilies": {
     "families": {
-      "default": { "model": "anthropic/claude-opus-5-5", "thinking": "high" },
       "lead": { "model": "claude-code/claude-opus-5-5", "thinking": "high", "color": "orange" },
       "design": { "model": "anthropic/claude-opus-5-5", "thinking": "medium" },
       "review": { "model": "openai-codex/gpt-6.1-terra", "thinking": "high" },
