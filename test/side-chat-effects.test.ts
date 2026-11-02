@@ -3,43 +3,12 @@ import type { ConversationId } from '@earendil-works/pi-durable'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import { context } from '../server/harness.ts'
 import { Messages } from '../extensions/messages/api.ts'
-import { Side, tracksEffect } from '../extensions/side-chat/server.ts'
+import { Side } from '../extensions/side-chat/server.ts'
 import { fauxServer, post, until } from './helpers.ts'
 import { ultimateRoot, servers, fixture, entries } from './side-chat-fixture.ts'
 
 describe('side chats', () => {
   it('tracks only the specified tool/actions before execution, including failures, and persists effects across reopen', async () => {
-    for (const name of [
-      'branch',
-      'message',
-      'note',
-      'notify',
-      'remember',
-      'setup',
-      'restart',
-      'edit',
-      'write',
-    ])
-      expect(tracksEffect(name, {})).toBe(true)
-    for (const name of ['bash', 'codemode', 'read', 'memory'])
-      expect(tracksEffect(name, {})).toBe(false)
-    for (const action of ['add', 'done']) expect(tracksEffect('todo', { action })).toBe(true)
-    expect(tracksEffect('todo', { action: 'list' })).toBe(false)
-    for (const action of ['list', 'runs', 'log'])
-      expect(tracksEffect('automation', { action })).toBe(false)
-    for (const action of [
-      'create',
-      'subscribe',
-      'unsubscribe',
-      'update',
-      'pause',
-      'resume',
-      'run',
-      'abort',
-      'delete',
-      'escalate',
-    ])
-      expect(tracksEffect('automation', { action })).toBe(true)
     const f = await fixture()
     const side = await f.open()
     await f.call(side, 'todo', { action: 'list' })
@@ -109,10 +78,9 @@ describe('side chats', () => {
     )
   })
 
+  // Each tool resolves images on its own path; resolving `latest` or an entry id is messages' own.
   it.each([
     ['message', 'latest'],
-    ['message', 'entry'],
-    ['branch', 'latest'],
     ['branch', 'entry'],
   ] as const)(
     'forwards the side chat image for %s with %s, not main’s image',

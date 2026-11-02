@@ -398,7 +398,7 @@ export async function resetAfter(tx: Tx, id: ConversationId, entry: EntryId) {
 }
 
 /** The newest user entry since the newest reset, including entries a compaction removed from context. */
-export async function exchangeUser(tx: Tx, id: ConversationId) {
+async function exchangeUser(tx: Tx, id: ConversationId) {
   let cursor: Cursor | undefined
   do {
     const page = await tx.scanEntries({ conversationId: id }, 64, cursor)
@@ -413,11 +413,7 @@ export async function exchangeUser(tx: Tx, id: ConversationId) {
 }
 
 /** A current, idle answer only: queued input and newer context invalidate assessments too. */
-export async function currentAnswer(
-  tx: Tx,
-  id: Parameters<Tx['conversation']>[0],
-  answer: EntryId,
-) {
+async function currentAnswer(tx: Tx, id: Parameters<Tx['conversation']>[0], answer: EntryId) {
   if ((await tx.doc(LiveDoc, id)).run) return false
   return currentContext(tx, id, answer)
 }

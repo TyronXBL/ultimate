@@ -61,15 +61,6 @@ it('keeps the start and end of a long reply and marks what it left out', () => {
   expect(input.endsWith('Residual risks: none.')).toBe(true)
 })
 
-it('asks a root for the feature its whole tree builds', async () => {
-  const branch = await launch()
-  await branch.exchange()
-  expect(branch.generated.mock.calls.at(-1)![6]).toBeFalsy()
-  const root = await launch({ root: true })
-  await root.exchange()
-  expect(root.generated.mock.calls.at(-1)![6]).toBe(true)
-})
-
 it('stores and exposes a feature and keeps it when omitted', async () => {
   const fixture = await launch()
   fixture.generated.mockResolvedValueOnce({

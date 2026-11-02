@@ -498,17 +498,10 @@ function lineage(host: ExtensionHost) {
           ? `lineage:notify:${target}:answer:${answer}`
           : `lineage:notify:${target}:${task.id}`
         const caller = runtime.conversationId
-        // A delivery found here (follow-up or note: a re-arm may switch `wake`) only lacks its record. This task may
-        // have delivered under its own id before answer-keyed ids, and a restart resumes it here.
-        const ownId = `lineage:notify:${target}:${task.id}`
+        // A delivery found here (follow-up or note: a re-arm may switch `wake`) only lacks its record.
         const delivered = await host
           .harness()
-          .commit(
-            async (tx) =>
-              (await tx.submissionByRequest(caller, requestId)) ??
-              (await tx.submissionByRequest(caller, ownId)),
-            ctx,
-          )
+          .commit((tx) => tx.submissionByRequest(caller, requestId), ctx)
         if (!delivered && wake)
           await (await runtime.conversation(caller, ctx))!.submit(
             {

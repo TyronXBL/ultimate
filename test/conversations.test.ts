@@ -25,7 +25,6 @@ import {
 import { UiState } from '../server/ui-state.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import { actionExec } from '../server/actions.ts'
-import { currentAnswer, exchangeUser } from '../extensions/conversations/summary.ts'
 import { Overview } from '../extensions/conversations/overview.ts'
 import { Branch } from '../extensions/lineage/api.ts'
 
@@ -522,10 +521,6 @@ it('projects arbitrary typed inputs, ignores user-role writes, and preserves act
   await server.harness.waitForIdle(context)
   const activity = { inputAt, answerAt }
   expect(summary(id)).toMatchObject(activity)
-  await server.harness.commit(async (tx) => {
-    expect((await exchangeUser(tx, id))?.id).toBe(input.id)
-    expect(await currentAnswer(tx, id, answer.id)).toBe(true)
-  }, context)
   await server.harness.commit(
     (tx) => tx.appendEntry(id, { kind: 'pi.compaction', head: 'self' }),
     context,

@@ -2,7 +2,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ConversationId, JsonObject, Tx } from '@earendil-works/pi-durable'
 import { afterEach, expect, it } from 'vitest'
-import { fallbackModel, summaryModelStatus } from '../extensions/conversations/summary-model.ts'
+import {
+  fallbackModel,
+  summaryModelSetting,
+  summaryModelStatus,
+} from '../extensions/conversations/summary-model.ts'
 import { check, noteFor } from '../extensions/setup/server.ts'
 import type { SetupIssue } from '../extensions/setup/refs.ts'
 import { git } from '../lib/git.ts'
@@ -32,7 +36,7 @@ async function summaryHost(available: ReturnType<typeof model>[], project = {}) 
 
 it('falls back from a default summary model without a login, and says so once', async () => {
   const { host, notices } = await summaryHost([
-    model('openrouter', 'some/expensive', 5),
+    model('openrouter', 'some/cheap', 1),
     model('openrouter', 'anthropic/claude-haiku-5.5', 2),
   ])
   const status = await summaryModelStatus(host)
@@ -47,7 +51,8 @@ it('falls back from a default summary model without a login, and says so once', 
 })
 
 it('never falls back from a summary model the settings name', async () => {
-  const { host } = await summaryHost([model('openrouter', 'x')], {
+  // The same model id under another provider is a different login.
+  const { host } = await summaryHost([model('openai', 'gpt-6-luna')], {
     summaryModel: 'openai-codex/gpt-6-luna',
   })
   expect(await summaryModelStatus(host)).toEqual({
@@ -63,6 +68,41 @@ it('falls back to the cheapest model when no known-good one is available', () =>
     id: 'small',
   })
   expect(fallbackModel([])).toBeUndefined()
+})
+
+it.each([
+  [
+    'the family summaries are assigned to',
+    { assign: { summaries: 'fast' } },
+    'fast',
+    'openai-codex/gpt-6.1-sol:medium',
+  ],
+  [
+    'Pi’s default model for a default family without one',
+    { assign: { summaries: 'default' } },
+    'default',
+    'acme/big:medium',
+  ],
+])('defaults the summary model to %s', async (_case, modelFamilies, family, value) => {
+  const userHome = await temp('ultimate-setup-families-')
+  expect(
+    await summaryModelSetting({
+      userHome,
+      projectRoot: join(userHome, 'project'),
+      projectSettings: async () => ({ modelFamilies }),
+      settings: { getDefaultProvider: () => 'acme', getDefaultModel: () => 'big' },
+    }),
+  ).toMatchObject({ value, source: 'default', family })
+})
+
+it('reads unreadable user settings as no summary model pin', async () => {
+  const userHome = await temp('ultimate-setup-settings-')
+  await mkdir(join(userHome, '.ultimate'))
+  await writeFile(join(userHome, '.ultimate/settings.json'), '{ not json')
+  expect(await summaryModelSetting({ userHome, projectSettings: async () => ({}) })).toMatchObject({
+    value: 'openai-codex/gpt-6-luna:low',
+    source: 'default',
+  })
 })
 
 async function checkHost(options: { logins: string[]; secrets?: string[] }) {

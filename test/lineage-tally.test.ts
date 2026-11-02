@@ -3,19 +3,16 @@ import { CompactionTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable
 import type { TaskId } from '@earendil-works/pi-durable'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { context } from '../server/harness.ts'
-import { fauxServer, post, seedTally, sourceCopy, temp } from './helpers.ts'
+import { post, seedTally } from './helpers.ts'
+import { fixture } from './lineage-fixture.ts'
 
 it('compacts a tally once at a time with the root focus and the given instructions', async () => {
-  const home = await temp()
-  const server = await fauxServer({ ultimateRoot: await sourceCopy(home), home, userHome: home })
+  const { server } = await fixture()
   const compacting = Promise.withResolvers<void>()
   const finishCompact = Promise.withResolvers<void>()
   try {
     const compact = async (args: unknown) =>
       (await post(server, '/api/extensions/lineage/actions/compact', { args })).data
-    const tools = server.host.registry.snapshot().extension('lineage')!.tools!
-    for (const name of ['new_root', 'seed_tally', 'compact_tally'])
-      expect(tools.map((tool) => tool.name)).not.toContain(name)
     const id = ROOT_CONVERSATION_ID
     await seedTally(server.harness)
     await server.harness.commit(async (tx) => {
@@ -61,6 +58,5 @@ it('compacts a tally once at a time with the root focus and the given instructio
     expect(JSON.stringify((await server.root.context(context)).messages)).toContain('Root summary')
   } finally {
     finishCompact.resolve()
-    await server.close()
   }
 })

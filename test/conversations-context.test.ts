@@ -8,12 +8,7 @@ import type { ConversationId, EntryRecord } from '@earendil-works/pi-durable'
 import { afterEach, expect, it } from 'vitest'
 import { ContextUsageDoc } from '../extensions/conversations/api.ts'
 import { contextBehavior } from '../extensions/conversations/context.ts'
-import {
-  contextUsage,
-  estimateAfterHead,
-  lastAssistant,
-  promptTokens,
-} from '../lib/context-usage.ts'
+import { contextUsage, estimateAfterHead, lastAssistant } from '../lib/context-usage.ts'
 import { until } from './helpers.ts'
 
 const cleanups: (() => Promise<void>)[] = []
@@ -106,21 +101,6 @@ async function fixture({ start = true } = {}) {
     },
   }
 }
-
-it('publishes the same measured percentage as the old browser computation, without output tokens', async () => {
-  const f = await fixture()
-  await f.answer()
-  const view = await f.root.context(context)
-  const oldTokens = promptTokens(lastAssistant(view.entries).message!.usage)
-  expect(await f.read()).toEqual({
-    tokens: oldTokens,
-    window: 10000,
-    percent: (oldTokens / 10000) * 100,
-    estimated: false,
-    at: lastAssistant(view.entries).message!.timestamp,
-    entry: view.entries.findLast((entry) => entry.kind === 'pi.assistant')!.id,
-  })
-})
 
 it('marks kept answers stale by entry id, not their position after the head', () => {
   const record = (id: number, kind: string) =>

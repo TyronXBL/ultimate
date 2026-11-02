@@ -102,7 +102,7 @@ describe('side chats', () => {
     await running.wait(context)
   })
 
-  it('schedules no automatic summary task for a side chat, so its title stays Side chat', async () => {
+  it('schedules no automatic summary task for a side chat, so its title stays Side chat, and refuses an agent opening one', async () => {
     const f = await fixture()
     const side = await f.open()
     await f.ask(side, 'A question answered in the side chat.')
@@ -123,6 +123,14 @@ describe('side chats', () => {
     expect(
       f.server.api.conversations().find((conversation) => conversation.id === side),
     ).toMatchObject({ title: 'Side chat' })
+    // Only the user opens side chats: an agent's call is refused.
+    await f.call(f.main, 'codemode', {
+      code: "return await ultimate.action('side-chat', 'open', {text: 'agent must not open'})",
+    })
+    expect(JSON.stringify(await entries(f.server, f.main))).toContain(
+      'side-chat/open is a user-only action',
+    )
+    expect((await f.server.harness.snapshot(Index, f.main, context))?.sides).toHaveLength(1)
   })
 
   it('includes terminal tool results and ignores completed generations inside an unfinished run', async () => {
@@ -140,16 +148,5 @@ describe('side chats', () => {
     expect((await f.server.harness.snapshot(Side, side, context))!.at).toBe(closing.id)
     f.hold.resolve()
     await running
-  })
-
-  it('refuses side-chat lifecycle actions invoked by an agent', async () => {
-    const f = await fixture()
-    await f.call(f.main, 'codemode', {
-      code: "return await ultimate.action('side-chat', 'open', {text: 'agent must not open'})",
-    })
-    expect(JSON.stringify(await entries(f.server, f.main))).toContain(
-      'side-chat/open is a user-only action',
-    )
-    expect((await f.server.harness.snapshot(Index, f.main, context))?.sides ?? []).toEqual([])
   })
 })

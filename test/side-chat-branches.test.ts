@@ -2,9 +2,10 @@ import { awaitWithContext } from '@earendil-works/chord/context'
 import { describe, expect, it } from 'vitest'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import type { ConversationId } from '@earendil-works/pi-durable'
-import { defineDoc, defineExtension, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
+import { defineExtension, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import { context } from '../server/harness.ts'
 import { Messages } from '../extensions/messages/api.ts'
+import { Started } from '../extensions/messages/addresses.ts'
 import { Automations } from '../extensions/automations/server.ts'
 import { fauxServer, until } from './helpers.ts'
 import { ultimateRoot, servers, fixture, entries } from './side-chat-fixture.ts'
@@ -26,17 +27,8 @@ describe('side chats', () => {
     const board = (await f.server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context))!
     const message = board.messages.find((sent) => sent.text === 'bounded work')!
     expect(message.from).toBe(f.main)
-    const started = defineDoc<{ by?: number }>({
-      kind: 'board.started',
-      version: 1,
-      scope: 'conversation',
-      checkpointWhen: () => false,
-      history: 'latest',
-      fork: 'initial',
-      initial: () => ({}),
-    })
     expect(
-      (await f.server.harness.snapshot(started, message.to as ConversationId, context))!.by,
+      (await f.server.harness.snapshot(Started, message.to as ConversationId, context))!.by,
     ).toBe(f.main)
     await f.call(side, 'notify', { id: message.to, wake: false })
     await until(async () =>

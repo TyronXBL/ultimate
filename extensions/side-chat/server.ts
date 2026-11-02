@@ -330,7 +330,7 @@ export const actions = {
 }
 
 /** Calls that could affect the world; marking first deliberately also locks Discard after failures. */
-export function tracksEffect(name: string, args: Record<string, unknown>) {
+function tracksEffect(name: string, args: Record<string, unknown>) {
   if (name === 'todo') return args.action === 'add' || args.action === 'done'
   if (name === 'automation') return !['list', 'runs', 'log'].includes(String(args.action))
   return [
@@ -347,7 +347,7 @@ export function tracksEffect(name: string, args: Record<string, unknown>) {
 }
 
 /** Read ahead of the user's first words in a side chat; agents/ultimate.md describes side chats the same way. */
-export function sideReminder(side: number, main: number, at: Date) {
+function sideReminder(side: number, main: number, at: Date) {
   return [
     `You are in a side chat (#${side}): a temporary copy of @ultimate (#${main}), forked at ${at.toTimeString().slice(0, 5)}. Main keeps running without you.`,
     'It is for quick lookups and small side tasks. Answer here, in place.',

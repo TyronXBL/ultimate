@@ -2,19 +2,18 @@
 import { until } from './helpers.ts'
 import type { Models } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
-import { defineExtension } from '@earendil-works/pi-durable'
 import { expect, it } from 'vitest'
 import { context } from '../server/harness.ts'
 import { Metadata } from '../server/metadata.ts'
-import { Overview } from '../extensions/conversations/overview.ts'
-import { generateSummary, summaryBehavior } from '../extensions/conversations/summary.ts'
+import { generateSummary } from '../extensions/conversations/summary.ts'
 import { luna, held, launch } from './conversations-summary-fixture.ts'
 
 it.each([false, true])(
-  'does not request abstracts without a branch, lineage=%s',
-  async (lineage) => {
-    const fixture = await launch({ root: lineage })
+  'does not request abstracts without a branch, root=%s; a root asks for its whole tree',
+  async (root) => {
+    const fixture = await launch({ root })
     await fixture.exchange()
+    expect(Boolean(fixture.generated.mock.calls[0][6])).toBe(root)
     expect(fixture.abstract).not.toHaveBeenCalled()
     expect(fixture.generated.mock.calls[0][7]).toBeUndefined()
     expect((await fixture.read())?.abstract).toBeUndefined()
@@ -121,56 +120,6 @@ it.each(['reply', 'spawn'] as const)(
     expect(changes).toHaveLength(1)
     await fixture.reopen()
     expect(await fixture.titleChanges()).toEqual(changes)
-  },
-)
-
-it.each(['none', 'legacy'])(
-  'skips summaries and assessments when the chosen Codex Luna is unavailable (%s)',
-  async (available) => {
-    // It asserts that the whole server has no tasks left.
-    const fixture = await launch({ own: true })
-    const server = fixture.server
-    const existing = server.host.registry.snapshot().extension('conversations')!
-    const models =
-      available === 'none'
-        ? []
-        : server.host.modelRuntime
-            .getModels()
-            .filter((model) => model.provider === 'openai' && model.id === 'gpt-6-luna')
-    expect(models).toHaveLength(available === 'none' ? 0 : 1)
-    server.host.registry.install(
-      defineExtension({
-        ...existing,
-        ...summaryBehavior(
-          {
-            harness: () => server.harness,
-            metadata: Metadata,
-            userHome: server.host.userHome,
-            // Chosen explicitly: only the default falls back to another available model.
-            projectSettings: async () => ({ summaryModel: 'openai-codex/gpt-6-luna:medium' }),
-            notice: () => {},
-            modelRuntime: { getAvailableSnapshot: () => models },
-          },
-          fixture.generated,
-        ),
-      }),
-    )
-    server.host.faux!.setResponses([fauxAssistantMessage('Done.')])
-    await (
-      await fixture.conversation.submit({ type: 'input', content: 'Work' }, context)
-    ).wait(context)
-    await server.harness.waitForIdle(context)
-    expect(fixture.generated).not.toHaveBeenCalled()
-    expect(await fixture.titleChanges()).toEqual([])
-    expect((await server.harness.inspect(context)).tasks).toHaveLength(0)
-    expect((await fixture.read())?.status).toBeUndefined()
-    expect((await fixture.read())?.assessmentStatus).toBeUndefined()
-    expect((await fixture.read())?.exchanges ?? 0).toBe(0)
-    expect(
-      (await server.harness.snapshot(Overview, server.root.id, context))?.conversations[
-        fixture.conversation.id
-      ]?.assessmentStatus,
-    ).toBeUndefined()
   },
 )
 

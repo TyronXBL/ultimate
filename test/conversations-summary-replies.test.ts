@@ -108,6 +108,38 @@ it('does not request question extraction after an accepted reply summary', async
   expect(f.questionsRequested).not.toHaveBeenCalled()
 })
 
+it('keeps an exchange current across a note: the held reply summary publishes, a spawn reads the input', async () => {
+  const f = await launch()
+  const gate = Promise.withResolvers<void>()
+  f.generated.mockImplementationOnce(async (_models, _input, signal) => {
+    await held(gate.promise, signal)
+    return { activity: 'Held reply.', title: 'Held title', summary: 'Held reply.' }
+  })
+  f.server.host.faux!.setResponses([fauxAssistantMessage('A finished answer.')])
+  await (
+    await f.conversation.submit({ type: 'input', content: 'Improve this conversation.' }, context)
+  ).wait(context)
+  await until(() => f.generated.mock.calls.length === 1)
+  // A note is a user-role write, not an input: it neither starts an exchange nor makes the answer stale.
+  await f.conversation.submit(
+    {
+      type: 'write',
+      entry: {
+        kind: 'lineage.note',
+        model: [{ role: 'user', content: 'Later note', timestamp: Date.now() }],
+      },
+    },
+    context,
+  )
+  gate.resolve()
+  await until(async () => (await f.read())?.assessmentStatus === 'ready')
+  expect((await f.read())?.summary).toBe('Held reply.')
+  await f.spawn((await f.read())!.lastAnswer!)
+  await until(() => f.generated.mock.calls.length === 2)
+  expect(f.generated.mock.calls[1][1]).toContain('Improve this conversation.')
+  expect(f.generated.mock.calls[1][1]).not.toContain('Later note')
+})
+
 it.each([false, true])(
   'refreshes during an actual subagent start, background=%s, while parent and child are busy',
   async (background) => {
