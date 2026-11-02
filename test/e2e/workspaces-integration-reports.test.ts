@@ -226,9 +226,8 @@ it.concurrent('does not note the root about its own submission', async () => {
   await f.service.submit(id, 'None', context)
   expect((await submitted(f, id))[0]).toContain('landed as')
   await reacted(f)
-  const view = await (await f.opened.harness.conversation(id, context))!.viewState(context)
-  expect(view.value.entries.filter((entry) => entry.kind === 'lineage.note')).toHaveLength(0)
-  view.dispose()
+  const view = await (await f.opened.harness.conversation(id, context))!.context(context)
+  expect(view.entries.filter((entry) => entry.kind === 'lineage.note')).toHaveLength(0)
   expect(await rootNotes(f)).toHaveLength(0)
 })
 
@@ -257,12 +256,8 @@ it.concurrent('notes the root of the submitter’s tree and skips a conversation
   expect((await submitted(f, unrooted))[0]).toContain('landed as')
   await reacted(f)
   const notes = async (id: ConversationId) => {
-    const view = await (await f.opened.harness.conversation(id, context))!.viewState(context)
-    try {
-      return view.value.entries.filter((entry) => entry.kind === 'lineage.note')
-    } finally {
-      view.dispose()
-    }
+    const view = await (await f.opened.harness.conversation(id, context))!.context(context)
+    return view.entries.filter((entry) => entry.kind === 'lineage.note')
   }
   await until(async () => (await notes(other.id)).length > 0)
   expect((await notes(other.id)).map((note) => (note.data as { from: number }).from)).toEqual([

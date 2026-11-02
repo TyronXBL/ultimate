@@ -1,7 +1,7 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import { cp, mkdir, writeFile, access, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { defineExtension, defineTool, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
@@ -146,7 +146,7 @@ export async function fixture(
         defineTool({
           name: 'write_commit',
           description: 'Write and commit a change',
-          parameters: Type.Object({}),
+          parameters: obj({}),
           async execute(_args, api) {
             writes++
             const cwd = api.env!.cwd
@@ -202,13 +202,8 @@ export async function fixture(
       )
     ).wait(context)
     await conversation.waitForIdle(context)
-    const view = await conversation.viewState(context)
-    try {
-      return view.value.entries.filter((entry) => entry.kind === 'pi.tool-result').at(-1)
-        ?.model?.[0]
-    } finally {
-      view.dispose()
-    }
+    const view = await conversation.context(context)
+    return view.entries.filter((entry) => entry.kind === 'pi.tool-result').at(-1)?.model?.[0]
   }
   return {
     ...paths,
@@ -278,52 +273,40 @@ export async function submitted(f: Awaited<ReturnType<typeof fixture>>, id: Conv
   })
   const conversation = (await f.opened.harness.conversation(id, context))!
   await conversation.waitForIdle(context)
-  const view = await conversation.viewState(context)
-  try {
-    const reports = view.value.entries.filter((entry) => entry.kind === 'workspaces.lander-report')
-    for (const report of reports) {
-      const { id: submission, outcome } = report.data as {
-        id: string
-        outcome: WorkspaceIndex['results'][string]
-      }
-      const index = (await f.opened.harness.snapshot(Workspaces, ROOT_CONVERSATION_ID, context))!
-      expect(outcome).toEqual(index.results[submission])
-      expect(outcome.lander).toBeGreaterThan(0)
-      expect(outcome.steps.length).toBeGreaterThan(0)
+  const view = await conversation.context(context)
+  const reports = view.entries.filter((entry) => entry.kind === 'workspaces.lander-report')
+  for (const report of reports) {
+    const { id: submission, outcome } = report.data as {
+      id: string
+      outcome: WorkspaceIndex['results'][string]
     }
-    return reports.map((entry) => JSON.stringify(entry.model))
-  } finally {
-    view.dispose()
+    const index = (await f.opened.harness.snapshot(Workspaces, ROOT_CONVERSATION_ID, context))!
+    expect(outcome).toEqual(index.results[submission])
+    expect(outcome.lander).toBeGreaterThan(0)
+    expect(outcome.steps.length).toBeGreaterThan(0)
   }
+  return reports.map((entry) => JSON.stringify(entry.model))
 }
 /** The lander conversation of the project source and its `ultimate.lander` log. */
 export async function landerLog(f: Awaited<ReturnType<typeof fixture>>) {
   const index = (await f.opened.harness.snapshot(Workspaces, ROOT_CONVERSATION_ID, context))!
   const id = index.landerConversations[await realpath(f.projectRoot)] as ConversationId
   const conversation = (await f.opened.harness.conversation(id, context))!
-  const view = await conversation.viewState(context)
-  try {
-    return {
-      id,
-      metadata: await f.opened.harness.snapshot(Metadata, id, context),
-      cwd: (await conversation.agent(context)).cwd,
-      kinds: view.value.entries.map((entry) => entry.kind),
-      log: view.value.entries
-        .filter((entry) => entry.kind === 'ultimate.lander')
-        .map((entry) => entry.data as LanderEntry),
-    }
-  } finally {
-    view.dispose()
+  const view = await conversation.context(context)
+  return {
+    id,
+    metadata: await f.opened.harness.snapshot(Metadata, id, context),
+    cwd: (await conversation.agent(context)).cwd,
+    kinds: view.entries.map((entry) => entry.kind),
+    log: view.entries
+      .filter((entry) => entry.kind === 'ultimate.lander')
+      .map((entry) => entry.data as LanderEntry),
   }
 }
 export async function rootNotes(f: Awaited<ReturnType<typeof fixture>>) {
   const root = (await f.opened.harness.conversation(ROOT_CONVERSATION_ID, context))!
-  const view = await root.viewState(context)
-  try {
-    return view.value.entries.filter((entry) => entry.kind === 'lineage.note')
-  } finally {
-    view.dispose()
-  }
+  const view = await root.context(context)
+  return view.entries.filter((entry) => entry.kind === 'lineage.note')
 }
 
 export const messageLog = async (f: Awaited<ReturnType<typeof fixture>>) =>

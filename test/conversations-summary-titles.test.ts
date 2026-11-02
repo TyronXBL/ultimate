@@ -1,6 +1,6 @@
 // First: helpers mocks the faux provider's token pacing, which must apply before the server modules load.
 import { post, until } from './helpers.ts'
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
@@ -26,7 +26,7 @@ it('summarizes every completed exchange, not tools, streams or idle time; persis
         defineTool({
           name: 'summary_probe',
           description: 'Probe',
-          parameters: Type.Object({}),
+          parameters: obj({}),
           execute: async () => ({ output: [{ type: 'text', text: 'SECRET_TOOL_OUTPUT' }] }),
         }),
       ],

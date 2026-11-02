@@ -442,7 +442,7 @@ it.concurrent('stop lists what a worker left uncommitted and keeps it', async ()
   )[0].conversationId
   const workspace = (await f.service.get(child, context))!
   const stopped = async () =>
-    JSON.stringify((await f.call(f.opened.root.id, 'subagent', { action: 'stop', id: child }))!)
+    JSON.stringify(await f.call(f.opened.root.id, 'subagent', { action: 'stop', id: child }))
   expect(await stopped()).toContain(`Stopped ${child}."`)
   await writeFile(join(workspace.path, 'draft.txt'), 'draft')
   // An unstaged edit of a tracked file: porcelain starts its line with a space (' M base.txt').

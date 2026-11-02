@@ -2,7 +2,7 @@
 import { until } from './helpers.ts'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import { Subagents } from '../extensions/subagents/api.ts'
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 import type { JsonObject } from '@earendil-works/pi-ai'
 import type { ToolRegistration } from '@earendil-works/pi-durable'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
@@ -162,7 +162,7 @@ it.each([false, true])(
           defineTool({
             name: 'summary_hold',
             description: 'Hold work until released',
-            parameters: Type.Object({}),
+            parameters: obj({}),
             execute: async (_args, api, toolContext) => {
               holding.add(api.conversationId)
               await awaitWithContext(gate, toolContext)

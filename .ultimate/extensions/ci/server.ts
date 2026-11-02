@@ -5,7 +5,7 @@
  * with a `ci.result` card. A PC that gives no verdict hands over to GitHub. It never runs the suites on this machine: an
  * unreachable GitHub is a result too.
  */
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { Context } from '@earendil-works/chord'
@@ -356,7 +356,7 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
         name: 'ci',
         description:
           "Run this repository's full CI (check, unit tests, e2e) for your committed HEAD in the background, on the PC runner when one is configured, else on the fork's GitHub Actions, instead of running the suites on this machine. Returns at once; you are woken once with a result card (passed or failed, the failing tests, timings). Uncommitted changes are not tested.",
-        parameters: Type.Object({}),
+        parameters: obj({}),
         // Not replay-safe (the default): an interrupted call is never rerun, so it starts at most one run.
         async execute(_args, api, ctx) {
           const cwd = await checkout(api.conversationId, ctx)
