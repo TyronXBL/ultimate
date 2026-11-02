@@ -161,7 +161,7 @@ function route(socket: Socket) {
         !proxied(headers) &&
         loopbackAuthority(headers.host, String(publicPort))
       const html = direct
-        ? `<h1>Ultimate core could not boot</h1><p>Waiting for changes in server/, shared/, extensions/</p><pre>${escape(stderr)}</pre>`
+        ? `<h1>Ultimate core could not boot</h1><p>Waiting for changes in server/, shared/, extensions/ or the installed packages</p><pre>${escape(stderr)}</pre>`
         : ''
       socket.end(
         `HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(html)}\r\nConnection: close\r\n\r\n${html}`,
@@ -524,9 +524,19 @@ const retry = () => {
     )
   }
 }
-const watchers = ['server', 'shared', 'extensions'].map((directory) =>
-  watch(join(ultimateRoot, directory), { recursive: true }, retry),
-)
+const watchers = [
+  ...['server', 'shared', 'extensions'].map((directory) =>
+    watch(join(ultimateRoot, directory), { recursive: true }, retry),
+  ),
+  // A fixed lockfile, or packages installed by hand, retry a boot that a failed install stopped.
+  ...[ultimateRoot, join(ultimateRoot, 'node_modules/.pnpm')]
+    .filter((directory) => existsSync(directory))
+    .map((directory) =>
+      watch(directory, (_event, file) => {
+        if (file === 'pnpm-lock.yaml' || file === 'lock.yaml') retry()
+      }),
+    ),
+]
 const projectConfig = join(projectRoot, '.ultimate')
 let configWatcher: ReturnType<typeof watch> | undefined
 const watchConfig = () => {

@@ -124,7 +124,7 @@ export async function loadExtensions(
   let watcher: ViteDevServer['watcher'] | undefined
   const loader = extensionLoader(host.ultimateRoot, (file) => watcher?.add(file))
   // The packages this process runs. A facet changed with the lockfile (a landing or an update moving to new package
-  // versions) is written for packages this process never loaded: reloading it broke storage once (Pi 1.5, `0a75f52`).
+  // versions) is written for packages this process never loaded, and reloading it can break storage for good.
   const lockfile = await wantedLockfile(host.ultimateRoot)
   const provided = new Map<ExtensionHost, Map<string, unknown>>()
   const providers = new Map<string, { owner: ExtensionHost; value: unknown }>()

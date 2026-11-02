@@ -72,8 +72,9 @@ export const AUTO_RESTART_PAUSE = 10 * 60_000
 /**
  * A listener for server facets that fail to load. When the running core is stale (`stale`: the core or packages changed
  * since boot, or the lockfile asks for packages it does not run, which holds every facet reload), the facet most likely
- * needs the new core, so it restarts the host at once, busy agents included: their work resumes in the new process. A failure while the core is current is a real bug and stays a load error. Facets
- * failing in one reload join the first one's check, so they cause one restart; `last` (ms) keeps restarts apart.
+ * needs the new core, so it restarts the host at once, busy agents included: their work resumes in the new process.
+ * A failure while the core is current is a real bug and stays a load error. Facets failing in one reload join the first
+ * one's check, so they cause one restart; `last` (ms) keeps restarts apart.
  */
 export function restartOnStaleLoad(options: {
   stale: () => Promise<boolean>
