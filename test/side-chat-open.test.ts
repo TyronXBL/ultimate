@@ -102,7 +102,7 @@ describe('side chats', () => {
     await running.wait(context)
   })
 
-  it('schedules no automatic summary task for a side chat, so its title stays Side chat, and refuses an agent opening one', async () => {
+  it('a side chat gets no automatic summary, and only the user opens one', async () => {
     const f = await fixture()
     const side = await f.open()
     await f.ask(side, 'A question answered in the side chat.')

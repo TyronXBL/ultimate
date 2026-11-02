@@ -368,14 +368,19 @@ it('collapses the oldest conversations to one line each when the tree outgrew th
   expect(collapsedLines[0]).toBe(
     'Earlier, collapsed (read them in full with codemode `ultimate.entries(1)`):',
   )
-  expect(collapsedLines.slice(1)).toEqual(
+  const lines = collapsedLines.slice(1)
+  expect(lines).toEqual(
     others
-      .slice(1, collapsedLines.length)
+      .slice(1, lines.length + 1)
       .map((id, index) => `- #${id} F${index + 1} · Tally — in progress`),
   )
-  expect(collapsedLines.length).toBeGreaterThan(1)
-  // The newest stays in full; the landing made the oldest newest.
-  expect(kept.some((block) => block.startsWith(`**#${others[13]} F13**`))).toBe(true)
+  // The oldest collapse and the newest stay in full; each conversation shows once, the landing made the oldest newest.
+  expect(lines.length).toBeGreaterThan(0)
+  expect(kept.length).toBeGreaterThan(1)
+  expect([...lines, ...kept].map((block) => Number(/#(\d+)/.exec(block)![1]))).toEqual([
+    ...others.slice(1),
+    others[0],
+  ])
   expect(kept.at(-1)?.split('\n')[0]).toBe(
     `**#${others[0]} F0** · Tally — state at landing, as of #${others[0]}/1:`,
   )

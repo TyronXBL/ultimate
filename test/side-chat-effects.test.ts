@@ -18,6 +18,7 @@ describe('side chats', () => {
     expect(JSON.stringify(await entries(f.server, side))).toContain(
       'Added 1 for user: from the side',
     )
+    expect((await f.server.harness.snapshot(Side, side, context))!.effects).toBe(true)
     await f.call(side, 'message', { to: 'user', text: 'must fail' })
     expect((await f.server.harness.snapshot(Side, side, context))!.effects).toBe(true)
     expect(JSON.stringify(await entries(f.server, side))).toContain(
@@ -78,7 +79,7 @@ describe('side chats', () => {
     )
   })
 
-  // Each tool resolves images on its own path; resolving `latest` or an entry id is messages' own.
+  // Each tool resolves images on its own path; `latest` and entry ids are messages.test.ts's "forwards images from the sender".
   it.each([
     ['message', 'latest'],
     ['branch', 'entry'],
