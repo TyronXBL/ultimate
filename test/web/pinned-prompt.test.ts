@@ -40,7 +40,13 @@ vi.mock('../../web/src/sdk/client.ts', async () => {
     retryMs: 5,
   })
   const api = createApi(store, { fetch: harness.fetch })
-  return { store, api, registry: createRegistry(), uiState: createUiState(undefined) }
+  return {
+    store,
+    api,
+    registry: createRegistry(),
+    uiState: createUiState(undefined),
+    setThemeMode() {},
+  }
 })
 vi.mock('../../web/src/sdk/resume.ts', () => ({ covered: () => false }))
 
