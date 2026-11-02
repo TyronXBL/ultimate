@@ -100,6 +100,8 @@ see [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 - A scratch checkout of your own (a baseline, a throwaway experiment) gets `git worktree add` and its own
   `pnpm install --frozen-lockfile --offline` (seconds: packages hardlink from the store). Never symlink `node_modules`
   from another checkout: pnpm records the checkout it installed for and aborts trying to reinstall the shared folder.
+- Scratch checkouts, pnpm stores, logs and other throwaway files go under `$TMPDIR` (`os.tmpdir()` in code), never a
+  hard-coded `/tmp`, and are deleted when done: on some machines `/tmp` is RAM, and filling it gets the host killed.
 - Every user-visible result is designed, not dumped: status and outcomes (a subagent report, a landing, a failure) get a
   renderer that matches the existing cards (see `extensions/subagents/messages.tsx`, `extensions/workspaces/log.tsx`),
   never plain Markdown in a message. Look at the running app and recent screenshots first, write the expected look into
