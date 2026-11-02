@@ -12,7 +12,7 @@ steps, not the policy.
 
 ```bash
 gh pr view <n> --json title,body,author,commits,files,baseRefName,headRefOid
-gh pr diff <n> > /tmp/pr<n>.diff; wc -l /tmp/pr<n>.diff
+gh pr diff <n> > "${TMPDIR:-/tmp}/pr<n>.diff"; wc -l "${TMPDIR:-/tmp}/pr<n>.diff"   # delete it when done
 ```
 
 Read every line of the diff before installing, building or testing anything. Look for:

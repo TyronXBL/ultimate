@@ -15,7 +15,7 @@ run, and spends one or two short turns on them.
 From the branch's worktree. This is the scratch-server command from `docs/running.md`, run in the background:
 
 ```bash
-H=$(mktemp -d /tmp/ultimate-smoke-XXXX)
+H=$(mktemp -d "${TMPDIR:-/tmp}/ultimate-smoke-XXXX")
 env $(env | grep -o '^ULTIMATE_[A-Z_]*' | sed 's/^/-u /') ULTIMATE_HOME=$H \
   pnpm start --port 4799 --no-open > $H.log 2>&1 &
 echo "supervisor pid $!"
