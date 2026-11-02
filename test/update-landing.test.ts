@@ -1,41 +1,10 @@
 import { expect, it } from 'vitest'
 import * as update from '../extensions/update/server.ts'
 
-const { coreChangedSince, landingInstalls } = update
+const { coreChangedSince } = update
 
 it('lets agents update the clone; only asking @ultimate to merge is the user’s alone', () => {
   expect(update.userActions).toEqual(['merge'])
-})
-
-/** A git whose `diff` lists `files` and whose checkout holds the landed commit when `landedHere`. */
-const git =
-  (files: string[], landedHere = true) =>
-  async (...args: string[]) => {
-    if (args[0] === 'merge-base') {
-      if (!landedHere) throw new Error('git merge-base failed: not an ancestor')
-      return ''
-    }
-    expect(args).toEqual(['diff', '--name-only', 'b1', 's2'])
-    return files.join('\n')
-  }
-
-const landing = { base: 'b1', sha: 's2' }
-
-it('installs after a landing that changes the lockfile or a patch', async () => {
-  expect(await landingInstalls(git(['extensions/a.ts', 'pnpm-lock.yaml']), landing)).toBe(true)
-  expect(
-    await landingInstalls(git(['patches/@earendil-works__pi-durable@1.4.0.patch']), landing),
-  ).toBe(true)
-})
-
-it('does not install after a landing that leaves packages alone', async () => {
-  expect(await landingInstalls(git(['extensions/a.ts', 'docs/pnpm-lock.yaml.md']), landing)).toBe(
-    false,
-  )
-})
-
-it('does not install when the landing went into another checkout', async () => {
-  expect(await landingInstalls(git(['pnpm-lock.yaml'], false), landing)).toBe(false)
 })
 
 /** A clone whose commits since `boot` change `files`; git's pathspec keeps only `server/` and `shared/`. */
@@ -60,7 +29,7 @@ it('asks for a restart when HEAD changed the core since boot, not for extensions
 
 /** The listener with a fake core: `stale` decides, restarts are counted, nothing restarted before. */
 function staleLoad(initial: boolean) {
-  let stale = initial
+  const stale = initial
   const restarts: number[] = []
   const notices: string[] = []
   const pending: { current?: Promise<void> } = {}
@@ -79,9 +48,7 @@ function staleLoad(initial: boolean) {
     listener,
     restarts,
     notices,
-    pending,
     settled: () => pending.current,
-    install: () => void (stale = true),
   }
 }
 
@@ -93,7 +60,9 @@ it('restarts once when facets fail to load while the core is stale, never while 
   stale.listener('mcp')
   await stale.settled()
   expect(stale.restarts).toHaveLength(1)
-  expect(stale.notices[0]).toBe('Restarting: claude-code failed to load after a core change')
+  expect(stale.notices[0]).toBe(
+    'Restarting: claude-code failed to load after a core or package change',
+  )
   stale.listener('claude-code')
   await stale.settled()
   expect(stale.restarts).toHaveLength(1)
@@ -102,22 +71,4 @@ it('restarts once when facets fail to load while the core is stale, never while 
   current.listener('claude-code')
   await current.settled()
   expect(current.restarts).toHaveLength(0)
-})
-
-// Commit 0bb0535 added @earendil-works/pi-schema: 18 facets hot-reloaded before the landing's install linked it, found
-// nothing stale, and stayed broken until someone restarted by hand once the install had finished.
-it('restarts once when facets still fail after the landing’s install completes', async () => {
-  const load = staleLoad(false)
-  load.listener('coding-tools')
-  load.listener('mcp')
-  await load.settled()
-  expect(load.restarts).toHaveLength(0)
-  load.install()
-  await update.retryStaleLoad(load.listener, load.pending, () => 'coding-tools')
-  expect(load.restarts).toHaveLength(1)
-
-  const healthy = staleLoad(false)
-  healthy.install()
-  await update.retryStaleLoad(healthy.listener, healthy.pending, () => undefined)
-  expect(healthy.restarts).toHaveLength(0)
 })

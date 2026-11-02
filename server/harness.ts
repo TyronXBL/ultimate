@@ -124,6 +124,8 @@ export interface HostOptions {
   /** Tests only: a faux provider, registered with the configured ones; new conversations default to its model. */
   faux?: FauxProviderHandle
   report?: (notice: Notice) => void
+  /** Storage failed: the open harness is closed for good and rejects all work with `SessionFailed`. */
+  storageFailed?: () => void
 }
 export async function prepareHarness(options: HostOptions) {
   const { ultimateRoot } = options
@@ -266,8 +268,10 @@ export async function prepareHarness(options: HostOptions) {
                 ),
             ),
             env,
-            onReport: (report) =>
-              options.report?.({ level: 'error', message: reportMessage(report) }),
+            onReport: (report) => {
+              options.report?.({ level: 'error', message: reportMessage(report) })
+              if (report.kind === 'storage_failed') options.storageFailed?.()
+            },
           },
           context,
         )

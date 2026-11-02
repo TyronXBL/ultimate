@@ -18,6 +18,8 @@ import { loopbackAuthority, proxied } from '../server/request-security.ts'
 import { isCoreReport } from '../server/supervisor-protocol.ts'
 import type { CoreReport } from '../server/supervisor-protocol.ts'
 import { dashboard } from './dashboard.ts'
+import { exec } from '../lib/exec.ts'
+import { installOwed, installPackages } from '../lib/packages.ts'
 
 const ultimateRoot = resolvePath(fileURLToPath(new URL('..', import.meta.url)))
 const { values, positionals } = parseArgs({
@@ -360,6 +362,40 @@ async function checkTypes() {
   const [code] = await once(child, 'exit')
   if (code !== 0) throw new Error(output || `Type check exited ${code}`)
 }
+/**
+ * Install the lockfile's packages before a core boots on them (a landing or an update moved the lockfile), under the
+ * clone lock the update extension installs under; throws with pnpm's output when the install fails.
+ */
+async function ensurePackages() {
+  if (!(await installOwed(ultimateRoot))) return
+  display.lifecycle(
+    'installing',
+    active ? { generation: active.generation, pid: active.child.pid } : undefined,
+  )
+  const { stdout } = await exec('git', ['rev-parse', '--git-path', 'ultimate-update.lock'], {
+    cwd: ultimateRoot,
+  })
+  const path = resolvePath(ultimateRoot, stdout.trim())
+  const deadline = Date.now() + 10 * 60_000
+  const acquire = () =>
+    acquireLock(path, { pid: process.pid }).catch((error: unknown) => {
+      // Another Ultimate updates or installs this clone: wait for it, then install whatever is still owed.
+      const held = error instanceof Error && error.message.startsWith('Ultimate core already owns')
+      if (!held || Date.now() > deadline) throw error
+      return undefined
+    })
+  let clone = await acquire()
+  while (!clone) {
+    await pause(2000)
+    clone = await acquire()
+  }
+  try {
+    const { install, installError } = await installPackages(ultimateRoot)
+    if (install === 'failed') throw new Error(`pnpm install failed:\n${installError}`)
+  } finally {
+    await clone.close()
+  }
+}
 async function prepare(core: Core) {
   const message = await wait(core, 'prepared')
   if (message.type === 'prepared') core.port = message.port
@@ -397,6 +433,7 @@ async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
   let next: Core | undefined
   let released = false
   try {
+    await ensurePackages()
     await checkTypes()
     next = boot(previousBuild)
     await prepare(next)
@@ -458,6 +495,7 @@ async function recover() {
       if (stopping) break
       let core: Core | undefined
       try {
+        await ensurePackages()
         core = boot()
         await prepare(core)
         await start(core)

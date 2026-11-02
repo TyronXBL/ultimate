@@ -8,6 +8,7 @@ import type { ProjectInfo } from './project.ts'
 import { extensionSettingsFiles } from './extension-settings.ts'
 import { watchRoots } from './watch-roots.ts'
 import { extensionLoader } from './extension-loader.ts'
+import { wantedLockfile } from '../lib/packages.ts'
 import { actionExec } from './actions.ts'
 import type { ExtensionAction } from './actions.ts'
 import type { JsonValue } from '@earendil-works/chord'
@@ -122,6 +123,9 @@ export async function loadExtensions(
   // Vite watched every file its SSR graph loaded; now the loader names them, such as an outside extension's helpers.
   let watcher: ViteDevServer['watcher'] | undefined
   const loader = extensionLoader(host.ultimateRoot, (file) => watcher?.add(file))
+  // The packages this process runs. A facet changed with the lockfile (a landing or an update moving to new package
+  // versions) is written for packages this process never loaded: reloading it broke storage once (Pi 1.5, `0a75f52`).
+  const lockfile = await wantedLockfile(host.ultimateRoot)
   const provided = new Map<ExtensionHost, Map<string, unknown>>()
   const providers = new Map<string, { owner: ExtensionHost; value: unknown }>()
   const facetHosts = new Map<string, ExtensionHost>()
@@ -492,6 +496,7 @@ export async function loadExtensions(
     winners?: Awaited<ReturnType<typeof discover>>,
   ) {
     winners ??= await discover()
+    const drifted = (await wantedLockfile(host.ultimateRoot)) !== lockfile
     const folders = winners.map((winner) => winner.name)
     const settings = winners.settings
     diagnostics = [
@@ -544,6 +549,10 @@ export async function loadExtensions(
       if (enabled && record.facets.server && (!servers || servers.has(name))) {
         const facetHost = scope(name)
         try {
+          if (drifted)
+            throw new Error(
+              'pnpm-lock.yaml changed since this core started: the server facet waits for a restart onto the new packages',
+            )
           // Node keys a module by its resolved file, so a link loads by its target.
           const module = await loader.load(join(target, 'server.ts'))
           const extension: Extension =
