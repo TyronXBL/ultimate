@@ -277,13 +277,7 @@ const collapsed = ({ id, title, feature, landings }: Activity) =>
  * its prompt while it has none), landings and notes, and a distillation of the tally itself. The newest stay in full;
  * when they exceed the budget the oldest collapse to one line each. Deterministic: it runs inside input placement.
  */
-export async function tallyText(
-  id: ConversationId,
-  tree: Tree,
-  baseline: number,
-  tx: Tx,
-  budget = TALLY_BUDGET,
-) {
+async function tallyText(id: ConversationId, tree: Tree, baseline: number, tx: Tx) {
   const { root } = tree
   const marker = await tx.latestHeadMarker(root)
   const entries: EntryRecord[] = []
@@ -387,13 +381,13 @@ export async function tallyText(
   const lines: string[] = []
   let dropped = 0
   for (const block of blocks) {
-    if (!lines.length && !dropped && used + cost(block.full) <= budget) {
+    if (!lines.length && !dropped && used + cost(block.full) <= TALLY_BUDGET) {
       kept.unshift(block.full)
       used += cost(block.full)
       continue
     }
     if (!lines.length && !dropped) used += cost(pointer)
-    if (!dropped && used + cost(block.line) <= budget) {
+    if (!dropped && used + cost(block.line) <= TALLY_BUDGET) {
       lines.unshift(block.line)
       used += cost(block.line)
     } else dropped++

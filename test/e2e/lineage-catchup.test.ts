@@ -8,7 +8,7 @@ import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { afterEach, beforeAll, expect, it } from 'vitest'
 import { abstract, leaveNote, Tally } from '../../extensions/lineage/server.ts'
-import { Seen, tallyText } from '../../extensions/lineage/catchup.ts'
+import { Seen } from '../../extensions/lineage/catchup.ts'
 import { context } from '../../server/harness.ts'
 import { branchProbe, fauxServer, post, seedTally, sourceCopy, temp, until } from '../helpers.ts'
 
@@ -345,45 +345,41 @@ it('catches a resumed branch up on what its tree learned, then on commits, once 
 it('collapses the oldest conversations to one line each when the tree outgrew the budget', async () => {
   const f = await catchupFixture()
   const own = await branchFrom(f.server, { from: 1, prompt: 'Far behind' })
-  const baseline = (await f.server.harness.snapshot(Seen, own, context))!.tally!
   const others: ConversationId[] = []
-  for (let n = 0; n < 6; n++) {
+  const abstracts: string[] = []
+  for (let n = 0; n < 14; n++) {
     const id = await branchFrom(f.server, { from: 1, prompt: `Feature ${n}` })
-    await writeAbstract(f.server, id, `Ask: feature ${n}\n${`State: ${n} `.repeat(120)}`, `F${n}`)
+    const text = `Ask: feature ${n}\n${`State: ${n} `.repeat(180)}`
+    await writeAbstract(f.server, id, text, `F${n}`)
+    abstracts.push(text)
     others.push(id)
   }
+  expect(estimateTextTokens(abstracts.join('\n\n'))).toBeGreaterThan(6000)
   await land(f.server, others[0], 'abcdef1234567', 'None')
-  const tree = async () => {
-    const tally = (await f.server.harness.snapshot(Tally, ROOT_CONVERSATION_ID, context))!
-    return { root: ROOT_CONVERSATION_ID, since: tally.since!, abstracts: tally.abstracts }
-  }
-  const t = await tree()
-  const { text } = await f.server.harness.commit(
-    (tx) => tallyText(own, t, baseline, tx, 900),
-    context,
-  )
-  expect(estimateTextTokens(text!)).toBeLessThanOrEqual(900)
-  const [header, collapsed, ...kept] = text!.split('\n\n')
-  expect(header).toBe("Meanwhile in #1's tree:")
-  expect(collapsed.split('\n')).toEqual([
-    'Earlier, collapsed (read them in full with codemode `ultimate.entries(1)`):',
-    `- #${others[1]} F1 · Tally — in progress`,
-    `- #${others[2]} F2 · Tally — in progress`,
-    `- #${others[3]} F3 · Tally — in progress`,
-    `- #${others[4]} F4 · Tally — in progress`,
-  ])
-  // The newest stay in full; the landing made the oldest newest.
-  expect(kept.map((block) => block.split('\n')[0])).toEqual([
-    `**#${others[5]} F5** · Tally — abstract as of #${others[5]}/1:`,
-    `**#${others[0]} F0** · Tally — state at landing, as of #${others[0]}/1:`,
-  ])
-  expect(kept[1]).toContain('- Landed `abcdef1` on main')
-
-  // At the real budget the whole backlog fits and the note carries it verbatim.
   await ask(f.server, own, 'resume far behind')
-  const note = ((await catchups(f.server, own))[0].data as { text: string }).text
-  expect(note).not.toContain('collapsed')
-  for (const id of others) expect(note).toContain(`**#${id} F`)
+  const text = ((await catchups(f.server, own))[0].data as { text: string }).text
+  const tally = text.split(
+    '\n\nCheck whether any of this already covers or changes what you are about to do.',
+  )[0]
+  expect(estimateTextTokens(tally)).toBeLessThanOrEqual(6000)
+  const [header, collapsed, ...kept] = tally.split('\n\n')
+  expect(header).toBe("Meanwhile in #1's tree:")
+  const collapsedLines = collapsed.split('\n')
+  expect(collapsedLines[0]).toBe(
+    'Earlier, collapsed (read them in full with codemode `ultimate.entries(1)`):',
+  )
+  expect(collapsedLines.slice(1)).toEqual(
+    others
+      .slice(1, collapsedLines.length)
+      .map((id, index) => `- #${id} F${index + 1} · Tally — in progress`),
+  )
+  expect(collapsedLines.length).toBeGreaterThan(1)
+  // The newest stays in full; the landing made the oldest newest.
+  expect(kept.some((block) => block.startsWith(`**#${others[13]} F13**`))).toBe(true)
+  expect(kept.at(-1)?.split('\n')[0]).toBe(
+    `**#${others[0]} F0** · Tally — state at landing, as of #${others[0]}/1:`,
+  )
+  expect(kept.at(-1)).toContain('- Landed `abcdef1` on main')
 })
 
 it('catches up a conversation without a tally baseline from the tally’s start', async () => {
