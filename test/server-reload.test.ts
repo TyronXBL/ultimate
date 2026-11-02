@@ -3,7 +3,9 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineExtension } from '@earendil-works/pi-durable'
 import { describe, expect, it } from 'vitest'
-import { prepareFauxServer as prepareServer, until, post, attach } from './helpers.ts'
+import { existsSync } from 'node:fs'
+import { prepareFauxServer as prepareServer, until, post, attach, temp } from './helpers.ts'
+import { prepareServer as prepareCore } from '../server/main.ts'
 import { context } from '../server/harness.ts'
 import type { ServerEvents } from '../shared/protocol.ts'
 import { fixture, orderedSource } from './server-fixture.ts'
@@ -133,6 +135,33 @@ describe('server reload', () => {
     await until(() => !!entry().server!.error)
     expect(entry().server!.loadedAt).toBe(successful)
     expect(server.host.registry.snapshot().extension('counter')).toBe(installed)
+  })
+  // The Pi 1.5 landing (0a75f52) changed facets and the lockfile together: they hot-reloaded onto the core still running
+  // Pi 1.4 and broke its storage for good.
+  it('keeps the loaded server facets once the lockfile asks for other packages than the core runs', async () => {
+    const { server } = await fixture(true)
+    const entry = () => server.extensions.info().find((extension) => extension.name === 'counter')!
+    const installed = server.host.registry.snapshot().extension('counter')!
+    await writeFile(join(server.host.ultimateRoot, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+    await writeFile(
+      join(server.host.ultimateRoot, 'extensions/counter/value.ts'),
+      "export const value = 'two'",
+    )
+    await until(() => !!entry().server!.error)
+    expect(entry().server!.error).toContain('pnpm-lock.yaml changed since this core started')
+    expect(server.host.registry.snapshot().extension('counter')).toBe(installed)
+  })
+  // After that landing, crash recovery booted cores on the stale packages; each opened storage before failing.
+  it('refuses to prepare a core on packages other than the lockfile asks for, before storage opens', async () => {
+    const root = await temp()
+    await mkdir(join(root, 'node_modules/.pnpm'), { recursive: true })
+    await writeFile(join(root, 'node_modules/.pnpm/lock.yaml'), 'lockfileVersion: 9\nold\n')
+    await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\nnew\n')
+    const home = join(root, 'home')
+    await expect(
+      prepareCore({ ultimateRoot: root, projectRoot: root, userHome: root, home, port: 0 }),
+    ).rejects.toThrow('are not the ones pnpm-lock.yaml asks for')
+    expect(existsSync(home)).toBe(false)
   })
   it('reloads only the owning extension when files or directories are added or removed, and an importer once its missing file appears', async () => {
     const { server } = await fixture(false, {

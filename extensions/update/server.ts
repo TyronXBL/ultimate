@@ -11,11 +11,11 @@ import { compareUrl } from '../../lib/compare.ts'
 import { exec } from '../../lib/exec.ts'
 import { fastForward, Refusal } from '../../lib/fast-forward.ts'
 import type { Git } from '../../lib/fast-forward.ts'
+import { installOwed, installPackages } from '../../lib/packages.ts'
 import { githubRepo } from '../../lib/project-identity.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { SubagentsApi } from '../subagents/api.ts'
-import { SubmissionLanded, WorkspacesApi } from '../workspaces/api.ts'
-import type { LandedData } from '../workspaces/api.ts'
+import { WorkspacesApi } from '../workspaces/api.ts'
 import { PauseApi } from '../pause/api.ts'
 import {
   cloneState,
@@ -46,18 +46,6 @@ export const gitIn =
     }
   }
 
-const read = (path: string) =>
-  readFile(path, 'utf8').catch(
-    // A missing lockfile or install reads as absent: no clone of Ultimate lacks both.
-    () => undefined,
-  )
-
-/** Whether `pnpm-lock.yaml` differs from what pnpm last installed (`node_modules/.pnpm/lock.yaml`). */
-export async function installOwed(root: string) {
-  const wanted = await read(join(root, 'pnpm-lock.yaml'))
-  return wanted !== undefined && wanted !== (await read(join(root, 'node_modules/.pnpm/lock.yaml')))
-}
-
 /** Whether packages were installed after `startedAt` (ms): this server still runs the ones before. */
 const installedSince = (root: string, startedAt: number) =>
   stat(join(root, 'node_modules/.pnpm/lock.yaml')).then(
@@ -83,9 +71,10 @@ export const AUTO_RESTART_PAUSE = 10 * 60_000
 
 /**
  * A listener for server facets that fail to load. When the running core is stale (`stale`: the core or packages changed
- * since boot), the facet most likely needs the new core, so it restarts the host at once, busy agents included: their
- * work resumes in the new process. A failure while the core is current is a real bug and stays a load error. Facets
- * failing in one reload join the first one's check, so they cause one restart; `last` (ms) keeps restarts apart.
+ * since boot, or the lockfile asks for packages it does not run, which holds every facet reload), the facet most likely
+ * needs the new core, so it restarts the host at once, busy agents included: their work resumes in the new process.
+ * A failure while the core is current is a real bug and stays a load error. Facets failing in one reload join the first
+ * one's check, so they cause one restart; `last` (ms) keeps restarts apart.
  */
 export function restartOnStaleLoad(options: {
   stale: () => Promise<boolean>
@@ -102,7 +91,7 @@ export function restartOnStaleLoad(options: {
       if (at !== undefined && now() - at < AUTO_RESTART_PAUSE) return
       if (!(await stale())) return
       await last.write(now())
-      notice(`Restarting: ${name} failed to load after a core change`)
+      notice(`Restarting: ${name} failed to load after a core or package change`)
       notice(`Automatic restart failed: ${await restart()}`)
     })()
       .catch((error: unknown) => notice(`Automatic restart: ${String(error)}`))
@@ -110,58 +99,6 @@ export function restartOnStaleLoad(options: {
         pending.current = undefined
       })
   }
-}
-
-/**
- * Check failed facets again once packages are installed: one that failed before the install linked a landing's new
- * package found nothing stale then. `failed` names a facet that still has a load error.
- */
-export async function retryStaleLoad(
-  listener: (name: string) => void,
-  pending: { current?: Promise<void> },
-  failed: () => string | undefined,
-) {
-  await pending.current
-  const name = failed()
-  if (!name) return
-  listener(name)
-  await pending.current
-}
-
-/** Install the lockfile's packages when they differ from the installed ones; the install's last lines when it fails. */
-async function installPackages(
-  root: string,
-): Promise<{ install: 'done' | 'failed' | 'skipped'; installError?: string }> {
-  if (!(await installOwed(root))) return { install: 'skipped' }
-  try {
-    await exec('pnpm', ['install', '--frozen-lockfile'], { cwd: root, timeout: 10 * 60_000 })
-    return { install: 'done' }
-  } catch (error) {
-    return { install: 'failed', installError: tail(error) }
-  }
-}
-
-/**
- * Whether a landing calls for an install in the clone at `root`: its range changes `pnpm-lock.yaml` or `patches/`, and
- * the clone's checkout holds the landed commit (the lander fast-forwarded it, so it is the host's checkout).
- */
-export async function landingInstalls(git: Git, { base, sha }: Pick<LandedData, 'base' | 'sha'>) {
-  const files = await git('merge-base', '--is-ancestor', sha, 'HEAD').then(
-    () => git('diff', '--name-only', base, sha),
-    // Not an ancestor, or unknown here: the landing went into another repository or branch.
-    () => '',
-  )
-  return files.split('\n').some((file) => file === 'pnpm-lock.yaml' || file.startsWith('patches/'))
-}
-
-/** The last output lines of a failed command. */
-function tail(error: unknown) {
-  const { stdout = '', stderr = '' } = error as {
-    stdout?: string
-    stderr?: string
-  }
-  const output = `${stdout}${stderr}`.trim()
-  return output ? output.split('\n').slice(-20).join('\n') : String(error)
 }
 
 /** A preview started by another Ultimate's `instance` tool: it shares the clone and must never touch it. */
@@ -193,6 +130,7 @@ export default function update(host: ExtensionHost) {
   const onLoadError = restartOnStaleLoad({
     stale: async () =>
       (await installedSince(host.ultimateRoot, Date.parse(host.system().process.startedAt))) ||
+      (await installOwed(host.ultimateRoot)) ||
       (await coreChangedSince(gitIn(host.ultimateRoot), await boot(host).head)),
     // A successful restart never returns: this process is released and the new core resumes its work.
     restart: () => host.restart(async () => {}),
@@ -218,37 +156,12 @@ export default function update(host: ExtensionHost) {
         shared.ticking = undefined
       })
   }
-  // A landing into the host's checkout that changes packages installs them at once; the status line then asks for the
-  // restart, or shows the install as owed when it failed. Not awaited: the reactor's transaction stays short.
-  host.react(
-    'install-landed',
-    [SubmissionLanded],
-    async (_tx, { data }) => {
-      const root = host.ultimateRoot
-      if (!(await landingInstalls(gitIn(root), data))) return
-      shared.installing ??= withLock(await lockOf(root), () => installPackages(root))
-        .then(() =>
-          retryStaleLoad(
-            onLoadError,
-            pending,
-            () => host.extensions().find((extension) => extension.server?.error)?.name,
-          ),
-        )
-        .then(() => refresh(host, false))
-        .catch((error: unknown) => host.notice(`Install after landing: ${String(error)}`))
-        .finally(() => {
-          shared.installing = undefined
-        })
-    },
-    { from: 'now' },
-  )
   const start = setTimeout(tick, 30_000)
   const timer = setInterval(tick, TICK)
   host.onClose(async () => {
     clearTimeout(start)
     clearInterval(timer)
     await shared.ticking
-    await shared.installing
   })
   return defineExtension({ name: 'update' })
 }
@@ -257,7 +170,6 @@ type Shared = {
   ticking: Promise<void> | undefined
   checking: Promise<void> | undefined
   updating: Promise<UpdateResult> | undefined
-  installing: Promise<void> | undefined
   latest: UpdateState | undefined
   updated: (UpdateResult & { ok: true }) | undefined
 }
@@ -268,7 +180,6 @@ const state = (host: ExtensionHost) =>
     ticking: undefined,
     checking: undefined,
     updating: undefined,
-    installing: undefined,
     latest: undefined,
     updated: undefined,
   }))
@@ -359,11 +270,15 @@ async function refresh(host: ExtensionHost, check: boolean, force = false) {
   if (!shared.latest.refused) delete shared.latest.refused
 }
 
-/** The clone's update state from the last check, read locally once when none was made yet; never fetches. */
+/**
+ * The clone's update state from the last check, read locally once when none was made yet; never fetches. Whether an
+ * install is owed is read each time: a landing that changes the lockfile shows it at once, not at the next check.
+ */
 async function currentState(host: ExtensionHost) {
   const shared = state(host)
   if (preview()) return previewState(host.ultimateRoot)
   if (!shared.latest) await refresh(host, false)
+  shared.latest!.install = await installOwed(host.ultimateRoot)
   return shared.latest!
 }
 

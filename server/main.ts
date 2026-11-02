@@ -22,6 +22,7 @@ import { discoveryRoots, writeProject } from './project.ts'
 import { reportCore } from './supervisor-protocol.ts'
 import { viteLogger } from './vite-logger.ts'
 import type { Notice } from '../shared/protocol.ts'
+import { assertInstalled } from '../lib/packages.ts'
 
 const send = (message: ChildMessage) => process.send?.(message)
 
@@ -32,6 +33,8 @@ export interface ServerOptions extends HostOptions {
 export async function prepareServer(options: Partial<ServerOptions> = {}) {
   const ultimateRoot =
     options.ultimateRoot ?? resolvePath(dirname(fileURLToPath(import.meta.url)), '..')
+  // Before anything opens: a core on other packages than the lockfile's fails only after storage opened.
+  await assertInstalled(ultimateRoot)
   const projectRoot = await realpath(
     options.projectRoot ?? process.env.ULTIMATE_PROJECT ?? options.ultimateRoot ?? process.cwd(),
   )
@@ -331,15 +334,29 @@ if (process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.met
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
   if (process.env.ULTIMATE_SUPERVISED === '1' && process.send) {
+    // While this core serves, a failed storage leaves it alive but unable to do anything: exit instead, so the
+    // supervisor starts a fresh core and durable work resumes there, as after a crash.
+    let serving = false
+    const storageFailed = () => {
+      if (!serving || closing) return
+      console.error('Storage failed: exiting so the supervisor starts a fresh core')
+      process.exit(1)
+    }
     try {
-      server = await prepareServer({ port: 0, publicUrl: process.env.ULTIMATE_PUBLIC_URL })
+      server = await prepareServer({
+        port: 0,
+        publicUrl: process.env.ULTIMATE_PUBLIC_URL,
+        storageFailed,
+      })
       process.on('message', (message: SupervisorMessage) => {
         void (async () => {
           if (message.type === 'go' || message.type === 'reacquire') {
             await server!.go(message.type === 'reacquire' ? message.error : undefined)
+            serving = true
             send({ type: 'ready' })
           }
           if (message.type === 'release') {
+            serving = false
             await server!.release()
             send({ type: 'released' })
           }

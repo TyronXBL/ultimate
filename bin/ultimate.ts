@@ -18,6 +18,8 @@ import { loopbackAuthority, proxied } from '../server/request-security.ts'
 import { isCoreReport } from '../server/supervisor-protocol.ts'
 import type { CoreReport } from '../server/supervisor-protocol.ts'
 import { dashboard } from './dashboard.ts'
+import { exec } from '../lib/exec.ts'
+import { installOwed, installPackages } from '../lib/packages.ts'
 
 const ultimateRoot = resolvePath(fileURLToPath(new URL('..', import.meta.url)))
 const { values, positionals } = parseArgs({
@@ -159,7 +161,7 @@ function route(socket: Socket) {
         !proxied(headers) &&
         loopbackAuthority(headers.host, String(publicPort))
       const html = direct
-        ? `<h1>Ultimate core could not boot</h1><p>Waiting for changes in server/, shared/, extensions/</p><pre>${escape(stderr)}</pre>`
+        ? `<h1>Ultimate core could not boot</h1><p>Waiting for changes in server/, shared/, extensions/ or the installed packages</p><pre>${escape(stderr)}</pre>`
         : ''
       socket.end(
         `HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(html)}\r\nConnection: close\r\n\r\n${html}`,
@@ -360,6 +362,40 @@ async function checkTypes() {
   const [code] = await once(child, 'exit')
   if (code !== 0) throw new Error(output || `Type check exited ${code}`)
 }
+/**
+ * Install the lockfile's packages before a core boots on them (a landing or an update moved the lockfile), under the
+ * clone lock the update extension installs under; throws with pnpm's output when the install fails.
+ */
+async function ensurePackages() {
+  if (!(await installOwed(ultimateRoot))) return
+  display.lifecycle(
+    'installing',
+    active ? { generation: active.generation, pid: active.child.pid } : undefined,
+  )
+  const { stdout } = await exec('git', ['rev-parse', '--git-path', 'ultimate-update.lock'], {
+    cwd: ultimateRoot,
+  })
+  const path = resolvePath(ultimateRoot, stdout.trim())
+  const deadline = Date.now() + 10 * 60_000
+  const acquire = () =>
+    acquireLock(path, { pid: process.pid }).catch((error: unknown) => {
+      // Another Ultimate updates or installs this clone: wait for it, then install whatever is still owed.
+      const held = error instanceof Error && error.message.startsWith('Ultimate core already owns')
+      if (!held || Date.now() > deadline) throw error
+      return undefined
+    })
+  let clone = await acquire()
+  while (!clone) {
+    await pause(2000)
+    clone = await acquire()
+  }
+  try {
+    const { install, installError } = await installPackages(ultimateRoot)
+    if (install === 'failed') throw new Error(`pnpm install failed:\n${installError}`)
+  } finally {
+    await clone.close()
+  }
+}
 async function prepare(core: Core) {
   const message = await wait(core, 'prepared')
   if (message.type === 'prepared') core.port = message.port
@@ -397,6 +433,7 @@ async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
   let next: Core | undefined
   let released = false
   try {
+    await ensurePackages()
     await checkTypes()
     next = boot(previousBuild)
     await prepare(next)
@@ -458,6 +495,7 @@ async function recover() {
       if (stopping) break
       let core: Core | undefined
       try {
+        await ensurePackages()
         core = boot()
         await prepare(core)
         await start(core)
@@ -486,9 +524,19 @@ const retry = () => {
     )
   }
 }
-const watchers = ['server', 'shared', 'extensions'].map((directory) =>
-  watch(join(ultimateRoot, directory), { recursive: true }, retry),
-)
+const watchers = [
+  ...['server', 'shared', 'extensions'].map((directory) =>
+    watch(join(ultimateRoot, directory), { recursive: true }, retry),
+  ),
+  // A fixed lockfile, or packages installed by hand, retry a boot that a failed install stopped.
+  ...[ultimateRoot, join(ultimateRoot, 'node_modules/.pnpm')]
+    .filter((directory) => existsSync(directory))
+    .map((directory) =>
+      watch(directory, (_event, file) => {
+        if (file === 'pnpm-lock.yaml' || file === 'lock.yaml') retry()
+      }),
+    ),
+]
 const projectConfig = join(projectRoot, '.ultimate')
 let configWatcher: ReturnType<typeof watch> | undefined
 const watchConfig = () => {
