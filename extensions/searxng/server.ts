@@ -2,7 +2,7 @@
 import { lookup } from 'node:dns'
 import type { LookupAddress } from 'node:dns'
 import { BlockList, isIP } from 'node:net'
-import { Type } from '@earendil-works/pi-ai'
+import { int, obj, oneOf, opt, str } from '@earendil-works/pi-schema'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 import { parse } from 'parse5'
@@ -502,36 +502,30 @@ export default function searxng(host: ExtensionHost) {
         replay: 'safe',
         description:
           "Search the public web through the user's own SearXNG instance. Returns ranked pages with titles, URLs, domains, snippets and publication dates, plus a note when upstream engines were unresponsive. Use this to discover sources or find current information; read a result with web_fetch. Output is limited to 50KB or 2,000 lines.",
-        parameters: Type.Object({
-          query: Type.String({
+        parameters: obj({
+          query: str({
             minLength: 1,
             maxLength: 512,
             description: 'What to find on the web, as a self-contained search query.',
           }),
-          count: Type.Optional(
-            Type.Integer({
+          count: opt(
+            int({
               minimum: 1,
               maximum: 25,
               description: 'Maximum number of results. Defaults to 10.',
             }),
           ),
-          categories: Type.Optional(
-            Type.String({
+          categories: opt(
+            str({
               maxLength: 128,
               description:
                 'Comma-separated SearXNG categories, for example "general", "news", "it". Defaults to the instance default.',
             }),
           ),
-          time_range: Type.Optional(
-            Type.Union(
-              [
-                Type.Literal('day'),
-                Type.Literal('week'),
-                Type.Literal('month'),
-                Type.Literal('year'),
-              ],
-              { description: 'Only results from this recent period.' },
-            ),
+          time_range: opt(
+            oneOf(['day', 'week', 'month', 'year'], {
+              description: 'Only results from this recent period.',
+            }),
           ),
         }),
         async execute(args, api, context) {
@@ -567,10 +561,10 @@ export default function searxng(host: ExtensionHost) {
         replay: 'safe',
         description:
           'Read one public web page as text: HTML becomes markdown-like text (headings, paragraphs, lists, links); plain text and JSON come back as they are. Refuses localhost and private networks, and binary content. Output is limited to 50KB or 2,000 lines.',
-        parameters: Type.Object({
-          url: Type.String({ minLength: 1, description: 'The http(s) URL of the page.' }),
-          max_chars: Type.Optional(
-            Type.Integer({
+        parameters: obj({
+          url: str({ minLength: 1, description: 'The http(s) URL of the page.' }),
+          max_chars: opt(
+            int({
               minimum: 100,
               description: 'Return at most this many characters of the page text.',
             }),

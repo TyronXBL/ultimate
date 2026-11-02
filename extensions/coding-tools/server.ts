@@ -4,7 +4,8 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { Context } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context'
-import { Type } from '@earendil-works/pi-ai'
+import { bool, num, obj, opt, str } from '@earendil-works/pi-schema'
+import type { Schema } from '@earendil-works/pi-schema'
 import {
   type ConversationId,
   defineDoc,
@@ -23,6 +24,7 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
+  type ReadToolInput,
 } from '@earendil-works/pi-durable/tools'
 import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
@@ -56,17 +58,20 @@ function readTool(host: Pick<ExtensionHost, 'projectRoot' | 'skills'>) {
       })
     }
   }
+  // Pi's own read schema with one more optional property, so its fields and descriptions stay Pi's.
+  const parameters: Schema<ReadToolInput & { rev?: string }> = {
+    ...read.parameters,
+    properties: {
+      ...(read.parameters.properties as object),
+      rev: str({
+        description: 'Commit, branch or tag to read the file at, instead of the working tree',
+      }),
+    },
+  }
   return defineTool({
     ...read,
     description: `${read.description} Pass rev (a commit, branch or tag) to read the file as of that commit instead of the working tree; a relative path resolves in the cwd's repository, whose commits every worktree shares.`,
-    parameters: Type.Object({
-      ...read.parameters.properties,
-      rev: Type.Optional(
-        Type.String({
-          description: 'Commit, branch or tag to read the file at, instead of the working tree',
-        }),
-      ),
-    }),
+    parameters,
     async execute({ rev, ...args }, api, context) {
       if (rev === undefined || !api.env) return execute(args, api, context)
       const env = await atRevision(api.env, args.path, rev, context)
@@ -238,8 +243,12 @@ async function untilStopped(
     if (value?.items.some((item) => item.mode === 'steer'))
       stop('Interrupted by a steering message')
   }
-  cancelled.start(async (value) => inspectCancelled(value))
-  inbox?.start(async (value) => inspectInbox(value))
+  cancelled.start(async (call) => {
+    if (call.kind === 'value') inspectCancelled(call.value)
+  })
+  inbox?.start(async (call) => {
+    if (call.kind === 'value') inspectInbox(call.value)
+  })
   try {
     inspectCancelled(cancelled.value)
     if (inbox) inspectInbox(inbox.value)
@@ -362,16 +371,16 @@ async function madeCommits(path: string, conversation: number) {
 
 export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectRoot' | 'skills'>) {
   const shell = createBashTool()
-  const parameters = Type.Object({
-    ...shell.parameters.properties,
-    timeout: Type.Optional(
-      Type.Number({
+  const parameters = obj({
+    command: str({ description: 'Bash command to execute' }),
+    timeout: opt(
+      num({
         description:
           'Timeout in seconds (optional; without it a default tripwire, 600 s unless configured, stops the command)',
       }),
     ),
-    interruptible: Type.Optional(
-      Type.Boolean({
+    interruptible: opt(
+      bool({
         description:
           'Only for commands that just wait or poll (CI checks, deploys, a file appearing): a steering message ends the command early. Never combine with commands that change things.',
       }),

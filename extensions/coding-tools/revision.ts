@@ -1,4 +1,4 @@
-// Pi upstream: @earendil-works/pi-durable@1.4.0 src/tools/read.ts — the read tool loads a file's content only through env.openBinaryReader, which atRevision replaces. Drop when Pi's read tool accepts a reader or a revision.
+// Pi upstream: @earendil-works/pi-durable@1.5.0 src/tools/read.ts — the read tool loads a file's content only through env.openBinaryReader, which atRevision replaces. Drop when Pi's read tool accepts a reader or a revision.
 import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, relative } from 'node:path'
 import type { Context } from '@earendil-works/chord'

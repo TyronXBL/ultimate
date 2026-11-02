@@ -4,7 +4,7 @@
  * card. The shell writes the output and the exit code to files, so a command outlives a host restart and its result is
  * still delivered.
  */
-import { Type } from '@earendil-works/pi-ai'
+import { num, obj, opt, str } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
@@ -197,10 +197,10 @@ export default function backgroundExtension(host: Pick<ExtensionHost, 'projectRo
         name: 'background',
         description:
           'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. Returns immediately; you are woken once with a result card: exit code, duration, the last 40 lines of output and the full log path. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
-        parameters: Type.Object({
-          command: Type.String(),
-          timeout: Type.Optional(
-            Type.Number({
+        parameters: obj({
+          command: str(),
+          timeout: opt(
+            num({
               minimum: 1,
               maximum: 86400,
               description: 'Seconds before the command is stopped; default 3600.',

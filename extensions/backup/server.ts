@@ -17,6 +17,7 @@ import {
 import type { ConversationId, EntryDraft, EntryId, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { defaultModel, hasLogin, previewModel } from '../../lib/agents.ts'
+import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
 import { Pin } from '../models/api.ts'
 import { Standing } from '../subagents/api.ts'
@@ -269,7 +270,7 @@ export default function extension(host: Host) {
   host.onOpen(async () => {
     unsubscribe?.()
     // Every model answer Pi records lands in a commit; the first one a limit ends switches the conversation.
-    unsubscribe = host.harness().subscribeCommits((publication) => {
+    unsubscribe = onCommit(host.harness(), (publication) => {
       for (const change of publication.changes) {
         const message = change.type === 'entry' ? change.value.model?.[0] : undefined
         if (
@@ -293,7 +294,7 @@ export default function extension(host: Host) {
     name: 'backup',
     hooks: [
       hook(GenerationTask, {
-        // Pi upstream: @earendil-works/pi-durable@1.4.0 — patched transactional beforeInput hook. Every run's first
+        // Pi upstream: @earendil-works/pi-durable@1.5.0 — patched transactional beforeInput hook. Every run's first
         // input is placed through it (a typed input, a delivery, a queued follow-up), before the run reads its agent.
         beforeInput: (_input, { tx, conversationId }) => returned(host, tx, conversationId),
       }),

@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile, access, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { defineExtension, defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
-import type { ConversationId, Tx } from '@earendil-works/pi-durable'
+import type { ConversationId, Submission, Tx } from '@earendil-works/pi-durable'
 import { expect, it, vi } from 'vitest'
 import { context } from '../../server/harness.ts'
 import { UiState } from '../../server/ui-state.ts'
@@ -357,7 +357,7 @@ it.concurrent('input admitted after release marks removed waits for deletion and
     )
   const releasing = f.service.release([id], context)
   const conversation = (await harness.conversation(id, context))!
-  let request: ReturnType<typeof conversation.submit> | undefined
+  let request!: Promise<Submission>
   try {
     await marked
     // The idle check and removed state are committed, but filesystem removal has not started.
@@ -472,7 +472,7 @@ it('resuming a child after its removal keeps the parent in the same release batc
   const queued = vi.spyOn(queues, 'set')
   const releasing = f.service.release([parent], context)
   const conversation = (await f.opened.harness.conversation(child, context))!
-  let request: ReturnType<typeof conversation.submit> | undefined
+  let request!: Promise<Submission>
   try {
     await deletingChildBranch.started()
     expect((await f.service.get(child, context))!.state).toBe('removed')
@@ -565,18 +565,14 @@ case "$(ps -ww -p "$PPID" -o args=)" in "git branch -D "*) exit 1 ;; esac
   ).toContain(kept[0].reason!)
   expect(f.writes).toBe(0)
   const conversation = (await f.opened.harness.conversation(id, context))!
-  const view = await conversation.viewState(context)
-  try {
-    const reply = view.value.entries
-      .flatMap((entry) => entry.model ?? [])
-      .findLast((message) => message.role === 'assistant')
-    expect(
-      reply?.role === 'assistant' &&
-        reply.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
-    ).toContain(kept[0].reason!)
-  } finally {
-    view.dispose()
-  }
+  const view = await conversation.context(context)
+  const reply = view.entries
+    .flatMap((entry) => entry.model ?? [])
+    .findLast((message) => message.role === 'assistant')
+  expect(
+    reply?.role === 'assistant' &&
+      reply.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
+  ).toContain(kept[0].reason!)
   expect((await f.service.get(id, context))!).toMatchObject({
     state: 'removed',
     error: kept[0].reason,

@@ -1037,7 +1037,7 @@ export function workspaces(host: Host) {
       index.items[String(id)] = {
         path,
         branch,
-        base: await git(source, 'rev-parse', 'HEAD'),
+        base: await git(source, 'rev-parse', `refs/heads/${target}`),
         source,
         target,
         state: 'preparing',

@@ -1,7 +1,7 @@
 // First: helpers mocks the faux provider's token pacing, which must apply before the server modules load.
 import { post, until } from './helpers.ts'
 import { awaitWithContext } from '@earendil-works/chord/context'
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 import type { Models } from '@earendil-works/pi-ai'
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable'
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream'
@@ -211,7 +211,7 @@ it('publishes initial intent while the main model request is blocked, once acros
         defineTool({
           name: 'intent_probe',
           description: 'Probe another model round',
-          parameters: Type.Object({}),
+          parameters: obj({}),
           execute: async () => ({ output: [{ type: 'text', text: 'Continue' }] }),
         }),
       ],
@@ -354,7 +354,7 @@ it('keeps an exchange answered across a mid-run compaction and reopen; only a re
         defineTool({
           name: 'compaction_hold',
           description: 'Hold work until released',
-          parameters: Type.Object({}),
+          parameters: obj({}),
           execute: async (_args, _api, toolContext) => {
             holding = true
             await awaitWithContext(gate, toolContext)
@@ -447,7 +447,7 @@ it('derives the same overview rows live and from a fresh open, with no summary m
         defineTool({
           name: 'overview_hold',
           description: 'Hold work until released',
-          parameters: Type.Object({}),
+          parameters: obj({}),
           execute: async (_args, _api, toolContext) => {
             await awaitWithContext(new Promise<void>((done) => (release = done)), toolContext)
             return { output: [{ type: 'text', text: 'Released' }] }
@@ -615,7 +615,7 @@ it.each(['answers', 'fails'] as const)(
           defineTool({
             name: 'order_hold',
             description: 'Hold work until released',
-            parameters: Type.Object({}),
+            parameters: obj({}),
             execute: async (_args, _api, toolContext) => {
               holding = true
               await awaitWithContext(new Promise<void>((done) => (release = done)), toolContext)
@@ -705,7 +705,7 @@ it('refreshes title, summary and feature when a steer joins a running run, and r
         defineTool({
           name: 'steer_hold',
           description: 'Hold work until released',
-          parameters: Type.Object({}),
+          parameters: obj({}),
           execute: async (_args, _api, toolContext) => {
             holding = true
             await awaitWithContext(new Promise<void>((done) => (release = done)), toolContext)

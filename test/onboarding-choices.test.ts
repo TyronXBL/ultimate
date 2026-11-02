@@ -54,8 +54,8 @@ it('offers setup only to named definitions, refuses inapplicable cards, and dedu
         context,
       )
       await server.harness.waitForIdle(context)
-      const view = await conversation.viewState(context)
-      return view.value.entries.findLast((entry) => entry.kind === 'pi.tool-result')!
+      const view = await conversation.context(context)
+      return view.entries.findLast((entry) => entry.kind === 'pi.tool-result')!
     }
     expect(JSON.stringify(await run('setup', { card: 'project' }))).toContain('undecided')
     await post(server, '/api/extensions/onboarding/actions/decide', { args: { local: false } })
@@ -91,7 +91,7 @@ it('offers setup only to named definitions, refuses inapplicable cards, and dedu
     )
     expect(receipts.map((receipt) => receipt.status)).toEqual([200, 200])
     await server.harness.waitForIdle(context)
-    const entries = (await conversation.viewState(context)).value.entries.filter(
+    const entries = (await conversation.context(context)).entries.filter(
       (entry) => entry.kind === 'onboarding.choice',
     )
     expect(entries).toHaveLength(1)
@@ -132,7 +132,7 @@ it('offers setup only to named definitions, refuses inapplicable cards, and dedu
     }
     expect(server.system.current().project.decision).toBe(true)
     expect(
-      (await conversation.viewState(context)).value.entries.filter(
+      (await conversation.context(context)).entries.filter(
         (entry) =>
           entry.kind === 'onboarding.choice' &&
           (entry.data as { toolCallId: string }).toolCallId === retry.toolCallId,
@@ -149,7 +149,7 @@ it('offers setup only to named definitions, refuses inapplicable cards, and dedu
       ).toBe(200)
     await server.harness.waitForIdle(context)
     expect(
-      (await conversation.viewState(context)).value.entries.filter(
+      (await conversation.context(context)).entries.filter(
         (entry) =>
           entry.kind === 'onboarding.choice' &&
           (entry.data as { toolCallId: string }).toolCallId === retry.toolCallId,

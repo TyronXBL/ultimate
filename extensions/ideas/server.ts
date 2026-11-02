@@ -2,7 +2,7 @@
  * Ideas: the project's idea board on the root conversation. The user collects ideas and launches one, which asks
  * @ultimate to start its branch; @ultimate links the branch with its `idea` tool and adds ideas proposed elsewhere.
  */
-import { Type } from '@earendil-works/pi-ai'
+import { arr, int, obj, oneOf, opt, str } from '@earendil-works/pi-schema'
 import {
   defineDoc,
   defineEntry,
@@ -359,14 +359,14 @@ export default function ideasExtension(host: ExtensionHost) {
         deferred: true,
         description:
           "The user's idea board: add {title, notes?, tags?, from?} an idea a branch, dream or survey proposed for later (from: its #<conversation>/<entry>); link {id, branch} the branch you started for a launched idea, replacing its link (a branch belongs to one idea, so linking it elsewhere unlinks the other: check both titles in the result); list. Ideas are the user's backlog of work to launch, not open loops: those are to-dos.",
-        parameters: Type.Object({
-          action: Type.Union([Type.Literal('add'), Type.Literal('link'), Type.Literal('list')]),
-          title: Type.Optional(Type.String()),
-          notes: Type.Optional(Type.String()),
-          tags: Type.Optional(Type.Array(Type.String())),
-          from: Type.Optional(Type.String()),
-          id: Type.Optional(Type.Integer({ minimum: 1 })),
-          branch: Type.Optional(Type.Integer({ minimum: 1 })),
+        parameters: obj({
+          action: oneOf(['add', 'link', 'list']),
+          title: opt(str()),
+          notes: opt(str()),
+          tags: opt(arr(str())),
+          from: opt(str()),
+          id: opt(int({ minimum: 1 })),
+          branch: opt(int({ minimum: 1 })),
         }),
         // Not replay-safe (the default): an interrupted add is never rerun, so it commits at most once.
         async execute(args, api, ctx) {
