@@ -23,22 +23,28 @@ const TIMEOUT = 30_000
  */
 function gitBytes(cwd: string, args: string[], input?: string) {
   return new Promise<Buffer>((resolve, reject) => {
-    const child = spawn('git', args, { cwd, signal: AbortSignal.timeout(TIMEOUT) })
+    const child = spawn('git', args, {
+      cwd,
+      signal: AbortSignal.timeout(TIMEOUT),
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    })
     const chunks: Buffer[] = []
     let size = 0
     let stderr = ''
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout!.on('data', (chunk: Buffer) => {
       size += chunk.length
       if (size > MAX_BLOB) child.kill()
       else chunks.push(chunk)
     })
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+    child.stderr!.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
     child.on('error', reject)
     child.on('close', (code) => {
       if (code === 0 && size <= MAX_BLOB) resolve(Buffer.concat(chunks))
       else reject(new Error(`git ${args.join(' ')} failed${stderr ? `: ${stderr.trim()}` : ''}`))
     })
-    child.stdin.end(input)
+    // Git may exit before it reads its input; the close above reports that run.
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(input)
   })
 }
 
