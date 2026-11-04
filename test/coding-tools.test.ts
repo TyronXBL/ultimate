@@ -21,7 +21,7 @@ it('uses a 600-second default tripwire and leaves explicit timeouts unchanged', 
     emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
     projectRoot: tmpdir(),
     skills: () => [],
-    projectSettings: async () => ({}),
+    userHome: tmpdir(),
   }).wraps!.find((wrap) => 'tool' in wrap && wrap.tool === 'bash')!
   if (!('tool' in wrapper)) throw new Error('Missing bash wrapper')
   const bash = wrapper.wrap({ ...createBashTool(), execute })
@@ -58,7 +58,7 @@ it('says a command killed by SIGTERM or SIGKILL was stopped from outside, and le
     emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
     projectRoot: tmpdir(),
     skills: () => [],
-    projectSettings: async () => ({}),
+    userHome: tmpdir(),
   }).wraps!.find((wrap) => 'tool' in wrap && wrap.tool === 'bash')!
   if (!('tool' in wrapper)) throw new Error('Missing bash wrapper')
   const bash = wrapper.wrap({ ...createBashTool(), execute })
@@ -127,7 +127,7 @@ it('reads an image past the 2000 px limit shrunk to fit, keeping its aspect rati
       emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
       projectRoot: dir,
       skills: () => [],
-      projectSettings: async () => ({}),
+      userHome: tmpdir(),
     }).tools!.find((tool) => tool.name === 'read')!
     const api = {
       env: new NodeExecutionEnv({ cwd: dir }),
@@ -157,7 +157,7 @@ it('names where a listed skill is when a read guessed its folder', async () => {
       emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
       projectRoot: dir,
       skills: () => [{ name: 'test-audit', filePath }] as ReturnType<ExtensionHost['skills']>,
-      projectSettings: async () => ({}),
+      userHome: tmpdir(),
     }).tools!.find((tool) => tool.name === 'read')!
     const api = { env: new NodeExecutionEnv({ cwd: dir }) } as unknown as ToolExecutionApi
     const guessed = join(dir, 'home/skills/test-audit/SKILL.md')

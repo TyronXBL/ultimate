@@ -4,8 +4,9 @@ Keeps a RAM floor: heavy jobs Ultimate starts wait or are refused while they wou
 
 ## Setting
 
-`memory.minAvailableMiB` (settings, user or project; off by default) is how much RAM, in MiB, must stay available
-(`MemAvailable` in `/proc/meminfo`). Linux only: elsewhere nothing is read and nothing is gated.
+`memory.minAvailableMiB` (in `~/.ultimate/settings.json` only, since RAM is the machine's; off by default) is how much
+RAM, in MiB, must stay available (`MemAvailable` in `/proc/meminfo`). It is read at every admission, so a change applies
+at once. Linux only: elsewhere nothing is read and nothing is gated.
 
 ## What it guarantees
 

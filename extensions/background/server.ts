@@ -15,6 +15,7 @@ import {
   commandNeedMiB,
   describeShort,
   listUsers,
+  memoryFloor,
   memoryUsers,
   RAM_POLL_MS,
   RAM_WAIT_MS,
@@ -87,7 +88,7 @@ async function tail(log: string) {
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
 
-const createRun = (host: Pick<ExtensionHost, 'projectSettings'>) =>
+const createRun = (host: Pick<ExtensionHost, 'userHome'>) =>
   defineTask<Input, Checkpoint, null>({
     name: 'background.run',
     version: 1,
@@ -95,7 +96,7 @@ const createRun = (host: Pick<ExtensionHost, 'projectSettings'>) =>
     phases: {
       start: async (task, runtime, ctx) => {
         const short = await admitRam(
-          await host.projectSettings(),
+          await memoryFloor(host.userHome),
           commandNeedMiB(task.input.command),
         )
         if (short) {
@@ -233,7 +234,7 @@ const createRun = (host: Pick<ExtensionHost, 'projectSettings'>) =>
   })
 
 export default function backgroundExtension(
-  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'projectSettings'>,
+  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome'>,
 ) {
   const Run = createRun(host)
   return defineExtension({
@@ -276,7 +277,10 @@ export default function backgroundExtension(
               ),
             ctx,
           )
-          const short = await checkRam(await host.projectSettings(), commandNeedMiB(args.command))
+          const short = await checkRam(
+            await memoryFloor(host.userHome),
+            commandNeedMiB(args.command),
+          )
           const text = short
             ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min; you will be woken once with its result either way. Keep working or end your turn.`
             : `Started in the background in ${cwd}. You will be woken once with its result; keep working or end your turn.`

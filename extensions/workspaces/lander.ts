@@ -15,6 +15,7 @@ import {
   commandNeedMiB,
   describeShort,
   listUsers,
+  memoryFloor,
   memoryUsers,
   RAM_POLL_MS,
   RAM_WAIT_MS,
@@ -114,7 +115,15 @@ export const log = (
 }
 type Host = Pick<
   ExtensionHost,
-  'home' | 'ultimateRoot' | 'harness' | 'projectSettings' | 'doc' | 'metadata' | 'notice' | 'emit'
+  | 'home'
+  | 'userHome'
+  | 'ultimateRoot'
+  | 'harness'
+  | 'projectSettings'
+  | 'doc'
+  | 'metadata'
+  | 'notice'
+  | 'emit'
 >
 /** One check command, with its own total limit in seconds when set. */
 type Check = { command: string; timeout?: number }
@@ -672,7 +681,7 @@ export function createLander(
                 [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
               ),
             )
-            const short = await admitRam(projectSettings, need)
+            const short = await admitRam(await memoryFloor(host.userHome), need)
             if (short) {
               const now = runtime.now()
               if (ramSince !== undefined && now - ramSince >= RAM_WAIT_MS)

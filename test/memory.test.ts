@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { admitRam, availableMiB, commandNeedMiB, memoryFloor, ramShort } from '../lib/memory.ts'
+import { writeJson } from '../lib/json-file.ts'
 import { temp } from './helpers.ts'
 
 it.each([
@@ -25,8 +26,8 @@ it.each([
 it('reserves what it admits, so concurrent starters cannot both pass on the same RAM', async () => {
   const dir = await temp('ultimate-memory-')
   // Room for exactly one 1024 MiB job above the floor, while RAM moves less than 400 MiB during the test.
-  const settings = { memory: { minAvailableMiB: (await availableMiB())! - 1500 } }
-  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(settings, 1024, dir)))
+  const floor = (await availableMiB())! - 1500
+  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(floor, 1024, dir)))
   expect(admitted.filter((short) => short === undefined)).toHaveLength(1)
   expect(admitted.find(Boolean)).toMatchObject({ need: 1024, reserved: 1024 })
 })
@@ -44,11 +45,12 @@ it.each([
   expect(commandNeedMiB(command)).toBe(need)
 })
 
-it('reads the floor from settings and MemAvailable from meminfo', async () => {
-  expect(memoryFloor({})).toBeUndefined()
-  expect(memoryFloor({ memory: { minAvailableMiB: 0 } })).toBeUndefined()
-  expect(memoryFloor({ memory: { minAvailableMiB: 3072 } })).toBe(3072)
-  const meminfo = join(await temp('ultimate-memory-'), 'meminfo')
+it("reads the floor from this machine's settings and MemAvailable from meminfo", async () => {
+  const userHome = await temp('ultimate-memory-')
+  expect(await memoryFloor(userHome)).toBeUndefined()
+  await writeJson(join(userHome, '.ultimate/settings.json'), { memory: { minAvailableMiB: 3072 } })
+  expect(await memoryFloor(userHome)).toBe(3072)
+  const meminfo = join(userHome, 'meminfo')
   await writeFile(meminfo, 'MemTotal:       12238816 kB\nMemAvailable:    3029644 kB\n')
   expect(await availableMiB(meminfo)).toBe(2958)
   expect(await availableMiB(join(meminfo, 'missing'))).toBeUndefined()

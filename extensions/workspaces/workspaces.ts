@@ -84,6 +84,7 @@ type Host = Pick<
   ExtensionHost,
   | 'harness'
   | 'home'
+  | 'userHome'
   | 'ultimateRoot'
   | 'projectRoot'
   | 'projectSettings'

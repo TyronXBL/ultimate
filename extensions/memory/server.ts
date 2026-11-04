@@ -14,7 +14,7 @@ const MARGIN = 1024
 
 export const actions = {
   state: implementAction(StateAction, async (_args, { host }) => {
-    const floor = memoryFloor(await host.projectSettings())
+    const floor = await memoryFloor(host.userHome)
     if (floor === undefined) return { users: [] }
     const available = await availableMiB()
     if (available === undefined) return { floor, users: [] }

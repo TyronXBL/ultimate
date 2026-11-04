@@ -38,7 +38,7 @@ it('runs in the background and delivers one result; concluding its owner kills t
     backgroundExtension({
       projectRoot: root,
       home: `${root}/home`,
-      projectSettings: async () => ({}),
+      userHome: `${root}/user`,
     }),
   )
   prepared.faux!.setResponses([

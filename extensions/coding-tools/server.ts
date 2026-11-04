@@ -34,6 +34,7 @@ import {
   commandNeedMiB,
   describeShort,
   listUsers,
+  memoryFloor,
   memoryUsers,
 } from '../../lib/memory.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
@@ -377,7 +378,7 @@ async function madeCommits(path: string, conversation: number) {
 }
 
 export default function codingTools(
-  host: Pick<ExtensionHost, 'emit' | 'projectRoot' | 'skills' | 'projectSettings'>,
+  host: Pick<ExtensionHost, 'emit' | 'projectRoot' | 'skills' | 'userHome'>,
 ) {
   const shell = createBashTool()
   const parameters = obj({
@@ -407,7 +408,7 @@ export default function codingTools(
         )
       // A known heavy command (tests, checks, installs, a server) never starts below the RAM floor.
       const need = commandNeedMiB(args.command)
-      const short = need ? await admitRam(await host.projectSettings(), need) : undefined
+      const short = need ? await admitRam(await memoryFloor(host.userHome), need) : undefined
       if (short)
         throw new Error(
           `Not enough RAM for this command: ${describeShort(short)}. Run it with the background tool, which waits until enough is free, or stop a job of yours first; what this Ultimate runs, by RSS:\n${listUsers(await memoryUsers())}`,

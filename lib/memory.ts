@@ -1,5 +1,5 @@
 /**
- * This machine's RAM floor: `memory.minAvailableMiB` in settings is how much RAM must stay available. The heavy jobs
+ * This machine's RAM floor: `memory.minAvailableMiB` in `~/.ultimate/settings.json` is how much RAM must stay available. The heavy jobs
  * Ultimate starts (background commands, lander checks, previews, heavy bash commands) look here first and wait or
  * refuse when their estimated need would take available RAM below it. Linux only: elsewhere nothing is read and
  * nothing is gated.
@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readJson, writeJson } from './json-file.ts'
+import { readSettings, userSettingsPath } from './settings.ts'
 
 /** About what a preview or a scratch server needs: a booted Ultimate with its web build. */
 export const PREVIEW_MIB = 1536
@@ -21,8 +22,15 @@ export const PREVIEW_MIB = 1536
 export const RAM_WAIT_MS = 30 * 60_000
 export const RAM_POLL_MS = 10_000
 
-/** The floor in MiB, undefined while off (the default). */
-export function memoryFloor(settings: JsonObject) {
+/**
+ * The floor in MiB from this machine's settings, undefined while off (the default). A machine setting: project settings
+ * travel with the repository to machines with other RAM.
+ */
+export async function memoryFloor(userHome: string) {
+  const settings = await readSettings(userSettingsPath(userHome)).catch(
+    // Unreadable settings: the setup status reports them; nothing is gated meanwhile.
+    (): JsonObject => ({}),
+  )
   const memory = settings.memory
   const floor =
     memory && typeof memory === 'object' && !Array.isArray(memory)
@@ -107,19 +115,18 @@ async function locked<T>(dir: string, critical: () => Promise<T>) {
   }
 }
 
-/** Whether a job needing `need` MiB fits now, by the floor in `settings`, without admitting it. */
-export async function checkRam(settings: JsonObject, need: number, dir = tmpdir()) {
-  const floor = memoryFloor(settings)
+/** Whether a job needing `need` MiB fits now above `floor` (`memoryFloor`), without admitting it. */
+export async function checkRam(floor: number | undefined, need: number, dir = tmpdir()) {
   if (floor === undefined) return undefined
   const reserved = (await reservations(dir, Date.now())).reduce((sum, item) => sum + item.need, 0)
   return ramShort(await availableMiB(), need, floor, reserved)
 }
 
 /** Admit a job needing `need` MiB: undefined when it fits, and its need is then reserved; else what falls short. */
-export async function admitRam(settings: JsonObject, need: number, dir = tmpdir()) {
-  if (memoryFloor(settings) === undefined) return undefined
+export async function admitRam(floor: number | undefined, need: number, dir = tmpdir()) {
+  if (floor === undefined) return undefined
   return locked(dir, async () => {
-    const short = await checkRam(settings, need, dir)
+    const short = await checkRam(floor, need, dir)
     if (!short && need) {
       const now = Date.now()
       await writeJson(admissions(dir), [
