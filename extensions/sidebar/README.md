@@ -61,8 +61,10 @@ section of the `sidebar.top` slot draws the same heading. Top to bottom:
 - The `sidebar.top` slot: background work that optional extensions contribute without the sidebar importing them,
   automations' **Scheduled**, up to five compact rows with `+N more`, and its own
   bottom rule. Each hides while it has nothing active.
-- **In flight · N** (`InFlight`, `root.tsx`): every open branch of every tree, newest input first. A branch is open
-  until it is concluded or it landed after its latest input (the lander's results, or a root landing note from it;
+- **In flight · N** (`InFlight`, `root.tsx`): every open branch of every tree, newest input first. Where a branch
+  stands is `lib/standing.ts`'s `branchStanding`, which the idea board and Review read too (`useStandings`,
+  `branch.tsx`): it is open until it is concluded or it landed after its latest input with no work of it or its
+  subagents under way (its latest landing is the newest of the lander's recent results and the roots' landing notes;
   a landed branch that gets new work is open again), and also while a question of it waits on the user, so it never
   folds into Landed before they answer. Each shows its title, its feature tag, a state (`submitted` or
   `landing` while the lander has it, the working phase while it works, amber `awaiting @ultimate` while a
@@ -93,7 +95,8 @@ Every row reads one state from messages’ `conversationState`, the same the Sys
 **waits on you** (@ultimate or a branch with an open question to the user);
 **awaiting @ultimate** (amber question mark, never on a subagent: an open reply-expected message the conversation sent
 the primary agent); **done** (green check, subagents only: it answered, and its answer went to its parent);
-**failed** (red cross: its latest input ended unanswered); else idle. Working includes queued input. Standing rows,
+**failed** (red cross: its latest input ended unanswered); else idle. Working includes queued input: a row's activity
+is `lib/activity.ts`'s, through conversations' `useActivity` (paused, working, queued, idle). Standing rows,
 the In flight list (after the lander's submitted/landing) and the System lanes show the same state. Nothing
 here is a model's opinion of a reply.
 

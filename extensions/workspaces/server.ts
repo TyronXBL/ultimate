@@ -28,7 +28,9 @@ import {
   IsolationAction,
   PendingAction,
   ProgressAction,
+  RecentLandingsAction,
   StatsAction,
+  SubmissionLanded,
 } from './refs.ts'
 import { githubRepo } from '../../lib/project-identity.ts'
 import { sweepChecks } from './lander.ts'
@@ -57,7 +59,21 @@ async function setupGit(host: ExtensionHost) {
   await workspaces(host).standLander(context)
 }
 
+const recentLandings = async (host: ExtensionHost) => {
+  const events = await host.eventLog.recent({ events: [SubmissionLanded], limit: 200 })
+  return events.map(({ data, at }) => ({
+    from: data.conversationId,
+    sha: data.sha,
+    base: data.base,
+    at: Date.parse(at),
+    title: data.title,
+    ...(data.feature === undefined ? {} : { feature: data.feature }),
+    commitCount: data.commitCount,
+  }))
+}
+
 export const actions = {
+  recentLandings: implementAction(RecentLandingsAction, (_args, { host }) => recentLandings(host)),
   /** `github.com/<owner>/<repo>` of the project's `origin`, or null off GitHub: landing cards link ranges. */
   github: implementAction(
     GithubAction,
@@ -173,6 +189,7 @@ export default function workspaceExtension(host: ExtensionHost) {
   const service = workspaces(host)
   host.implement(WorkspacesApi, {
     ...service,
+    recentLandings: () => recentLandings(host),
     failing: (options, ctx) => failing(host, options, ctx),
     git,
     doc: Workspaces,

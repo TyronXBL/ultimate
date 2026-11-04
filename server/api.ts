@@ -28,6 +28,7 @@ import { admit, deviceOf } from './request-security.ts'
 import type { Access } from './request-security.ts'
 import { conversationIndex } from './project.ts'
 import { shortTitle } from '../lib/title.ts'
+import { activityOf, isBusy } from '../lib/activity.ts'
 
 class HttpError extends Error {
   status: number
@@ -198,6 +199,15 @@ export async function createApi(
   }
   events.listeners.add(indexListener)
   let refreshing = Promise.resolve()
+  /** A summary's `busy`: the task graph is what the server knows of a conversation's activity. */
+  const busyOf = (id: number) =>
+    isBusy(
+      activityOf({
+        task: Object.values(tasks().tasks).some(
+          (task) => task.conversationId === id && !task.background,
+        ),
+      }),
+    )
   async function refreshConversations(ids?: Set<ConversationId>) {
     const records = await harness.commit(async (tx) => {
       if (ids)
@@ -241,9 +251,7 @@ export async function createApi(
     for (const fresh of refreshed) {
       const summary = {
         ...fresh,
-        busy: Object.values(tasks().tasks).some(
-          (task) => task.conversationId === fresh.id && !task.background,
-        ),
+        busy: busyOf(fresh.id),
       }
       const index = next.findIndex((item) => item.id === summary.id)
       if (index < 0) next.push(summary)
@@ -267,9 +275,7 @@ export async function createApi(
         events.emit('tasks', tasks())
         const next = summaries.map((summary) => ({
           ...summary,
-          busy: Object.values(tasks().tasks).some(
-            (task) => task.conversationId === summary.id && !task.background,
-          ),
+          busy: busyOf(summary.id),
         }))
         if (JSON.stringify(next) !== JSON.stringify(summaries)) {
           summaries = next

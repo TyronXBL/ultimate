@@ -187,7 +187,9 @@ export function Transcript({ dock }: { dock?: boolean }) {
 }
 
 function TranscriptEntries() {
-  const { id, entries: active, older, live, busy, loading } = useConversation()
+  const { id, entries: active, older, live, activity, loading } = useConversation()
+  // Running now: queued input alone shows no working row.
+  const busy = activity === 'working'
   const [history, setHistory] = useState<EntryRecord[]>([])
   const previousActive = useRef(active)
   const previousOlder = useRef<number>(undefined)

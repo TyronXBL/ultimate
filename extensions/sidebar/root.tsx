@@ -11,8 +11,9 @@ import {
   FeatureTag,
   useOverview,
 } from '../conversations/ui.tsx'
+import type { Activity } from '../../lib/activity.ts'
+import type { Standing } from '../../lib/standing.ts'
 import { tones, useBranchState, useFlightWork } from './branch.tsx'
-import type { Landing } from './landings.ts'
 import { RowMenu, saveTitle } from './rows.tsx'
 import { Section } from './section.tsx'
 import { SummaryHistory } from './summaries.tsx'
@@ -21,9 +22,9 @@ import type { Work } from './work.ts'
 
 type FlightProps = {
   conversation: ConversationSummary
-  working: boolean
-  /** A pause parked its run. */
-  parked?: boolean
+  standing: Standing
+  /** Its activity, working too while only its subagents run. */
+  activity: Activity
   shown: boolean
   now: number
   work?: Work
@@ -58,7 +59,10 @@ function Edits({ count, spec }: { count: number; spec: string }) {
 /** One open branch: its feature and title, where it stands, and its age; click opens it. */
 function FlightRow(props: FlightProps) {
   return (
-    <Provided input={props.working ? props.conversation.id : undefined} point={ConversationPhase}>
+    <Provided
+      input={props.activity === 'working' ? props.conversation.id : undefined}
+      point={ConversationPhase}
+    >
       {(phase) => <PhasedFlightRow {...props} phase={phase} />}
     </Provided>
   )
@@ -66,8 +70,8 @@ function FlightRow(props: FlightProps) {
 
 function PhasedFlightRow({
   conversation,
-  working,
-  parked,
+  standing,
+  activity,
   shown,
   now,
   work,
@@ -79,7 +83,7 @@ function PhasedFlightRow({
   const [editing, setEditing] = useState(false)
   const cancelled = useRef(false)
   const feature = useOverview()[conversation.id]?.feature
-  const state = useBranchState(conversation, working, phase, parked)
+  const state = useBranchState(conversation, standing, activity, phase)
   const latest = Math.max(conversation.inputAt ?? 0, conversation.answerAt ?? 0)
   const title = conversation.title ?? `#${conversation.id}`
   return (
@@ -189,25 +193,13 @@ function PhasedFlightRow({
   )
 }
 
-/** An open branch for the In flight section, with whether it (or a subagent of it) works and its subagent lines. */
+/** An open branch for the In flight section, with where it stands, its activity and its subagent lines. */
 export type Flight = {
   conversation: ConversationSummary
-  working: boolean
-  parked?: boolean
+  standing: Standing
+  activity: Activity
   subagents?: ReactNode
 }
-
-/**
- * Whether a flight still counts as open once the roots' own landing notes are known too: the lander keeps only recent
- * results, so a branch whose landing note is newer than its latest input landed, unless it works again.
- */
-export const stillOpen = (flight: Flight, landings: readonly Landing[]) =>
-  flight.working ||
-  !landings.some(
-    (event) =>
-      event.from === flight.conversation.id &&
-      (event.at ?? 0) >= (flight.conversation.inputAt ?? 0),
-  )
 
 /**
  * In flight · N: every open branch across the project's trees, newest input first, each with its feature, state, age,
@@ -236,10 +228,10 @@ export function InFlight({
             key={flight.conversation.id}
             now={now}
             onConclude={(conclude) => onConclude(flight.conversation.id, conclude)}
-            parked={flight.parked}
             shown={flight.conversation.id === shownId}
+            standing={flight.standing}
+            activity={flight.activity}
             work={work.get(flight.conversation.id)}
-            working={flight.working}
           >
             {flight.subagents}
           </FlightRow>

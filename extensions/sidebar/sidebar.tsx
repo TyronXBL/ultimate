@@ -20,12 +20,12 @@ import {
   useNow,
   useStore,
   useSystem,
-  useTasks,
 } from '@/sdk'
 import {
   ConcludeAction,
   hiddenConversationIds,
   ResumeAction,
+  useActivity,
   useConcludedSince,
   useOverview,
 } from '../conversations/ui.tsx'
@@ -43,8 +43,8 @@ import {
   stateTone,
   stateWord,
 } from '../messages/ui.tsx'
-import { inFlight } from './branch.tsx'
-import { InFlight, MemoryRow, stillOpen, useMemorySummary } from './root.tsx'
+import { useStandings } from './branch.tsx'
+import { InFlight, MemoryRow, useMemorySummary } from './root.tsx'
 import type { Flight } from './root.tsx'
 import { Landed, useLandings } from './landed.tsx'
 import { MEMORY_SURFACE, useOpenMemory, useRoots } from '../lineage/ui.tsx'
@@ -221,18 +221,12 @@ function Tree({
 }) {
   const overview = useOverview()
   const log = useDocOf(1, MessagesDoc) ?? emptyMessages
-  const tasks = useTasks()
-  const foreground = new Set<number>(
-    Object.values(tasks?.tasks ?? {})
-      .filter((task) => !task.background)
-      .map((task) => task.conversationId),
-  )
-  // The task graph reflects the run; the timestamp/title list can lag. A run a pause parked is not working.
-  const conversations = useConversations().map((conversation) => ({
+  const activity = useActivity(parked)
+  const all = useConversations()
+  // A row's dot pulses while it runs: neither a run a pause parked nor queued input alone.
+  const conversations = all.map((conversation) => ({
     ...conversation,
-    busy:
-      !parked.has(conversation.id) &&
-      (foreground.has(conversation.id) || overview[conversation.id]?.runState === 'working'),
+    busy: activity(conversation.id) === 'working',
   }))
   const actions = useShell()
   const workspacesEnabled = useSystem()?.extensions.some(
@@ -254,6 +248,11 @@ function Tree({
       : undefined
   const [expanded, setExpanded] = useSidebarState<number[]>('expanded', [])
   const working = workingByTop(conversations)
+  /** A row's activity: working too while only conversations below it run, unless a pause holds its own run. */
+  const rowActivity = (id: number) => {
+    const own = activity(id)
+    return own === 'paused' || !working.has(id) ? own : 'working'
+  }
   const topLevel = topLevelRows(conversations, new Set(unlisted.flatMap((set) => [...set])))
   // @ultimate first, then the lander and other standing agents: pinned above the rest and never concluded.
   const standingIds = useDocOf(1, StandingDoc)
@@ -277,6 +276,8 @@ function Tree({
   }
   const rootRows = listed.filter((conversation) => roots.has(conversation.id)).toSorted(byInput)
   const landings = useLandings(rootRows.map((root) => root.id))
+  const standingOf = useStandings(all, parked)
+  const standings = new Map<number, ReturnType<typeof standingOf>['state']>()
   /** The listed branches below `id`, at any depth. */
   const branchesBelow = (id: number): ConversationSummary[] =>
     (branchesBySource.get(id) ?? [])
@@ -286,14 +287,11 @@ function Tree({
   // landed ones wait in Earlier.
   const openBranches = rootRows
     .flatMap((root) => branchesBelow(root.id))
-    .filter((branch) =>
-      listedInFlight(
-        branch.id,
-        inFlight(branch, workspaceIndex) &&
-          stillOpen({ conversation: branch, working: working.has(branch.id) }, landings),
-        log.messages,
-      ),
-    )
+    .filter((branch) => {
+      const { state } = standingOf(branch)
+      standings.set(branch.id, state)
+      return listedInFlight(state)
+    })
     .toSorted(byInput)
   const rest = listed.filter(
     (conversation) =>
@@ -355,7 +353,6 @@ function Tree({
   }
   /** A standing agent's or the lander's row: status and age, the lander's latest landing, @ultimate's questions. */
   const standingRow = (conversation: ConversationSummary | undefined) => {
-    const busy = conversation !== undefined && working.has(conversation.id)
     const latest = Math.max(conversation?.inputAt ?? 0, conversation?.answerAt ?? 0)
     const lander = conversation?.label === 'lander'
     const isUltimate = conversation === undefined || conversation.id === ultimateId
@@ -380,9 +377,8 @@ function Tree({
           {
             id: conversation.id,
             kind: isUltimate ? 'primary' : 'other',
+            activity: rowActivity(conversation.id),
             runState: overview[conversation.id]?.runState,
-            busy,
-            parked: parked.has(conversation.id),
             primary: ultimateId,
           },
           log,
@@ -442,9 +438,8 @@ function Tree({
       {
         id: conversation.id,
         kind: 'other',
+        activity: activity(conversation.id),
         runState: overview[conversation.id]?.runState,
-        busy: conversation.busy,
-        parked: parked.has(conversation.id),
         primary: ultimateId,
         concludedSince: concludedSince(conversation.id),
       },
@@ -521,7 +516,7 @@ function Tree({
       <div key={conversation.id}>
         {nested ? (
           <ChildRow
-            parked={parked.has(conversation.id)}
+            activity={activity(conversation.id)}
             primary={ultimateId}
             conversation={conversation}
             row={overview[conversation.id]}
@@ -546,7 +541,7 @@ function Tree({
         conversation={child}
         depth={depth}
         key={child.id}
-        parked={parked.has(child.id)}
+        activity={activity(child.id)}
         primary={ultimateId}
         row={overview[child.id]}
         shown={shownId === child.id}
@@ -555,8 +550,8 @@ function Tree({
     ])
   const flights: Flight[] = openBranches.map((branch) => ({
     conversation: branch,
-    working: working.has(branch.id),
-    parked: parked.has(branch.id),
+    standing: standings.get(branch.id)!,
+    activity: rowActivity(branch.id),
     subagents: [
       <EpicLine id={branch.id} key="epic" working={working.get(branch.id) === 'self'} />,
       ...subagentLines(branch.id),

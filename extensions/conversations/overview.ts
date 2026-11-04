@@ -5,6 +5,7 @@ import type { ConversationId, Cursor, SubmissionRecord } from '@earendil-works/p
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { resetAfter, Summaries } from './summary.ts'
 import { isInput } from '../../lib/entries.ts'
+import { activityOf } from '../../lib/activity.ts'
 import { OverviewDoc } from './refs.ts'
 import type { OverviewRow, OverviewState } from './types.ts'
 
@@ -81,11 +82,14 @@ export function overviewBehavior(
         const active = input !== undefined && !(await resetAfter(tx, id, input.entry!))
         const answerId = active && input.status === 'done' ? input.answer : undefined
         const failed = active && input.status === 'unanswered' && !quiet.has(input.reason)
+        const activity = activityOf({
+          run: !!live.run,
+          queued: inbox.items.some((item) => item.mode !== 'write'),
+        })
         const row: OverviewRow = {
-          runState: live.run
-            ? 'working'
-            : inbox.items.some((item) => item.mode !== 'write')
-              ? 'queued'
+          runState:
+            activity === 'working' || activity === 'queued'
+              ? activity
               : answerId !== undefined
                 ? 'answered'
                 : failed

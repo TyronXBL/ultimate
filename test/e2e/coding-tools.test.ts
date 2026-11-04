@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -79,6 +80,7 @@ it('reads a file as committed at a revision, after the working tree dropped it',
       emit: vi.fn<ExtensionHost['emit']>() as ExtensionHost['emit'],
       projectRoot: cwd,
       skills: () => [],
+      userHome: tmpdir(),
     }).tools!.find((tool) => tool.name === 'read')!
     const api = {
       env: new NodeExecutionEnv({ cwd }),

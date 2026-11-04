@@ -39,6 +39,18 @@ export type WorkspaceService = {
     options: { tests?: string[]; except?: number; limit?: number },
     ctx: Context,
   ): Promise<FailingTest[]>
+  /** The latest 200 durable landing events, shared by branch standings and Review. */
+  recentLandings(): Promise<
+    {
+      from: number
+      sha: string
+      base: string
+      at: number
+      title: string
+      feature?: string
+      commitCount: number
+    }[]
+  >
   /** The worktree index document (`ultimate.workspaces` on the root), for reads inside a transaction. */
   doc: typeof Workspaces
   /** Make the project folder a Git repository with a first commit, so worktrees and landing work. */

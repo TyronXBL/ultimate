@@ -3,8 +3,12 @@
  * the primary agent, which conversations a conclusion hides, the overview document and the conversation actions, and
  * the points where optional extensions describe a conversation (its working phase, its plan task).
  */
+import { useMemo } from 'react'
 import type { ReactNode } from 'react'
-import { definePoint, useUiState } from '@/sdk'
+import { definePoint, useTasks, useUiState } from '@/sdk'
+import { activityOf } from '../../lib/activity.ts'
+import type { Activity } from '../../lib/activity.ts'
+import { useOverview } from './feature.tsx'
 
 /**
  * What a working conversation `id` is doing (`phase` provides it): `label` for a row's activity line, `word` in lower
@@ -33,6 +37,32 @@ export const ConversationEpic = definePoint<
 >('conversations.epic')
 
 export { ConversationRef, FeatureTag, useOverview, useStandingName } from './feature.tsx'
+
+/**
+ * Each conversation's activity (`lib/activity.ts`), as every view says it: its foreground tasks from the live task
+ * graph (the conversation list's `busy` can lag it), its run and queued input from the overview, and `parked`, the runs
+ * a pause holds (the `ParkedRuns` point).
+ */
+export function useActivity(parked?: ReadonlySet<number>): (id: number) => Activity {
+  const overview = useOverview()
+  const tasks = useTasks()
+  const foreground = useMemo(
+    () =>
+      new Set<number>(
+        Object.values(tasks?.tasks ?? {})
+          .filter((task) => !task.background)
+          .map((task) => task.conversationId),
+      ),
+    [tasks],
+  )
+  return (id) =>
+    activityOf({
+      task: foreground.has(id),
+      run: overview[id]?.runState === 'working',
+      queued: overview[id]?.runState === 'queued',
+      parked: parked?.has(id),
+    })
+}
 export { AgentMark, agentTitle } from './marks.tsx'
 export type { Presence } from './marks.tsx'
 export { hiddenConversationIds } from './visible.tsx'

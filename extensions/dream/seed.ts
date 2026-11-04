@@ -13,6 +13,7 @@ import { Messages } from '../messages/api.ts'
 import type { Automation } from '../automations/types.ts'
 import { BuiltInDoc, PauseDoc } from './built-ins.ts'
 import { deliver } from './delivery.ts'
+import { openQuestion } from '../../lib/messages.ts'
 import type { Prepared } from './refs.ts'
 import type { Seed } from './types.ts'
 
@@ -67,7 +68,7 @@ export async function buildSeed(host: ExtensionHost, prepared: Prepared): Promis
     // the message itself when it asks none.
     const questions: Seed['questions'] = []
     for (const message of (await tx.doc(Messages, ROOT_CONVERSATION_ID)).messages) {
-      if (message.to !== 'user' || !message.reply || message.state !== 'delivered') continue
+      if (!openQuestion(message)) continue
       const ref = `#${message.id}`
       if (message.questions?.length)
         for (const { text } of message.questions) questions.push({ text, ref })
