@@ -6,6 +6,25 @@ export type TriggerEvent = { name: string; description: string; fields: Record<s
 export const RunLabel = 'automation'
 export const WatcherLabel = 'watcher'
 
+/**
+ * A context condition: armed until it fires, then waiting until the context drops below `above - 10` (see
+ * condition.ts, the only writer).
+ */
+export type Condition = {
+  metric: 'context'
+  of: string
+  above: number
+  cooldownMs: number
+  armed: boolean
+  value?: number
+  /** Fire only once the user gave `of` no input for this long (ms): a pause, checked every minute. */
+  idleFor?: number
+  /** The user's latest input to `of` (ms), kept while `idleFor` is set; the pause counts from creation before one. */
+  inputAt?: number
+  /** When the condition itself last fired: the cooldown counts from it, not from a manual run. */
+  firedAt?: number
+}
+
 export type Schedule =
   | { kind: 'cron'; expr: string; tz: string }
   | { kind: 'at'; time: string }
@@ -31,20 +50,7 @@ export type Automation = {
   updatedAt: number
   schedule?: Schedule
   event?: { name: string; where?: Record<string, string | number | boolean>; sinceEvent: number }
-  condition?: {
-    metric: 'context'
-    of: string
-    above: number
-    cooldownMs: number
-    armed: boolean
-    value?: number
-    /** Fire only once the user gave `of` no input for this long (ms): a pause, checked every minute. */
-    idleFor?: number
-    /** The user's latest input to `of` (ms), kept while `idleFor` is set; the pause counts from creation before one. */
-    inputAt?: number
-    /** When the condition itself last fired: the cooldown counts from it, not from a manual run. */
-    firedAt?: number
-  }
+  condition?: Condition
   recentFires?: number[]
   script?: {
     ask: string

@@ -42,6 +42,8 @@
     "extensions/sounds/cues.ts",
     "extensions/keep-warm/due.ts",
     "extensions/quota/chip.ts",
+    "extensions/goal/state.ts",
+    "extensions/automations/condition.ts",
     "extensions/theme/palette.ts",
     "extensions/theme/fonts.ts",
     "extensions/sounds/tones.ts",

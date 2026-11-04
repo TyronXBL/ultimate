@@ -171,7 +171,8 @@ function Words({ goal }: { goal: Goal }) {
 export function StartedCard({ entry }: { entry: EntryRecord }) {
   const { goal: id } = entry.data as GoalEntry
   const goal = useGoal(id)
-  const open = !!goal && !goal.ended
+  const ended = goal?.phase.state === 'ended' ? goal.phase : undefined
+  const open = !!goal && !ended
   return (
     <Card
       goal={id}
@@ -183,7 +184,7 @@ export function StartedCard({ entry }: { entry: EntryRecord }) {
             <span>
               {open
                 ? `since ${formatTime(goal.startedAt)}`
-                : `ended ${formatTime(goal.ended!.at)} · report below`}
+                : `ended ${formatTime(ended!.at)} · report below`}
             </span>
           )}
         </>
@@ -210,19 +211,20 @@ export function StartedCard({ entry }: { entry: EntryRecord }) {
 
 /** The goal reminder's state: waking @ultimate every 30 minutes, or paused while it waits on the user. */
 function Reminder({ goal }: { goal: Goal }) {
-  if (!goal.reminder && !goal.waiting) return null
+  const { phase } = goal
+  if (!goal.reminder && phase.state !== 'waiting') return null
   return (
     <p
       className="flex items-start gap-2 border-t border-border/60 px-4 py-2 text-[12px] leading-snug"
-      data-goal-reminder={goal.waiting ? 'paused' : 'active'}
+      data-goal-reminder={phase.state === 'waiting' ? 'paused' : 'active'}
     >
-      {goal.waiting ? (
+      {phase.state === 'waiting' ? (
         <>
           <BellOffIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
           <span className="min-w-0">
-            <span className="text-warning">Waiting on you:</span> {goal.waiting.reason}
+            <span className="text-warning">Waiting on you:</span> {phase.reason}
             <span className="ml-2 font-mono text-[11px] text-muted-foreground">
-              reminder paused since {formatTime(goal.waiting.at)}
+              reminder paused since {formatTime(phase.at)}
             </span>
           </span>
         </>
@@ -282,7 +284,7 @@ const headlines = {
 export function ReportCard({ entry }: { entry: EntryRecord }) {
   const { goal: id } = entry.data as GoalEntry
   const goal = useGoal(id)
-  const ended = goal?.ended
+  const ended = goal?.phase.state === 'ended' ? goal.phase : undefined
   return (
     <Card
       goal={id}

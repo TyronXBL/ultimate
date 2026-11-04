@@ -9,8 +9,9 @@ import goalExtension, {
   Goals,
   openGoal,
   start,
-  TRIES,
 } from '../extensions/goal/server.ts'
+import { mark, reminderOf, transition, TRIES } from '../extensions/goal/state.ts'
+import type { Criterion, GoalPhase } from '../extensions/goal/refs.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 
 const ULTIMATE = 5 as ConversationId
@@ -118,7 +119,7 @@ it('keeps one goal open at a time and ends it once', async () => {
   })
   await expect(start(tx, 'Another', 0)).rejects.toThrow('Goal 1 is still open')
   expect(await end(tx, { at: 1, by: 'user', outcome: 'ended' })).toMatchObject({
-    ended: { by: 'user' },
+    phase: { state: 'ended', by: 'user' },
   })
   await expect(end(tx, { at: 2, by: 'user', outcome: 'ended' })).rejects.toThrow('No goal')
   expect((await start(tx, 'Next', 3)).id).toBe(2)
@@ -146,7 +147,7 @@ it('blocks a criterion after repeated failed tries and finishes with the outcome
     4,
   )
   expect(done.ended).toMatchObject({
-    ended: { by: 'ultimate', outcome: 'blocked', summary: 'Stuck' },
+    phase: { state: 'ended', by: 'ultimate', outcome: 'blocked', summary: 'Stuck' },
   })
   expect(await openGoal(tx)).toBeUndefined()
 })
@@ -249,7 +250,7 @@ it('keeps a reminder while the goal is open: paused while waiting on the user, g
     subscribers: ['@ultimate'],
     key: 'goal.reminder:1',
   })
-  ;(await openGoal(tx))!.waiting = { reason: 'Which account?', at: 0 }
+  ;(await openGoal(tx))!.phase = { state: 'waiting', reason: 'Which account?', at: 0 }
   await sync()
   expect([...ledger.values()]).toEqual([
     {
@@ -282,12 +283,15 @@ it('keeps a reminder while the goal is open: paused while waiting on the user, g
   await run({ action: 'pause', reason: 'Which account to deploy to?' })
   await sync()
   expect(ledger.get('A1')!.enabled).toBe(false)
-  expect((await openGoal(tx))!.waiting).toMatchObject({ reason: 'Which account to deploy to?' })
+  expect((await openGoal(tx))!.phase).toMatchObject({
+    state: 'waiting',
+    reason: 'Which account to deploy to?',
+  })
   expect(await note({ kind: 'pi.user' })).toContain('Waiting on the user')
   await run({ action: 'resume' })
   await sync()
   expect(ledger.get('A1')!.enabled).toBe(true)
-  expect((await openGoal(tx))!.waiting).toBeUndefined()
+  expect((await openGoal(tx))!.phase).toEqual({ state: 'active' })
 
   await run({ action: 'finish', outcome: 'met', summary: 'Done' })
   await sync()
@@ -323,4 +327,39 @@ it('grants nothing through a start card still queued after the user ended its go
       BACKGROUND_CONTEXT,
     ),
   ).toBeUndefined()
+})
+
+const active: GoalPhase = { state: 'active' }
+const waiting: GoalPhase = { state: 'waiting', reason: 'Which account?', at: 1 }
+const ended: GoalPhase = { state: 'ended', at: 9, by: 'user', outcome: 'ended' }
+const ending = { at: 9, by: 'user', outcome: 'ended' } as const
+
+it('moves a goal through its phases and keeps the reminder in line with each', () => {
+  // The reminder follows the phase alone: running, paused while waiting on the user, gone once ended.
+  for (const [from, event, to, reminder] of [
+    [active, { type: 'pause', reason: 'Which account?', at: 1 }, waiting, 'paused'],
+    [waiting, { type: 'pause', reason: 'Which account?', at: 1 }, waiting, 'paused'],
+    [waiting, { type: 'resume' }, active, 'on'],
+    [active, { type: 'end', ending }, ended, 'off'],
+    [waiting, { type: 'end', ending }, ended, 'off'],
+  ] as const) {
+    const next = transition(from, event)
+    expect(next).toEqual(to)
+    expect(reminderOf(next)).toBe(reminder)
+  }
+  expect(reminderOf(active)).toBe('on')
+  expect(() => transition(active, { type: 'resume' })).toThrow('not paused')
+  for (const event of [
+    { type: 'pause', reason: 'x', at: 1 },
+    { type: 'resume' },
+    { type: 'end', ending },
+  ] as const)
+    expect(() => transition(ended, event)).toThrow('No goal is open')
+})
+
+it('marks a criterion met, or one more failed try and blocked at the last', () => {
+  const open = (tries?: number): Criterion => ({ text: 'c', status: 'open', tries })
+  expect(mark(open(), 'met').status).toBe('met')
+  expect(mark(open(), 'failed')).toMatchObject({ status: 'open', tries: 1 })
+  expect(mark(open(TRIES - 1), 'failed')).toMatchObject({ status: 'blocked', tries: TRIES })
 })

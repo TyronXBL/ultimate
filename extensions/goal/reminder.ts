@@ -11,6 +11,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { AutomationsApi } from '../automations/api.ts'
 import type { Automation } from '../automations/refs.ts'
 import type { Goal } from './refs.ts'
+import { reminderOf } from './state.ts'
 
 const SCHEDULE = 'every 30m'
 const reminderName = (goal: number) => `Goal reminder · goal ${goal}`
@@ -51,7 +52,7 @@ export function reminderTask(host: ExtensionHost, Goals: Goals) {
     const own = goal?.reminder
       ? list.find((item) => item.id === goal.reminder)
       : list.find((item) => item.key === reminderKey(id))
-    if (!goal || goal.ended) {
+    if (!goal || reminderOf(goal.phase) === 'off') {
       if (!own) return false
       await automations.delete(own.id)
       return true
@@ -74,9 +75,10 @@ export function reminderTask(host: ExtensionHost, Goals: Goals) {
       }, context)
       return true
     }
-    if (own.enabled === !goal.waiting) return false
-    if (goal.waiting) await automations.pause(own.id)
-    else await automations.resume(own.id)
+    const wanted = reminderOf(goal.phase) === 'on'
+    if (own.enabled === wanted) return false
+    if (wanted) await automations.resume(own.id)
+    else await automations.pause(own.id)
     return true
   }
   return defineTask<{ goal: number }, { phase: 'sync' }, null>({

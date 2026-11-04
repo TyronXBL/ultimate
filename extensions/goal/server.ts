@@ -24,20 +24,35 @@ import { deliver, deliverTask } from './delivery.ts'
 import { reminderTask } from './reminder.ts'
 import { EndAction, GoalDoc, ImagesAction, StartAction } from './refs.ts'
 import type { Criterion, Decision, Ending, Goal } from './refs.ts'
+import { mark, openGoalOf, transition, TRIES } from './state.ts'
 
-/** Failed tries after which a criterion is blocked; work goes on with the others. */
-export const TRIES = 3
 const TEXT_CHARS = 2000
 
 export const Goals = defineDoc<{ next: number; goals: Goal[] }>({
   kind: GoalDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({ next: 1, goals: [] }),
+  // Version 2: a goal's phase is one field, not `waiting` and `ended` set or not.
+  migrate: (value) => {
+    const doc = value as unknown as { next: number; goals: (Goal & LegacyPhase)[] }
+    for (const goal of doc.goals) {
+      if (goal.phase) continue
+      goal.phase = goal.ended
+        ? { state: 'ended', ...goal.ended }
+        : goal.waiting
+          ? { state: 'waiting', ...goal.waiting }
+          : { state: 'active' }
+      delete goal.waiting
+      delete goal.ended
+    }
+    return doc
+  },
 })
+type LegacyPhase = { waiting?: { reason: string; at: number }; ended?: Ending }
 export const docs = [Goals]
 
 /** A plain copy: the document's overlay is a proxy that structuredClone refuses, and unusable after the commit. */
@@ -47,7 +62,7 @@ const ultimateOf = async (tx: Tx) => (await tx.doc(Standing, ROOT_CONVERSATION_I
 
 /** The open goal, if any. */
 export async function openGoal(tx: Tx) {
-  return (await tx.doc(Goals, ROOT_CONVERSATION_ID)).goals.find((goal) => !goal.ended)
+  return openGoalOf((await tx.doc(Goals, ROOT_CONVERSATION_ID)).goals)
 }
 
 const text = (value: unknown, name: string) => {
@@ -60,7 +75,7 @@ const text = (value: unknown, name: string) => {
 /** Start a goal for the user's words `words`; refuses while another is open. */
 export async function start(tx: Tx, words: unknown, now: number) {
   const goals = await tx.doc(Goals, ROOT_CONVERSATION_ID)
-  const open = goals.goals.find((goal) => !goal.ended)
+  const open = openGoalOf(goals.goals)
   if (open) throw new Error(`Goal ${open.id} is still open; end it first`)
   const goalText = text(words, 'The goal')
   const goal: Goal = {
@@ -69,6 +84,7 @@ export async function start(tx: Tx, words: unknown, now: number) {
     startedAt: now,
     criteria: [],
     decisions: [],
+    phase: { state: 'active' },
   }
   goals.goals.push(goal)
   return goal
@@ -78,7 +94,7 @@ export async function start(tx: Tx, words: unknown, now: number) {
 export async function end(tx: Tx, ending: Ending) {
   const goal = await openGoal(tx)
   if (!goal) throw new Error('No goal is open')
-  goal.ended = ending
+  goal.phase = transition(goal.phase, { type: 'end', ending })
   return copy(goal)
 }
 
@@ -99,9 +115,9 @@ export function noteText(goal: Goal, reminded = false) {
     `Hands-off goal ${goal.id}, granted by the user, who is away: ${goal.text}`,
     `Done means:\n${criteria}`,
     `Work toward it without the user: decide what you would ask them yourself (a go, a decision, a UI preview approval against the criteria), record each with goal {action: 'decide'} and its reason, and keep going. ${goal.decisions.length} decided so far. Mark criteria met or failed as you check them; a criterion is blocked after ${TRIES} failed tries, so learn from each failure before the next try. Finish with goal {action: 'finish'} when every criterion is met or every open one is blocked. Only when you are truly blocked on the user, goal {action: 'pause', reason} stops the reminder that wakes you.`,
-    ...(goal.waiting
+    ...(goal.phase.state === 'waiting'
       ? [
-          `Waiting on the user since ${new Date(goal.waiting.at).toISOString()}: ${goal.waiting.reason}. The reminder is paused. Once they answer and you can go on, goal {action: 'resume'} turns it back on.`,
+          `Waiting on the user since ${new Date(goal.phase.at).toISOString()}: ${goal.phase.reason}. The reminder is paused. Once they answer and you can go on, goal {action: 'resume'} turns it back on.`,
         ]
       : []),
     ...(reminded
@@ -140,10 +156,11 @@ type ToolArgs = {
 export async function act(tx: Tx, ultimate: ConversationId, args: ToolArgs, now: number) {
   const goal = await openGoal(tx)
   if (!goal) throw new Error('No hands-off goal is open; ask the user as usual.')
-  const criterion = () => {
-    const found = goal.criteria[(args.n ?? 0) - 1]
+  const check = (result: 'met' | 'failed') => {
+    const index = (args.n ?? 0) - 1
+    const found = goal.criteria[index]
     if (!found) throw new Error(`No criterion ${String(args.n)}; there are ${goal.criteria.length}`)
-    return found
+    return (goal.criteria[index] = mark(found, result))
   }
   if (args.action === 'criteria') {
     const items = (args.criteria ?? []).map((item) => text(item, 'A criterion'))
@@ -170,13 +187,11 @@ export async function act(tx: Tx, ultimate: ConversationId, args: ToolArgs, now:
     return { answer: `Recorded decision ${goal.decisions.length}: ${decision.picked}` }
   }
   if (args.action === 'met') {
-    criterion().status = 'met'
+    check('met')
     return { answer: `Criterion ${args.n} met.` }
   }
   if (args.action === 'failed') {
-    const found = criterion()
-    found.tries = (found.tries ?? 0) + 1
-    if (found.tries >= TRIES) found.status = 'blocked'
+    const found = check('failed')
     const open = goal.criteria.filter((item) => item.status === 'open').length
     return {
       answer:
@@ -186,15 +201,18 @@ export async function act(tx: Tx, ultimate: ConversationId, args: ToolArgs, now:
     }
   }
   if (args.action === 'pause') {
-    goal.waiting = { reason: text(args.reason, 'reason'), at: now }
+    goal.phase = transition(goal.phase, {
+      type: 'pause',
+      reason: text(args.reason, 'reason'),
+      at: now,
+    })
     return {
       answer: `Goal ${goal.id} waits on the user; the reminder is paused. Ask them now.`,
       sync: goal.id,
     }
   }
   if (args.action === 'resume') {
-    if (!goal.waiting) throw new Error(`Goal ${goal.id} is not paused`)
-    delete goal.waiting
+    goal.phase = transition(goal.phase, { type: 'resume' })
     return {
       answer: `Goal ${goal.id} goes on; the reminder wakes you again.`,
       sync: goal.id,
@@ -216,9 +234,9 @@ export async function act(tx: Tx, ultimate: ConversationId, args: ToolArgs, now:
 
 /** The report card's model text: what @ultimate (or the user, ending it) should take from it. */
 const reportText = (goal: Goal) =>
-  goal.ended?.by === 'user'
+  goal.phase.state === 'ended' && goal.phase.by === 'user'
     ? `The user ended hands-off goal ${goal.id}. From now on ask them as usual.`
-    : `Hands-off goal ${goal.id} ended (${goal.ended?.outcome}); its report card is here for the user. From now on ask them as usual.`
+    : `Hands-off goal ${goal.id} ended (${goal.phase.state === 'ended' ? goal.phase.outcome : ''}); its report card is here for the user. From now on ask them as usual.`
 
 /**
  * Goal `goal`'s card of `kind` for @ultimate, delivered by a task created in `tx`, the commit that changed the goal.

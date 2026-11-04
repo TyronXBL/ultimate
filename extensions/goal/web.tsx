@@ -5,10 +5,11 @@ import { GoalCall } from './call.tsx'
 import { ReportCard, StartedCard } from './cards.tsx'
 import { GoalDialog, goalDialog } from './dialog.tsx'
 import { GoalDoc } from './refs.ts'
+import { openGoalOf } from './state.ts'
 
 /** A quiet status-line mark while @ultimate works hands-off; it opens @ultimate, where the goal's card is. */
 function HandsOff() {
-  const goal = useDocOf(1, GoalDoc)?.goals.find((item) => !item.ended)
+  const goal = openGoalOf(useDocOf(1, GoalDoc)?.goals ?? [])
   const actions = useUltimate()
   if (!goal) return null
   return (

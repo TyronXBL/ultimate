@@ -17,6 +17,8 @@ import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
 import automations, { actions, Automations } from '../extensions/automations/server.ts'
 import type { Automation } from '../extensions/automations/types.ts'
+import { conditionLook, editCondition, step } from '../extensions/automations/condition.ts'
+import type { Condition } from '../extensions/automations/types.ts'
 import { IDLE_TICK } from '../extensions/automations/triggers.ts'
 import { temp, eventHost, until, apis } from './helpers.ts'
 
@@ -571,4 +573,55 @@ it('lists ten event definitions and validates trigger inputs and kind changes', 
   const changed = await f.record(a.id)
   expect(changed.event).toBeUndefined()
   expect(changed.condition).toMatchObject({ of: '@ultimate', above: 80, armed: true })
+})
+
+it('steps a context condition through armed and waiting', () => {
+  const HOUR = 3600_000
+  const base: Condition = {
+    metric: 'context',
+    of: '@ultimate',
+    above: 80,
+    cooldownMs: HOUR,
+    armed: true,
+  }
+  const idle = { ...base, idleFor: 8 * HOUR }
+  const at = (percent: number, now: number, createdAt = 0) =>
+    ({ type: 'measured', percent, now, createdAt }) as const
+  for (const [from, event, armed, fires] of [
+    // Waiting arms only below above - 10; inside the band it stays waiting.
+    [{ ...base, armed: false }, at(69, 0), true, false],
+    [{ ...base, armed: false }, at(75, 0), false, false],
+    [{ ...base, armed: false }, at(85, 0), false, false],
+    [base, at(79, 0), true, false],
+    [base, at(80, 0), false, true],
+    // A manual run is not a crossing: the cooldown counts from the condition's own fire.
+    [{ ...base, firedAt: 0 }, at(85, HOUR - 1), true, false],
+    [{ ...base, firedAt: 0 }, at(85, HOUR), false, true],
+    // The pause counts from creation until the user's first input, then from that input.
+    [idle, at(85, 8 * HOUR - 1), true, false],
+    [idle, at(85, 8 * HOUR), false, true],
+    [{ ...idle, inputAt: 7 * HOUR }, at(85, 8 * HOUR), true, false],
+    [{ ...idle, inputAt: 7 * HOUR }, at(85, 15 * HOUR), false, true],
+  ] as const) {
+    const next = step(from, event)
+    expect(next.condition.armed).toBe(armed)
+    expect(!!next.fire).toBe(fires)
+    expect(next.condition).toMatchObject({
+      value: event.percent,
+      ...(fires ? { firedAt: event.now } : {}),
+    })
+    expect(conditionLook(next.condition)).toBe(armed ? 'armed' : 'waiting')
+  }
+  expect(step(idle, at(85, 9 * HOUR)).fire).toEqual({ paused: 9 * HOUR })
+  // Input counts only for a condition that waits for a pause.
+  expect(step(idle, { type: 'input', at: 5 }).condition.inputAt).toBe(5)
+  expect(step(base, { type: 'input', at: 5 }).condition).toBe(base)
+  // An edit keeps a waiting condition waiting; a new one starts armed.
+  expect(editCondition(undefined, { metric: 'context', of: '@ultimate', above: 80 }, 0).armed).toBe(
+    true,
+  )
+  expect(editCondition({ ...base, armed: false }, { ...base, above: 70 }, 0)).toMatchObject({
+    armed: false,
+    above: 70,
+  })
 })

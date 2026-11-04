@@ -8,6 +8,7 @@ import type { EventRecord } from '../../shared/events.ts'
 import { ContextUsageDoc } from '../conversations/api.ts'
 import type { ContextUsage } from '../conversations/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
+import { step } from './condition.ts'
 import { describeSchedule } from './schedule.ts'
 import type { Automations as Ledger } from './server.ts'
 import type { Automation, TriggerEvent } from './types.ts'
@@ -117,28 +118,25 @@ export function triggers(
     const usage = measured ?? (await tx.doc(ContextUsageDoc, id as ConversationId))
     if (usage.percent === undefined) return
     const condition = a.condition
-    condition.value = usage.percent
-    if (usage.percent < condition.above - 10) condition.armed = true
     const now = Date.now()
-    const paused = condition.idleFor ? now - (condition.inputAt ?? a.createdAt) : undefined
-    if (
-      usage.percent >= condition.above &&
-      condition.armed &&
-      (paused === undefined || paused >= condition.idleFor!) &&
-      // A manual run is not a crossing: the cooldown counts from the condition's own fire.
-      (condition.firedAt === undefined || now - condition.firedAt >= condition.cooldownMs)
-    ) {
+    const next = step(condition, {
+      type: 'measured',
+      percent: usage.percent,
+      now,
+      createdAt: a.createdAt,
+    })
+    if (next.fire) {
       const count = (n: number) =>
         Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n)
+      const { paused } = next.fire
       await fire(
         tx,
         a,
         now,
         `${condition.of} context ${Math.round(usage.percent)}%${usage.tokens !== undefined && usage.window !== undefined ? ` (${count(usage.tokens)}/${count(usage.window)})` : ''}${paused === undefined ? '' : ` after ${hours(paused)} without the user's input`}`,
       )
-      condition.armed = false
-      condition.firedAt = now
     }
+    a.condition = next.condition
   }
   let stop: (() => void) | undefined
   let queue = Promise.resolve()
@@ -214,7 +212,8 @@ export function triggers(
           const target = STANDING.test(of)
             ? (await tx.doc(Standing, ROOT_CONVERSATION_ID))[of.slice(1)]
             : Number(of.slice(1))
-          if (target === data.conversation) a.condition.inputAt = Date.parse(at)
+          if (target === data.conversation)
+            a.condition = step(a.condition, { type: 'input', at: Date.parse(at) }).condition
         }
       },
       { from: 'now' },

@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { api, errorMessage, useDialog, useDocOf, useUltimate } from '@/sdk'
 import { talkToUltimate } from '../subagents/ui.tsx'
 import { GoalDoc, StartAction } from './refs.ts'
+import { openGoalOf } from './state.ts'
 
 /** The dialog ⌘K "Go hands-off…" opens. */
 export const goalDialog = 'goal.start'
@@ -26,7 +27,7 @@ export function GoalDialog() {
 }
 
 function Body({ onClose }: { onClose: () => void }) {
-  const active = useDocOf(1, GoalDoc)?.goals.find((goal) => !goal.ended)
+  const active = openGoalOf(useDocOf(1, GoalDoc)?.goals ?? [])
   const actions = useUltimate()
   const [text, setText] = useState('')
   const [starting, setStarting] = useState(false)

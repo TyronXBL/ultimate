@@ -23,6 +23,15 @@ export type Ending = {
   summary?: string
 }
 
+/**
+ * Where a goal is: working, waiting on the user (the reminder is paused until it resumes), or ended. state.ts is the
+ * only writer.
+ */
+export type GoalPhase =
+  | { state: 'active' }
+  | { state: 'waiting'; reason: string; at: number }
+  | ({ state: 'ended' } & Ending)
+
 /** What "done" means, as @ultimate wrote it down: each criterion open, met, or blocked after repeated failed tries. */
 export type Criterion = { text: string; status: 'open' | 'met' | 'blocked'; tries?: number }
 
@@ -35,12 +44,10 @@ export type Goal = {
   decisions: Decision[]
   /** The "Goal reminder" automation that wakes @ultimate every 30 minutes while the goal is open. */
   reminder?: string
-  /** Set while @ultimate is blocked on the user: the reminder is paused until it resumes. */
-  waiting?: { reason: string; at: number }
-  ended?: Ending
+  phase: GoalPhase
 }
 
-/** `{ next, goals }` on conversation 1, oldest first; at most one goal is open (no `ended`). */
+/** `{ next, goals }` on conversation 1, oldest first; at most one goal is open (not ended). */
 export const GoalDoc = docRef<{ next: number; goals: Goal[] }>('goal')
 
 /** `goal.started` and `goal.report` entries in @ultimate's conversation name their goal. */

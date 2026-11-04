@@ -11,6 +11,7 @@ import {
 import { useEffect, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { api, cn, formatDuration, formatTime, useUltimate } from '@/sdk'
+import { conditionLook } from './condition.ts'
 import { ListAction } from './refs.ts'
 import type { Automation, AutomationListItem, Run, Schedule } from './refs.ts'
 
@@ -150,7 +151,7 @@ export function lookOf(automation: Automation, now: number): Look {
   if (state === 'running') return 'watching'
   if (state === 'done') return 'done'
   if (automation.enabled) {
-    if (automation.condition) return automation.condition.armed ? 'armed' : 'waiting'
+    if (automation.condition) return conditionLook(automation.condition)
     if (automation.event) return 'watching'
     return 'scheduled'
   }
@@ -234,7 +235,7 @@ export function stateLine(automation: Automation, now: number): string {
   const last = automation.runs.at(-1)
   if (automation.condition && !attention(look) && look !== 'working') {
     const condition = automation.condition
-    return condition.armed
+    return conditionLook(condition) === 'armed'
       ? condition.value === undefined
         ? 'context not seen yet'
         : `${Math.round(condition.value)}% now`
