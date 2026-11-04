@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { api, cn, defineWebExtension, formatAgo, useAction, useDocOf, useNow } from '@/sdk'
-import { chipOf, pingFailed, TTL } from './due.ts'
+import { chipOf, outcome, pingFailed, TTL } from './due.ts'
 import { SetAction, StateAction, WarmDoc } from './refs.ts'
 import type { WarmState } from './refs.ts'
 
@@ -86,7 +86,7 @@ function Chip() {
           {state.last && (
             <div className={cn(pingFailed(state) && 'text-red-500')}>
               Last ping {formatAgo(state.last.at)}
-              {state.last.error !== undefined
+              {outcome(state.last) === 'failed'
                 ? `: ${state.last.error}`
                 : ` · read ${tokens(state.last.read)}, wrote ${tokens(state.last.write)}`}
             </div>

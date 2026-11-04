@@ -42,7 +42,6 @@
     "extensions/sounds/cues.ts",
     "extensions/keep-warm/due.ts",
     "extensions/quota/chip.ts",
-    "extensions/todos/done.ts",
     "extensions/theme/palette.ts",
     "extensions/theme/fonts.ts",
     "extensions/sounds/tones.ts",
@@ -81,6 +80,7 @@
     "lib/families.ts",
     "lib/marks.ts",
     "lib/source-frames.ts",
+    "lib/todos.ts",
     "extensions/subagents/message-types.ts",
     "test/web"
   ]

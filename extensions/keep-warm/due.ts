@@ -39,9 +39,8 @@ const INTERRUPTED = 'interrupted'
 /** Whether the user left keep-warm on (the default). */
 export const isOn = (doc: Pick<WarmDocState, 'off'>) => !doc.off
 
-/** A ping's outcome: still claimed (in flight, or crashed; the same record), failed with an error, or answered. */
-export const outcome = (ping: Ping): 'succeeded' | 'interrupted' | 'failed' =>
-  ping.error === undefined ? 'succeeded' : ping.error === INTERRUPTED ? 'interrupted' : 'failed'
+/** A ping's outcome: answered, or failed with an error (a claimed one still in flight or crashed reads as failed). */
+export const outcome = (ping: Ping): 'succeeded' | 'failed' => (ping.error ? 'failed' : 'succeeded')
 
 /** The last ping did not succeed and nothing renewed the cache since: a later cached answer from @ultimate clears it. */
 export const pingFailed = ({ last, lastRequest }: Pick<WarmState, 'last' | 'lastRequest'>) =>

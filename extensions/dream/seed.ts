@@ -6,6 +6,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { readJson, writeJson } from '../../lib/json-file.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import type { MemoryItem } from '../lineage/refs.ts'
+import { isDone } from '../../lib/todos.ts'
 import type { Todo } from '../todos/refs.ts'
 import { Roots } from '../lineage/api.ts'
 import { Messages } from '../messages/api.ts'
@@ -75,7 +76,7 @@ export async function buildSeed(host: ExtensionHost, prepared: Prepared): Promis
     for (const slug of about)
       if (!memories[slug]) throw new Error(`Chapter seed lost user memory ${slug}`)
     const todos = (await document<{ items: Todo[] }>(host, tx, 'todos')).items
-      .filter((item) => item.done === undefined)
+      .filter((item) => !isDone(item))
       .map(({ text, owner }) => ({ text, owner }))
     // The built-in dream triggers are dream's own: the new chapter makes them again, as they were here.
     const own = (await tx.doc(BuiltInDoc, ROOT_CONVERSATION_ID)).id

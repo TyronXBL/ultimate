@@ -126,7 +126,7 @@ it('moves the document only through warmStep', () => {
 it('reads a ping and the chip as states', () => {
   expect([undefined, 'interrupted', 'HTTP 500'].map((error) => outcome(ping(error)))).toEqual([
     'succeeded',
-    'interrupted',
+    'failed',
     'failed',
   ])
   const chip = (state: Partial<WarmState>) => chipOf({ on: true, pings: 0, ...state }, now)
@@ -134,6 +134,10 @@ it('reads a ping and the chip as states', () => {
   expect(chip({ lastRequest })).toBe('warm')
   expect(chip({ lastRequest: now - TTL })).toBe('cold')
   expect(chip({ lastRequest, on: false })).toBe('off')
+  // Off wins over a failed ping: no pings run, so the chip is not red.
+  expect(
+    chip({ lastRequest, on: false, last: { ...ping('HTTP 500'), at: now - minutes(5) } }),
+  ).toBe('off')
   // 6413693a: a crashed attempt counts as a failure.
   expect(chip({ lastRequest, last: { ...ping('interrupted'), at: now - minutes(5) } })).toBe(
     'failing',

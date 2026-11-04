@@ -8,7 +8,7 @@ import todosExtension, {
   noteFor,
   Todos,
 } from '../extensions/todos/server.ts'
-import { isDone } from '../extensions/todos/done.ts'
+import { isDone } from '../lib/todos.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 
 const ULTIMATE = 5 as ConversationId

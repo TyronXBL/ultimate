@@ -16,7 +16,7 @@ import { waiting } from '../questions/ui.tsx'
 import { StandingAction } from '../subagents/ui.tsx'
 import { AddAction, DoneAction, ReopenAction, TodosDoc } from './refs.ts'
 import type { Todo } from './refs.ts'
-import { isDone } from './done.ts'
+import { isDone } from '../../lib/todos.ts'
 
 /** The fields of a waiting message a question row shows. */
 type Asked = {

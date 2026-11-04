@@ -19,7 +19,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { Standing } from '../subagents/api.ts'
 import { AddAction, DoneAction, ReopenAction, TodosDoc } from './refs.ts'
 import type { Todo } from './refs.ts'
-import { isDone } from './done.ts'
+import { isDone } from '../../lib/todos.ts'
 
 /** Done to-dos kept; older ones are dropped when another is ticked. */
 export const DONE_LIMIT = 50
