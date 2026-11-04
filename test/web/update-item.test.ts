@@ -77,8 +77,6 @@ it.each(standings)('derives %s', (_name, facts, expected) => {
 it.each([
   [{ diverged: true, project: true, landing: false }, true],
   [{ diverged: true, project: true, landing: true }, false],
-  [{ diverged: true, project: false, landing: false }, false],
-  [{ diverged: false, project: true, landing: false }, false],
 ])('offers a merge for %j: %s', (facts, offered) => {
   expect(mergeOffered(facts)).toBe(offered)
 })

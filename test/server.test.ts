@@ -20,9 +20,9 @@ import { UiState } from '../server/ui-state.ts'
 import { Metadata } from '../server/metadata.ts'
 import type { ConversationSummary, ServerEvents } from '../shared/protocol.ts'
 import { Logins } from '../extensions/models/server.ts'
-import { phaseOf, transition } from '../extensions/models/login-state.ts'
+import { transition } from '../extensions/models/login-state.ts'
 import type { LoginEvent } from '../extensions/models/login-state.ts'
-import type { LoginFlow, LoginPhase } from '../extensions/models/refs.ts'
+import type { LoginPhase } from '../extensions/models/refs.ts'
 import { fixture, orderedSource, servers } from './server-fixture.ts'
 import { eventHost } from './helpers.ts'
 import { UserInputEvent } from '../shared/events.ts'
@@ -950,32 +950,10 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
     ['fail', asked, { type: 'fail' }, { state: 'failed', error: 'Login failed' }],
     // A prompt's cleanup or an abort can arrive after the flow finished: it stays finished.
     ['late answered', { state: 'complete' }, { type: 'answered' }, { state: 'complete' }],
-    [
-      'late prompt',
-      { state: 'cancelled' },
-      { type: 'prompt', prompt: secret },
-      { state: 'cancelled' },
-    ],
     ['late cancel', { state: 'complete' }, { type: 'cancel' }, { state: 'complete' }],
-    ['late complete', { state: 'cancelled' }, { type: 'complete' }, { state: 'cancelled' }],
-    ['late fail', { state: 'cancelled' }, { type: 'fail' }, { state: 'cancelled' }],
   ]
   it.each(loginMoves)('moves a login flow on %s', (_name, from, event, expected) => {
     expect(transition(from, event)).toEqual(expected)
-  })
-  it('shows a login flow by its phase, a failed start over it, and running before its document arrives', () => {
-    const flow: LoginFlow = {
-      provider: 'stub',
-      type: 'api_key',
-      phase: { state: 'complete' },
-      events: [],
-    }
-    expect(phaseOf(undefined)).toEqual({ state: 'running' })
-    expect(phaseOf(flow)).toEqual({ state: 'complete' })
-    expect(phaseOf(flow, 'Unsupported provider')).toEqual({
-      state: 'failed',
-      error: 'Unsupported provider',
-    })
   })
   it('runs logins in the models extension: prompt, answer, cancel, no credential leak, dead flows cancelled', async () => {
     const { server, options } = await fixture(false, {

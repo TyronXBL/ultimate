@@ -219,9 +219,13 @@ export const actions = {
         (): FlowEvent => ({ type: signal.aborted ? 'cancel' : 'fail' }),
       )
       .then(async (event) => {
-        live.delete(flowId)
-        if (event.type === 'complete') await loginChanged(host, provider)
-        return step(event)
+        try {
+          if (event.type === 'complete') await loginChanged(host, provider)
+          await step(event)
+        } finally {
+          // Stay in `live` until the terminal phase is recorded, so a facet reload meanwhile never cancels a finished login.
+          live.delete(flowId)
+        }
       })
       .catch(() => host.notice('Login flow finalization failed'))
     return { flowId }

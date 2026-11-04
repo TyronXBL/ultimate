@@ -261,7 +261,7 @@ async function refresh(host: ExtensionHost, check: boolean, force = false) {
     refused: rest.refused ?? landingNow,
     ...(mergeOffered({
       diverged: Boolean(diverged),
-      project: await isProject(host),
+      project: Boolean(diverged) && (await isProject(host)),
       landing: Boolean(landingNow),
     })
       ? { merge: true as const }
