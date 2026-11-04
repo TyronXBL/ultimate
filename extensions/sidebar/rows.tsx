@@ -530,7 +530,7 @@ function TaskedSubagentLine({
       <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
       {task?.chip}
       <span className="min-w-0 flex-1 truncate text-foreground/75">
-        <RunName id={conversation.id} label={conversation.label ?? 'agent'} />
+        <RunName compact id={conversation.id} label={conversation.label ?? 'agent'} />
         <span className="text-muted-foreground/60"> #{conversation.id}</span>
       </span>
       <span
@@ -645,7 +645,7 @@ function TaskedChildRow({
         <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
         {task?.chip}
         <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-foreground/80">
-          <RunName id={conversation.id} label={conversation.label ?? 'Agent'} /> · #
+          <RunName compact id={conversation.id} label={conversation.label ?? 'Agent'} /> · #
           {conversation.id}
         </span>
         {conversation.workspace && (

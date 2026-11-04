@@ -8,6 +8,7 @@ import { api, events, useDocOf } from '@/sdk'
 import type { UltimateActions } from '@/sdk'
 import { RunsDoc, StandingAction } from './refs.ts'
 import type { Run } from './refs.ts'
+import { familyTitle } from '../../lib/families.ts'
 
 export {
   BranchSetupDoc,
@@ -24,12 +25,55 @@ export function useRun(id: number | undefined): Run | undefined {
 }
 
 /**
- * A child's name as rows and cards show it: its label, then the model it was started on, muted, and a wand when
- * `subagent start` made it on the fly rather than from a definition.
+ * Why a child runs on another model than its definition gives it: a few words for its row (`coordinator's choice`,
+ * `branch setup`, `backup (rate limit)`) and the whole story for the tooltip. Undefined when it runs on its own.
  */
-export function RunName({ id, label }: { id: number | undefined; label: ReactNode }) {
+function runReason(run: Run | undefined, name: string) {
+  const { override, backup } = run ?? {}
+  if (!override && !backup) return undefined
+  const own =
+    override &&
+    `${name}'s definition runs on ${override.family ? `${familyTitle(override.family)}: ` : ''}${override.own}.`
+  const chosen =
+    override &&
+    (override.by === 'setup'
+      ? `This branch's agent setup runs it on ${run!.model} instead.`
+      : `${override.caller ?? 'Its caller'} started it with ${override.asked}, so it ran on ${run!.model}.`)
+  return {
+    word: backup
+      ? `backup (${backup.reason})`
+      : override!.by === 'setup'
+        ? 'branch setup'
+        : `${override!.caller ?? 'caller'}'s choice`,
+    detail: [
+      own,
+      chosen,
+      backup &&
+        `${backup.from} answered with a ${backup.reason} error, so it runs on the backup ${backup.model} for now.`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  }
+}
+
+/**
+ * A child's name as rows and cards show it: its label, then the model it runs on, muted, and a wand when `subagent
+ * start` made it on the fly rather than from a definition. When that model is not its definition's, a card says why
+ * after it (truncated first) and a `compact` sidebar row underlines the model, dotted; both tell the whole story on hover.
+ */
+export function RunName({
+  id,
+  label,
+  compact,
+}: {
+  id: number | undefined
+  label: ReactNode
+  compact?: boolean
+}) {
   const run = useRun(id)
-  return (
+  const reason = runReason(run, typeof label === 'string' ? label : 'This agent')
+  const model = run?.backup?.model ?? run?.model
+  const name = (
     <>
       {run?.adhoc && (
         <WandSparklesIcon
@@ -40,8 +84,37 @@ export function RunName({ id, label }: { id: number | undefined; label: ReactNod
         </WandSparklesIcon>
       )}
       {label}
-      {run?.model && <span className="text-muted-foreground/70"> · {run.model}</span>}
+      {model && (
+        <span className="text-muted-foreground/70">
+          {' · '}
+          {compact && reason ? (
+            <span
+              className="underline decoration-dotted underline-offset-2"
+              data-run-reason
+              title={`${reason.word}\n${reason.detail}`}
+            >
+              {model}
+            </span>
+          ) : (
+            model
+          )}
+        </span>
+      )}
     </>
+  )
+  if (compact || !reason) return name
+  return (
+    <span className="inline-flex max-w-full min-w-0 items-baseline overflow-hidden">
+      <span className="max-w-full shrink-0 truncate">{name}</span>
+      <span
+        className="min-w-0 shrink-[1000] truncate text-muted-foreground/60"
+        data-run-reason
+        title={reason.detail}
+      >
+        {'\u00a0· '}
+        {reason.word}
+      </span>
+    </span>
   )
 }
 

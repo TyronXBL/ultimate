@@ -97,7 +97,18 @@ export const BranchSetupDoc = docRef<BranchSetupState>('subagents.setup')
  * What a `subagent start` child was started on: its model id (`gpt-6-astra`) and whether it was made on the fly, without
  * a definition (`adhoc`).
  */
-export type Run = { model?: string; adhoc?: true }
+export type Run = {
+  model?: string
+  adhoc?: true
+  /**
+   * Started on another model than its definition gives it: by the start call (`caller` the agent that made it, `asked`
+   * what it named: `family default`) or by the branch's agent setup. `family` and `own` (`provider/modelId`) are what
+   * the definition runs on.
+   */
+  override?: { by: 'call' | 'setup'; caller?: string; asked?: string; family?: string; own: string }
+  /** Runs on a backup model since its own (`from`) hit a limit (`reason`); extensions/backup keeps it. */
+  backup?: { from: string; model: string; reason: string }
+}
 /** `{ [conversationId]: Run }` of the children `subagent start` made, on conversation 1. */
 export const RunsDoc = docRef<Record<string, Run>>('subagents.runs')
 

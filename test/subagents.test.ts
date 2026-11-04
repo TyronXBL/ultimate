@@ -477,6 +477,40 @@ it('makes an agent on the fly from the call, read-only without a worktree, and r
   })
 })
 
+it("records why a child runs on another model than its definition's: the call's choice or the branch setup", async () => {
+  const f = await fixture()
+  await call(f.opened, { action: 'start', agent: 'scout', task: 'Plain' })
+  await call(f.opened, {
+    action: 'start',
+    agent: 'scout',
+    model: 'faux/faux-think',
+    task: 'Picked',
+  })
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(BranchSetup, f.opened.root.id)).agents = {
+      scout: { provider: 'faux', modelId: 'faux-think' },
+    }
+  }, context)
+  await call(f.opened, { action: 'start', agent: 'scout', task: 'Set up' })
+  const [plain, picked, setUp] = (await children(f.opened)).map((child) => child.conversationId)
+  expect(await f.opened.harness.snapshot(Runs, f.opened.root.id, context)).toEqual({
+    [plain]: { model: 'faux-1' },
+    [picked]: {
+      model: 'faux-think',
+      override: {
+        by: 'call',
+        asked: 'model faux/faux-think',
+        family: 'default',
+        own: 'faux/faux-1',
+      },
+    },
+    [setUp]: {
+      model: 'faux-think',
+      override: { by: 'setup', family: 'default', own: 'faux/faux-1' },
+    },
+  })
+})
+
 it('routes asynchronous leaf reports only to their lead, not the root', async () => {
   const f = await fixture()
   await writeFile(
