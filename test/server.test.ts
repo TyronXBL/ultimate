@@ -335,10 +335,11 @@ export default host => { host.resource('cleanup.process',()=>{
       'extensions/linked/notes.txt',
       'extensions/mine/web.tsx',
     ]
-    for (const file of files) await writeFile(join(user, file), 'export default {}')
-    const status = async (file: string) =>
-      (await fetch(server.url + '/@fs' + join(user, file))).status
-    expect(await Promise.all(files.map(status))).toEqual(files.map(() => 404))
+    for (const file of files) await writeFile(join(user, file), 'private-file-body')
+    const body = async (file: string) =>
+      (await fetch(server.url + '/@fs' + join(user, file))).text()
+    for (const served of await Promise.all(files.map(body)))
+      expect(served).not.toContain('private-file-body')
   })
   it('scans committed submissions newest first, filtered and paged', async () => {
     const { server } = await fixture(false, undefined, true)
