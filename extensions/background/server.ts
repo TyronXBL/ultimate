@@ -6,7 +6,7 @@
  */
 import { num, obj, opt, str } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
-import type { ConversationId } from '@earendil-works/pi-durable'
+import type { ConversationId, PhaseHandler } from '@earendil-works/pi-durable'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -26,8 +26,9 @@ import type { BackgroundResult } from './refs.ts'
 
 type Input = { to: number; cwd: string; command: string; timeout: number; home: string }
 type Checkpoint =
-  /** `waiting`: since when it waits for RAM. */
-  | { phase: 'start'; waiting?: number }
+  | { phase: 'start' }
+  /** Waits for RAM above the floor, since `since`. */
+  | { phase: 'wait'; since: number }
   | { phase: 'poll'; pid: number; began: number }
   | { phase: 'deliver'; result: BackgroundResult }
 
@@ -88,69 +89,79 @@ async function tail(log: string) {
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
 
-const createRun = (host: Pick<ExtensionHost, 'userHome'>) =>
-  defineTask<Input, Checkpoint, null>({
+function createRun(host: Pick<ExtensionHost, 'userHome'>) {
+  /** Start the command, or wait for RAM first; `wait` comes back here every poll. */
+  const begin: PhaseHandler<
+    Input,
+    Extract<Checkpoint, { phase: 'start' | 'wait' }>,
+    Checkpoint,
+    null,
+    object
+  > = async (task, runtime, ctx) => {
+    const files = paths(task)
+    // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started,
+    // before anything else: what follows may wait for RAM, or report that the command never started.
+    const left = await readPidFile(files.pid)
+    if (left) await stopGroup(left, { pidFile: files.pid })
+    const short = await admitRam(
+      await memoryFloor(host.userHome),
+      commandNeedMiB(task.input.command),
+    )
+    if (short) {
+      const { checkpoint } = task.state
+      const since = checkpoint.phase === 'wait' ? checkpoint.since : runtime.now()
+      const waited = runtime.now() - since
+      const next =
+        waited < RAM_WAIT_MS
+          ? {
+              status: 'sleeping' as const,
+              until: runtime.now() + RAM_POLL_MS,
+              checkpoint: { phase: 'wait' as const, since },
+            }
+          : deliver({
+              command: task.input.command,
+              cwd: task.input.cwd,
+              outcome: 'not-started',
+              exitCode: null,
+              seconds: Math.round(waited / 1000),
+              tail: '',
+              // It never ran, so it wrote no log.
+              log: '',
+              note: `Not enough RAM: ${describeShort(short)}. Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
+            })
+      await runtime.commit(() => next, ctx)
+      return
+    }
+    await mkdir(join(task.input.home, 'background'), { recursive: true })
+    await rm(files.status, { force: true })
+    const began = runtime.now()
+    const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', LEADER], {
+      cwd: task.input.cwd,
+      pidFile: files.pid,
+      env: {
+        ...process.env,
+        BACKGROUND_COMMAND: task.input.command,
+        BACKGROUND_LOG: files.log,
+        BACKGROUND_STATUS: files.status,
+      },
+    })
+    if (!group.child.pid) throw new Error('Could not start the background command')
+    await runtime.commit(
+      () => ({
+        status: 'sleeping',
+        until: began + pollMs(0),
+        checkpoint: { phase: 'poll', pid: group.child.pid!, began },
+      }),
+      ctx,
+    )
+  }
+  return defineTask<Input, Checkpoint, null>({
     name: 'background.run',
     version: 1,
     initial: () => ({ phase: 'start' }),
     phases: {
-      start: async (task, runtime, ctx) => {
-        const files = paths(task)
-        // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started,
-        // before anything else: what follows may wait for RAM, or report that the command never started.
-        const left = await readPidFile(files.pid)
-        if (left) await stopGroup(left, { pidFile: files.pid })
-        const short = await admitRam(
-          await memoryFloor(host.userHome),
-          commandNeedMiB(task.input.command),
-        )
-        if (short) {
-          const waiting = task.state.checkpoint.waiting ?? runtime.now()
-          const waited = runtime.now() - waiting
-          const next =
-            waited < RAM_WAIT_MS
-              ? {
-                  status: 'sleeping' as const,
-                  until: runtime.now() + RAM_POLL_MS,
-                  checkpoint: { phase: 'start' as const, waiting },
-                }
-              : deliver({
-                  command: task.input.command,
-                  cwd: task.input.cwd,
-                  outcome: 'not-started',
-                  exitCode: null,
-                  seconds: Math.round(waited / 1000),
-                  tail: '',
-                  // It never ran, so it wrote no log.
-                  log: '',
-                  note: `Not enough RAM: ${describeShort(short)}. Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
-                })
-          await runtime.commit(() => next, ctx)
-          return
-        }
-        await mkdir(join(task.input.home, 'background'), { recursive: true })
-        await rm(files.status, { force: true })
-        const began = runtime.now()
-        const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', LEADER], {
-          cwd: task.input.cwd,
-          pidFile: files.pid,
-          env: {
-            ...process.env,
-            BACKGROUND_COMMAND: task.input.command,
-            BACKGROUND_LOG: files.log,
-            BACKGROUND_STATUS: files.status,
-          },
-        })
-        if (!group.child.pid) throw new Error('Could not start the background command')
-        await runtime.commit(
-          () => ({
-            status: 'sleeping',
-            until: began + pollMs(0),
-            checkpoint: { phase: 'poll', pid: group.child.pid!, began },
-          }),
-          ctx,
-        )
-      },
+      start: begin,
+      wait: begin,
       poll: async (task, runtime, ctx) => {
         const { pid, began } = task.state.checkpoint
         const files = paths(task)
@@ -233,6 +244,7 @@ const createRun = (host: Pick<ExtensionHost, 'userHome'>) =>
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx)
     },
   })
+}
 
 export default function backgroundExtension(
   host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome'>,
