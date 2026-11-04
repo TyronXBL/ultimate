@@ -33,10 +33,12 @@ export async function isolatable(
   )
   if (!top) return { reason: noRepository }
   const source = await realpath(top)
-  const target = await git(source, 'symbolic-ref', '--quiet', '--short', 'HEAD').catch(() => '')
+  const [target, head] = await Promise.all([
+    git(source, 'symbolic-ref', '--quiet', '--short', 'HEAD').catch(() => ''),
+    git(source, 'rev-parse', '--verify', '--quiet', 'HEAD').catch(() => ''),
+  ])
   if (!target) return { reason: 'Isolation needs a checked-out branch' }
-  if (!(await git(source, 'rev-parse', '--verify', '--quiet', 'HEAD').catch(() => '')))
-    return { reason: noCommit }
+  if (!head) return { reason: noCommit }
   // A preview lands on its own branch, never on the branch of the checkout it previews.
   const preview = process.env.ULTIMATE_PREVIEW_BRANCH
   const project = process.env.ULTIMATE_PROJECT
