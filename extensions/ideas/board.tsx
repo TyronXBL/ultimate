@@ -9,6 +9,8 @@ import {
   Dock,
   errorMessage,
   Header,
+  ParkedRuns,
+  Provided,
   StatusLine,
   useDocOf,
   useNow,
@@ -54,8 +56,16 @@ function AddIdea({ className }: { className?: string }) {
  * conversation, docked; on a phone it is one list, what needs you first, each card with its stage.
  */
 export function Board() {
+  return (
+    <Provided input={null} point={ParkedRuns}>
+      {(parked) => <BoardContent parked={parked} />}
+    </Provided>
+  )
+}
+
+function BoardContent({ parked }: { parked: ReadonlySet<number> | undefined }) {
   const phone = useViewport() === 'phone'
-  const { rows, probes, loading } = useBoard()
+  const { rows, probes, loading } = useBoard(parked)
   const needs = rows.filter((row) => row.asks.length > 0).length
   return (
     <>

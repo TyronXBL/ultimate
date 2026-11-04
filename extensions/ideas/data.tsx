@@ -47,10 +47,10 @@ function PlanProbe({
 }
 
 /** Every idea as a row of the board, and the probes that must be mounted for them to know about plans. */
-export function useBoard() {
+export function useBoard(parked?: ReadonlySet<number>) {
   const items = useDocOf(1, IdeasDoc)?.items
   const conversations = useWorkspaceConversations()
-  const standingOf = useStandings(conversations, useLandings(useRoots() ?? []))
+  const standingOf = useStandings(conversations, useLandings(useRoots() ?? []), parked)
   const asks = waiting((useDocOf(1, MessagesDoc) ?? emptyMessages).messages).toReversed()
   // Each watched branch's plan: whether it has an epic, absent while its plan has not streamed in.
   const [planned, setPlanned] = useState<Record<number, boolean>>({})

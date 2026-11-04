@@ -25,6 +25,7 @@ import {
   errorMessage,
   events,
   formatAgo,
+  ParkedRuns,
   Provided,
   useUltimate,
 } from '@/sdk'
@@ -209,7 +210,22 @@ function Status({ row }: { row: Row }) {
 }
 
 function BranchState(props: { branch: WorkspaceConversation; standing: Standing }) {
-  const activity = useActivity()(props.branch.id)
+  return (
+    <Provided input={null} point={ParkedRuns}>
+      {(parked) => <BranchStateWithParked {...props} parked={parked} />}
+    </Provided>
+  )
+}
+
+function BranchStateWithParked({
+  parked,
+  ...props
+}: {
+  branch: WorkspaceConversation
+  standing: Standing
+  parked?: ReadonlySet<number>
+}) {
+  const activity = useActivity(parked)(props.branch.id)
   return (
     <Provided
       input={activity === 'working' ? props.branch.id : undefined}
