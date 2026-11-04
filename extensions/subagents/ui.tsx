@@ -66,8 +66,8 @@ export function RunName({ id, label }: { id: number | undefined; label: ReactNod
   const reason = runReason(run, typeof label === 'string' ? label : 'This agent')
   const model = run?.backup?.model ?? run?.model
   return (
-    <span className="inline-flex max-w-full min-w-0 items-baseline">
-      <span className="truncate">
+    <span className="inline-flex max-w-full min-w-0 items-baseline overflow-hidden">
+      <span className="max-w-full shrink-0 truncate">
         {run?.adhoc && (
           <WandSparklesIcon
             aria-label="Made on the fly"
