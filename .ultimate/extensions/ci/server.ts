@@ -310,7 +310,7 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
             requestId: `ci.result:${task.id}`,
             content: summary(result),
             entry: { kind: 'ci.result', data: result },
-            whenBusy: 'followUp',
+            whenBusy: 'steer',
           },
           ctx,
         )
@@ -355,7 +355,7 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
       defineTool({
         name: 'ci',
         description:
-          "Run this repository's full CI (check, unit tests, e2e) for your committed HEAD in the background, on the PC runner when one is configured, else on the fork's GitHub Actions, instead of running the suites on this machine. Returns at once; you are woken once with a result card (passed or failed, the failing tests, timings). Uncommitted changes are not tested.",
+          "Run this repository's full CI (check, unit tests, e2e) for your committed HEAD in the background, on the PC runner when one is configured, else on the fork's GitHub Actions, instead of running the suites on this machine. Returns at once; its result card (passed or failed, the failing tests, timings) steers your current run after its tool round, or wakes you when idle. Uncommitted changes are not tested.",
         parameters: obj({}),
         // Not replay-safe (the default): an interrupted call is never rerun, so it starts at most one run.
         async execute(_args, api, ctx) {
@@ -375,7 +375,7 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
               ),
             ctx,
           )
-          const text = `CI started for ${sha.slice(0, 7)} in ${cwd}. You will be woken with its result in about 2–10 minutes; keep working or end your turn.${dirty ? ' Uncommitted changes are not part of it.' : ''}`
+          const text = `CI started for ${sha.slice(0, 7)} in ${cwd}. Its result steers you or wakes you in about 2–10 minutes; keep working or end your turn.${dirty ? ' Uncommitted changes are not part of it.' : ''}`
           return { output: [{ type: 'text', text }] }
         },
       }),

@@ -142,7 +142,7 @@ document, tools and model-facing text, where agents and stored entries already u
   aside (`data.setAside`) into **N steps set aside · show**.
 - **Notify**: `notify` `{ id, wake? }` starts `lineage.notify` in the caller. It waits until the target and its
   subagents are idle, then delivers `#id finished · <title>` with its last own answer (≤1500 chars), not an inherited
-  source answer. `wake` (default true) submits a follow-up placed as `lineage.finished`; `wake: false` leaves a note
+  source answer. `wake` (default true) submits a steer placed as `lineage.finished`; `wake: false` leaves a note
   with `source: 'finished'`. Request id
   `lineage:notify:<target>:<task>` deduplicates delivery; calling again for the same id aborts the pending task.
   The caller's `lineage.notified` `{ answers: { [target]: entryId } }` records the answer entry each delivery carried;

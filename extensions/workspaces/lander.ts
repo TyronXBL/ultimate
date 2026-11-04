@@ -889,7 +889,7 @@ export function createLander(
               type: 'input',
               content: text,
               entry,
-              whenBusy: 'followUp',
+              whenBusy: 'steer',
               requestId: `lander:${id}`,
             },
             context,

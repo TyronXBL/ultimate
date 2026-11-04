@@ -13,6 +13,7 @@ import { context, prepareHarness } from '../../server/harness.ts'
 import type { OpenHost } from '../../server/harness.ts'
 import backgroundExtension from '../../extensions/background/server.ts'
 import type { BackgroundResult } from '../../extensions/background/refs.ts'
+import codingTools from '../../extensions/coding-tools/server.ts'
 import { writeJson } from '../../lib/json-file.ts'
 import { temp, until } from '../helpers.ts'
 
@@ -114,4 +115,53 @@ it('waits for RAM below the floor and starts once the floor allows it', async ()
     (await caller.context(context)).entries.some((entry) => entry.kind === 'background.result'),
   )
   expect(existsSync(join(root, 'ran'))).toBe(true)
+})
+
+it('steers the calling run and wakes an interruptible wait when the command finishes', async () => {
+  const root = await temp('ultimate-background-')
+  const prepared = await prepareHarness({
+    ultimateRoot: root,
+    userHome: await temp(),
+    home: `${root}/home`,
+    faux: fauxProvider(),
+  })
+  prepared.registry.install(
+    backgroundExtension({ projectRoot: root, home: `${root}/home`, userHome: `${root}/user` }),
+  )
+  prepared.registry.install(
+    codingTools({
+      emit: async () => undefined as never,
+      projectRoot: root,
+      skills: () => [],
+      userHome: `${root}/user`,
+    }),
+  )
+  prepared.faux!.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall('background', {
+          command: "until [ -f waiting ]; do sleep 0.05; done; printf 'done\\n'",
+        }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage(
+      [fauxToolCall('bash', { command: 'touch waiting; sleep 60', interruptible: true })],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage([fauxText('Handled in the same run.')]),
+  ])
+  const opened = await prepared.open()
+  hosts.push(opened)
+  const caller = opened.root
+  await caller.submit({ type: 'input', requestId: 'wait-steer', content: 'Run and wait' }, context)
+  await until(async () =>
+    JSON.stringify((await caller.context(context)).entries).includes('Handled in the same run.'),
+  )
+  const entries = (await caller.context(context)).entries
+  expect(JSON.stringify(entries)).toContain('Interrupted by a steering message')
+  const resultIndex = entries.findIndex((entry) => entry.kind === 'background.result')
+  const finalIndex = entries.findLastIndex((entry) => entry.kind === 'pi.assistant')
+  expect(resultIndex).toBeGreaterThan(-1)
+  expect(resultIndex).toBeLessThan(finalIndex)
 })
