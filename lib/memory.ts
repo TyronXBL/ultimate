@@ -95,7 +95,9 @@ async function stateDir(parent: string) {
   })
   const found = await lstat(dir)
   if (!found.isDirectory() || (uid !== undefined && found.uid !== uid) || found.mode & 0o077)
-    throw new Error(`${dir} must be a directory of this user's own, mode 700: remove it`)
+    throw new Error(
+      `${dir} must be a directory of this user's own, mode 700: remove it (another user's needs its owner or root), or set TMPDIR to a private folder`,
+    )
   return dir
 }
 async function reservations(dir: string, now: number) {
