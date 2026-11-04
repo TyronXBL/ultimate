@@ -32,24 +32,28 @@ picture, the UI included, for explaining Ultimate to a user; `extensions/lineage
 
 ## Layers and how they reload
 
-- `extensions/<name>/web.tsx`: UI of an extension (slots, panels, surfaces, tool and entry renderers, commands). Vite
-  hot reload, instantly, without a page reload; a broken facet shows an error card, the rest keeps running.
+- `extensions/<name>/web.tsx`: UI of an extension (slots, panels, surfaces, tool and entry renderers, commands). Rebuilt
+  into the page about 2 s after a save; open pages switch to the new bundle (drafts and view kept). A broken facet
+  shows an error card; the rest keeps running.
 - `extensions/<name>/server.ts`: agent behaviour (system prompt, tools, hooks; Pi Durable extensions). Reinstalled on
   save: running tool calls finish on the old code, the next call uses the new code.
 - `extensions/<name>/api.ts`: its contract for other extensions; `export const tier = 'core'` puts it in the
   always-on core tier, which depends only on the core tier, one way
   ([docs/extensions.md](docs/extensions.md#core-tier)). Goes live with the facets that import it.
 - `lib/`: pure helpers extensions share (exec, git, JSON and settings files, secret reads); no state, no extension
-  imports. Goes live like the extensions that import it.
-- `web/`: the web core (surface host with primitives, SDK in `web/src/sdk`, transcript, composer, palette). Vite hot
-  reload, instantly.
+  imports. Goes live like the extensions that import it: rebuilt or reinstalled on save.
+- `web/`: the web core (surface host with primitives, SDK in `web/src/sdk`, transcript, composer, palette). Rebuilt
+  and switched to like a `web.tsx`.
 - `agents/`: subagent definitions (Markdown with frontmatter), read at each use.
 - `server/`, `shared/`: core plumbing (harness, storage, API, Vite hookup). Call the `restart` tool: a new process
   boots and type-checks next to the old one; if it fails you get the error and the old process keeps running, if it
   succeeds the run resumes in the new process.
 - `bin/`: the supervisor. Only a human restart (`pnpm start`) applies it; keep it tiny and change it rarely.
 
-Put behaviour in `extensions/` rather than `server/` whenever you can: it reloads without a restart.
+Put behaviour in `extensions/` rather than `server/` whenever you can: it reloads without a restart. The browser runs a
+production bundle (`server/web.ts`): a change to `web/` or a `web.tsx` rebuilds it in a short-lived child process, and
+every open page reloads onto the new bundle, resuming the view and drafts it left; with no page open the next page load
+builds it.
 A surface is a full-screen app the user switches to (header, ⌘K, `mod+1…9`); the conversation itself is the built-in
 `agent` surface, and a project's apps go in `<project>/.ultimate/extensions/` (see "Surfaces" in the guide).
 New UI is a new extension folder, not a change to `web/`: follow the `write-extension` skill, which points into

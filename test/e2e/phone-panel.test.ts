@@ -1,5 +1,6 @@
 // On a phone the right panel's tabs scroll the shown one into view. Chromium's scrollIntoView returns a promise, and an
-// effect that returned it crashed the Agent surface as soon as the panel opened or switched tabs.
+// effect that returned it crashed the Agent surface as soon as the panel opened or switched tabs. The panel opens while
+// the page still lands on @ultimate, and that redirect once closed it again.
 import { join, resolve } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { launchBrowser } from '../../extensions/browser/server.ts'

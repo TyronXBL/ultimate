@@ -20,6 +20,7 @@ import { formatDimensionNote, resizeImage } from '@earendil-works/pi-coding-agen
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import { fetchText, sourceFrames } from '../../lib/source-frames.ts'
 import { BrowserApi, type ChromiumStatus } from './api.ts'
 import { chromiumStatus } from './chromium-version.ts'
 import { refusal, scopeProxy } from './scope.ts'
@@ -468,6 +469,16 @@ export default function browserExtension(host: ExtensionHost) {
       await guard(page.goto(url.href, { waitUntil: 'domcontentloaded' }), ownTimeoutMs)
       const result = await action(page, outcomes, png, guard)
       const title = await guard(page.title())
+      // Errors name source files and lines, as dev tools show them, not positions in the bundle. Scripts and maps
+      // are read from in-scope URLs only: a page's error text cannot make the host fetch a public one.
+      const maps = new Map()
+      const read = async (script: string) =>
+        (await refusal(new URL(script))) ? undefined : fetchText(script)
+      outcomes.splice(
+        0,
+        outcomes.length,
+        ...(await guard(Promise.all(outcomes.map((outcome) => sourceFrames(outcome, read, maps))))),
+      )
       context.abortSignal?.throwIfAborted()
       return {
         structuredContent: {
