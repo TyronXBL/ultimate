@@ -3,6 +3,7 @@
  * pages are read with web_fetch, which runs no JavaScript; a Chromium with a known hole never renders them.
  */
 import { lookup } from 'node:dns/promises'
+import { once } from 'node:events'
 import { BlockList, connect, createServer, isIP, type Socket } from 'node:net'
 
 /** Loopback, private (RFC 1918, IPv6 ULA), link-local and tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) addresses. */
@@ -30,17 +31,38 @@ function isLocal(address: string) {
   return local.check(address, family === 4 ? 'ipv4' : 'ipv6')
 }
 
-/** The address to connect to for `host`, checked: every address a name resolves to must be local. */
-async function resolveLocal(host: string): Promise<{ address: string } | { reason: string }> {
+/**
+ * The addresses to connect to for `host`, checked: every address a name resolves to must be local. `unresolved` marks
+ * a name that does not resolve, which is no scope question.
+ */
+async function resolveLocal(
+  host: string,
+): Promise<{ addresses: string[] } | { reason: string; unresolved?: boolean }> {
   const name = host.replace(/^\[|\]$/g, '')
   if (isIP(name))
-    return isLocal(name) ? { address: name } : { reason: `${name} is a public address` }
+    return isLocal(name) ? { addresses: [name] } : { reason: `${name} is a public address` }
+  // A failed lookup reads as no addresses, reported below.
   const addresses = await lookup(name, { all: true }).catch(() => [])
-  if (!addresses.length) return { reason: `${name} does not resolve` }
+  if (!addresses.length) return { reason: `${name} does not resolve`, unresolved: true }
   const outside = addresses.find((entry) => !isLocal(entry.address))
   return outside
     ? { reason: `${name} resolves to ${outside.address}, a public address` }
-    : { address: addresses[0].address }
+    : { addresses: addresses.map((entry) => entry.address) }
+}
+
+/** A socket to the first of `addresses` that accepts (`localhost` may list `::1` before an IPv4-only server's `127.0.0.1`). */
+async function open(addresses: string[], port: number) {
+  for (const [index, address] of addresses.entries()) {
+    const socket = connect(port, address)
+    try {
+      await once(socket, 'connect')
+      return socket
+    } catch (error) {
+      socket.destroy()
+      if (index === addresses.length - 1) throw error
+    }
+  }
+  throw new Error('no address to connect to')
 }
 
 const SCOPE =
@@ -52,7 +74,10 @@ export async function refusal(url: URL) {
   if (!['http:', 'https:'].includes(url.protocol))
     return `Refused ${url.href}: ${url.protocol} URLs are not opened; ${SCOPE}.`
   const target = await resolveLocal(url.hostname)
-  return 'reason' in target ? `Refused ${url.href}: ${target.reason}; ${SCOPE}.` : undefined
+  if (!('reason' in target)) return undefined
+  return target.unresolved
+    ? `Cannot open ${url.href}: ${target.reason}.`
+    : `Refused ${url.href}: ${target.reason}; ${SCOPE}.`
 }
 
 /**
@@ -63,6 +88,7 @@ export async function refusal(url: URL) {
 export async function scopeProxy() {
   const sockets = new Set<Socket>()
   const refused = new Map<string, string>()
+  let closed = false
   const server = createServer((client) => {
     sockets.add(client)
     client.on('close', () => sockets.delete(client))
@@ -100,20 +126,26 @@ export async function scopeProxy() {
       client.end(reply(2))
       return
     }
-    const upstream = connect(request.port, target.address)
+    let upstream: Socket
+    try {
+      upstream = await open(target.addresses, request.port)
+    } catch {
+      // 5: connection refused, as the server's own refusal would read without the proxy.
+      client.end(reply(5))
+      return
+    }
+    // The call ended, or the browser gave up, while this connection was resolving or connecting.
+    if (closed || client.destroyed) {
+      upstream.destroy()
+      return
+    }
     sockets.add(upstream)
     upstream.on('close', () => sockets.delete(upstream))
-    upstream.once('connect', () => {
-      client.write(reply(0))
-      upstream.write(request.rest)
-      client.pipe(upstream).pipe(client)
-    })
-    upstream.on('error', () => {
-      // 5: connection refused; once connected, the client socket just closes.
-      if (upstream.connecting) client.end(reply(5))
-      else client.destroy()
-    })
+    upstream.on('error', () => client.destroy())
     client.on('close', () => upstream.destroy())
+    client.write(reply(0))
+    upstream.write(request.rest)
+    client.pipe(upstream).pipe(client)
   }
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
   const { port } = server.address() as { port: number }
@@ -121,6 +153,7 @@ export async function scopeProxy() {
     server: `socks5://127.0.0.1:${port}`,
     refused,
     close() {
+      closed = true
       server.close()
       for (const socket of sockets) socket.destroy()
     },

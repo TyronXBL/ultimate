@@ -20,7 +20,7 @@ import { formatDimensionNote, resizeImage } from '@earendil-works/pi-coding-agen
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { fetchText, sourceFrames } from '../../lib/source-frames.ts'
+import { sourceFrames } from '../../lib/source-frames.ts'
 import { BrowserApi, type ChromiumStatus } from './api.ts'
 import { chromiumStatus } from './chromium-version.ts'
 import { refusal, scopeProxy } from './scope.ts'
@@ -470,14 +470,25 @@ export default function browserExtension(host: ExtensionHost) {
       const result = await action(page, outcomes, png, guard)
       const title = await guard(page.title())
       // Errors name source files and lines, as dev tools show them, not positions in the bundle. Scripts and maps
-      // are read from in-scope URLs only: a page's error text cannot make the host fetch a public one.
+      // are read through the context's scope proxy, so a page's error text cannot make the host fetch a public URL.
       const maps = new Map()
-      const read = async (script: string) =>
-        (await refusal(new URL(script))) ? undefined : fetchText(script)
+      const requests = isolated.request
+      const read = (script: string) =>
+        requests.get(script).then(
+          (response) => (response.ok() ? response.text() : undefined),
+          () => undefined, // Out of scope, unreachable or not a URL: the frame stays as it is.
+        )
       outcomes.splice(
         0,
         outcomes.length,
-        ...(await guard(Promise.all(outcomes.map((outcome) => sourceFrames(outcome, read, maps))))),
+        ...(await guard(
+          Promise.all(
+            outcomes.map((outcome) =>
+              // A malformed source map leaves the outcome as the page reported it.
+              sourceFrames(outcome, read, maps).catch(() => outcome),
+            ),
+          ),
+        )),
       )
       context.abortSignal?.throwIfAborted()
       return {
