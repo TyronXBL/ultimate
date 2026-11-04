@@ -7,6 +7,7 @@ export type BackgroundResult = {
   exitCode: number | null
   seconds: number
   tail: string
+  /** Empty when it never started. */
   log: string
   /** Why part of the command's process group may still run, and what to check. */
   note?: string

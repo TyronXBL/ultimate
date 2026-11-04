@@ -22,7 +22,7 @@ import {
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionLanded } from './api.ts'
-import { setup } from './setup.ts'
+import { setup, setupCommands } from './setup.ts'
 import { failedTests, failingTests } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
 import type { Landed, LanderEntry, LanderOutcome, QueueEntry, WorkspaceIndex } from './types.ts'
@@ -663,14 +663,16 @@ export function createLander(
               )
             }
             const { base } = merged
-            // Below the RAM floor the checks wait, durably and for a bounded time, for their heaviest group.
+            // Below the RAM floor setup and checks wait, durably and for a bounded time, for their heaviest step.
+            const projectSettings = await host.projectSettings()
             const need = Math.max(
               0,
+              ...setupCommands(projectSettings).map(commandNeedMiB),
               ...settings.checks.map((group) =>
                 [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
               ),
             )
-            const short = await admitRam(await host.projectSettings(), need)
+            const short = await admitRam(projectSettings, need)
             if (short) {
               const now = runtime.now()
               if (ramSince !== undefined && now - ramSince >= RAM_WAIT_MS)
@@ -697,7 +699,7 @@ export function createLander(
             }
             // Setup prepares the merged revision, for example installs its lockfile.
             await step('setting up')
-            await setup(source, path, await host.projectSettings(), signal)
+            await setup(source, path, projectSettings, signal)
             const flaky: string[] = []
             for (const [position, group] of settings.checks.entries()) {
               const members = Array.isArray(group) ? group : [group]

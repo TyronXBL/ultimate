@@ -44,7 +44,8 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
         <div className="space-y-2 px-3 py-2.5">
           <p className="break-words text-foreground">{result.command}</p>
           <p className="break-all text-muted-foreground">
-            {result.cwd} · {result.log}
+            {result.cwd}
+            {result.log && ` · ${result.log}`}
           </p>
           {result.note && <p className="break-words text-warning">{result.note}</p>}
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-muted-foreground">

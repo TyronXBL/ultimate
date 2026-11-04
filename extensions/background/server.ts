@@ -115,7 +115,8 @@ const createRun = (host: Pick<ExtensionHost, 'projectSettings'>) =>
                   exitCode: null,
                   seconds: Math.round(waited / 1000),
                   tail: '',
-                  log: paths(task).log,
+                  // It never ran, so it wrote no log.
+                  log: '',
                   note: `Not enough RAM: ${describeShort(short)}. Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
                 })
           await runtime.commit(() => next, ctx)
@@ -210,7 +211,7 @@ const createRun = (host: Pick<ExtensionHost, 'projectSettings'>) =>
           {
             type: 'input',
             requestId: `background.result:${task.id}`,
-            content: `Background command ${ended}: ${result.command}\nFull log: ${result.log}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
+            content: `Background command ${ended}: ${result.command}${result.log ? `\nFull log: ${result.log}` : ''}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
             entry: { kind: 'background.result', data: result },
             whenBusy: 'followUp',
           },

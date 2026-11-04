@@ -454,8 +454,7 @@ export default function instanceExtension(
     let pendingHome: string | undefined
     try {
       context.abortSignal?.throwIfAborted()
-      if ([...instances.values()].filter(live).length + starts.pending >= 3)
-        throw new Error('At most three instances may run at once')
+      // Before the instance cap, so nothing awaits between that check and the reservation of a start.
       const short = await admitRam(await host.projectSettings(), PREVIEW_MIB)
       if (short) {
         const names = new Map(
@@ -465,6 +464,8 @@ export default function instanceExtension(
           `Not enough RAM for an instance: ${describeShort(short)}. Stop one of your previews (instance stop) or another job of yours first; what this Ultimate runs, by RSS:\n${listUsers(await memoryUsers(process.pid, { names }))}`,
         )
       }
+      if ([...instances.values()].filter(live).length + starts.pending >= 3)
+        throw new Error('At most three instances may run at once')
       starts.pending++
       reserved = true
       const { cwd, project, conversationId } = await prepare()

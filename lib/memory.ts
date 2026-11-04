@@ -73,13 +73,15 @@ export function ramShort(
 const SETTLE_MS = 60_000
 type Reservation = { need: number; until: number }
 const admissions = (dir: string) => join(dir, 'ultimate-ram-admissions.json')
-const reservations = async (dir: string, now: number) =>
-  (
-    await readJson<Reservation[]>(admissions(dir), []).catch(
-      // A torn or foreign file reserves nothing; the next admission rewrites it.
-      () => [],
-    )
-  ).filter((reservation) => reservation.until > now)
+async function reservations(dir: string, now: number) {
+  const saved = await readJson<unknown>(admissions(dir), []).catch(
+    // A torn or foreign file reserves nothing; the next admission rewrites it.
+    () => [],
+  )
+  return (Array.isArray(saved) ? (saved as Reservation[]) : []).filter(
+    (reservation) => reservation.until > now,
+  )
+}
 
 /** Run `critical` holding the machine's admission lock: a lock file, taken over once it is 10 s old. */
 async function locked<T>(dir: string, critical: () => Promise<T>) {
