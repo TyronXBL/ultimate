@@ -2,7 +2,9 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { afterEach, expect, it, vi } from 'vitest'
-import classify, { cooldownMs, secrets } from '../extensions/classify/server.ts'
+import classify, { secrets } from '../extensions/classify/server.ts'
+import { blocked, reject } from '../extensions/classify/state.ts'
+import type { Pause } from '../extensions/classify/state.ts'
 import { ClassifyApi } from '../extensions/classify/api.ts'
 import type { ClassifyService } from '../extensions/classify/api.ts'
 import { writeSecret } from '../extensions/secrets/store.ts'
@@ -167,7 +169,9 @@ it('stops sending after a 402 until the cooldown ends', async () => {
   await expect(service.ask(request, signal)).rejects.toThrow('TypeSafe 402: billing_error')
   expect(fetch).toHaveBeenCalledTimes(1)
   expect(notice).toHaveBeenCalledWith(expect.stringContaining('TypeSafe: out of credits'))
-  vi.advanceTimersByTime(cooldownMs)
+  vi.advanceTimersByTime(15 * 60_000 - 1)
+  await expect(service.ask(request, signal)).rejects.toThrow('TypeSafe 402: billing_error')
+  vi.advanceTimersByTime(1)
   expect((await service.ask(request, signal)).model).toBe('jev-1.14.0')
   expect(fetch).toHaveBeenCalledTimes(2)
 })
@@ -186,4 +190,13 @@ it.each([
   await expect(service.ask(request, new AbortController().signal)).rejects.toThrow(
     'Malformed TypeSafe response',
   )
+})
+
+// A changed key retries at once, and the rejected key stays paused if the user switches back (31e1da6c).
+it.each<[string, Pause, string, boolean]>([
+  ['nothing was rejected', { state: 'active' }, 'a', false],
+  ['another key was rejected', reject('a', 'e', 0), 'b', false],
+  ['the rejected key, after switching back', reject('a', 'e', 0), 'a', true],
+])('pause: %s → blocked %s', (_name, pause, key, expected) => {
+  expect(blocked(pause, key, 1000)).toBe(expected ? 'e' : undefined)
 })

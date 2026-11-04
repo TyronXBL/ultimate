@@ -14,6 +14,8 @@ import {
 import { afterEach, expect, it, vi } from 'vitest'
 import { context } from '../server/harness.ts'
 import recall, { Recall } from '../extensions/recall/server.ts'
+import { checking, recallStep } from '../extensions/recall/state.ts'
+import type { RecallState } from '../extensions/recall/refs.ts'
 import { ClassifyApi } from '../extensions/classify/api.ts'
 import type { ClassifyService } from '../extensions/classify/api.ts'
 import { ContextUsageDoc } from '../extensions/conversations/api.ts'
@@ -120,4 +122,32 @@ it('recalls a memory after the input, already in the first request and at the sa
     memories: [{ slug: 'night-watch', line: memories['night-watch'].line, confidence: 0.84 }],
   })
   expect(await f.state()).toEqual({ last: input.id })
+})
+
+it.each<[string, RecallState, Parameters<typeof recallStep>[1], RecallState]>([
+  ['a check starts', { last: 3 }, { type: 'start', message: 7 }, { last: 3, pending: 7 }],
+  [
+    'a finished check clears pending and records the input',
+    { pending: 7 },
+    { type: 'finish', input: 8 },
+    { last: 8 },
+  ],
+  // A stopped run never finishes: the bubble kept shimmering until abort cleared pending (2462cab9).
+  [
+    'a stopped run clears its pending check',
+    { last: 3, pending: 7 },
+    { type: 'abort', message: 7 },
+    { last: 3 },
+  ],
+  [
+    'a stopped run leaves another message check alone',
+    { pending: 9 },
+    { type: 'abort', message: 7 },
+    { pending: 9 },
+  ],
+])('recall state: %s', (_name, from, event, to) => {
+  const state = { ...from }
+  recallStep(state, event)
+  expect(state).toEqual(to)
+  expect(checking(state, 7)).toBe(to.pending === 7)
 })

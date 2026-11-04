@@ -3,6 +3,7 @@ import { cn, defineWebExtension, useDoc, useTranscript } from '@/sdk'
 import type { EntryRecord } from '@/sdk'
 import { MemoryChip } from '../lineage/ui.tsx'
 import { RecallDoc } from './refs.ts'
+import { checking } from './state.ts'
 import { RECALL_ENTRY } from './types.ts'
 import type { Recalled } from './types.ts'
 
@@ -11,7 +12,7 @@ import type { Recalled } from './types.ts'
  * memories then fly in as chips hanging on its bottom edge, each opening the Memory surface. Nothing when none applies.
  */
 function RecallBubble({ entry }: { entry: EntryRecord }) {
-  const pending = useDoc(RecallDoc)?.pending === entry.id
+  const pending = checking(useDoc(RecallDoc), entry.id)
   const recalled = useTranscript().find(
     (other) => other.kind === RECALL_ENTRY && (other.data as Recalled).input === entry.id,
   )?.data as Recalled | undefined
@@ -29,7 +30,7 @@ function RecallBubble({ entry }: { entry: EntryRecord }) {
     timer.current = setTimeout(() => setLap(false), 1200)
   }, [pending])
   useEffect(() => () => clearTimeout(timer.current), [])
-  const checking = pending || lap
+  const lit = pending || lap
   return (
     <>
       {watched && (
@@ -37,19 +38,19 @@ function RecallBubble({ entry }: { entry: EntryRecord }) {
           aria-hidden
           className={cn(
             'pointer-events-none absolute inset-0 rounded-lg p-px transition-opacity duration-700',
-            checking ? 'opacity-100' : 'opacity-0',
+            lit ? 'opacity-100' : 'opacity-0',
           )}
-          data-recall-checking={checking || undefined}
+          data-recall-checking={lit || undefined}
           style={{
             // One lap of the band across the border per minimum check time.
-            animation: checking ? 'sweep 1.2s linear infinite' : undefined,
+            animation: lit ? 'sweep 1.2s linear infinite' : undefined,
             background:
               'linear-gradient(90deg, transparent 30%, var(--color-brand) 50%, transparent 70%) 0 0 / 300% 100%',
             mask: 'linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0)',
           }}
         />
       )}
-      {recalled && !checking && <Chips animate={watched} recalled={recalled} />}
+      {recalled && !lit && <Chips animate={watched} recalled={recalled} />}
     </>
   )
 }
