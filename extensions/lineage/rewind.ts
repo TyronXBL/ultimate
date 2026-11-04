@@ -19,6 +19,7 @@ import type { ContextEdit, ConversationId, Cursor, EntryId, Tx } from '@earendil
 import { implementAction } from '../../lib/actions.ts'
 import type { ActionInput } from '../../lib/actions.ts'
 import { git } from '../../lib/git.ts'
+import { mapBounded, PROCESS_CONCURRENCY } from '../../lib/bounded.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { defineEvent } from '../../shared/events.ts'
 import { Committed } from '../coding-tools/api.ts'
@@ -158,18 +159,18 @@ async function fileStates(top: string, paths: ReadonlySet<string>, base: string 
     // A repository before its first commit has no HEAD to count lines against.
     () => undefined,
   )
+  const [numstat, untrackedRows] = await Promise.all([
+    head ? git(top, 'diff', '--numstat', '--no-renames', base ?? 'HEAD', '--', ...listed) : '',
+    git(top, 'ls-files', '--others', '--exclude-standard', '--', ...listed),
+  ])
   const counts = new Map<string, { added: number; removed: number }>()
   if (head)
-    for (const line of rows(
-      await git(top, 'diff', '--numstat', '--no-renames', base ?? 'HEAD', '--', ...listed),
-    )) {
+    for (const line of rows(numstat)) {
       // Binary files count `-` lines.
       const [added, removed, path] = line.split('\t')
       counts.set(path, { added: Number(added) || 0, removed: Number(removed) || 0 })
     }
-  const untracked = new Set(
-    rows(await git(top, 'ls-files', '--others', '--exclude-standard', '--', ...listed)),
-  )
+  const untracked = new Set(rows(untrackedRows))
   return listed.map((path): RewindFile => {
     if (untracked.has(path)) return { path, untracked: true }
     return { path, ...counts.get(path) }
@@ -240,24 +241,22 @@ async function facts(host: ExtensionHost, id: ConversationId, at: number, ctx: C
     : { inside: new Set<string>(), outside: new Set<string>() }
   const paths = edited.inside
   if (top)
-    for (const { data } of after)
-      for (const path of rows(
-        // A merge lists its changes against its first parent; a root commit against nothing.
-        await git(
-          top,
-          'diff-tree',
-          '-r',
-          '--no-commit-id',
-          '--name-only',
-          '--root',
-          '--diff-merges=first-parent',
-          data.sha,
-        ).catch(
-          // A commit an amend or rebase dropped may be gone; its files show through the other commits and edits.
-          () => '',
-        ),
-      ))
-        paths.add(path)
+    for (const commitPaths of await mapBounded(after, PROCESS_CONCURRENCY, ({ data }) =>
+      git(
+        top,
+        'diff-tree',
+        '-r',
+        '--no-commit-id',
+        '--name-only',
+        '--root',
+        '--diff-merges=first-parent',
+        data.sha,
+      ).catch(
+        // A commit an amend or rebase dropped may be gone; its files show through the other commits and edits.
+        () => '',
+      ),
+    ))
+      for (const path of rows(commitPaths)) paths.add(path)
   const files = [
     ...(top ? await fileStates(top, paths, base) : []),
     // Git cannot count a file outside the checkout: it is listed as changed.
