@@ -20,6 +20,9 @@ import { UiState } from '../server/ui-state.ts'
 import { Metadata } from '../server/metadata.ts'
 import type { ConversationSummary, ServerEvents } from '../shared/protocol.ts'
 import { Logins } from '../extensions/models/server.ts'
+import { phaseOf, transition } from '../extensions/models/login-state.ts'
+import type { LoginEvent } from '../extensions/models/login-state.ts'
+import type { LoginFlow, LoginPhase } from '../extensions/models/refs.ts'
 import { fixture, orderedSource, servers } from './server-fixture.ts'
 import { eventHost } from './helpers.ts'
 import { UserInputEvent } from '../shared/events.ts'
@@ -934,6 +937,46 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
     await stream.close()
     await until(async () => (await call('DELETE', 5)) === 410)
   })
+  const secret = { type: 'secret', message: 'Enter key' } as const
+  const code = { type: 'manual_code', message: 'Paste the code' } as const
+  const asked: LoginPhase = { state: 'running', prompt: secret }
+  const loginMoves: [string, LoginPhase, LoginEvent<typeof secret | typeof code>, LoginPhase][] = [
+    ['prompt', { state: 'running' }, { type: 'prompt', prompt: secret }, asked],
+    ['next prompt', asked, { type: 'prompt', prompt: code }, { state: 'running', prompt: code }],
+    ['answered', asked, { type: 'answered' }, { state: 'running' }],
+    ['complete', asked, { type: 'complete' }, { state: 'complete' }],
+    // A restart leaves a flow running without its process, and a closed dialog cancels one waiting: both drop the prompt.
+    ['cancel', asked, { type: 'cancel' }, { state: 'cancelled' }],
+    ['fail', asked, { type: 'fail' }, { state: 'failed', error: 'Login failed' }],
+    // A prompt's cleanup or an abort can arrive after the flow finished: it stays finished.
+    ['late answered', { state: 'complete' }, { type: 'answered' }, { state: 'complete' }],
+    [
+      'late prompt',
+      { state: 'cancelled' },
+      { type: 'prompt', prompt: secret },
+      { state: 'cancelled' },
+    ],
+    ['late cancel', { state: 'complete' }, { type: 'cancel' }, { state: 'complete' }],
+    ['late complete', { state: 'cancelled' }, { type: 'complete' }, { state: 'cancelled' }],
+    ['late fail', { state: 'cancelled' }, { type: 'fail' }, { state: 'cancelled' }],
+  ]
+  it.each(loginMoves)('moves a login flow on %s', (_name, from, event, expected) => {
+    expect(transition(from, event)).toEqual(expected)
+  })
+  it('shows a login flow by its phase, a failed start over it, and running before its document arrives', () => {
+    const flow: LoginFlow = {
+      provider: 'stub',
+      type: 'api_key',
+      phase: { state: 'complete' },
+      events: [],
+    }
+    expect(phaseOf(undefined)).toEqual({ state: 'running' })
+    expect(phaseOf(flow)).toEqual({ state: 'complete' })
+    expect(phaseOf(flow, 'Unsupported provider')).toEqual({
+      state: 'failed',
+      error: 'Unsupported provider',
+    })
+  })
   it('runs logins in the models extension: prompt, answer, cancel, no credential leak, dead flows cancelled', async () => {
     const { server, options } = await fixture(false, {
       models: `export { default, actions, docs, userActions } from ${JSON.stringify(resolvePath('extensions/models/server.ts'))}`,
@@ -961,31 +1004,33 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
       const response = await action('login', { provider: 'stub', type: 'api_key' }, conversationId)
       expect(response.status).toBe(200)
       const flowId = String(response.data.result.flowId)
-      await until(async () => (await flows(conversationId))[flowId]?.prompt?.type === 'secret')
+      await until(async () => {
+        const { phase } = (await flows(conversationId))[flowId] ?? {}
+        return phase?.state === 'running' && phase.prompt?.type === 'secret'
+      })
       return flowId
     }
     const first = await login()
     expect((await action('answer', { flowId: first, value: 'not-a-real-credential' })).status).toBe(
       200,
     )
-    await until(async () => (await flows())[first].status === 'complete')
+    await until(async () => (await flows())[first].phase.state === 'complete')
     expect(answered).toBe('not-a-real-credential')
     expect((await flows())[first]).toEqual({
       provider: 'stub',
       type: 'api_key',
-      status: 'complete',
+      phase: { state: 'complete' },
       events: [{ type: 'info', message: 'Stub login' }],
     })
     const blank = await login()
     expect((await action('answer', { flowId: blank, value: '' })).status).toBe(200)
-    await until(async () => (await flows())[blank].status === 'complete')
+    await until(async () => (await flows())[blank].phase.state === 'complete')
     expect(answered).toBe('')
     // A flow lives in the document of the conversation that started it.
     const other = Number((await post(server, '/api/conversations', {})).data.id)
     const second = await login(other)
     expect((await action('cancel', { flowId: second })).status).toBe(200)
-    await until(async () => (await flows(other))[second].status === 'cancel')
-    expect((await flows(other))[second].prompt).toBeUndefined()
+    await until(async () => (await flows(other))[second].phase.state === 'cancelled')
     expect((await action('answer', { flowId: second, value: 'late-credential' })).data).toEqual({
       error: 'Unknown login flow',
     })
@@ -1015,8 +1060,7 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
       ;(await tx.doc(Logins, 1 as ConversationId)).flows.dead = {
         provider: 'stub',
         type: 'api_key',
-        status: 'running',
-        prompt: { type: 'secret', message: 'Enter key' },
+        phase: { state: 'running', prompt: { type: 'secret', message: 'Enter key' } },
         events: [],
       }
     }, context)
@@ -1027,6 +1071,6 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
     servers.push(reopened)
     expect(
       (await reopened.harness.snapshot(Logins, 1 as ConversationId, context))?.flows.dead,
-    ).toEqual({ provider: 'stub', type: 'api_key', status: 'cancel', events: [] })
+    ).toEqual({ provider: 'stub', type: 'api_key', phase: { state: 'cancelled' }, events: [] })
   })
 })

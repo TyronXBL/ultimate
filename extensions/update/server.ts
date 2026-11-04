@@ -29,6 +29,7 @@ import {
 import { Applied, CheckAction, MergeAction, Refused, StateAction, UpdateAction } from './refs.ts'
 import type { UpdateResult, UpdateState } from './refs.ts'
 import { UpdateApi } from './api.ts'
+import { mergeOffered, standingOf } from './item.ts'
 
 /** How often the clone is compared with origin locally; origin itself is fetched at most hourly (`FETCH_EVERY`). */
 export const TICK = 5 * 60_000
@@ -258,7 +259,13 @@ async function refresh(host: ExtensionHost, check: boolean, force = false) {
     ...rest,
     ...(summary ? { summary } : {}),
     refused: rest.refused ?? landingNow,
-    ...(diverged && !landingNow && (await isProject(host)) ? { merge: true as const } : {}),
+    ...(mergeOffered({
+      diverged: Boolean(diverged),
+      project: await isProject(host),
+      landing: Boolean(landingNow),
+    })
+      ? { merge: true as const }
+      : {}),
     ...(error ? { error } : {}),
     ...(repo && remoteHead ? { compare: compareUrl(repo, head, remoteHead) } : {}),
     install: await installOwed(root),
@@ -413,7 +420,9 @@ export const actions = {
     if (preview()) throw new Error('A preview never updates the clone it runs from')
     await refresh(host, false)
     const latest = state(host).latest!
-    if (!latest.merge) throw new Error(latest.refused ?? `${latest.branch} has not diverged`)
+    const standing = standingOf(latest)
+    if (standing.kind === 'preview' || standing.hold !== 'merge')
+      throw new Error(latest.refused ?? `${latest.branch} has not diverged`)
     const { head, remoteHead } = await cloneState(gitIn(host.ultimateRoot), host.ultimateRoot)
     const id = await host.need(SubagentsApi).standing('ultimate', context)
     const conversation = (await host.harness().conversation(id, context))!

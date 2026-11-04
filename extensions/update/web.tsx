@@ -20,9 +20,13 @@ import {
   useSystem,
   useUltimate,
 } from '@/sdk'
-import { itemOf } from './item.ts'
+import { standingOf } from './item.ts'
+import type { Standing } from './item.ts'
 import { CheckAction, MergeAction, StateAction, UpdateAction } from './refs.ts'
 import type { Layers, UpdateResult, UpdateState } from './refs.ts'
+
+/** What the item shows: everything but a preview, which shows nothing. */
+type Shown = Exclude<Standing, { kind: 'preview' }>
 
 const statusButton =
   '-mx-1 flex cursor-pointer items-center gap-1.5 rounded-sm px-1 transition-colors hover:bg-accent'
@@ -120,6 +124,7 @@ function CheckNow({ checking, onClick }: { checking: boolean; onClick: () => voi
 
 function Popup({
   state,
+  standing,
   busy,
   checking,
   error,
@@ -128,6 +133,7 @@ function Popup({
   merge,
 }: {
   state: UpdateState
+  standing: Shown
   busy: boolean
   checking: boolean
   error?: string
@@ -136,12 +142,9 @@ function Popup({
   merge: () => void
 }) {
   const coreStale = useSystem()?.code.coreStale
-  const updated = state.behind === 0 ? state.updated : undefined
+  const { updated } = standing
   // Under a summary the commit list folds to the first few.
   const shown = Math.min(state.commits.length, state.summary ? 3 : 5)
-  // Packages owed or loaded since start, with nothing new to pull: retry the install, or restart.
-  const owes = !state.behind && (state.install || state.restart)
-  const current = !state.behind && !updated && !owes
   return (
     <>
       <div className="border-b border-border/70 px-3 py-2 text-[11.5px]">
@@ -151,7 +154,7 @@ function Popup({
         </div>
       </div>
       <div className="space-y-2 px-3 py-2 text-[11.5px] leading-[1.55]">
-        {current ? (
+        {standing.kind === 'current' && !updated ? (
           <div>
             {checking ? (
               'Checking origin for new commits…'
@@ -176,7 +179,7 @@ function Popup({
               </pre>
             )}
           </>
-        ) : (
+        ) : standing.kind === 'behind' ? (
           <>
             <div>
               {state.branch ?? 'main'} is {state.behind} {state.behind === 1 ? 'commit' : 'commits'}{' '}
@@ -225,26 +228,25 @@ function Popup({
               </div>
             )}
           </>
-        )}
-        {owes && !updated && (
+        ) : (
           <div>
-            {state.install
+            {standing.kind === 'install'
               ? 'pnpm-lock.yaml differs from the installed packages: pnpm install is owed.'
               : 'Packages or server code changed after this Ultimate started: restart it to load them.'}
           </div>
         )}
-        {state.merge && !updated ? (
+        {standing.hold === 'merge' ? (
           <div data-update-diverged>
             {state.branch ?? 'main'} also has {state.ahead}{' '}
             {state.ahead === 1 ? 'commit' : 'commits'} of its own, so it can't fast-forward.
             @ultimate can merge origin into them on a branch and land it once the checks pass.
           </div>
         ) : (
-          state.refused &&
+          standing.hold === 'refused' &&
           !updated && (
             <div className="flex items-start gap-1.5 text-warning">
               <TriangleAlertIcon className="mt-0.5 size-3 shrink-0" />
-              <span>Can't update: {state.refused}. Nothing was stashed, rebased or reset.</span>
+              <span>Can't update: {standing.reason}. Nothing was stashed, rebased or reset.</span>
             </div>
           )
         )}
@@ -257,20 +259,13 @@ function Popup({
       </div>
       <div className="flex items-center justify-between gap-2 border-t border-border/70 px-3 py-1.5">
         <span className="text-[10.5px] text-muted-foreground">
-          {state.fetchedAt !== undefined && !(state.refused && !state.merge && !updated)
+          {state.fetchedAt !== undefined && !(standing.hold === 'refused' && !updated)
             ? `checked ${formatAgo(state.fetchedAt, Date.now(), { ago: true })}`
             : ''}
         </span>
         <div className="flex items-center gap-1">
           {!updated && <CheckNow checking={checking} onClick={check} />}
-          <Action
-            busy={busy}
-            coreStale={coreStale}
-            merge={merge}
-            owes={owes}
-            run={run}
-            state={state}
-          />
+          <Action busy={busy} coreStale={coreStale} merge={merge} run={run} standing={standing} />
         </div>
       </div>
     </>
@@ -279,49 +274,47 @@ function Popup({
 
 /** The popover's main button: install, restart or update; none while the clone is current. */
 function Action({
-  state,
+  standing,
   busy,
-  owes,
   coreStale,
   run,
   merge,
 }: {
-  state: UpdateState
+  standing: Shown
   busy: boolean
-  owes: boolean
   coreStale?: boolean
   run: () => void
   merge: () => void
 }) {
   const restart = useRestart()
-  const updated = state.behind === 0 ? state.updated : undefined
-  if (!state.behind && !updated && !owes) return null
+  const refused = standing.hold === 'refused' ? standing.reason : undefined
+  const restartButton = (
+    <Button
+      className="h-7 font-sans text-[12px]"
+      disabled={restart.busy}
+      onClick={restart.run}
+      size="sm"
+      variant="outline"
+    >
+      {restart.busy ? 'Restarting…' : 'Restart now'}
+    </Button>
+  )
+  if (standing.kind === 'current') return standing.updated && coreStale ? restartButton : null
+  if (standing.kind === 'restart') return standing.reload || coreStale ? restartButton : null
   return (
     <>
-      {!state.behind && state.install ? (
+      {standing.kind === 'install' ? (
         <Button
           className="h-7 font-sans text-[12px]"
-          disabled={busy || !!state.refused}
+          disabled={busy || !!refused}
           onClick={run}
           size="sm"
-          title={state.refused}
+          title={refused}
           variant="outline"
         >
           {busy ? 'Installing…' : 'Retry pnpm install'}
         </Button>
-      ) : updated || owes ? (
-        (updated?.layers.core || updated?.layers.lockfile || coreStale || state.restart) && (
-          <Button
-            className="h-7 font-sans text-[12px]"
-            disabled={restart.busy}
-            onClick={restart.run}
-            size="sm"
-            variant="outline"
-          >
-            {restart.busy ? 'Restarting…' : 'Restart now'}
-          </Button>
-        )
-      ) : state.merge ? (
+      ) : standing.hold === 'merge' ? (
         <Button
           className="h-7 font-sans text-[12px]"
           data-update-merge
@@ -336,10 +329,10 @@ function Action({
         <Button
           className="h-7 font-sans text-[12px]"
           data-update-now
-          disabled={busy || !!state.refused}
+          disabled={busy || !!refused}
           onClick={run}
           size="sm"
-          title={state.refused}
+          title={refused}
           variant="outline"
         >
           {busy ? 'Updating…' : 'Update now'}
@@ -367,8 +360,10 @@ function Update() {
   }, [refetch])
   const state = data
   if (!state) return null
-  const item = itemOf(state)
-  if (item === 'none') return null
+  const standing = standingOf(state)
+  if (standing.kind === 'preview') return null
+  const { kind } = standing
+  const refused = standing.hold === 'refused'
   const check = () => {
     setChecking(true)
     setError(undefined)
@@ -412,7 +407,7 @@ function Update() {
       .finally(() => setBusy(false))
   }
   const label =
-    item === 'current' ? (
+    kind === 'current' ? (
       <>
         {checking ? (
           <LoaderCircleIcon className="size-3 animate-spin" />
@@ -421,12 +416,12 @@ function Update() {
         )}
         <span className="max-md:hidden">up to date</span>
       </>
-    ) : item === 'install' ? (
+    ) : kind === 'install' ? (
       <>
         <TriangleAlertIcon className="size-3" />
         install owed
       </>
-    ) : item === 'restart' ? (
+    ) : kind === 'restart' ? (
       <>
         <CheckIcon className="size-3" />
         <span className="max-md:hidden">updated · </span>restart
@@ -435,7 +430,7 @@ function Update() {
       <>
         {busy || checking ? (
           <LoaderCircleIcon className="size-3 animate-spin" />
-        ) : state.refused && !state.merge ? (
+        ) : refused ? (
           <TriangleAlertIcon className="size-3" />
         ) : (
           <ArrowDownIcon className="size-3" />
@@ -449,11 +444,11 @@ function Update() {
         <button
           className={cn(
             statusButton,
-            item === 'current'
+            kind === 'current'
               ? 'text-muted-foreground/70 hover:text-foreground'
               : busy
                 ? 'text-brand'
-                : !state.behind || (state.refused && !state.merge)
+                : kind !== 'behind' || refused
                   ? 'text-warning'
                   : 'text-brand',
           )}
@@ -476,6 +471,7 @@ function Update() {
           error={error}
           merge={merge}
           run={run}
+          standing={standing}
           state={state}
         />
       </PopoverContent>

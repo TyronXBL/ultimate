@@ -38,6 +38,7 @@
     "extensions/recall/types.ts",
     "extensions/conversations/summary-model-ref.ts",
     "extensions/models/switches.ts",
+    "extensions/models/login-state.ts",
     "extensions/context/breakdown.ts",
     "extensions/status-line/context.ts",
     "extensions/status-line/turns.ts",

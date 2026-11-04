@@ -30,6 +30,7 @@ import type { AuthEvent, AuthPrompt } from '@/sdk'
 import { authLabel, dialogs, reopenPicker, useLoginProvider } from './state.tsx'
 import type { ProviderInfo } from './state.tsx'
 import { AnswerAction, CancelAction, LoginAction, LoginDoc, LogoutAction } from './refs.ts'
+import { phaseOf } from './login-state.ts'
 
 type AuthType = ProviderInfo['authTypes'][number]['type']
 function useLoginFlow(flowId: string | undefined) {
@@ -282,8 +283,9 @@ function FlowView({
 }) {
   const flow = useLoginFlow(flowId)
   const actions = useUltimate()
-  const status = error ? 'error' : (flow?.status ?? 'running')
-  const failure = error ?? flow?.error
+  const phase = phaseOf(flow, error)
+  const status = phase.state
+  const prompt = phase.state === 'running' ? phase.prompt : undefined
   useEffect(() => onRunning(status === 'running' ? flowId : undefined), [flowId, onRunning, status])
   useEffect(() => {
     // oxlint-disable-next-line typescript/no-floating-promises -- refreshModels catches fetch failures and retries on the next system event.
@@ -309,19 +311,19 @@ function FlowView({
             'ml-auto flex items-center gap-1.5 text-[11.5px]',
             status === 'complete'
               ? 'text-success'
-              : status === 'error'
+              : status === 'failed'
                 ? 'text-error'
-                : status === 'cancel'
+                : status === 'cancelled'
                   ? 'text-muted-foreground'
                   : 'text-brand',
           )}
         >
           {status === 'running' && <LoaderCircleIcon className="size-3 animate-spin" />}
           {status === 'running'
-            ? flow?.prompt
+            ? prompt
               ? 'waiting for you'
               : 'in progress'
-            : status === 'cancel'
+            : status === 'cancelled'
               ? 'cancelled'
               : status === 'complete'
                 ? 'logged in'
@@ -334,10 +336,10 @@ function FlowView({
             // oxlint-disable-next-line react/no-array-index-key -- Login events append within this flow.
             <EventView event={event} flowId={flowId} index={index} key={index} />
           ))}
-        {flow?.prompt && status === 'running' && flowId && (
-          <PromptForm flowId={flowId} key={JSON.stringify(flow.prompt)} prompt={flow.prompt} />
+        {prompt && flowId && (
+          <PromptForm flowId={flowId} key={JSON.stringify(prompt)} prompt={prompt} />
         )}
-        {status === 'running' && !flow?.prompt && (flow?.events.length ?? 0) === 0 && (
+        {status === 'running' && !prompt && (flow?.events.length ?? 0) === 0 && (
           <p className="text-[12px] text-muted-foreground">Starting {method.provider.id} login…</p>
         )}
         {status === 'complete' && (
@@ -346,12 +348,12 @@ function FlowView({
             available now.
           </p>
         )}
-        {status === 'error' && (
+        {phase.state === 'failed' && (
           <p className="flex items-start gap-2 font-sans text-[13px] text-error">
-            <CircleAlertIcon className="mt-0.5 size-4 shrink-0" /> {failure ?? 'Login failed'}
+            <CircleAlertIcon className="mt-0.5 size-4 shrink-0" /> {phase.error}
           </p>
         )}
-        {status === 'cancel' && (
+        {status === 'cancelled' && (
           <p className="text-[12px] text-muted-foreground">Login cancelled.</p>
         )}
       </div>
@@ -366,7 +368,7 @@ function FlowView({
             Cancel
           </Button>
         )}
-        {(status === 'error' || status === 'cancel') && (
+        {(status === 'failed' || status === 'cancelled') && (
           <Button className="h-7 text-[12px]" onClick={onRetry} size="sm" variant="outline">
             Try again
           </Button>

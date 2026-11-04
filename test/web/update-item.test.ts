@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { itemOf } from '../../extensions/update/item.ts'
+import { mergeOffered, standingOf } from '../../extensions/update/item.ts'
 import type { UpdateState } from '../../extensions/update/refs.ts'
 
 const state = (extra: Partial<UpdateState> = {}): UpdateState => ({
@@ -11,37 +11,74 @@ const state = (extra: Partial<UpdateState> = {}): UpdateState => ({
   ...extra,
 })
 const layers = { core: false, bin: false, lockfile: false, live: true }
+const updatedWith = (changed: Partial<typeof layers>) => ({
+  ok: true as const,
+  from: 'a',
+  to: 'b',
+  commits: 1,
+  layers: { ...layers, ...changed },
+  install: 'skipped' as const,
+})
+const none = { hold: 'none' } as const
 
-it('shows the quiet item while the clone is current', () => {
-  expect(itemOf(state())).toBe('current')
-  // An update that touched only hot-reloading code owes nothing: current again.
-  expect(
-    itemOf(
-      state({
-        updated: { ok: true, from: 'a', to: 'b', commits: 1, layers, install: 'skipped' },
-      }),
-    ),
-  ).toBe('current')
+// What the item and the popover show, from the facts one refresh collects.
+const standings: [string, Partial<UpdateState>, object][] = [
+  ['a preview shows nothing', { preview: true }, { kind: 'preview' }],
+  ['a current clone', {}, { kind: 'current', ...none }],
+  // An update that touched only hot-reloading code owes nothing: current again, with what it did.
+  [
+    'a hot-only update',
+    { updated: updatedWith({}) },
+    { kind: 'current', ...none, updated: updatedWith({}) },
+  ],
+  ['new commits', { behind: 3 }, { kind: 'behind', ...none }],
+  [
+    'new commits an update would refuse',
+    { behind: 3, refused: 'dirty' },
+    { kind: 'behind', hold: 'refused', reason: 'dirty' },
+  ],
+  [
+    'a diverged clone @ultimate can merge',
+    { behind: 3, ahead: 1, refused: 'main has diverged', merge: true },
+    { kind: 'behind', hold: 'merge' },
+  ],
+  ['an install owed', { install: true }, { kind: 'install', ...none }],
+  // fe5907cd: server/ changed in HEAD since boot, nothing installed, nothing behind.
+  ['a restart owed', { restart: true }, { kind: 'restart', reload: true, ...none }],
+  [
+    'a core update',
+    { updated: updatedWith({ core: true }) },
+    { kind: 'restart', reload: true, ...none, updated: updatedWith({ core: true }) },
+  ],
+  [
+    'a bin update, which a restart does not load',
+    { updated: updatedWith({ bin: true }) },
+    { kind: 'restart', reload: false, ...none, updated: updatedWith({ bin: true }) },
+  ],
+  // Behind wins over everything owed; an install over a restart.
+  [
+    'new commits while a restart is owed',
+    { behind: 1, restart: true },
+    { kind: 'behind', ...none },
+  ],
+  ['an install and a restart owed', { install: true, restart: true }, { kind: 'install', ...none }],
+  [
+    'a dirty clone with nothing behind',
+    { refused: 'dirty' },
+    { kind: 'current', hold: 'refused', reason: 'dirty' },
+  ],
+]
+
+it.each(standings)('derives %s', (_name, facts, expected) => {
+  expect(standingOf(state(facts))).toEqual(expected)
 })
 
-it('shows nothing on a preview, and the prominent items while something is owed', () => {
-  expect(itemOf(state({ preview: true }))).toBe('none')
-  expect(itemOf(state({ behind: 3 }))).toBe('behind')
-  expect(itemOf(state({ behind: 3, refused: 'dirty' }))).toBe('behind')
-  expect(itemOf(state({ install: true }))).toBe('install')
-  expect(itemOf(state({ restart: true }))).toBe('restart')
-  expect(
-    itemOf(
-      state({
-        updated: {
-          ok: true,
-          from: 'a',
-          to: 'b',
-          commits: 1,
-          layers: { ...layers, core: true },
-          install: 'skipped',
-        },
-      }),
-    ),
-  ).toBe('restart')
+// a57c0b48: a merge was offered while the lander landed into the same branch.
+it.each([
+  [{ diverged: true, project: true, landing: false }, true],
+  [{ diverged: true, project: true, landing: true }, false],
+  [{ diverged: true, project: false, landing: false }, false],
+  [{ diverged: false, project: true, landing: false }, false],
+])('offers a merge for %j: %s', (facts, offered) => {
+  expect(mergeOffered(facts)).toBe(offered)
 })

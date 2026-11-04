@@ -6,15 +6,20 @@ import type { AuthEvent, AuthPrompt, AuthType, ModelThinkingLevel } from '@earen
 import { actionRef, docRef } from '../../shared/extension-api.ts'
 import { defineEvent } from '../../shared/events.ts'
 
+/** Where a login flow stands; only `transition` (login-state.ts) changes it. */
+export type LoginPhase<Prompt = AuthPrompt> =
+  /** `prompt`: the one waiting for an answer, without its `signal`. */
+  | { state: 'running'; prompt?: Prompt }
+  | { state: 'complete' }
+  | { state: 'cancelled' }
+  | { state: 'failed'; error: string }
+
 /** One login flow as the browser sees it. Answers and credentials never enter it. */
 export type LoginFlow = {
   provider: string
   type: AuthType
-  status: 'running' | 'complete' | 'cancel' | 'error'
-  /** The prompt waiting for an answer, without its `signal`. */
-  prompt?: AuthPrompt
+  phase: LoginPhase
   events: AuthEvent[]
-  error?: string
 }
 
 /** The login flows started from a conversation, by flow id, on that conversation; finished ones are kept for a while. */

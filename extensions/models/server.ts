@@ -23,7 +23,9 @@ import {
   LogoutAction,
   SaveFamiliesAction,
 } from './refs.ts'
-import type { SaveFamilies } from './refs.ts'
+import type { LoginPhase, SaveFamilies } from './refs.ts'
+import { transition } from './login-state.ts'
+import type { LoginEvent } from './login-state.ts'
 import { familiesView, saveFamilies } from './families.ts'
 import { fallback } from './fallback.ts'
 
@@ -38,21 +40,43 @@ type WirePrompt<T> = T extends AuthPrompt ? Omit<T, 'signal'> : never
 export type LoginFlow = {
   provider: string
   type: AuthType
-  status: 'running' | 'complete' | 'cancel' | 'error'
-  /** The prompt waiting for an answer. */
-  prompt?: Json<WirePrompt<AuthPrompt>>
+  phase: LoginPhase<Json<WirePrompt<AuthPrompt>>>
   events: Json<AuthEvent>[]
+}
+type FlowEvent = LoginEvent<Json<WirePrompt<AuthPrompt>>>
+/** Before version 2 a flow held `status` (`cancel`, `error`), a `prompt` and an `error` instead of a phase. */
+type LegacyFlow = Omit<LoginFlow, 'phase'> & {
+  status?: string
+  prompt?: Extract<LoginFlow['phase'], { state: 'running' }>['prompt']
   error?: string
+  phase?: LoginFlow['phase']
 }
 /** The login flows started from a conversation, by flow id; the login dialog streams it with `useDoc`. */
 export const Logins = defineDoc<{ flows: Record<string, LoginFlow> }>({
   kind: LoginDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({ flows: {} }),
+  migrate: (value) => {
+    const doc = value as unknown as { flows: Record<string, LegacyFlow> }
+    for (const flow of Object.values(doc.flows)) {
+      flow.phase =
+        flow.status === 'running'
+          ? { state: 'running', ...(flow.prompt ? { prompt: flow.prompt } : {}) }
+          : flow.status === 'complete'
+            ? { state: 'complete' }
+            : flow.status === 'cancel'
+              ? { state: 'cancelled' }
+              : { state: 'failed', error: flow.error ?? 'Login failed' }
+      delete flow.status
+      delete flow.prompt
+      delete flow.error
+    }
+    return doc as unknown as { flows: Record<string, LoginFlow> }
+  },
 })
 export const docs = [Logins]
 
@@ -131,9 +155,9 @@ export const actions = {
     await harness.commit(async (tx) => {
       if (!(await tx.conversation(id))) throw new Error('Unknown conversation')
       const { flows } = await tx.doc(Logins, id)
-      const finished = Object.keys(flows).filter((key) => flows[key].status !== 'running')
+      const finished = Object.keys(flows).filter((key) => flows[key].phase.state !== 'running')
       for (const key of finished.slice(0, -kept)) delete flows[key]
-      flows[flowId] = { provider, type, status: 'running', events: [] }
+      flows[flowId] = { provider, type, phase: { state: 'running' }, events: [] }
     }, context)
     const flow: Flow = { controller: new AbortController(), writes: Promise.resolve() }
     const update = (change: (state: LoginFlow) => void) => {
@@ -148,6 +172,12 @@ export const actions = {
         .catch((error: unknown) => console.error('models: login document not updated:', error))
       return flow.writes
     }
+    /** The flow's only state writer. */
+    const step = (event: FlowEvent) =>
+      update((state) => {
+        const phase = transition(state.phase, event)
+        if (phase !== state.phase) state.phase = phase
+      })
     live.set(flowId, flow)
     const { signal } = flow.controller
     void host.modelRuntime
@@ -160,7 +190,7 @@ export const actions = {
               for (const item of signals) item.removeEventListener('abort', abort)
               delete flow.answer
               // oxlint-disable-next-line typescript/no-floating-promises -- update catches and logs document write failures.
-              void update((state) => delete state.prompt)
+              void step({ type: 'answered' })
             }
             const abort = () => {
               cleanup()
@@ -179,25 +209,19 @@ export const actions = {
             }
             const { signal: _signal, ...wire } = prompt
             // oxlint-disable-next-line typescript/no-floating-promises -- update catches and logs document write failures.
-            void update((state) => {
-              state.prompt = json(wire)
-            })
+            void step({ type: 'prompt', prompt: json(wire) })
           }),
         notify: (event) => void update((state) => state.events.push(json(event))),
       })
       .then(
-        () => (signal.aborted ? 'cancel' : 'complete'),
+        (): FlowEvent => ({ type: signal.aborted ? 'cancel' : 'complete' }),
         // Provider errors may include secrets or callback codes; never forward them.
-        () => (signal.aborted ? 'cancel' : 'error'),
+        (): FlowEvent => ({ type: signal.aborted ? 'cancel' : 'fail' }),
       )
-      .then(async (status) => {
+      .then(async (event) => {
         live.delete(flowId)
-        if (status === 'complete') await loginChanged(host, provider)
-        return update((state) => {
-          state.status = status
-          delete state.prompt
-          if (status === 'error') state.error = 'Login failed'
-        })
+        if (event.type === 'complete') await loginChanged(host, provider)
+        return step(event)
       })
       .catch(() => host.notice('Login flow finalization failed'))
     return { flowId }
@@ -242,14 +266,13 @@ export default function models(host: ExtensionHost) {
     for (const id of ids) {
       const dead = (records: Readonly<Record<string, LoginFlow>>) =>
         Object.keys(records).filter(
-          (flowId) => records[flowId].status === 'running' && !live.has(flowId),
+          (flowId) => records[flowId].phase.state === 'running' && !live.has(flowId),
         )
       if (!dead((await harness.snapshot(Logins, id, context))?.flows ?? {}).length) continue
       await harness.commit(async (tx) => {
         const { flows } = await tx.doc(Logins, id)
         for (const flowId of dead(flows)) {
-          flows[flowId].status = 'cancel'
-          delete flows[flowId].prompt
+          flows[flowId].phase = transition(flows[flowId].phase, { type: 'cancel' })
         }
       }, context)
     }
