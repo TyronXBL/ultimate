@@ -297,7 +297,9 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
 }
 
 function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
-  const { id, agent, busy, loading, inbox } = useConversation()
+  const { id, agent, activity, loading, inbox } = useConversation()
+  // Steer or queue only into a run: queued input alone sends as a new prompt.
+  const busy = activity === 'working'
   const queued = inbox.filter((item) => item.mode !== 'write')
   const scoped = useContext(ConversationIdContext)
   const target = useContext(ComposerTargetContext)

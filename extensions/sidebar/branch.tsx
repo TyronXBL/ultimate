@@ -1,64 +1,89 @@
 /** Where a branch stands, as its sidebar row shows it: in flight or landed, its state word, and its work so far. */
 import { useEffect, useRef, useState } from 'react'
 import { useAction, useDocOf, useEvents } from '@/sdk'
+import { isBusy } from '../../lib/activity.ts'
+import type { Activity } from '../../lib/activity.ts'
+import { waitsOnUser } from '../../lib/messages.ts'
+import { branchStanding } from '../../lib/standing.ts'
+import type { Standing } from '../../lib/standing.ts'
 import { Committed } from '../coding-tools/ui.tsx'
 import { MessagesDoc, conversationState, emptyMessages } from '../messages/ui.tsx'
 import { StandingDoc } from '../subagents/ui.tsx'
 import { ProgressAction, useWorkspaceIndex } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation as ConversationSummary } from '../workspaces/ui.tsx'
-import { useConcludedSince, useOverview } from '../conversations/ui.tsx'
+import { useActivity, useConcludedSince, useOverview } from '../conversations/ui.tsx'
+import type { Landing } from './landings.ts'
 import { workOf } from './work.ts'
 
-/** When a branch last landed: its latest landed submission's last step. */
-export function landedAt(index: ReturnType<typeof useWorkspaceIndex>, id: number) {
-  let at: number | undefined
-  for (const result of Object.values(index.results))
-    if (result.conversationId === id && result.outcome === 'landed')
-      at = Math.max(at ?? 0, result.steps.at(-1)?.at ?? result.at)
-  return at
+/**
+ * Where each branch stands (`lib/standing.ts`), by the lander's index, the roots' landing notes `landings`
+ * (`useLandings`) and the messages log. Its work is under way while it or an owned conversation below it is busy
+ * (`useActivity`, with `parked` the runs a pause holds).
+ */
+export function useStandings(
+  conversations: readonly ConversationSummary[],
+  landings: readonly Landing[],
+  parked?: ReadonlySet<number>,
+) {
+  const index = useWorkspaceIndex()
+  const log = useDocOf(1, MessagesDoc) ?? emptyMessages
+  const concludedSince = useConcludedSince()
+  const activity = useActivity(parked)
+  const byId = new Map(conversations.map((conversation) => [conversation.id, conversation]))
+  const busy = new Set<number>()
+  for (const conversation of conversations) {
+    if (!isBusy(activity(conversation.id))) continue
+    let current: ConversationSummary | undefined = conversation
+    // Up through owned subagents: an ownerless branch has its own standing.
+    while (current) {
+      busy.add(current.id)
+      if (current.parentConversationId === undefined || current.ownerTaskId === undefined) break
+      current = byId.get(current.parentConversationId)
+    }
+  }
+  return (branch: Pick<ConversationSummary, 'id' | 'inputAt'>) =>
+    branchStanding(
+      {
+        id: branch.id,
+        inputAt: branch.inputAt,
+        busy: busy.has(branch.id),
+        concluded: concludedSince(branch.id) === Infinity,
+        asks: log.messages.some(waitsOnUser(branch.id)),
+      },
+      index,
+      landings,
+    )
 }
 
-/**
- * Whether a branch is still in flight: started and neither concluded (the caller leaves those out) nor landed since
- * its latest input. A branch that lands and then gets new work is in flight again.
- */
-export function inFlight(
-  conversation: ConversationSummary,
-  index: ReturnType<typeof useWorkspaceIndex>,
-) {
-  if (conversation.busy) return true
-  if (index.queue.some((item) => item.conversationId === conversation.id)) return true
-  const landed = landedAt(index, conversation.id)
-  return landed === undefined || (conversation.inputAt ?? 0) > landed
-}
+/** Whether the sidebar lists a branch In flight: everything but a landing without a question for the user. */
+export const listedInFlight = (standing: Standing) =>
+  standing !== 'landed' && standing !== 'concluded'
 
 /** A branch state's tone. */
 export type BranchTone = 'failed' | 'success' | 'brand' | 'waiting' | 'paused' | 'quiet'
 
-/** Where an open branch stands, in a word or two, and how loud to say it. */
+/**
+ * Where an open branch stands, in a word or two, and how loud to say it: its `standing` while the lander has it, else
+ * its conversation state by `activity`, which counts its subagents' runs as working.
+ */
 export function useBranchState(
   conversation: ConversationSummary,
-  working: boolean,
+  standing: Standing,
+  activity: Activity,
   phase: { word: string; waiting: boolean } | undefined,
-  parked = false,
 ): { label: string; tone: BranchTone } {
-  const index = useWorkspaceIndex()
   const log = useDocOf(1, MessagesDoc) ?? emptyMessages
   const runState = useOverview()[conversation.id]?.runState
   const primary = useDocOf(1, StandingDoc)?.ultimate
   const concludedSince = useConcludedSince()(conversation.id)
-  const queued = index.queue.find((item) => item.conversationId === conversation.id)
-  if (queued?.state === 'landing') return { label: 'landing', tone: 'success' } as const
-  if (queued) return { label: 'submitted', tone: 'success' } as const
+  if (standing === 'landing') return { label: 'landing', tone: 'success' } as const
+  if (standing === 'submitted') return { label: 'submitted', tone: 'success' } as const
+  const state = conversationState(
+    { id: conversation.id, kind: 'other', activity, runState, primary, concludedSince },
+    log,
+  )
   // A pause holds its run: nothing of it executes until Play.
-  if (parked) return { label: 'paused', tone: 'paused' } as const
-  // The sidebar's one conversation state; `working` also counts its subagents' runs.
-  const state = working
-    ? 'working'
-    : conversationState(
-        { id: conversation.id, kind: 'other', runState, primary, concludedSince },
-        log,
-      )
+  if (state === 'paused') return { label: 'paused', tone: 'paused' } as const
   if (state === 'working')
     return {
       label: phase && !phase.waiting ? phase.word : 'working',

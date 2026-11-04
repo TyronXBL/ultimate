@@ -1,20 +1,20 @@
 /** The board's rows: each idea with its stage, its branch and the decisions it waits on, all read live. */
 import { useCallback, useEffect, useState } from 'react'
 import { useDocOf, useExtensionUiState } from '@/sdk'
-import { useConcludedSince } from '../conversations/ui.tsx'
+import type { BranchLanding } from '../../lib/standing.ts'
 import { useRoots } from '../lineage/ui.tsx'
 import { MessagesDoc, emptyMessages } from '../messages/ui.tsx'
 import type { Message } from '../messages/refs.ts'
 import { PlanDoc } from '../plan/ui.tsx'
 import { waiting } from '../questions/ui.tsx'
-import { inFlight, landedAt, useFlightWork, useLandings } from '../sidebar/ui.tsx'
-import type { Landing } from '../sidebar/ui.tsx'
-import { useWorkspaceConversations, useWorkspaceIndex } from '../workspaces/ui.tsx'
+import { useFlightWork, useLandings, useStandings } from '../sidebar/ui.tsx'
+import { useWorkspaceConversations } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation } from '../workspaces/ui.tsx'
+import type { Standing } from '../../lib/standing.ts'
 import { IdeasDoc } from './refs.ts'
 import type { Idea } from './refs.ts'
 import { stageOf } from './stage.ts'
-import type { BranchFacts, Column } from './stage.ts'
+import type { Column } from './stage.ts'
 
 export type Row = {
   idea: Idea
@@ -22,44 +22,15 @@ export type Row = {
   note?: 'launching' | 'not built'
   /** Its linked branch, once @ultimate started it and while it is known. */
   branch?: WorkspaceConversation
-  landed?: BranchFacts['landed']
+  /** Where its branch stands, once linked. */
+  standing?: Standing
+  /** What its branch landed since its latest input. */
+  landed?: BranchLanding
   /** Messages from or about its branch that wait on the user, oldest first. */
   asks: Message[]
   /** When it last moved: the branch's latest input or answer, else when it was parked, launched or added. */
   at: number
 }
-
-/**
- * Its latest landing, unless it is in flight again: queued, busy, or given input since. From the lander's recent
- * results, else the roots' landing notes; an earlier landing never stands in for work under way.
- */
-function landingOf(
-  branch: WorkspaceConversation,
-  index: ReturnType<typeof useWorkspaceIndex>,
-  landings: readonly Landing[],
-): BranchFacts['landed'] {
-  if (branch.busy || index.queue.some((item) => item.conversationId === branch.id)) return undefined
-  const at = landedAt(index, branch.id)
-  if (at !== undefined) {
-    if (inFlight(branch, index)) return undefined
-    const result = Object.values(index.results)
-      .filter((item) => item.conversationId === branch.id && item.outcome === 'landed' && item.sha)
-      .toSorted((a, b) => a.at - b.at)
-      .at(-1)
-    if (result?.sha) return { sha: result.sha, base: result.base, at }
-  }
-  const note = landings.find(
-    (event) => event.from === branch.id && (event.at ?? 0) >= (branch.inputAt ?? 0),
-  )
-  return note ? { sha: note.sha, base: note.base, at: note.at } : undefined
-}
-
-/** Whether a branch ever landed: any landed result or landing note of it, however old. */
-const everLanded = (
-  id: number,
-  index: ReturnType<typeof useWorkspaceIndex>,
-  landings: readonly Landing[],
-) => landedAt(index, id) !== undefined || landings.some((event) => event.from === id)
 
 /** Reports whether `branch` has a plan epic, or undefined while its plan has not streamed in. */
 function PlanProbe({
@@ -79,9 +50,7 @@ function PlanProbe({
 export function useBoard() {
   const items = useDocOf(1, IdeasDoc)?.items
   const conversations = useWorkspaceConversations()
-  const index = useWorkspaceIndex()
-  const landings = useLandings(useRoots() ?? [])
-  const concludedSince = useConcludedSince()
+  const standingOf = useStandings(conversations, useLandings(useRoots() ?? []))
   const asks = waiting((useDocOf(1, MessagesDoc) ?? emptyMessages).messages).toReversed()
   // Each watched branch's plan: whether it has an epic, absent while its plan has not streamed in.
   const [planned, setPlanned] = useState<Record<number, boolean>>({})
@@ -107,26 +76,23 @@ export function useBoard() {
   const rows = (items ?? []).map((idea): Row => {
     const id = idea.launch?.branch
     const branch = id === undefined ? undefined : byId.get(id)
-    const landed = branch && landingOf(branch, index, landings)
-    const submitted = id !== undefined && index.queue.some((item) => item.conversationId === id)
-    // Building, from facts that last: a plan epic, unlanded commits, the lander's queue, or any landing of it.
+    const standing = id === undefined ? undefined : standingOf(branch ?? { id })
+    // Building, from facts that last: a plan epic, unlanded commits, or any landing of it.
     const started =
       id !== undefined &&
       (planned[id] ||
         !!work.get(id)?.commits ||
-        submitted ||
-        everLanded(id, index, landings) ||
+        standing?.landing !== undefined ||
         (planned[id] === undefined && seen.includes(id)))
-    const facts: BranchFacts | undefined =
-      id === undefined
-        ? undefined
-        : { landed, concluded: concludedSince(id) === Infinity, submitted, started }
     const activity = branch ? Math.max(branch.inputAt ?? 0, branch.answerAt ?? 0) : 0
     return {
       idea,
-      ...stageOf(idea, facts),
+      ...stageOf(idea, standing && { standing: standing.state, started }),
       branch,
-      landed,
+      ...(standing ? { standing: standing.state } : {}),
+      ...(standing?.state === 'landed' || standing?.state === 'waits'
+        ? { landed: standing.landing }
+        : {}),
       asks:
         id === undefined
           ? []

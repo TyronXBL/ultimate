@@ -40,6 +40,8 @@ import type { State } from './store.ts'
 import { errorMessage, formatDuration } from './format.ts'
 import type { CompactDocs, CompactRow, ToolCallView, UltimateContext } from './types.ts'
 import { useViewport } from './viewport.ts'
+import { activityOf, isBusy } from '../../../lib/activity.ts'
+import type { Activity } from '../../../lib/activity.ts'
 import { ConversationIdContext, TranscriptContext } from './conversation-scope.tsx'
 export { TranscriptContext } from './conversation-scope.tsx'
 
@@ -78,7 +80,9 @@ export interface ConversationState {
   live: LiveState
   /** `pi.inbox`: queued steers, follow-ups, and writes. */
   inbox: readonly InboxItem[]
-  /** A run is in progress. */
+  /** What it is doing, from its run and inbox (`lib/activity.ts`); a pause shows in the `ParkedRuns` point instead. */
+  activity: Activity
+  /** Work of it is under way: it runs or has input queued. */
   busy: boolean
   view?: StreamedView
 }
@@ -90,6 +94,7 @@ const empty: ConversationState = {
   usage: { models: {}, tools: {} },
   live: {},
   inbox: [],
+  activity: 'idle',
   busy: false,
 }
 const derived = new WeakMap<StreamedView, ConversationState>()
@@ -99,6 +104,11 @@ function derive(view: StreamedView | undefined): ConversationState {
   if (!state) {
     const docs = view.docs as Readonly<Record<string, JsonObject | undefined>>
     const live = (docs['pi.live'] ?? {}) as LiveState
+    const inbox = (docs['pi.inbox'] as { items?: InboxItem[] } | undefined)?.items ?? []
+    const activity = activityOf({
+      run: !!live.run,
+      queued: inbox.some((item) => item.mode !== 'write'),
+    })
     state = {
       id: view.conversation.id,
       loading: false,
@@ -107,8 +117,9 @@ function derive(view: StreamedView | undefined): ConversationState {
       agent: docs['pi.agent'] ?? {},
       usage: (docs['pi.usage'] ?? empty.usage) as UsageState,
       live,
-      inbox: (docs['pi.inbox'] as { items?: InboxItem[] } | undefined)?.items ?? [],
-      busy: !!live.run,
+      inbox,
+      activity,
+      busy: isBusy(activity),
       view,
     }
     derived.set(view, state)

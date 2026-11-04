@@ -2,12 +2,11 @@ import { defineExtension, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durabl
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from '@earendil-works/chord/context'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { Messages, MessagesApi } from '../messages/api.ts'
-import type { Message, Question } from '../messages/api.ts'
+import type { Question } from '../messages/api.ts'
 import { implementAction } from '../../lib/actions.ts'
+import { openQuestion } from '../../lib/messages.ts'
 import { AnswerAction, DismissAction } from './refs.ts'
 
-const open = (message: Message) =>
-  message.to === 'user' && message.reply && message.state === 'delivered'
 const NOT_OPEN = 'These questions are no longer open'
 
 function validAnswers(value: unknown): value is { question: string; answer: string }[] {
@@ -78,7 +77,7 @@ export const actions = {
     const reply = await host.harness().commit(async (tx) => {
       const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
       const message = log.messages.find((m) => m.id === data.messageId)
-      if (!message || !open(message)) throw new Error(NOT_OPEN)
+      if (!message || !openQuestion(message)) throw new Error(NOT_OPEN)
       if (text !== undefined) return text
       checkAnswers(answers, message.questions ?? [])
       return answerText(answers, message.questions ?? [], note)

@@ -1,17 +1,8 @@
 import type { ReactNode } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import {
-  cn,
-  ParkedRuns,
-  Provided,
-  useDocOf,
-  useStore,
-  useTasks,
-  useUltimate,
-  Wordmark,
-} from '@/sdk'
+import { cn, ParkedRuns, Provided, useDocOf, useStore, useUltimate, Wordmark } from '@/sdk'
 import { MessagesDoc, emptyMessages, waitingOnUser } from '../messages/ui.tsx'
-import { AgentMark, ConversationPhase, useOverview } from '../conversations/ui.tsx'
+import { AgentMark, ConversationPhase, useActivity } from '../conversations/ui.tsx'
 import { StandingDoc, talkToUltimate } from '../subagents/ui.tsx'
 import { primaryLabel } from './label.ts'
 
@@ -58,17 +49,10 @@ const name = 'ultimate'
 function Primary({ parked }: { parked?: ReadonlySet<number> }) {
   const actions = useUltimate()
   const id = useDocOf(1, StandingDoc)?.[name]
-  const tasks = useTasks()
-  const runState = useOverview()[id ?? -1]?.runState
+  const activity = useActivity(parked)(id ?? -1)
   const shown = useStore((state) => state.view?.conversation.id ?? state.requested)
-  const paused = id !== undefined && parked?.has(id) === true
-  const working =
-    id !== undefined &&
-    !paused &&
-    (runState === 'working' ||
-      Object.values(tasks?.tasks ?? {}).some(
-        (task) => !task.background && task.conversationId === id,
-      ))
+  const paused = activity === 'paused'
+  const working = activity === 'working'
   const active = id !== undefined && shown === id && actions.surface === 'agent'
   return (
     <WaitingOnUser>

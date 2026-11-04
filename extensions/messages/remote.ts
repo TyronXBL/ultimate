@@ -10,6 +10,7 @@ import { locate, postAction, selfAddress } from '../../lib/remote.ts'
 import { discoverAgents } from '../../lib/agents.ts'
 import { Messages, MessageSent } from './api.ts'
 import type { Message } from './api.ts'
+import { isOpen } from '../../lib/messages.ts'
 import { append } from './log.ts'
 import { remoteLabel, senderName } from './addresses.ts'
 import { delivery } from './delivery.ts'
@@ -88,12 +89,7 @@ export async function tell(
   const asking = (
     (await host.harness().snapshot(Messages, ROOT_CONVERSATION_ID, ctx))?.messages ?? []
   ).find(
-    (m) =>
-      m.from === 'remote' &&
-      m.to === from &&
-      m.reply &&
-      m.remote?.project === target.name &&
-      (m.state === 'sent' || m.state === 'delivered'),
+    (m) => m.from === 'remote' && m.to === from && m.remote?.project === target.name && isOpen(m),
   )
   if (asking)
     throw new Error(

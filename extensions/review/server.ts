@@ -4,6 +4,7 @@ import { defineEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
 import { formatAgo } from '../../lib/ago.ts'
+import { latestLanding } from '../../lib/standing.ts'
 import { UserInputEvent } from '../../shared/events.ts'
 import { git, isolatable } from '../../lib/git.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
@@ -62,15 +63,21 @@ async function resolve(host: ExtensionHost, spec: string) {
   if (present) return spec
   const doc = await index(host, context)
   const owner = Object.entries(doc?.items ?? {}).find(([, item]) => item.branch === branch)?.[0]
-  const landed = Object.values(doc?.results ?? {}).findLast(
-    (result) => result.outcome === 'landed' && String(result.conversationId) === owner,
+  if (!doc || owner === undefined) return 'uncommitted'
+  // Past the index's latest outcomes, the landing events the roots' landing notes are written from: what the target
+  // gained, merged with what landed meanwhile.
+  const events = await host.eventLog.recent({ events: [SubmissionLanded], limit: 200 })
+  const landing = latestLanding(
+    Number(owner),
+    doc,
+    events.map(({ at, data }) => ({
+      from: data.conversationId,
+      sha: data.sha,
+      base: data.base,
+      at: Date.parse(at),
+    })),
   )
-  if (landed?.base) return `${landed.base}...${landed.tip}`
-  // Past the index's latest outcomes, the landing event: what the target gained, merged with what landed meanwhile.
-  const [event] = await host.eventLog
-    .recent({ events: [SubmissionLanded], limit: 200 })
-    .then((landings) => landings.filter(({ data }) => String(data.conversationId) === owner))
-  return event ? `${event.data.base}...${event.data.sha}` : 'uncommitted'
+  return landing?.base ? `${landing.base}...${landing.tip ?? landing.sha}` : 'uncommitted'
 }
 
 /** A git or landing time in seconds, as the range list shows it. */

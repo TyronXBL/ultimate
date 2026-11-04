@@ -16,7 +16,7 @@ import {
   useUltimate,
 } from '@/sdk'
 import { MessagesDoc, conversationState, emptyMessages } from '../messages/ui.tsx'
-import { useConcludedSince, useOverview } from '../conversations/ui.tsx'
+import { useActivity, useConcludedSince, useOverview } from '../conversations/ui.tsx'
 import { StandingDoc } from '../subagents/ui.tsx'
 import { LaneTree } from './hierarchy.tsx'
 import { Axis, laneState } from './lanes.tsx'
@@ -43,6 +43,7 @@ function useStates(parked: ReadonlySet<number>) {
   const log = useDocOf(1, MessagesDoc) ?? emptyMessages
   const overview = useOverview()
   const conversations = useConversations()
+  const activity = useActivity(parked)
   const primary = useDocOf(1, StandingDoc)?.ultimate
   const concludedSince = useConcludedSince()
   return (lane: Lane) => {
@@ -52,9 +53,8 @@ function useStates(parked: ReadonlySet<number>) {
       {
         id,
         kind: id === primary ? 'primary' : own?.ownerTaskId !== undefined ? 'subagent' : 'other',
+        activity: activity(id),
         runState: overview[id]?.runState,
-        busy: own?.busy,
-        parked: parked.has(id),
         primary,
         concludedSince: concludedSince(id),
       },

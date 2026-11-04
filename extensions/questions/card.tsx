@@ -4,6 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { api, cn, errorMessage, useConversation, useDocOf, useViewport } from '@/sdk'
+import { openQuestion } from '../../lib/messages.ts'
 import type { Question } from '../messages/refs.ts'
 import { MessagesDoc } from '../messages/ui.tsx'
 import { keyCard, openQuestions } from './open.tsx'
@@ -61,7 +62,7 @@ export function MessageQuestions({
   const questions = openQuestions(message)
   const card = `message:${message.id}`
   const shown = useKeys(card)
-  if (message.to !== 'user' || !message.reply || message.state !== 'delivered') return null
+  if (!openQuestion(message)) return null
   return (
     <Card
       card={card}

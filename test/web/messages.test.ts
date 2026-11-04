@@ -370,20 +370,13 @@ const messagesLog = (...messages: Partial<Message>[]) => ({
 })
 
 describe('conversation state', () => {
-  const primary = { id: 2, kind: 'primary' as const }
+  const primary = { id: 2, kind: 'primary' as const, activity: 'idle' as const }
   const toUser = messagesLog({ from: 2, to: 'user' })
 
-  it('is paused, not working, while a pause parks its run', () => {
-    expect(conversationState({ ...primary, busy: true, parked: true }, toUser)).toBe('paused')
-    expect(
-      conversationState({ ...primary, runState: 'working', parked: true }, messagesLog()),
-    ).toBe('paused')
-  })
-
-  it('is working while it runs or has input queued, before anything else', () => {
-    expect(conversationState({ ...primary, busy: true }, toUser)).toBe('working')
-    expect(conversationState({ ...primary, runState: 'working' }, toUser)).toBe('working')
-    expect(conversationState({ ...primary, runState: 'queued' }, messagesLog())).toBe('working')
+  it('is paused while a pause parks its run, else working while work of it is under way', () => {
+    expect(conversationState({ ...primary, activity: 'paused' }, toUser)).toBe('paused')
+    for (const activity of ['working', 'queued'] as const)
+      expect(conversationState({ ...primary, activity }, toUser)).toBe('working')
   })
 
   it('waits for the primary agent with an open question to the user', () => {
@@ -395,17 +388,28 @@ describe('conversation state', () => {
   })
 
   it('waits for a non-subagent question of its own, never for a subagent or an unrelated conversation', () => {
-    expect(conversationState({ id: 2, kind: 'other', runState: 'answered' }, toUser)).toBe('waits')
-    expect(conversationState({ id: 2, kind: 'subagent', runState: 'answered' }, toUser)).not.toBe(
-      'waits',
-    )
-    expect(conversationState({ id: 3, kind: 'other', runState: 'answered' }, toUser)).not.toBe(
-      'waits',
-    )
+    expect(
+      conversationState({ id: 2, kind: 'other', activity: 'idle', runState: 'answered' }, toUser),
+    ).toBe('waits')
+    expect(
+      conversationState(
+        { id: 2, kind: 'subagent', activity: 'idle', runState: 'answered' },
+        toUser,
+      ),
+    ).not.toBe('waits')
+    expect(
+      conversationState({ id: 3, kind: 'other', activity: 'idle', runState: 'answered' }, toUser),
+    ).not.toBe('waits')
   })
 
   it('awaits the primary agent while its reply-expected message to it is open', () => {
-    const branch = { id: 5, kind: 'other' as const, runState: 'answered' as const, primary: 3 }
+    const branch = {
+      id: 5,
+      kind: 'other' as const,
+      activity: 'idle' as const,
+      runState: 'answered' as const,
+      primary: 3,
+    }
     for (const state of ['sent', 'delivered'] as const)
       expect(conversationState(branch, messagesLog({ from: 5, to: 3, state }))).toBe('awaiting')
     expect(conversationState(branch, messagesLog({ from: 5, to: 3, state: 'answered' }))).toBe(
@@ -421,7 +425,13 @@ describe('conversation state', () => {
   })
 
   it('awaits the primary agent after reporting to it, until the primary agent messages it', () => {
-    const branch = { id: 5, kind: 'other' as const, runState: 'answered' as const, primary: 3 }
+    const branch = {
+      id: 5,
+      kind: 'other' as const,
+      activity: 'idle' as const,
+      runState: 'answered' as const,
+      primary: 3,
+    }
     const report = { from: 5, to: 3, reply: false, report: true as const }
     expect(conversationState(branch, messagesLog(report))).toBe('awaiting')
     // A branch's reply awaits its answer; a standing agent's reply just answered (life's @google).
@@ -447,13 +457,25 @@ describe('conversation state', () => {
     // Concluded at 200, then resumed: its earlier report stays settled, a newer one is owed.
     expect(owed(200)).toEqual([])
     expect(owed(200, { ...report, at: 300 })).toEqual([2])
-    const branch = { id: 5, kind: 'other' as const, runState: 'answered' as const, primary: 3 }
+    const branch = {
+      id: 5,
+      kind: 'other' as const,
+      activity: 'idle' as const,
+      runState: 'answered' as const,
+      primary: 3,
+    }
     expect(conversationState({ ...branch, concludedSince: 200 }, messagesLog(report))).toBe('idle')
   })
 
   it('says every state in a word, so a standing row or lane never falls back to idle', () => {
     // A standing agent (not the primary) asking @ultimate shows it, rather than idle.
-    const standing = { id: 7, kind: 'other' as const, runState: 'answered' as const, primary: 3 }
+    const standing = {
+      id: 7,
+      kind: 'other' as const,
+      activity: 'idle' as const,
+      runState: 'answered' as const,
+      primary: 3,
+    }
     expect(stateWord(conversationState(standing, messagesLog({ from: 7, to: 3 })))).toBe(
       'awaiting @ultimate',
     )
@@ -464,17 +486,26 @@ describe('conversation state', () => {
   })
 
   it('failed when its latest input ended without an answer', () => {
-    expect(conversationState({ id: 5, kind: 'other', runState: 'error' }, messagesLog())).toBe(
-      'failed',
-    )
+    expect(
+      conversationState(
+        { id: 5, kind: 'other', activity: 'idle', runState: 'error' },
+        messagesLog(),
+      ),
+    ).toBe('failed')
   })
 
   it('done for an answered subagent, idle for any other answered conversation', () => {
     expect(
-      conversationState({ id: 5, kind: 'subagent', runState: 'answered' }, messagesLog()),
+      conversationState(
+        { id: 5, kind: 'subagent', activity: 'idle', runState: 'answered' },
+        messagesLog(),
+      ),
     ).toBe('done')
-    expect(conversationState({ id: 5, kind: 'other', runState: 'answered' }, messagesLog())).toBe(
-      'idle',
-    )
+    expect(
+      conversationState(
+        { id: 5, kind: 'other', activity: 'idle', runState: 'answered' },
+        messagesLog(),
+      ),
+    ).toBe('idle')
   })
 })

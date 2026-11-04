@@ -1,4 +1,7 @@
 import type { EntryRecord } from '@earendil-works/pi-durable'
+import { isOpen, openQuestion, waitsOnUser } from '../../lib/messages.ts'
+import { isBusy } from '../../lib/activity.ts'
+import type { Activity } from '../../lib/activity.ts'
 import type { MessagesData, Message, Remote } from './refs.ts'
 
 /** How another project's Ultimate is named; the server says the same in its model text. */
@@ -12,15 +15,12 @@ export function answeredMessages(messages: Message[], conversation: number, entr
 
 export const emptyMessages: MessagesData = { messages: [], next: 1 }
 /** What waits on the user: each question to the user they have neither answered nor dismissed. */
-export const waitingOnUser = (log: MessagesData) =>
-  log.messages.filter(
-    (message) => message.to === 'user' && message.reply && message.state === 'delivered',
-  ).length
+export const waitingOnUser = (log: MessagesData) => log.messages.filter(openQuestion).length
 
 /**
  * Where a conversation stands, the one state every view shows:
  * - `paused`: the host is paused and its run is parked: no task of it executes until Play;
- * - `working`: it runs, or has input queued;
+ * - `working`: it runs, or has input queued (its activity, `lib/activity.ts`);
  * - `waits`: the primary agent (@ultimate) counts every question open with the user; a non-subagent
  *   conversation has one of its own open. This is the state that asks the user to act;
  * - `awaiting`: a conversation that is no subagent asked the primary agent (a branch asking @ultimate) and waits for
@@ -44,10 +44,10 @@ export function conversationState(
     id: number
     /** `primary`: the agent that talks to the user; `subagent`: owned by a task of its parent. */
     kind: 'primary' | 'subagent' | 'other'
+    /** Its activity (`useActivity`). */
+    activity: Activity
+    /** How its latest input ended, from the overview: `error` and `answered` say failed and done. */
     runState?: 'working' | 'queued' | 'idle' | 'answered' | 'error'
-    busy?: boolean
-    /** A pause of the host parked its run (the `ParkedRuns` point). */
-    parked?: boolean
     /** The primary agent's conversation, which a branch's open question waits on. */
     primary?: number
     /** Since when it counts as concluded (`useConcludedSince`): its reports from before then await nothing. */
@@ -56,15 +56,12 @@ export function conversationState(
   log: MessagesData,
 ): ConversationState {
   const { id, kind, runState } = conversation
-  if (conversation.parked) return 'paused'
-  if (conversation.busy || runState === 'working' || runState === 'queued') return 'working'
+  if (conversation.activity === 'paused') return 'paused'
+  if (isBusy(conversation.activity)) return 'working'
   if (
     kind === 'primary'
       ? waitingOnUser(log) > 0
-      : kind !== 'subagent' &&
-        log.messages.some(
-          (m) => m.from === id && m.to === 'user' && m.reply && m.state === 'delivered',
-        )
+      : kind !== 'subagent' && log.messages.some(waitsOnUser(id))
   )
     return 'waits'
   if (
@@ -325,10 +322,6 @@ export function openMessages(
 /** Whether a report is settled: its sender was concluded after sending it (or is concluded now). */
 const settled = (message: Message, concludedSince: (id: number) => number | undefined) =>
   typeof message.from === 'number' && message.at <= (concludedSince(message.from) ?? -Infinity)
-
-/** A reply-enabled message still waiting for its answer. */
-export const isOpen = (message: Message) =>
-  message.reply && (message.state === 'sent' || message.state === 'delivered')
 
 /** Who waits on whom for one message; `yours` is an open question to the user. */
 export function messageStatus(message: Message) {
