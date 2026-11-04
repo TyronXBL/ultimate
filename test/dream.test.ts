@@ -303,8 +303,19 @@ it("marks the branch a dream request's turn started as the dream, and asks @ulti
   // Started by another conversation in the same moment: not @ultimate's dream.
   await mark(901, call, 77)
   expect(await dreamOf()).toBeUndefined()
+  // A chapter prepared after an earlier dream and never slept into kept hiding this dream's cue.
+  await f.harness.commit(async (tx) => {
+    ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).prepared = {
+      chapter: 'stale',
+      learned: ['one', 'two', 'three'],
+      handoff: 'old',
+      at: 5000,
+    }
+  }, context)
   await mark(902, call)
-  expect(await dreamOf()).toEqual({ branch: 902, requested, at: 1902 })
+  expect(await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context)).toEqual({
+    dream: { branch: 902, requested, at: 1902 },
+  })
   // A later turn's branch, after @ultimate's answer ended the dream turn, leaves the dream as it was.
   await append('pi.assistant', { stopReason: 'stop' })
   await mark(903, await append('pi.assistant', { stopReason: 'toolUse' }))

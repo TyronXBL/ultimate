@@ -16,7 +16,7 @@ import {
 } from '@earendil-works/pi-durable'
 import type { ConversationId, EntryDraft, EntryId, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { defaultModel, hasLogin, previewModel } from '../../lib/agents.ts'
+import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
 import { Pin } from '../models/api.ts'
@@ -53,7 +53,6 @@ type Host = Pick<
   | 'resource'
   | 'want'
   | 'modelRuntime'
-  | 'settings'
   | 'implement'
   | 'onOpen'
   | 'onClose'
@@ -116,8 +115,8 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
     host.harness().commit(async (tx) => {
       const agent = await tx.doc(AgentDoc, id)
       const available = host.modelRuntime.getAvailableSnapshot()
-      // A conversation that follows the default runs on it: that is the model this answer came from.
-      const current = agent.model ?? defaultModel(available, host.settings)
+      // Every conversation runs on a model of its own: Pi answers a run without one `no_model`, never with a limit.
+      const current = agent.model
       if (!current) return undefined
       const state = await tx.doc(State, id)
       const failed = `${message.provider}/${message.model}`
