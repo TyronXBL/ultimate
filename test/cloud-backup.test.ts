@@ -8,6 +8,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { backUp, backupPath, classify, Conflict, readBackup } from '../extensions/cloud/backup.ts'
 import { BackupEvent } from '../extensions/cloud/refs.ts'
+import { headline, idle, transition } from '../extensions/cloud/run.ts'
+import type { RunEvent } from '../extensions/cloud/run.ts'
+import type { Run } from '../extensions/cloud/types.ts'
 import { uploadSnapshot } from '../extensions/cloud/snapshot.ts'
 import { git } from '../lib/git.ts'
 import { chapterFiles, FIRST_CHAPTER, readChapters, requestChapter } from '../lib/chapters.ts'
@@ -704,7 +707,7 @@ it('backs up from the UI, records the refusal as a failed event with the sentenc
     expect(JSON.stringify(refused.data)).toContain(sentence)
     expect((await action('state')).data.result).toMatchObject({
       lastBackup: { id: first.data.result.id },
-      conflict: { error: sentence, latest: { id: 'zz-other', machine: 'rog' } },
+      run: { state: 'conflict', error: sentence, latest: { id: 'zz-other', machine: 'rog' } },
     })
     const events = await eventHost(() => server.harness, 'test').eventLog.recent({
       events: [BackupEvent],
@@ -716,9 +719,68 @@ it('backs up from the UI, records the refusal as a failed event with the sentenc
     const forced = await action('backup', { force: true })
     expect(forced.status).toBe(200)
     expect(stub.commits.at(-1)).toMatchObject({ force: true, parent: first.data.result.id })
-    expect((await action('state')).data.result).not.toHaveProperty('conflict')
+    expect((await action('state')).data.result).toMatchObject({ run: { state: 'idle' } })
   } finally {
     await server.close()
     vi.unstubAllEnvs()
   }
+})
+
+const latest = { id: 'zz-other', machine: 'rog', at: 1 }
+const uploading: Run = { state: 'uploading', done: 5, total: 10, uploaded: 2 }
+it.each<[string, Run, RunEvent, Run]>([
+  [
+    'begin',
+    { state: 'failed', error: 'x' },
+    { type: 'begin' },
+    { state: 'uploading', done: 0, total: 0, uploaded: 0 },
+  ],
+  ['begin while uploading', uploading, { type: 'begin' }, uploading],
+  [
+    'progress',
+    uploading,
+    { type: 'progress', done: 8, total: 10, uploaded: 3 },
+    { state: 'uploading', done: 8, total: 10, uploaded: 3 },
+  ],
+  [
+    'late progress after the run ended',
+    idle,
+    { type: 'progress', done: 1, total: 1, uploaded: 1 },
+    idle,
+  ],
+  // e2c194e3: a 409 naming this very backup counts as done, so a refused run ends idle.
+  ['succeeded after a refusal', { state: 'conflict', error: 'x' }, { type: 'succeeded' }, idle],
+  // 83f81845: the refusal keeps the latest backup the Worker's 409 named.
+  [
+    'refused',
+    uploading,
+    { type: 'refused', error: 'rog backed up', latest },
+    { state: 'conflict', error: 'rog backed up', latest },
+  ],
+  [
+    'failed replaces a refusal',
+    { state: 'conflict', error: 'x' },
+    { type: 'failed', error: 'Backup failed: 503' },
+    { state: 'failed', error: 'Backup failed: 503' },
+  ],
+  ['aborted before upload', uploading, { type: 'aborted' }, idle],
+  [
+    'aborted keeps the last refusal',
+    { state: 'failed', error: 'x' },
+    { type: 'aborted' },
+    { state: 'failed', error: 'x' },
+  ],
+])('cloud backup run: %s', (_name, from, event, expected) => {
+  expect(transition(from, event)).toEqual(expected)
+})
+// 8ec63dbf: the status line said "backed up just now" after a refusal.
+it('cloud backup run: one headline for the status line', () => {
+  const last = { id: 'a', at: 5, machine: 'desk', bytes: 1, uploaded: 1 }
+  const since = (at: number) => `at ${at}`
+  expect([
+    headline(uploading, last, since),
+    headline({ state: 'conflict', error: 'x' }, last, since),
+    headline({ state: 'failed', error: 'x' }, last, since),
+    headline(idle, undefined, since),
+  ]).toEqual(['backing up…', 'backup refused', 'backed up at 5', 'no backup yet'])
 })

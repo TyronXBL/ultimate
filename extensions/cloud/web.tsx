@@ -5,7 +5,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { api, cn, defineWebExtension, errorMessage, formatAgo, formatBytes } from '@/sdk'
 import { JoinDialog, joinDialog } from './join.tsx'
 import { BackupAction, StateAction } from './refs.ts'
-import type { CloudState } from './types.ts'
+import { headline } from './run.ts'
+import type { CloudState, Run } from './types.ts'
 
 /** One poll shared by every component that reads it, running while any is mounted; a failed poll keeps the last value. */
 function poll<T>(
@@ -53,7 +54,7 @@ function poll<T>(
 
 const local = poll(
   (signal) => api.action(StateAction, null, { signal }),
-  (state) => (state?.status === 'off' ? 30_000 : state?.backup ? 1000 : 10_000),
+  (state) => (state?.status === 'off' ? 30_000 : state?.run.state === 'uploading' ? 1000 : 10_000),
 )
 const useLocal = () => useSyncExternalStore(local.subscribe, local.get)
 
@@ -87,8 +88,8 @@ function useAct() {
 /** The last backup, "Back up now" and the upload while it runs. */
 function BackupRow({ state }: { state: CloudState }) {
   const { busy, error, act } = useAct()
-  const { lastBackup, backup } = state
-  const uploading = !!backup
+  const { lastBackup, run } = state
+  const uploading = run.state === 'uploading'
   return (
     <div className="space-y-1 px-3 py-2" data-cloud-backup>
       <div className="flex min-w-0 items-center gap-2">
@@ -100,8 +101,8 @@ function BackupRow({ state }: { state: CloudState }) {
             className="block text-[11px] text-muted-foreground tabular-nums"
             title={lastBackup ? new Date(lastBackup.at).toLocaleString() : undefined}
           >
-            {uploading && backup.total > 0
-              ? `${mb(backup.done)} / ${mb(backup.total)} MB read · ${mb(backup.uploaded)} MB uploaded`
+            {run.state === 'uploading' && run.total > 0
+              ? `${mb(run.done)} / ${mb(run.total)} MB read · ${mb(run.uploaded)} MB uploaded`
               : lastBackup
                 ? `${since(lastBackup.at)} from ${lastBackup.machine} · ${formatBytes(lastBackup.uploaded)} (${formatBytes(lastBackup.bytes)} database)`
                 : 'No backup from this machine yet'}
@@ -119,32 +120,28 @@ function BackupRow({ state }: { state: CloudState }) {
           Back up now
         </Button>
       </div>
-      {uploading && (
+      {run.state === 'uploading' && (
         <div className="h-0.5 overflow-hidden rounded-full bg-muted">
           <div
             className="h-full rounded-full bg-brand/70 transition-[width]"
             style={{
-              width: `${backup.total ? Math.min(100, (backup.done / backup.total) * 100) : 0}%`,
+              width: `${run.total ? Math.min(100, (run.done / run.total) * 100) : 0}%`,
             }}
           />
         </div>
       )}
-      {error && !state.conflict && <p className="font-sans text-[12px] text-error">{error}</p>}
-      {!error && state.lastError && (
-        <p className="font-sans text-[12px] text-error/90">{state.lastError}</p>
+      {error && run.state !== 'conflict' && (
+        <p className="font-sans text-[12px] text-error">{error}</p>
+      )}
+      {!error && run.state === 'failed' && (
+        <p className="font-sans text-[12px] text-error/90">{run.error}</p>
       )}
     </div>
   )
 }
 
 /** A refused backup: the Worker's sentence, then "Back up anyway" with a confirm naming what it replaces. */
-function ConflictRow({
-  conflict,
-  busy,
-}: {
-  conflict: NonNullable<CloudState['conflict']>
-  busy: boolean
-}) {
+function ConflictRow({ conflict }: { conflict: Extract<Run, { state: 'conflict' }> }) {
   const [confirming, setConfirming] = useState(false)
   const action = useAct()
   const { latest } = conflict
@@ -169,7 +166,7 @@ function ConflictRow({
             </Button>
             <Button
               className="h-6 font-sans text-[12px]"
-              disabled={busy || action.busy}
+              disabled={action.busy}
               onClick={() =>
                 action.act(async () => {
                   setConfirming(false)
@@ -187,7 +184,6 @@ function ConflictRow({
         <div className="flex justify-end">
           <Button
             className="h-6 font-sans text-[12px]"
-            disabled={busy}
             onClick={() => setConfirming(true)}
             size="xs"
             variant="outline"
@@ -240,14 +236,8 @@ function CloudStatus() {
         satellite · no backups
       </span>
     )
-  const uploading = !!state.backup
-  const status = uploading
-    ? 'backing up…'
-    : state.conflict
-      ? 'backup refused'
-      : state.lastBackup
-        ? `backed up ${since(state.lastBackup.at)}`
-        : 'no backup yet'
+  const { run, lastBackup } = state
+  const status = headline(run, lastBackup, since)
   // The first chapter's backups are the project's; later chapters name theirs, as the dream cards do.
   const label =
     state.chapter && state.chapter.number > 1
@@ -259,14 +249,14 @@ function CloudStatus() {
         <button
           className={cn(
             statusButton,
-            uploading && 'text-brand',
-            state.conflict && !uploading && 'text-warning',
+            run.state === 'uploading' && 'text-brand',
+            run.state === 'conflict' && 'text-warning',
           )}
           data-cloud-status
           title="Cloud backup"
           type="button"
         >
-          {uploading ? (
+          {run.state === 'uploading' ? (
             <LoaderCircleIcon className="size-3 animate-spin" />
           ) : (
             <CloudIcon className="size-3" />
@@ -276,7 +266,7 @@ function CloudStatus() {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0 font-mono" side="top">
         <BackupRow state={state} />
-        {state.conflict && <ConflictRow busy={uploading} conflict={state.conflict} />}
+        {run.state === 'conflict' && <ConflictRow conflict={run} />}
         <RestoreRow name={state.name} />
       </PopoverContent>
     </Popover>

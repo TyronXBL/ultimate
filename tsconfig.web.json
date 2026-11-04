@@ -28,6 +28,8 @@
     ".ultimate/extensions/*/refs.ts",
     "extensions/messages/caller.ts",
     "extensions/cloud/types.ts",
+    "extensions/tailscale/state.ts",
+    "extensions/cloud/run.ts",
     "extensions/conversations/types.ts",
     "extensions/dream/types.ts",
     "extensions/lineage/types.ts",

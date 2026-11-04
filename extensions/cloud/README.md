@@ -64,7 +64,7 @@ branches, then commits it with this home's **parent**: the backup it last upload
 `<home>/cloud-backup.json` (`{ key, parent, last }`). The commit names the machine, the project's folder name, the key, the chapter's name and number,
 and the tailnet address (from `tailscale`, when published). On 200 the new backup
 becomes the parent. On 409 another machine backed up after this home's parent: the parent stays, the uploaded chunks
-stay for the Worker's retention, and `state` reports `conflict { error, latest }`. Two 409s are this machine's own and
+stay for the Worker's retention, and `state` reports `run: { state: 'conflict', error, latest }`. Two 409s are this machine's own and
 not conflicts: one whose `latest` is this very backup (a retried commit already made) counts as done, and one whose
 `latest` this machine made on top of its recorded parent (registered, but answered with a 500) becomes the parent, and
 the commit is retried once on it; that answer is final. One backup runs at a time, and none

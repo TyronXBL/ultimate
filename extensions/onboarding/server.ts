@@ -15,6 +15,7 @@ import type { Conversation, ConversationId } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { isolatable } from '../../lib/git.ts'
 import { writeJson } from '../../lib/json-file.ts'
+import { firstRunOf } from './onboarded.ts'
 import { readSettings, updateSettings, userSettingsPath } from '../../lib/settings.ts'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import type { ExtensionAction } from '../../server/actions.ts'
@@ -146,6 +147,14 @@ async function declared(path: string) {
 }
 
 const marker = (userHome: string) => join(userHome, '.ultimate/onboarding.json')
+/** The first run's state: the user's `"onboarding": false` setting, then the marker. */
+const firstRunIn = async (userHome: string) =>
+  firstRunOf(
+    (await readSettings(userSettingsPath(userHome))).onboarding === false,
+    existsSync(marker(userHome)),
+  )
+/** The only writer of the marker: the user finished or skipped the first run. */
+const finishFirstRun = (userHome: string) => writeJson(marker(userHome), { firstRunDone: true })
 
 /** The walkthrough's model fact: @ultimate's model and context window, so beat 4 can recommend 1M+. */
 async function modelLine(host: ExtensionHost, conversation: Conversation) {
@@ -216,7 +225,7 @@ export const actions: Record<string, ExtensionAction> = {
     const checkout = await isolatable(host.projectRoot)
     const facts = {
       project: { name: basename(host.projectRoot), path: host.projectRoot },
-      firstRun: !existsSync(marker(host.userHome)),
+      firstRun: (await firstRunIn(host.userHome)) === 'pending',
       projectUndecided: project.config && project.decision === null,
       ...('reason' in checkout ? { gitReason: checkout.reason } : {}),
       root,
@@ -364,19 +373,18 @@ export const actions: Record<string, ExtensionAction> = {
     return operation
   }),
   status: implementAction(StatusAction, async (_args, { host }) => {
-    const [folders, settings, project, user, added] = await Promise.all([
+    const [folders, firstRun, project, user, added] = await Promise.all([
       host.projectExtensions(),
-      readSettings(userSettingsPath(host.userHome)),
+      firstRunIn(host.userHome),
       host.projectSetup(),
       // The user's own lists, for the first run's checkboxes.
       declared(userSettingsPath(host.userHome)),
       adds(host.projectRoot),
     ])
     // `"onboarding": false` in the user's settings: an experienced machine skips the first run and Start here.
-    const off = settings.onboarding === false
     return {
-      firstRun: !off && !existsSync(marker(host.userHome)),
-      off,
+      firstRun: firstRun === 'pending',
+      off: firstRun === 'off',
       project,
       user,
       adds: {
@@ -387,7 +395,7 @@ export const actions: Record<string, ExtensionAction> = {
     }
   }),
   firstRunDone: implementAction(FirstRunDoneAction, async (_args, { host }) => {
-    await writeJson(marker(host.userHome), { firstRunDone: true })
+    await finishFirstRun(host.userHome)
     return { firstRun: false }
   }),
   /**
@@ -416,7 +424,7 @@ export const actions: Record<string, ExtensionAction> = {
       for (const [name, enabled] of Object.entries(choices as Record<string, boolean>))
         toggle(extensions, name, enabled)
     })
-    await writeJson(marker(host.userHome), { firstRunDone: true })
+    await finishFirstRun(host.userHome)
     if (local === undefined) await host.reloadExtensions()
     else await host.setProjectDecision(local)
     return { firstRun: false }

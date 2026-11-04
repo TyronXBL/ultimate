@@ -7,6 +7,17 @@ export interface LastBackup {
   uploaded: number
 }
 
+/**
+ * This process's backup run: idle, uploading (bytes read of `total` before compression, and compressed bytes uploaded so
+ * far), refused (another machine backed up after this home's parent: `error` is the Worker's sentence, `latest` names
+ * the backup a forced one replaces, as the Worker's 409 names it) or failed.
+ */
+export type Run =
+  | { state: 'idle' }
+  | { state: 'uploading'; done: number; total: number; uploaded: number }
+  | { state: 'conflict'; error: string; latest?: { id: string; machine: string; at: number } }
+  | { state: 'failed'; error: string }
+
 /** `cloud.state`: whether backups run here, and this home's last backup, for the status line. */
 export interface CloudState {
   /**
@@ -21,12 +32,6 @@ export interface CloudState {
   machine?: string
   /** The backup this home last uploaded or restored from: the parent of its next backup. */
   lastBackup?: LastBackup
-  /** The running backup: bytes read of `total` (before compression), and compressed bytes uploaded so far. */
-  backup?: { done: number; total: number; uploaded: number }
-  /**
-   * The last backup was refused: another machine backed up after this home's parent. `error` is the Worker's sentence;
-   * `latest` names the backup a forced one replaces, as the Worker's 409 names it.
-   */
-  conflict?: { error: string; latest?: { id: string; machine: string; at: number } }
-  lastError?: string
+  /** The backup run on this machine: `run.ts` is its only writer. */
+  run: Run
 }

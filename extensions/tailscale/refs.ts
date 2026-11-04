@@ -4,23 +4,24 @@
  */
 import { actionRef } from '../../shared/extension-api.ts'
 
-/** The publication state, the tailnet `url` once ready, and a `hint` when something blocks it. */
-export type Status = {
-  state:
-    | 'disabled'
-    | 'starting'
-    | 'ready'
-    | 'not-installed'
-    | 'not-running'
-    | 'not-operator'
-    | 'https-disabled'
-    | 'port-conflict'
-    | 'error'
-  url?: string
-  /** The tailnet logins allowed in (`tailscale.allow` in settings, by default the tailnet's owner). */
-  allow: string[]
-  hint?: string
-}
+/** What blocks the publication; each carries a `hint` saying how to fix it. */
+export type Problem =
+  | 'not-installed'
+  | 'not-running'
+  | 'not-operator'
+  | 'https-disabled'
+  | 'port-conflict'
+  | 'error'
+
+/**
+ * The publication state. `allow` is the tailnet logins allowed in (`tailscale.allow` in settings, by default the
+ * tailnet's owner). `ready` carries the tailnet `url`, and a `hint` while no one can open it yet; a problem carries
+ * the `hint` that fixes it. `state.ts` is the only writer.
+ */
+export type Status =
+  | { state: 'disabled' | 'starting'; allow: string[] }
+  | { state: 'ready'; url: string; allow: string[]; hint?: string }
+  | { state: Problem; allow: string[]; hint: string }
 
 /** No arguments → this server's publication status. */
 export const StatusAction = actionRef<null, Status>('tailscale', 'status')

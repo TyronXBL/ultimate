@@ -24,8 +24,8 @@ import {
 } from '@/sdk'
 import { encode } from 'uqr'
 import { RetryAction, StatusAction } from './refs.ts'
-import type { Status } from './refs.ts'
-type Problem = Exclude<Status['state'], 'disabled' | 'starting' | 'ready'>
+import type { Problem } from './refs.ts'
+import { isProblem, view } from './state.ts'
 
 const problems: Record<Problem, { title: string; link?: { href: string; label: string } }> = {
   'not-installed': {
@@ -247,18 +247,18 @@ const quiet = (label: string) => (
 /** Everything about the tailnet in one place: the address to scan, or what to fix. */
 function Details({ status }: { status: ReturnType<typeof useStatus> }) {
   const { data, error, refetch } = status
-  const state = data?.state
+  const shown = view(data)
   const meta =
-    state === 'ready' ? (
+    shown === 'ready' ? (
       <span className="flex items-center gap-1.5 text-success">
         {dot('bg-success')}
         reachable
       </span>
-    ) : state === 'disabled' ? (
+    ) : shown === 'off' ? (
       <span className="text-muted-foreground/70">off</span>
-    ) : state === 'starting' || (!data && !error) ? (
+    ) : shown === 'starting' || (shown === 'loading' && !error) ? (
       quiet('starting…')
-    ) : state ? (
+    ) : shown === 'trouble' ? (
       <span className="flex items-center gap-1.5 text-warning">
         {dot('bg-warning')}
         needs a fix
@@ -272,12 +272,10 @@ function Details({ status }: { status: ReturnType<typeof useStatus> }) {
           {errorMessage(error)}
         </p>
       )}
-      {state === 'ready' && data?.url && (
-        <Ready allow={data.allow} hint={data.hint} url={data.url} />
-      )}
-      {state && state in problems && <Trouble hint={data?.hint} state={state as Problem} />}
+      {data?.state === 'ready' && <Ready allow={data.allow} hint={data.hint} url={data.url} />}
+      {data && isProblem(data) && <Trouble hint={data.hint} state={data.state} />}
       {/* Ready too: it serves the mapping again if something removed it behind this server's back. */}
-      {(state === 'ready' || (state && state in problems)) && <CheckAgain onChecked={refetch} />}
+      {(shown === 'ready' || shown === 'trouble') && <CheckAgain onChecked={refetch} />}
     </section>
   )
 }
@@ -323,8 +321,8 @@ function Indicator() {
   const [open, setOpen] = useState(false)
   useEvent('tailscale:open', () => setOpen(true))
   const state = status.data?.state
-  const trouble = state !== undefined && state in problems
-  const shown = (state === 'ready' && !!status.data?.url) || trouble
+  const trouble = view(status.data) === 'trouble'
+  const shown = view(status.data) === 'ready' || trouble
   if (!shown && !open) return null
   return (
     <Popover onOpenChange={setOpen} open={open}>

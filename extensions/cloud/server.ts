@@ -15,7 +15,9 @@ import { TailscaleApi } from '../tailscale/api.ts'
 import { backUp, chapterKey, classify, Conflict, readBackup } from './backup.ts'
 import { join, joinState, saveCloud } from './join.ts'
 import { BackupAction, BackupEvent, JoinAction, JoinStateAction, StateAction } from './refs.ts'
-import type { CloudState } from './types.ts'
+import { idle, transition } from './run.ts'
+import type { RunEvent } from './run.ts'
+import type { CloudState, Run } from './types.ts'
 
 export const secrets = [
   { name: 'ULTIMATE_CLOUD_TOKEN', description: 'Bearer token for the cloud backup Worker' },
@@ -29,14 +31,9 @@ const SNAPSHOT_KEY = 'ULTIMATE_CLOUD_SNAPSHOT_KEY'
 const BACKUP_CAP = 10 * 60_000
 const PAUSED = 'Ultimate is paused; press Play first'
 
-/**
- * This process's backup state, kept across reloads of the facet: the running upload, and the conflict and error
- * of the last attempt.
- */
+/** This process's backup run, kept across reloads of the facet. */
 interface Running {
-  backup?: CloudState['backup']
-  conflict?: CloudState['conflict']
-  lastError?: string
+  run: Run
 }
 
 /** Whether backups run here, and for which project; `cloud.state` reads it on every call. */
@@ -64,15 +61,19 @@ async function record<D extends JsonValue>(host: ExtensionHost, event: EventToke
     .catch((error: unknown) => host.notice(`Cloud backup: ${String(error)}`))
 }
 
-const runningIn = (host: ExtensionHost) => host.resource('cloud.backup', (): Running => ({}))
+const runningIn = (host: ExtensionHost) =>
+  host.resource('cloud.backup', (): Running => ({ run: idle }))
+const send = (running: Running, event: RunEvent) => {
+  running.run = transition(running.run, event)
+}
 
 /** Back up now: one at a time, never while paused. */
 export async function backup(host: ExtensionHost, force: boolean) {
   const running = runningIn(host)
-  if (running.backup) throw new Error('a backup is already running')
+  if (running.run.state === 'uploading') throw new Error('a backup is already running')
   if (host.want(PauseApi)?.paused()) throw new Error(PAUSED)
   // Set before the first await, so a second call refuses at once.
-  running.backup = { done: 0, total: 0, uploaded: 0 }
+  send(running, { type: 'begin' })
   try {
     const ready = await setup(host)
     if (ready.status === 'off')
@@ -85,7 +86,7 @@ export async function backup(host: ExtensionHost, force: boolean) {
       throw new Error(`${host.projectRoot} has no GitHub origin remote, so it cannot be backed up`)
     return await upload(host, running, ready, force)
   } finally {
-    running.backup = undefined
+    send(running, { type: 'aborted' })
   }
 }
 
@@ -118,10 +119,10 @@ async function upload(
       ...(tailnet?.startsWith('https://') ? { tailnet } : {}),
       signal: AbortSignal.timeout(BACKUP_CAP),
       progress: (read, total, uploaded) => {
-        running.backup = { done: read, total, uploaded }
+        send(running, { type: 'progress', done: read, total, uploaded })
       },
     })
-    running.conflict = running.lastError = undefined
+    send(running, { type: 'succeeded' })
     await record(host, BackupEvent, {
       phase: 'done',
       project: ready.key,
@@ -132,13 +133,12 @@ async function upload(
     return done
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (error instanceof Conflict) {
-      running.conflict = { error: message, ...(error.latest ? { latest: error.latest } : {}) }
-      running.lastError = undefined
-    } else {
-      running.conflict = undefined
-      running.lastError = `Backup failed: ${message}`
-      host.notice(running.lastError)
+    if (error instanceof Conflict)
+      send(running, { type: 'refused', error: message, latest: error.latest })
+    else {
+      const failed = `Backup failed: ${message}`
+      send(running, { type: 'failed', error: failed })
+      host.notice(failed)
     }
     await record(host, BackupEvent, {
       phase: 'failed',
@@ -152,14 +152,14 @@ async function upload(
 }
 
 export const actions = {
-  /** `{ status, name, machine, lastBackup, backup, conflict, lastError }` for the status line. */
+  /** `{ status, name, machine, lastBackup, run }` for the status line. */
   state: implementAction(StateAction, async (_args, { host }): Promise<CloudState> => {
     const ready = await setup(host)
     const running = runningIn(host)
     const name = basename(host.projectRoot)
     if (ready.status === 'satellite')
-      return { status: 'satellite', name, machine: ready.config.machine }
-    if (ready.status !== 'on') return { status: ready.status, name }
+      return { status: 'satellite', name, machine: ready.config.machine, run: idle }
+    if (ready.status !== 'on') return { status: ready.status, name, run: idle }
     const saved = await readBackup(ready.dir, ready.key)
     return {
       status: 'on',
@@ -167,9 +167,7 @@ export const actions = {
       chapter: { name: host.chapter.name, number: host.chapter.number },
       machine: ready.config.machine,
       ...(saved ? { lastBackup: saved.last } : {}),
-      ...(running.backup ? { backup: { ...running.backup } } : {}),
-      ...(running.conflict ? { conflict: running.conflict } : {}),
-      ...(running.lastError ? { lastError: running.lastError } : {}),
+      run: running.run,
     }
   }),
   /** `{ force? }`: Back up now; resolves once the backup is committed. */

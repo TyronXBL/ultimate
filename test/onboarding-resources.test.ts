@@ -5,6 +5,7 @@ import { fauxServer, post, temp, removeTemp, trimmedSourceCopy } from './helpers
 import { context } from '../server/harness.ts'
 import { projectDecision } from '../server/project-setup.ts'
 import { updateSettings } from '../lib/settings.ts'
+import { firstRunOf, firstRunView } from '../extensions/onboarding/onboarded.ts'
 
 it('gates project resources, remembers choices, and applies onboarding settings actions live', async () => {
   const home = await temp('ultimate-onboarding-')
@@ -214,4 +215,24 @@ it('gates project resources, remembers choices, and applies onboarding settings 
     await server?.close()
     await removeTemp(home)
   }
+})
+
+it.each([
+  // 33f42e7f: `"onboarding": false` turns the first run off, marker or not.
+  ['setting off, no marker', true, false, 'off'],
+  ['setting off, marked', true, true, 'off'],
+  ['no marker', false, false, 'pending'],
+  ['marked', false, true, 'done'],
+] as const)('first run: %s', (_name, off, marked, expected) => {
+  expect(firstRunOf(off, marked)).toBe(expected)
+})
+it.each([
+  ['pending', false, true, false, 'first-run'],
+  ['finished or skipped', false, true, true, 'closed'],
+  ['not pending', false, false, false, 'closed'],
+  // 6a008b5e: ⌘K Get ready… reopens it after the first run was finished, done or off.
+  ['reopened after finishing', true, true, true, 'reopened'],
+  ['reopened when not pending', true, false, false, 'reopened'],
+] as const)('first run dialog: %s', (_name, reopened, pending, finished, expected) => {
+  expect(firstRunView(reopened, pending, finished)).toBe(expected)
 })

@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import tailscale, { actions } from '../extensions/tailscale/server.ts'
 import type { Status } from '../extensions/tailscale/api.ts'
+import { transition, view } from '../extensions/tailscale/state.ts'
+import type { Event } from '../extensions/tailscale/state.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import { admit, createAccess } from '../server/request-security.ts'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
@@ -118,7 +120,9 @@ else if (args[0] === 'serve') {
       access,
       close,
       status: async () =>
-        (await actions.status(null, { host } as Parameters<typeof actions.status>[1])) as Status,
+        (await actions.status(null, { host } as Parameters<typeof actions.status>[1])) as Status & {
+          url?: string
+        },
     }
   }
   return { home, config, invocations, instance }
@@ -565,4 +569,79 @@ it('reports failed teardown without throwing and classifies filesystem failures 
   await writeFile(join(f.home, '.ultimate/tailscale.json'), '{permission denied')
   const invalid = await f.instance('/new', 4751)
   expect((await invalid.status()).state).toBe('error')
+})
+
+const url = 'https://rog.example.ts.net:4747'
+const me = ['owner@example.com']
+const noOwner = { state: 'ready', url, allow: [], hint: expect.stringContaining('owner login') }
+it.each<[string, Status, Event, unknown]>([
+  [
+    'start',
+    { state: 'disabled', allow: [] },
+    { type: 'starting' },
+    { state: 'starting', allow: [] },
+  ],
+  [
+    'allowlist resolved',
+    { state: 'starting', allow: [] },
+    { type: 'resolved', allow: me },
+    { state: 'starting', allow: me },
+  ],
+  [
+    'published',
+    { state: 'starting', allow: me },
+    { type: 'published', url, allow: me },
+    { state: 'ready', url, allow: me },
+  ],
+  // cf94cf17: with no owner login in status, ready says why no one can open it.
+  [
+    'published without owner',
+    { state: 'starting', allow: [] },
+    { type: 'published', url },
+    noOwner,
+  ],
+  // b8deef07: the login shows up later; ready takes it and drops the hint.
+  [
+    'owner found',
+    { state: 'ready', url, allow: [], hint: 'No one can open it yet' },
+    { type: 'owner-found', allow: me },
+    { state: 'ready', url, allow: me },
+  ],
+  [
+    'owner found while a probe failed',
+    { state: 'error', allow: [], hint: 'probe failed' },
+    { type: 'owner-found', allow: me },
+    { state: 'error', allow: [], hint: 'probe failed' },
+  ],
+  [
+    'blocked keeps the allowlist',
+    { state: 'starting', allow: me },
+    { type: 'blocked', problem: 'https-disabled', hint: 'Enable HTTPS' },
+    { state: 'https-disabled', allow: me, hint: 'Enable HTTPS' },
+  ],
+  // 44c5bf1a: Check again shows ready once the mapping is found standing after a transient probe failure.
+  [
+    'restored after a failed probe',
+    { state: 'error', allow: me, hint: 'probe failed' },
+    { type: 'published', url, allow: me },
+    { state: 'ready', url, allow: me },
+  ],
+  [
+    'stopped keeps the allowlist',
+    { state: 'ready', url, allow: me },
+    { type: 'stopped' },
+    { state: 'disabled', allow: me },
+  ],
+])('tailscale status: %s', (_name, from, event, expected) => {
+  expect(transition(from, event)).toEqual(expected)
+})
+it('tailscale status: one view for the status line and the details', () => {
+  const views = [
+    undefined,
+    { state: 'disabled', allow: [] },
+    { state: 'starting', allow: [] },
+    { state: 'ready', url, allow: [] },
+    { state: 'port-conflict', allow: [], hint: 'taken' },
+  ] as (Status | undefined)[]
+  expect(views.map(view)).toEqual(['loading', 'off', 'starting', 'ready', 'trouble'])
 })

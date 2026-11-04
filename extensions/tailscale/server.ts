@@ -16,6 +16,9 @@ import { TailscaleApi } from './api.ts'
 import type { Status } from './api.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { RetryAction, StatusAction } from './refs.ts'
+import type { Problem } from './refs.ts'
+import { off, transition } from './state.ts'
+import type { Event } from './state.ts'
 interface Serve {
   TCP?: Record<string, unknown>
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>
@@ -43,18 +46,17 @@ const retries = new WeakMap<ExtensionHost, () => Promise<void>>()
 export const actions: Record<string, ExtensionAction> = {
   status: implementAction(
     StatusAction,
-    async (_args, { host }): Promise<Status> =>
-      statuses.get(host) ?? { state: 'disabled', allow: [] },
+    async (_args, { host }): Promise<Status> => statuses.get(host) ?? off,
   ),
   /** Starts again, or once ready serves the mapping again if it went missing, and returns the new status. */
   retry: implementAction(RetryAction, async (_args, { host }): Promise<Status> => {
     await retries.get(host)?.()
-    return statuses.get(host) ?? { state: 'disabled', allow: [] }
+    return statuses.get(host) ?? off
   }),
 }
 
 export default function tailscale(host: ExtensionHost) {
-  let status: Status = { state: 'disabled', allow: [] }
+  let status = off
   // TAILSCALE_COMMAND names another CLI; tests point it at a missing one so test servers stay off the tailnet.
   const override = process.env.TAILSCALE_COMMAND
   let cli = override ?? 'tailscale'
@@ -73,9 +75,9 @@ export default function tailscale(host: ExtensionHost) {
   let opening: Promise<void> | undefined
   let running: Promise<void> | undefined
   let closed = false
-  const set = (next: Status) => {
-    status = next
-    statuses.set(host, next)
+  const send = (event: Event) => {
+    status = transition(status, event)
+    statuses.set(host, status)
   }
   const command = (args: string[]) => exec(cli, args, { timeout: 15000, maxBuffer: 1024 * 1024 })
   // Tailscale user IDs can exceed Number.MAX_SAFE_INTEGER; preserve the original numeric token.
@@ -92,8 +94,8 @@ export default function tailscale(host: ExtensionHost) {
     const login = node.Self?.UserID ? node.User?.[node.Self.UserID]?.LoginName : undefined
     return login ? [login] : undefined
   }
-  const fail = (state: Status['state'], hint: string) => {
-    set({ state, allow: status.allow, hint })
+  const fail = (problem: Problem, hint: string) => {
+    send({ type: 'blocked', problem, hint })
     host.notice(`Tailscale: ${hint}`)
   }
   async function withRegistry<T>(use: (value: { ports: Record<string, Entry> }) => Promise<T>) {
@@ -132,7 +134,8 @@ export default function tailscale(host: ExtensionHost) {
       await lock.close()
     }
   }
-  let ready: Status | undefined
+  /** What this server serves, to show it ready again after a probe failed over a mapping that stands. */
+  let published: { url: string; allow?: string[] } | undefined
   let reading: ReturnType<typeof command> | undefined
   /** Whether this server's mapping still stands (`own`), a live successor took it over, or it is gone. */
   const intact = () =>
@@ -150,7 +153,7 @@ export default function tailscale(host: ExtensionHost) {
       if (ownedPort !== undefined) {
         const mapping = await intact()
         // A probe that failed earlier left an error status over a mapping that stands: show it ready again.
-        if (mapping === 'own') set(ready!)
+        if (mapping === 'own') send({ type: 'published', ...published! })
         if (mapping) return
         // Removed behind this server's back (`tailscale serve … off`, or another server's cleanup): claim it again.
         remove?.()
@@ -160,7 +163,7 @@ export default function tailscale(host: ExtensionHost) {
         userSettingsPath(host.userHome),
         {},
       )
-      set({ state: 'starting', allow: [] })
+      send({ type: 'starting' })
       let output: string
       try {
         output = (await command(['status', '--json'])).stdout
@@ -173,9 +176,9 @@ export default function tailscale(host: ExtensionHost) {
           await access(cli, constants.X_OK)
         } catch {
           // On by default, so a machine without Tailscale gets a status, not a notice on every start.
-          set({
-            state: 'not-installed',
-            allow: [],
+          send({
+            type: 'blocked',
+            problem: 'not-installed',
             hint: 'Install Tailscale and put its CLI on PATH.',
           })
           return
@@ -201,7 +204,7 @@ export default function tailscale(host: ExtensionHost) {
         (!Array.isArray(allow) || allow.some((login) => typeof login !== 'string' || !login))
       )
         throw new Error('tailscale.allow must be an array of login names')
-      set({ state: 'starting', allow: allow ?? [] })
+      send({ type: 'resolved', allow: allow ?? [] })
       if (!node.CertDomains?.includes(dns)) {
         fail('https-disabled', 'Enable HTTPS certificates in the Tailscale admin console.')
         return
@@ -289,21 +292,16 @@ export default function tailscale(host: ExtensionHost) {
             if (!allow) {
               reading ??= command(['status', '--json']).finally(() => (reading = undefined))
               allow ??= ownerOf(parse((await reading).stdout))
-              if (allow) ready = { state: 'ready', url, allow }
-              if (allow && status.state === 'ready') set(ready!)
+              if (allow) {
+                published = { url, allow }
+                send({ type: 'owner-found', allow })
+              }
             }
             return allow?.includes(login) ? { login } : undefined
           },
         })
-        ready = allow
-          ? { state: 'ready', url, allow }
-          : {
-              state: 'ready',
-              url,
-              allow: [],
-              hint: 'No one can open it yet: tailscale status --json does not list the owner login (Self.UserID in User). It is read again on the next tailnet request.',
-            }
-        set(ready)
+        published = { url, allow }
+        send({ type: 'published', ...published })
       })
     } catch (error) {
       const stderr = (error as { stderr?: string }).stderr ?? ''
@@ -342,8 +340,8 @@ export default function tailscale(host: ExtensionHost) {
       }
       ownedPort = undefined
     }
-    set({ state: 'disabled', allow: status.allow })
+    send({ type: 'stopped' })
   })
-  set(status)
+  statuses.set(host, status)
   return defineExtension({ name: 'tailscale' })
 }
