@@ -139,8 +139,10 @@ async function locked<T>(dir: string, critical: () => Promise<T>) {
 
 /** Whether a job needing `need` MiB fits now above `floor` (`memoryFloor`), without admitting it. */
 export async function checkRam(floor: number | undefined, need: number, parent = tmpdir()) {
-  if (floor === undefined) return undefined
-  const dir = await stateDir(parent)
+  return floor === undefined ? undefined : shortIn(await stateDir(parent), floor, need)
+}
+/** What a job needing `need` MiB falls short by, with the reservations kept in the state folder `dir`. */
+async function shortIn(dir: string, floor: number, need: number) {
   const reserved = (await reservations(dir, Date.now())).reduce((sum, item) => sum + item.need, 0)
   return ramShort(await availableMiB(), need, floor, reserved)
 }
@@ -150,7 +152,7 @@ export async function admitRam(floor: number | undefined, need: number, parent =
   if (floor === undefined) return undefined
   const dir = await stateDir(parent)
   return locked(dir, async () => {
-    const short = await checkRam(floor, need, parent)
+    const short = await shortIn(dir, floor, need)
     if (!short && need) {
       const now = Date.now()
       await writeJson(admissions(dir), [

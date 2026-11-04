@@ -99,14 +99,14 @@ function createRun(host: Pick<ExtensionHost, 'userHome'>) {
     object
   > = async (task, runtime, ctx) => {
     const files = paths(task)
-    // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started,
-    // before anything else: what follows may wait for RAM, or report that the command never started.
+    // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started and
+    // starts it again at once, as before the floor existed: that attempt already ran, so it never waits for RAM or
+    // reports that the command never started. Its own RAM was just freed.
     const left = await readPidFile(files.pid)
     if (left) await stopGroup(left, { pidFile: files.pid })
-    const short = await admitRam(
-      await memoryFloor(host.userHome),
-      commandNeedMiB(task.input.command),
-    )
+    const short = left
+      ? undefined
+      : await admitRam(await memoryFloor(host.userHome), commandNeedMiB(task.input.command))
     if (short) {
       const { checkpoint } = task.state
       const since = checkpoint.phase === 'wait' ? checkpoint.since : runtime.now()
