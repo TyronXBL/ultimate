@@ -21,7 +21,7 @@ import type { ResponseReceipt } from '../conversations/summary.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { PauseApi } from '../pause/api.ts'
 import { Standing } from '../subagents/api.ts'
-import { due, LEAD, TTL } from './due.ts'
+import { due, isOn, LEAD, outcome, TTL, warmStep } from './due.ts'
 import { SetAction, StateAction, WarmDoc } from './refs.ts'
 import type { Ping, WarmDocState, WarmState } from './refs.ts'
 
@@ -85,13 +85,13 @@ async function activity(host: ExtensionHost, doc: WarmDocState, now: number) {
   if (model?.provider !== PROVIDER) return undefined
   const answered = await answeredAt(host, id!, model.modelId, now)
   const last = doc.last?.model === model.modelId ? doc.last : undefined
-  const pinged = last && !last.error ? last.at : undefined
+  const pinged = last && outcome(last) === 'succeeded' ? last.at : undefined
   const lastRequest = Math.max(answered ?? 0, pinged ?? 0) || undefined
   return {
     id: id!,
     model: model.modelId,
     lastRequest,
-    failedAfter: last?.error ? last.at : undefined,
+    failedAfter: last && outcome(last) !== 'succeeded' ? last.at : undefined,
     inputAt: doc.inputAt,
   }
 }
@@ -100,17 +100,17 @@ async function activity(host: ExtensionHost, doc: WarmDocState, now: number) {
 export const open = (paused: boolean | undefined, lastRequest: number, now: number) =>
   !paused && now - lastRequest < TTL
 
+type Attempt = { at: number; model: string; previous?: number }
+
 /**
  * In one commit: record the attempt as interrupted, only while it is still on, @ultimate has no run and no other
  * attempt was recorded since the tick read `previous`. A crash mid-request then counts as a failure, never a retry.
  */
-async function claim(host: ExtensionHost, id: ConversationId, attempt: Ping, previous?: number) {
+async function claim(host: ExtensionHost, id: ConversationId, attempt: Attempt) {
   return host.harness().commit(async (tx) => {
     const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
-    if (doc.off || doc.last?.at !== previous || (await tx.doc(LiveDoc, id)).run) return false
-    doc.last = attempt
-    doc.pings = (doc.pings ?? 0) + 1
-    return true
+    if ((await tx.doc(LiveDoc, id)).run) return false
+    return warmStep(doc, { type: 'claim', ...attempt })
   }, context)
 }
 
@@ -122,7 +122,7 @@ async function record(
   answer?: AssistantMessage,
 ) {
   await host.harness().commit(async (tx) => {
-    ;(await tx.doc(State, ROOT_CONVERSATION_ID)).last = last
+    warmStep(await tx.doc(State, ROOT_CONVERSATION_ID), { type: 'record', ping: last })
     if (answer)
       await host.need(ConversationsApi).accountResponse(tx, id, {
         provider: answer.provider,
@@ -160,8 +160,7 @@ async function ping(
   // Preparing awaited: a pause, a new run or the switch may have come in meanwhile. The claim checks the switch and the
   // run in its commit; pause and the hour are checked again after it, with nothing awaited before the request starts.
   if (!open(paused(), found.lastRequest, Date.now())) return
-  if (!(await claim(host, id, { at, model: found.model, error: 'interrupted' }, found.previous)))
-    return
+  if (!(await claim(host, id, { at, model: found.model, previous: found.previous }))) return
   if (!open(paused(), found.lastRequest, Date.now())) {
     await record(host, id, { at, model: found.model, error: 'skipped: paused or expired' })
     return
@@ -203,7 +202,7 @@ async function tick(host: ExtensionHost) {
   // Paused, also by a rate limit: no request starts until Play.
   if (host.want(PauseApi)?.paused()) return
   const doc = await read(host)
-  if (doc.off) return
+  if (!isOn(doc)) return
   const now = Date.now()
   const found = await activity(host, doc, now)
   if (!found?.lastRequest || !due({ now, ...found })) return
@@ -214,7 +213,7 @@ async function state(host: ExtensionHost): Promise<WarmState> {
   const doc = await read(host)
   const now = Date.now()
   const found = await activity(host, doc, now)
-  const on = !doc.off
+  const on = isOn(doc)
   const base = {
     on,
     pings: doc.pings ?? 0,
@@ -241,7 +240,7 @@ export default function keepWarm(host: ExtensionHost) {
     [UserInputEvent],
     async (tx, { data, at }) => {
       if ((await tx.doc(Standing, ROOT_CONVERSATION_ID)).ultimate !== data.conversation) return
-      ;(await tx.doc(State, ROOT_CONVERSATION_ID)).inputAt = Date.parse(at)
+      warmStep(await tx.doc(State, ROOT_CONVERSATION_ID), { type: 'input', at: Date.parse(at) })
     },
     { from: 'now' },
   )
@@ -268,9 +267,7 @@ export const actions = {
     const on = (args as { on?: unknown } | null)?.on
     if (typeof on !== 'boolean') throw new Error('Expected { on: boolean }')
     await host.harness().commit(async (tx) => {
-      const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
-      if (on) delete doc.off
-      else doc.off = true
+      warmStep(await tx.doc(State, ROOT_CONVERSATION_ID), { type: 'switch', on })
     }, context)
     return state(host)
   }),

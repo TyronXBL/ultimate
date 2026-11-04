@@ -16,6 +16,7 @@ import { waiting } from '../questions/ui.tsx'
 import { StandingAction } from '../subagents/ui.tsx'
 import { AddAction, DoneAction, ReopenAction, TodosDoc } from './refs.ts'
 import type { Todo } from './refs.ts'
+import { isDone } from './done.ts'
 
 /** The fields of a waiting message a question row shows. */
 type Asked = {
@@ -43,10 +44,10 @@ export function Todos() {
   const questions = waiting((useDocOf(1, MessagesDoc) ?? emptyMessages).messages)
   const now = useNow(60_000)
   const [error, setError] = useState<string>()
-  const open = items.filter((todo) => !todo.done)
+  const open = items.filter((todo) => !isDone(todo))
   const yours = open.filter((todo) => todo.owner === 'user')
   const ultimate = open.filter((todo) => todo.owner === 'ultimate')
-  const done = items.filter((todo) => todo.done).toReversed()
+  const done = items.filter(isDone).toReversed()
   const count = questions.length + open.length
 
   const run = (action: Promise<unknown>) => {
@@ -60,7 +61,7 @@ export function Todos() {
     )
   }
   const toggle = (todo: Todo) =>
-    void run(api.action(todo.done ? ReopenAction : DoneAction, { id: todo.id }))
+    void run(api.action(isDone(todo) ? ReopenAction : DoneAction, { id: todo.id }))
   const { showSurface, switchConversation } = useUltimate()
   // Sent as the user, like typing it into @ultimate's composer; a busy @ultimate takes it after its current run.
   const start = (todo: Todo) =>
@@ -172,7 +173,8 @@ function TodoRow({
   toggle: (todo: Todo) => void
   start?: (todo: Todo) => void
 }) {
-  const at = todo.done ?? todo.at
+  const ticked = isDone(todo)
+  const at = ticked ? todo.done : todo.at
   const age = formatAgo(at, now)
   const label =
     todo.owner === 'user' ? 'Ask @ultimate to help with this' : 'Have @ultimate work on this'
@@ -180,11 +182,11 @@ function TodoRow({
     <li className="group/todo flex items-start rounded hover:bg-muted/50" data-todo={todo.id}>
       <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5 py-1.5 pl-2 pointer-coarse:py-2.5">
         <Checkbox
-          aria-label={todo.done ? `Reopen: ${todo.text}` : `Done: ${todo.text}`}
-          checked={!!todo.done}
+          aria-label={ticked ? `Reopen: ${todo.text}` : `Done: ${todo.text}`}
+          checked={ticked}
           className={cn(
             'mt-0.5',
-            todo.done &&
+            ticked &&
               'data-[state=checked]:border-muted-foreground/40 data-[state=checked]:bg-muted data-[state=checked]:text-muted-foreground',
           )}
           onCheckedChange={() => toggle(todo)}
@@ -192,7 +194,7 @@ function TodoRow({
         <span
           className={cn(
             'min-w-0 flex-1 text-[13px] leading-snug break-words',
-            todo.done && 'text-muted-foreground line-through decoration-muted-foreground/50',
+            ticked && 'text-muted-foreground line-through decoration-muted-foreground/50',
           )}
         >
           {todo.text}
@@ -200,13 +202,13 @@ function TodoRow({
         <time
           className="shrink-0 pt-px font-mono text-[11px] text-muted-foreground/70"
           dateTime={new Date(at).toISOString()}
-          title={`${todo.done ? 'Done' : 'Added'} ${new Date(at).toLocaleString()}`}
+          title={`${ticked ? 'Done' : 'Added'} ${new Date(at).toLocaleString()}`}
         >
-          {todo.done && todo.owner === 'ultimate' ? '@ultimate · ' : ''}
+          {ticked && todo.owner === 'ultimate' ? '@ultimate · ' : ''}
           {age}
         </time>
       </label>
-      {start && !todo.done ? (
+      {start && !ticked ? (
         <button
           aria-label={`${label}: ${todo.text}`}
           className="mt-1 mr-2 ml-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground opacity-0 group-hover/todo:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:mt-0 pointer-coarse:mr-1 pointer-coarse:size-9 pointer-coarse:opacity-100"

@@ -19,6 +19,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { Standing } from '../subagents/api.ts'
 import { AddAction, DoneAction, ReopenAction, TodosDoc } from './refs.ts'
 import type { Todo } from './refs.ts'
+import { isDone } from './done.ts'
 
 /** Done to-dos kept; older ones are dropped when another is ticked. */
 export const DONE_LIMIT = 50
@@ -71,10 +72,10 @@ export async function mark(tx: Tx, id: unknown, done: boolean) {
   if (!todo) throw new Error(`No to-do ${String(id)}`)
   if (done) {
     todo.done ??= Date.now()
-    const ticked = todos.items.filter((item) => item.done !== undefined)
+    const ticked = todos.items.filter(isDone)
     const drop = new Set(
       ticked
-        .toSorted((a, b) => b.done! - a.done!)
+        .toSorted((a, b) => b.done - a.done)
         .slice(DONE_LIMIT)
         .map((item) => item.id),
     )
@@ -87,7 +88,7 @@ export async function mark(tx: Tx, id: unknown, done: boolean) {
 const line = (todo: Todo) => `- ${todo.id}: ${todo.text}`
 /** The open to-dos as model text, by owner; undefined when none is open. */
 export function listText(items: readonly Todo[]) {
-  const open = items.filter((item) => item.done === undefined)
+  const open = items.filter((item) => !isDone(item))
   if (!open.length) return undefined
   const mine = open.filter((item) => item.owner === 'ultimate')
   const theirs = open.filter((item) => item.owner === 'user')
@@ -109,7 +110,7 @@ export async function noteFor(tx: Tx, conversationId: ConversationId, now: numbe
     entries: [
       {
         kind: 'todos.note',
-        data: { open: items.filter((item) => item.done === undefined).length },
+        data: { open: items.filter((item) => !isDone(item)).length },
         model: [
           {
             role: 'user' as const,

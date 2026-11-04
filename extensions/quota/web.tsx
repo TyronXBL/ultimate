@@ -2,11 +2,9 @@ import { GaugeIcon } from 'lucide-react'
 import { useEffect } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { api, cn, defineWebExtension, formatAgo, useAction, useNow } from '@/sdk'
+import { chipOf, NEAR } from './chip.ts'
 import { StateAction } from './refs.ts'
 import type { QuotaProvider, QuotaWindow } from './refs.ts'
-
-/** From this share on a limit is close; at 100 its pool is blocked until it resets. */
-const NEAR = 70
 
 const tone = (used: number) =>
   used >= 100 ? 'text-error' : used >= NEAR ? 'text-warning' : 'text-muted-foreground'
@@ -36,15 +34,6 @@ const absolute = (at: number) =>
     minute: '2-digit',
     hourCycle: 'h23',
   })
-
-/** The fullest limit across every login, with whose it is. */
-function worst(providers: QuotaProvider[]) {
-  let top: { provider: QuotaProvider; window: QuotaWindow } | undefined
-  for (const provider of providers)
-    for (const window of provider.windows)
-      if (!top || window.used > top.window.used) top = { provider, window }
-  return top
-}
 
 function Row({ window, now }: { window: QuotaWindow; now: number }) {
   const blocked = window.used >= 100
@@ -148,11 +137,7 @@ function Chip() {
   }
   const providers = data?.providers ?? []
   if (!providers.length) return null
-  const top = worst(providers)
-  const used = top?.window.used ?? 0
-  const failed = providers.some((provider) => provider.error)
-  const full = providers.flatMap((provider) => provider.windows).filter((w) => w.used >= 100)
-  const near = used >= NEAR
+  const { look, full, top, failed } = chipOf(providers)
   return (
     <Popover onOpenChange={readFresh}>
       <PopoverTrigger asChild>
@@ -160,18 +145,18 @@ function Chip() {
           aria-label="Subscription limits"
           className={cn(
             '-mx-1 flex cursor-pointer items-center gap-1.5 rounded-sm px-1 transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground',
-            near && 'text-warning',
+            look !== 'ok' && 'text-warning',
           )}
-          data-quota={full.length ? 'full' : near ? 'near' : 'ok'}
+          data-quota={look}
           type="button"
         >
-          <GaugeIcon className={cn('size-3', failed && !near && 'text-error')} />
-          {full.length ? (
-            <span className="tabular-nums">{full.length} full</span>
-          ) : near && top ? (
+          <GaugeIcon className={cn('size-3', failed && look === 'ok' && 'text-error')} />
+          {look === 'full' ? (
+            <span className="tabular-nums">{full} full</span>
+          ) : look === 'near' && top ? (
             <>
               <span className="max-md:hidden">{top.provider.name}</span>
-              <span className="tabular-nums">{percent(used)}</span>
+              <span className="tabular-nums">{percent(top.window.used)}</span>
             </>
           ) : (
             <span className="max-md:hidden">limits</span>

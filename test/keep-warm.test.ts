@@ -1,5 +1,16 @@
 import { expect, it } from 'vitest'
-import { due, failing, IDLE_STOP, LEAD, TTL } from '../extensions/keep-warm/due.ts'
+import {
+  chipOf,
+  due,
+  failing,
+  IDLE_STOP,
+  LEAD,
+  outcome,
+  TTL,
+  warmStep,
+} from '../extensions/keep-warm/due.ts'
+import type { WarmEvent } from '../extensions/keep-warm/due.ts'
+import type { WarmDocState, WarmState } from '../extensions/keep-warm/refs.ts'
 import * as keepWarm from '../extensions/keep-warm/server.ts'
 
 const now = Date.parse('2026-10-24T12:00:00Z')
@@ -64,4 +75,70 @@ it('sends only while not paused and within the hour, checked right before the re
 
 it('leaves the switch to the user', () => {
   expect(keepWarm.userActions).toEqual(['set'])
+})
+
+const ping = (error?: string) => ({ at: now - minutes(5), model: 'm', ...(error ? { error } : {}) })
+
+it('moves the document only through warmStep', () => {
+  const at = now
+  const rows: [string, WarmDocState, WarmEvent, boolean, WarmDocState][] = [
+    // 89bccf4c, 6413693a: a claim records the attempt as interrupted and counts it, in one step.
+    [
+      'claims',
+      { last: ping(), pings: 2 },
+      { type: 'claim', at, model: 'm', previous: now - minutes(5) },
+      true,
+      { last: { at, model: 'm', error: 'interrupted' }, pings: 3 },
+    ],
+    [
+      'claims the first',
+      {},
+      { type: 'claim', at, model: 'm' },
+      true,
+      { last: { at, model: 'm', error: 'interrupted' }, pings: 1 },
+    ],
+    // 89bccf4c: off, or another attempt recorded since the tick read, refuses the claim and changes nothing.
+    ['refused when off', { off: true }, { type: 'claim', at, model: 'm' }, false, { off: true }],
+    [
+      'refused after another attempt',
+      { last: ping() },
+      { type: 'claim', at, model: 'm' },
+      false,
+      { last: ping() },
+    ],
+    [
+      'records the outcome',
+      { last: ping('interrupted'), pings: 1 },
+      { type: 'record', ping: ping() },
+      true,
+      { last: ping(), pings: 1 },
+    ],
+    ['notes the input', {}, { type: 'input', at }, true, { inputAt: at }],
+    ['turns off', { inputAt: at }, { type: 'switch', on: false }, true, { inputAt: at, off: true }],
+    ['turns on', { off: true }, { type: 'switch', on: true }, true, {}],
+  ]
+  for (const [name, from, event, applied, expected] of rows) {
+    const doc = structuredClone(from)
+    expect({ name, applied: warmStep(doc, event), doc }).toEqual({ name, applied, doc: expected })
+  }
+})
+
+it('reads a ping and the chip as states', () => {
+  expect([undefined, 'interrupted', 'HTTP 500'].map((error) => outcome(ping(error)))).toEqual([
+    'succeeded',
+    'interrupted',
+    'failed',
+  ])
+  const chip = (state: Partial<WarmState>) => chipOf({ on: true, pings: 0, ...state }, now)
+  const lastRequest = now - minutes(10)
+  expect(chip({ lastRequest })).toBe('warm')
+  expect(chip({ lastRequest: now - TTL })).toBe('cold')
+  expect(chip({ lastRequest, on: false })).toBe('off')
+  // 6413693a: a crashed attempt counts as a failure.
+  expect(chip({ lastRequest, last: { ...ping('interrupted'), at: now - minutes(5) } })).toBe(
+    'failing',
+  )
+  expect(chip({ lastRequest, last: { ...ping(), at: now - minutes(5) } })).toBe('warm')
+  // 5f134f69: a cached answer after the failed ping clears the red chip.
+  expect(chip({ lastRequest: now - minutes(1), last: ping('HTTP 500') })).toBe('warm')
 })

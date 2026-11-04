@@ -3,6 +3,10 @@ import type { GenerationHooks } from '@earendil-works/pi-durable'
 import { afterEach, expect, it, vi } from 'vitest'
 import quotaExtension, { actions } from '../extensions/quota/server.ts'
 import { QuotaApi } from '../extensions/quota/api.ts'
+import { chipOf } from '../extensions/quota/chip.ts'
+import type { QuotaProvider } from '../extensions/quota/refs.ts'
+import { cacheStep, due } from '../extensions/quota/state.ts'
+import type { CacheEvent, Cached } from '../extensions/quota/state.ts'
 import type { ActionContext } from '../server/actions.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import { apis } from './helpers.ts'
@@ -16,9 +20,12 @@ afterEach(() => {
 function quotaHost(keys: Record<string, string>) {
   const services = apis()
   const resources = new Map<string, unknown>()
+  const reactors: Record<string, (tx: unknown, event: { data: { provider: string } }) => void> = {}
   const host = {
     ...services,
-    react: () => {},
+    react: (name: string, _events: unknown, fn: (typeof reactors)[string]) => {
+      reactors[name] = fn
+    },
     resource: <T>(name: string, init: () => T) => {
       if (!resources.has(name)) resources.set(name, init())
       return resources.get(name) as T
@@ -31,7 +38,7 @@ function quotaHost(keys: Record<string, string>) {
   } as unknown as ExtensionHost
   const hooks = quotaExtension(host).hooks![0].handlers as GenerationHooks
   const state = () => actions.state(null, { host } as ActionContext)
-  return { services, hooks, state }
+  return { services, hooks, state, reactors }
 }
 
 const answer = (provider: string, errorMessage?: string) =>
@@ -150,4 +157,101 @@ it('lists registered sources of subscription logins and reads them again only wh
     at: 5 * 60_000 - 1,
     error: 'unexpected response',
   })
+})
+
+it('moves a cache entry only through cacheStep, and reads again when due', () => {
+  const T = 10 * 60_000
+  const reading = { windows: [] }
+  const run = (events: CacheEvent[]) => {
+    const entry: Cached = {}
+    for (const event of events) cacheStep(entry, event)
+    return entry
+  }
+  const settled = Promise.resolve()
+  const read: CacheEvent[] = [
+    { type: 'start', at: T, reading: settled },
+    { type: 'read', reading, at: T },
+    { type: 'settle' },
+  ]
+  const failed: CacheEvent[] = [
+    { type: 'start', at: T, reading: settled },
+    { type: 'fail', error: 'HTTP 500' },
+    { type: 'settle' },
+  ]
+  // Rows: events, then `now` offsets and whether a normal / fresh look reads again.
+  const rows: [string, CacheEvent[], number, boolean, boolean][] = [
+    ['never read', [], 0, true, true],
+    ['holds five idle minutes', [...read], 5 * 60_000 - 1, false, true],
+    ['reads after five', [...read], 5 * 60_000, true, true],
+    ['fresh reads after thirty seconds', [...read], 30_000, false, true],
+    // 2b50d1c7: a failed read is retried after a minute, not five.
+    ['retries a failed read sooner', [...failed], 60_000, true, true],
+    [
+      'answer shortens it',
+      [...read, { type: 'answer', at: T + 1, limited: false }],
+      60_000,
+      true,
+      true,
+    ],
+    // An answer before the read says nothing about the numbers read after it.
+    [
+      'older answer is covered',
+      [{ type: 'answer', at: T - 1, limited: false }, ...read],
+      60_000,
+      false,
+      true,
+    ],
+    [
+      'limit error reads at once',
+      [...read, { type: 'answer', at: T + 1, limited: true }],
+      1,
+      true,
+      true,
+    ],
+  ]
+  for (const [name, events, after, normal, fresh] of rows) {
+    const entry = run(events)
+    expect({
+      name,
+      normal: due(entry, T + after, false),
+      fresh: due(entry, T + after, true),
+    }).toEqual({ name, normal, fresh })
+  }
+  expect(run(read)).toEqual({ reading: { windows: [], at: T }, tried: T })
+  expect(run([...failed, ...read]).error).toBeUndefined()
+})
+
+it('drops the numbers of a changed login, so the next look reads again', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(0)
+  let reads = 0
+  const { services, state, reactors } = quotaHost({ antigravity: 'key' })
+  services.need(QuotaApi).register({
+    provider: 'antigravity',
+    name: 'Antigravity',
+    read: async () => ({ windows: [{ label: '5h', used: ++reads }] }),
+  })
+  await state()
+  await state()
+  expect(reads).toBe(1)
+  reactors['login-changed']({}, { data: { provider: 'antigravity' } })
+  expect((await state()).providers[0].windows[0].used).toBe(2)
+})
+
+it('shows a used-up limit as an amber count, never red', () => {
+  const provider = (used: number[], error?: string): QuotaProvider => ({
+    provider: 'p',
+    name: 'P',
+    windows: used.map((value) => ({ label: 'w', used: value })),
+    ...(error ? { error } : {}),
+  })
+  const look = (...args: Parameters<typeof provider>) => {
+    const { look: kind, full, failed } = chipOf([provider(...args)])
+    return { kind, full, failed }
+  }
+  expect(look([10, 69.9])).toEqual({ kind: 'ok', full: 0, failed: false })
+  expect(look([70, 20])).toEqual({ kind: 'near', full: 0, failed: false })
+  expect(look([100, 100, 30])).toEqual({ kind: 'full', full: 2, failed: false })
+  expect(look([10], 'HTTP 401')).toEqual({ kind: 'ok', full: 0, failed: true })
+  expect(chipOf([]).top).toBeUndefined()
 })

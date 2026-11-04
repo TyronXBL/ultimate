@@ -1,4 +1,5 @@
-/** When a keep-warm ping is due. Browser-safe: the chip reads the hour too. */
+/** When a keep-warm ping is due, and the document's state. Browser-safe: the chip reads the hour too. */
+import type { Ping, WarmDocState, WarmState } from './refs.ts'
 
 /** Claude's long prompt cache lives an hour from the last request that read or wrote it. */
 export const TTL = 60 * 60_000
@@ -30,4 +31,61 @@ export function due({ now, lastRequest, inputAt, failedAfter }: Activity) {
   if (failing(failedAfter, lastRequest)) return false
   const age = now - lastRequest
   return age >= LEAD && age < TTL && now - inputAt < IDLE_STOP
+}
+
+/** A ping claimed before it is sent, so a crash mid-request leaves it as this error: a failure, never a retry. */
+const INTERRUPTED = 'interrupted'
+
+/** Whether the user left keep-warm on (the default). */
+export const isOn = (doc: Pick<WarmDocState, 'off'>) => !doc.off
+
+/** A ping's outcome: still claimed (in flight, or crashed; the same record), failed with an error, or answered. */
+export const outcome = (ping: Ping): 'succeeded' | 'interrupted' | 'failed' =>
+  ping.error === undefined ? 'succeeded' : ping.error === INTERRUPTED ? 'interrupted' : 'failed'
+
+/** The last ping did not succeed and nothing renewed the cache since: a later cached answer from @ultimate clears it. */
+export const pingFailed = ({ last, lastRequest }: Pick<WarmState, 'last' | 'lastRequest'>) =>
+  last !== undefined && outcome(last) !== 'succeeded' && failing(last.at, lastRequest)
+
+/** The status-line chip's look: one derivation for the colour and the attribute. */
+export const chipOf = (state: WarmState, now: number): 'off' | 'warm' | 'cold' | 'failing' =>
+  !state.on
+    ? 'off'
+    : pingFailed(state)
+      ? 'failing'
+      : state.lastRequest !== undefined && state.lastRequest + TTL > now
+        ? 'warm'
+        : 'cold'
+
+export type WarmEvent =
+  /** The tick claims an attempt at `at`, unless the switch is off or another attempt was recorded since `previous`. */
+  | { type: 'claim'; at: number; model: string; previous?: number }
+  /** An attempt ended (or was skipped). */
+  | { type: 'record'; ping: Ping }
+  /** The user wrote to @ultimate (ms). */
+  | { type: 'input'; at: number }
+  /** The user turned keep-warm on or off. */
+  | { type: 'switch'; on: boolean }
+
+/** The only writer of the keep-warm document. Whether the event applied: only a claim can be refused. */
+export function warmStep(doc: WarmDocState, event: WarmEvent) {
+  switch (event.type) {
+    case 'claim':
+      if (!isOn(doc) || doc.last?.at !== event.previous) return false
+      doc.last = { at: event.at, model: event.model, error: INTERRUPTED }
+      doc.pings = (doc.pings ?? 0) + 1
+      return true
+    case 'record':
+      doc.last = event.ping
+      return true
+    case 'input':
+      doc.inputAt = event.at
+      return true
+    case 'switch':
+      if (event.on) delete doc.off
+      else doc.off = true
+      return true
+    default:
+      return event satisfies never
+  }
 }

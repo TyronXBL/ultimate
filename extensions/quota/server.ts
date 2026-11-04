@@ -8,28 +8,14 @@ import { implementAction } from '../../lib/actions.ts'
 import { LoginChanged } from '../models/api.ts'
 import { limited } from '../../lib/rate-limit.ts'
 import { QuotaApi } from './api.ts'
-import type { QuotaReading, QuotaSource } from './api.ts'
+import type { QuotaSource } from './api.ts'
 import { builtinSources } from './sources.ts'
+import { cacheStep, due } from './state.ts'
+import type { Cached } from './state.ts'
 import { StateAction } from './refs.ts'
 import type { QuotaState } from './refs.ts'
 
-const MINUTE = 60_000
-/** How old numbers may get while the provider is idle; after one of its answers; when the user asks for fresh ones. */
-const IDLE = 5 * MINUTE
-const USED = MINUTE
-const FRESH = 30_000
 const TIMEOUT = 15_000
-
-/** One provider's last reading, the last attempt, and its latest answer, which shortens how long the reading holds. */
-type Cached = {
-  reading?: QuotaReading & { at: number }
-  tried?: number
-  error?: string
-  used?: number
-  /** A limit error after the last attempt: read again at once. */
-  limitedAt?: number
-  inflight?: Promise<void>
-}
 
 /** The sources other extensions registered, which replace a built-in one of the same provider, and the readings. */
 type Quota = { registered: Map<string, QuotaSource>; cache: Map<string, Cached> }
@@ -50,21 +36,6 @@ const cached = (current: Quota, provider: string) => {
 }
 
 /**
- * Whether `entry` should be read again at `now`: never read, a limit hit since, or older than its allowance, which is
- * shorter after an answer from the provider or a failed read.
- */
-function due(entry: Cached, now: number, fresh: boolean) {
-  if (entry.tried === undefined) return true
-  if (entry.limitedAt !== undefined && entry.limitedAt > entry.tried) return true
-  const allowance = fresh
-    ? FRESH
-    : entry.error !== undefined || (entry.used !== undefined && entry.used > entry.tried)
-      ? USED
-      : IDLE
-  return now - entry.tried >= allowance
-}
-
-/**
  * What the popover says about a failed read, always a fixed phrase: any other message, even a source's own, could
  * quote a response or a token, and the action's result is shown and traced.
  */
@@ -76,26 +47,24 @@ function failure(error: unknown) {
 }
 
 async function read(host: Pick<ExtensionHost, 'modelRuntime'>, source: QuotaSource, entry: Cached) {
-  entry.tried = Date.now()
   const signal = AbortSignal.timeout(TIMEOUT)
   let apiKey: string | undefined
   try {
     apiKey = (await host.modelRuntime.getAuth(source.provider, { signal }))?.auth.apiKey
   } catch {
     // Pi's refresh error can quote the provider's answer; the login's own health is reported by health.
-    entry.error = 'login could not be refreshed'
+    cacheStep(entry, { type: 'fail', error: 'login could not be refreshed' })
     return
   }
   if (!apiKey) {
-    entry.error = 'no login'
+    cacheStep(entry, { type: 'fail', error: 'no login' })
     return
   }
   try {
     const reading = await source.read(apiKey, signal)
-    entry.reading = { ...reading, at: Date.now() }
-    delete entry.error
+    cacheStep(entry, { type: 'read', reading, at: Date.now() })
   } catch (error) {
-    entry.error = failure(error)
+    cacheStep(entry, { type: 'fail', error: failure(error) })
   }
 }
 
@@ -111,8 +80,12 @@ async function state(host: ExtensionHost, fresh: boolean): Promise<QuotaState> {
   await Promise.all(
     sources.flatMap((source) => {
       const entry = cached(current, source.provider)
-      if (!entry.inflight && due(entry, now, fresh))
-        entry.inflight = read(host, source, entry).finally(() => delete entry.inflight)
+      if (!entry.inflight && due(entry, now, fresh)) {
+        const reading = read(host, source, entry).finally(() =>
+          cacheStep(entry, { type: 'settle' }),
+        )
+        cacheStep(entry, { type: 'start', at: now, reading })
+      }
       return entry.inflight ? [entry.inflight] : []
     }),
   )
@@ -154,10 +127,11 @@ export default function quotaExtension(host: ExtensionHost) {
           const covered = sourcesOf(current).some((source) => source.provider === message.provider)
           if (!covered || message.stopReason === 'aborted') return
           const entry = cached(current, message.provider)
-          const now = Date.now()
-          entry.used = now
-          if (message.stopReason === 'error' && limited(message.errorMessage ?? ''))
-            entry.limitedAt = now
+          cacheStep(entry, {
+            type: 'answer',
+            at: Date.now(),
+            limited: message.stopReason === 'error' && limited(message.errorMessage ?? ''),
+          })
         },
       }),
     ],

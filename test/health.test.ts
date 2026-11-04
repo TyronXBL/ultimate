@@ -39,6 +39,12 @@ it('computes a provider state from its latest success, auth failure and transien
   expect(state({ lastOk: 7, lastFail: 6, lastAuth: 6 })).toBe('ok')
   expect(state({ lastOk: 5, lastFail: 8, transient: [6, 7, 8] })).toBe('failing')
   expect(state({ lastOk: 6, lastFail: 8, transient: [6, 7, 8] })).toBe('ok')
+  // 1f90c50b: a streak counts by time, so two failures five minutes apart flip it; the same two close together do not.
+  expect(state({ lastOk: 5, lastFail: 9, transient: [6, 6 + 5 * MINUTE] })).toBe('failing')
+  expect(state({ lastOk: 5, lastFail: 9, transient: [6, 7] })).toBe('ok')
+  // 07f9787a: a capacity failure only stamps lastFail and never turns a provider failing.
+  expect(state({ lastOk: 5, lastFail: 9 })).toBe('ok')
+  expect(state({ lastFail: 9 })).toBe('unknown')
 })
 
 it('classifies failures as auth, capacity or transient', () => {

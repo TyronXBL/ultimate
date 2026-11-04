@@ -8,6 +8,7 @@ import todosExtension, {
   noteFor,
   Todos,
 } from '../extensions/todos/server.ts'
+import { isDone } from '../extensions/todos/done.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 
 const ULTIMATE = 5 as ConversationId
@@ -51,8 +52,14 @@ it('ticks and reopens a to-do, keeping only the newest done ones', async () => {
   const { tx } = fakeTx()
   for (let i = 0; i < DONE_LIMIT + 2; i++) await add(tx, `t${i}`, 'ultimate')
   const first = await mark(tx, 1, true)
-  expect(first.done).toBeTypeOf('number')
-  expect((await mark(tx, 1, false)).done).toBeUndefined()
+  expect(isDone(first)).toBe(true)
+  // 19301207: the reply is a copy, not the document's overlay, which is unusable once the commit settles.
+  expect(first).not.toBe((await list(tx))[0])
+  // Ticking again keeps the first tick's time.
+  expect((await mark(tx, 1, true)).done).toBe(first.done)
+  expect(isDone(await mark(tx, 1, false))).toBe(false)
+  expect(isDone(await mark(tx, 1, true))).toBe(true)
+  expect(isDone(await mark(tx, 1, false))).toBe(false)
   // Everything but the last was ticked long ago, in id order; ticking the last drops the two oldest ticks.
   for (const todo of (await list(tx)).slice(0, -1)) todo.done = todo.id
   await mark(tx, DONE_LIMIT + 2, true)
