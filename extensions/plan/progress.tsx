@@ -1,6 +1,7 @@
 import { criteriaOf, sectionsOf } from './body.tsx'
+import type { EpicStatus, TaskStatus } from './refs.ts'
 
-type Progress = { key: string; status: string; tasks: Record<string, { status: string }> }
+type Progress = { key: string; status: EpicStatus; tasks: Record<string, { status: TaskStatus }> }
 
 /** An epic's numbered or bulleted acceptance criteria, if its body has them. */
 export const criteriaOfBody = (body: string) => {
@@ -18,7 +19,7 @@ export function progressLabel(epic: Progress & { body: string }) {
 }
 
 /** Done and canceled tasks are finished. */
-export const finished = (tasks: Record<string, { status: string }>) =>
+export const finished = (tasks: Record<string, { status: TaskStatus }>) =>
   Object.values(tasks).filter((task) => task.status === 'done' || task.status === 'canceled').length
 
 /** The pill's epic: the newest open one, its progress, and how many other epics are open; none once all are done. */

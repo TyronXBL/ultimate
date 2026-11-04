@@ -13,6 +13,15 @@ import type { ConversationId, Cursor, EntryId, JsonObject, Tx } from '@earendil-
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { Branch } from '../lineage/api.ts'
 import { PlanDoc, TaskIndexDoc } from './refs.ts'
+import {
+  epicStatuses,
+  isEpicStatus,
+  isTaskStatus,
+  setEpicStatus,
+  setTaskStatus,
+  taskStatuses,
+} from './types.ts'
+import type { EpicStatus, TaskStatus } from './types.ts'
 
 export type Task = {
   key: string
@@ -20,7 +29,7 @@ export type Task = {
   role: 'worker' | 'reviewer'
   description: string
   deps: string[]
-  status: 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done' | 'blocked' | 'canceled'
+  status: TaskStatus
   child?: number
   verdict?: string
   notes: { at: string; text: string }[]
@@ -29,7 +38,7 @@ export type Epic = {
   key: string
   title: string
   body: string
-  status: 'planning' | 'in_progress' | 'done' | 'blocked'
+  status: EpicStatus
   verdict?: string
   tasks: Record<string, Task>
 }
@@ -204,7 +213,7 @@ export default (host: ExtensionHost) => {
               description: 'A returned key: epic E1 or task E1.1; note takes a task key.',
             }),
           ),
-          status: opt(str()),
+          status: opt(oneOf([...epicStatuses, ...taskStatuses] as const)),
           child: opt(int({ minimum: 1 })),
           verdict: opt(str()),
           text: opt(str()),
@@ -283,15 +292,20 @@ export default (host: ExtensionHost) => {
                   text: required(args.text, 'text'),
                 })
               } else {
-                const statuses = task
-                  ? ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'blocked', 'canceled']
-                  : ['planning', 'in_progress', 'done', 'blocked']
-                if (args.status !== undefined && !statuses.includes(args.status))
-                  throw new Error(`Invalid status for ${item.key}: ${args.status}`)
                 if (task && args.body !== undefined) throw new Error('body requires an epic key')
                 if (!task && (args.description !== undefined || args.child !== undefined))
                   throw new Error('description and child require a task key')
-                if (args.status !== undefined) item.status = args.status as typeof item.status
+                if (args.status !== undefined) {
+                  if (task) {
+                    if (!isTaskStatus(args.status))
+                      throw new Error(`Invalid status for ${item.key}: ${args.status}`)
+                    setTaskStatus(item, args.status)
+                  } else {
+                    if (!isEpicStatus(args.status))
+                      throw new Error(`Invalid status for ${item.key}: ${args.status}`)
+                    setEpicStatus(item, args.status)
+                  }
+                }
                 if (args.title !== undefined) item.title = args.title
                 if (args.verdict !== undefined) item.verdict = args.verdict
                 if (task) {

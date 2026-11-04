@@ -3,6 +3,8 @@
  * on which task. Browser-safe.
  */
 import { docRef } from '../../shared/extension-api.ts'
+import type { EpicStatus, TaskStatus } from './types.ts'
+export type { EpicStatus, TaskStatus } from './types.ts'
 
 /** One task of an epic; `child` is the conversation working on it. */
 export type Task = {
@@ -11,7 +13,7 @@ export type Task = {
   role: string
   description: string
   deps: string[]
-  status: string
+  status: TaskStatus
   child?: number
   verdict?: string
   notes: { at: string; text: string }[]
@@ -21,7 +23,7 @@ export type Epic = {
   key: string
   title: string
   body: string
-  status: string
+  status: EpicStatus
   verdict?: string
   tasks: Record<string, Task>
 }
@@ -33,7 +35,7 @@ export type TaskLink = {
   epic: string
   key: string
   title: string
-  status: string
+  status: TaskStatus
 }
 
 /** A coordinator's epics and tasks, on the coordinator's conversation. */

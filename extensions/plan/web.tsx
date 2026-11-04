@@ -41,7 +41,7 @@ import { InfoAction, stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
 import { criteriaOf, sectionsOf, verbatim } from './body.tsx'
 import { criteriaOfBody, finished, number, pillOf, progressLabel } from './progress.tsx'
 import { PlanDoc } from './refs.ts'
-import type { Epic, Plan, Task, TaskLink } from './refs.ts'
+import type { Epic, EpicStatus, Plan, Task, TaskLink, TaskStatus } from './refs.ts'
 import { StatusIcon, TaskChip, statusOf, useOpenTask, useTaskOf } from './ui.tsx'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
@@ -59,7 +59,7 @@ function Tag({ children, className }: { children: ReactNode; className?: string 
   )
 }
 
-function StatusChip({ status }: { status: string }) {
+function StatusChip({ status }: { status: EpicStatus | TaskStatus }) {
   return <Tag className={statusOf(status).tone}>{status.replace('_', ' ')}</Tag>
 }
 

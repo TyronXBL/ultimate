@@ -16,6 +16,7 @@ import { Standing } from '../subagents/api.ts'
 import type { ResponseReceipt } from '../conversations/summary.ts'
 import type { SummaryModel } from '../conversations/summary-model.ts'
 import { DiscardAction, InjectAction, OpenAction, SideChatDoc, SideChatsDoc } from './refs.ts'
+import { isOpen, lifecycleOf, transition } from './logic.ts'
 import type { SideChat, SideChatIndex, SideChatSummary } from './refs.ts'
 
 export const Side = defineDoc<Partial<SideChat>>({
@@ -108,6 +109,24 @@ function sideId(args: unknown): ConversationId {
   return id as ConversationId
 }
 
+function writeLifecycle(
+  side: Partial<SideChat>,
+  listed: SideChatIndex['sides'][number],
+  ending: { mode?: 'discarded' | 'injected' },
+  next: ReturnType<typeof transition>,
+) {
+  if (next.state === 'open') {
+    delete side.ended
+    delete listed.ended
+    delete ending.mode
+  } else if (next.state === 'ending') ending.mode = next.mode
+  else {
+    side.ended = next.mode
+    listed.ended = next.mode
+    ending.mode = next.mode
+  }
+}
+
 async function end(host: ExtensionHost, id: ConversationId, mode: 'discarded' | 'injected') {
   const summaries = host.need(ConversationsApi)
   const model = mode === 'injected' ? await summaries.summaryModel() : undefined
@@ -120,12 +139,21 @@ async function end(host: ExtensionHost, id: ConversationId, mode: 'discarded' | 
     const side = await tx.doc(Side, id)
     if (side.of === undefined) throw new Error(`#${id} is not a side chat`)
     const ending = await tx.doc(Ending, id)
-    if (mode === 'injected' && ending.mode === mode && ending.task !== undefined)
+    const state = lifecycleOf(side.ended, ending.mode)
+    if (
+      mode === 'injected' &&
+      state.state !== 'open' &&
+      state.mode === mode &&
+      ending.task !== undefined
+    )
       return ending.task as TaskId
-    if (side.ended || ending.mode) throw new Error(`Side chat #${id} is already ended or ending`)
+    if (!isOpen(state)) throw new Error(`Side chat #${id} is already ended or ending`)
     if (mode === 'discarded' && side.effects)
       throw new Error(`Side chat #${id} has effects; inject its summary instead`)
-    ending.mode = mode
+    const listed = (await tx.doc(Index, side.of as ConversationId)).sides.find(
+      (item) => item.id === id,
+    )!
+    writeLifecycle(side, listed, ending, transition(state, { type: 'begin', mode }))
     ending.task = await tx.createTask(
       endTask(host),
       { side: id, ...(model ? { model } : {}) },
@@ -188,7 +216,10 @@ export function endTask(host: ExtensionHost) {
       summarize: async (task, runtime, ctx) => {
         const id = task.input.side as ConversationId
         const side = (await runtime.snapshot(Side, id, ctx))!
-        const mode = (await runtime.snapshot(Ending, id, ctx))!.mode!
+        const endingDoc = (await runtime.snapshot(Ending, id, ctx))!
+        const life = lifecycleOf(side.ended, endingDoc.mode)
+        if (life.state !== 'ending') throw new Error(`Side chat #${id} is not ending`)
+        const mode = life.mode
         let response: ResponseReceipt | undefined
         if (mode === 'injected') {
           let source = await runtime.memo<string>('source', ctx)
@@ -234,9 +265,17 @@ export function endTask(host: ExtensionHost) {
             if (runtime.signal.aborted) throw error
             await runtime.commit(async (tx) => {
               const ending = await tx.doc(Ending, id)
-              delete ending.mode
+              const failedSide = await tx.doc(Side, id)
+              const listed = (await tx.doc(Index, failedSide.of as ConversationId)).sides.find(
+                (item) => item.id === id,
+              )!
+              writeLifecycle(
+                failedSide,
+                listed,
+                ending,
+                transition(lifecycleOf(failedSide.ended, ending.mode), { type: 'rollback' }),
+              )
               delete ending.task
-              delete (await tx.doc(Side, id)).ended
               if (response) await summaries.accountResponse(tx, id, response)
               return {
                 status: 'terminal',
@@ -274,14 +313,15 @@ export function endTask(host: ExtensionHost) {
         }
         await runtime.commit(async (tx) => {
           const state = await tx.doc(Side, id)
-          if (state.ended) return terminal
+          const ending = await tx.doc(Ending, id)
+          const lifecycle = lifecycleOf(state.ended, ending.mode)
+          if (lifecycle.state === 'ended') return terminal
           await summaries.concludeIn(tx, [id])
           if (response) await summaries.accountResponse(tx, id, response)
-          state.ended = mode
           const listed = (await tx.doc(Index, side.of as ConversationId)).sides.find(
             (item) => item.id === id,
           )!
-          listed.ended = mode
+          writeLifecycle(state, listed, ending, transition(lifecycle, { type: 'complete' }))
           return terminal
         }, ctx)
       },
@@ -366,7 +406,8 @@ export default (host: ExtensionHost) =>
           const side = await tx.doc(Side, conversationId)
           if (side.of === undefined) return undefined
           const ending = await tx.doc(Ending, conversationId)
-          if (side.ended || ending.mode) throw new Error(`Side chat #${conversationId} has ended`)
+          if (!isOpen(lifecycleOf(side.ended, ending.mode)))
+            throw new Error(`Side chat #${conversationId} has ended`)
           if (ending.introduced) return undefined
           ending.introduced = true
           return {
@@ -391,7 +432,7 @@ export default (host: ExtensionHost) =>
           return host.harness().commit(async (tx) => {
             const side = await tx.doc(Side, api.conversationId)
             if (side.of === undefined) return undefined
-            if (side.ended || (await tx.doc(Ending, api.conversationId)).mode)
+            if (!isOpen(lifecycleOf(side.ended, (await tx.doc(Ending, api.conversationId)).mode)))
               return { block: 'This side chat has ended' }
             if (tracksEffect(call.name, call.arguments)) side.effects = true
             return undefined

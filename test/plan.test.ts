@@ -9,9 +9,17 @@ import type { ConversationId, JsonObject } from '@earendil-works/pi-durable'
 import { expect, it } from 'vitest'
 import type { ExtensionHost } from '../server/extensions.ts'
 import planExtension, { Plan, TaskIndex } from '../extensions/plan/server.ts'
+import { epicStatuses, isEpicStatus, isTaskStatus, taskStatuses } from '../extensions/plan/types.ts'
 import { context, prepareHarness } from '../server/harness.ts'
 import { Metadata } from '../server/metadata.ts'
 import { temp, removeTemp } from './helpers.ts'
+
+it('uses distinct valid status sets for epics and tasks', () => {
+  for (const status of epicStatuses) expect(isEpicStatus(status)).toBe(true)
+  for (const status of taskStatuses) expect(isTaskStatus(status)).toBe(true)
+  expect(isEpicStatus('in_review')).toBe(false)
+  expect(isTaskStatus('planning')).toBe(false)
+})
 
 it('shares the root ledger read-only with descendants, saves verdicts, and replays nested calls separately', async () => {
   const directory = await temp('ultimate-plan-')
@@ -146,6 +154,14 @@ it('shares the root ledger read-only with descendants, saves verdicts, and repla
       description: 'Check it',
       deps: ['E1.1'],
     })
+    for (const status of taskStatuses)
+      expect((await call({ action: 'update', key: 'E1.2', status })).isError).not.toBe(true)
+    for (const status of epicStatuses)
+      expect((await call({ action: 'update', key: 'E1', status })).isError).not.toBe(true)
+    expect((await call({ action: 'update', key: 'E1', status: 'in_review' })).isError).toBe(true)
+    expect((await call({ action: 'update', key: 'E1.1', status: 'planning' })).isError).toBe(true)
+    await call({ action: 'update', key: 'E1.2', status: 'backlog' })
+    await call({ action: 'update', key: 'E1', status: 'planning' })
     await call({
       action: 'update',
       key: 'E1.1',

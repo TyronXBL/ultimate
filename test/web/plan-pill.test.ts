@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest'
 import { pillOf } from '../../extensions/plan/progress.tsx'
+import type { EpicStatus, TaskStatus } from '../../extensions/plan/refs.ts'
 
-const epic = (key: string, status: string, ...tasks: string[]) => ({
+const epic = (key: string, status: EpicStatus, ...tasks: TaskStatus[]) => ({
   key,
   status,
   tasks: Object.fromEntries(tasks.map((task, i) => [`${key}.${i + 1}`, { status: task }])),

@@ -1,6 +1,42 @@
 /** Side chat decisions the web facet makes, pure for tests. Browser-safe. */
 import type { SideChat, SideChatIndex } from './refs.ts'
 
+export type EndMode = 'discarded' | 'injected'
+export type SideLifecycle =
+  | { state: 'open' }
+  | { state: 'ending'; mode: EndMode }
+  | { state: 'ended'; mode: EndMode }
+export type EndEvent =
+  | { type: 'begin'; mode: EndMode }
+  | { type: 'complete' }
+  | { type: 'rollback' }
+
+export function transition(state: SideLifecycle, event: EndEvent): SideLifecycle {
+  switch (event.type) {
+    case 'begin':
+      if (state.state !== 'open') throw new Error('Side chat is already ended or ending')
+      return { state: 'ending', mode: event.mode }
+    case 'complete':
+      if (state.state !== 'ending') throw new Error('Side chat is not ending')
+      return { state: 'ended', mode: state.mode }
+    case 'rollback':
+      if (state.state !== 'ending' || state.mode !== 'injected')
+        throw new Error('Only an inject can roll back')
+      return { state: 'open' }
+    default: {
+      const exhaustive: never = event
+      return exhaustive
+    }
+  }
+}
+export const lifecycleOf = (ended?: EndMode, ending?: EndMode): SideLifecycle =>
+  ended
+    ? { state: 'ended', mode: ended }
+    : ending
+      ? { state: 'ending', mode: ending }
+      : { state: 'open' }
+export const isOpen = (state: SideLifecycle) => state.state === 'open'
+
 /** What a composer key event carries for the Tab toggle. */
 export interface TabKey {
   key: string
@@ -34,7 +70,7 @@ export function togglesSideMode(
 
 /** Side chats still open, oldest first: ended ones went back to main as a summary or were thrown away. */
 export const openSides = (index: SideChatIndex | undefined) =>
-  (index?.sides ?? []).filter((side) => side.ended === undefined)
+  (index?.sides ?? []).filter((side) => isOpen(lifecycleOf(side.ended)))
 
 /** The side chat in front, if it is still open; a parked or ended one leaves main in front. */
 export const frontSide = (front: number | null, index: SideChatIndex | undefined) =>
@@ -76,6 +112,6 @@ export function createEndings(describe: (failure: unknown) => string) {
 
 /** How a side chat may end: Discard only while it changed nothing outside itself. */
 export function endings(side: Partial<SideChat> | undefined) {
-  const live = side?.of !== undefined && side.ended === undefined
+  const live = side?.of !== undefined && isOpen(lifecycleOf(side.ended))
   return { inject: live, discard: live && !side.effects, locked: live && !!side.effects }
 }

@@ -15,11 +15,14 @@ import { useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { cn, useDocOf, useUiState, useUltimate } from '@/sdk'
 import { TaskIndexDoc } from './refs.ts'
-import type { TaskLink } from './refs.ts'
+import type { TaskLink, TaskStatus, EpicStatus } from './refs.ts'
 
 export { PlanDoc } from './refs.ts'
 
-const statuses: Record<string, { icon: typeof CircleIcon; tone: string; dot: string }> = {
+const statuses: Record<
+  EpicStatus | TaskStatus,
+  { icon: typeof CircleIcon; tone: string; dot: string }
+> = {
   backlog: { icon: CircleDashedIcon, tone: 'text-muted-foreground/70', dot: 'bg-muted-foreground' },
   planning: { icon: CircleDashedIcon, tone: 'text-muted-foreground', dot: 'bg-muted-foreground' },
   todo: { icon: CircleIcon, tone: 'text-muted-foreground', dot: 'bg-muted-foreground' },
@@ -41,9 +44,9 @@ const statuses: Record<string, { icon: typeof CircleIcon; tone: string; dot: str
     dot: 'bg-muted-foreground/40',
   },
 }
-export const statusOf = (status: string) => statuses[status] ?? statuses.todo
+export const statusOf = (status: EpicStatus | TaskStatus) => statuses[status]
 
-export function StatusIcon({ status }: { status: string }) {
+export function StatusIcon({ status }: { status: EpicStatus | TaskStatus }) {
   const { icon: Icon, tone } = statusOf(status)
   return <Icon aria-label={status} className={cn('size-3.5 shrink-0', tone)} />
 }
