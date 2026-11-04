@@ -62,6 +62,8 @@ export async function discoverExtensions(
             (root.source === 'builtin' || builtinCore.has(entry.name)) &&
             files.includes('api.ts') &&
             coreTier.test(await readFile(join(path, 'api.ts'), 'utf8'))
+          // Learned before the folder's other reads, which may still fail; the built-in root asks no earlier name.
+          if (core && root.source === 'builtin') builtinCore.add(entry.name)
           return {
             name: entry.name,
             path,
@@ -82,11 +84,7 @@ export async function discoverExtensions(
         }
       }),
     )
-    for (const winner of found) {
-      if (!winner) continue
-      if (winner.core && root.source === 'builtin') builtinCore.add(winner.name)
-      winners.set(winner.name, winner)
-    }
+    for (const winner of found) if (winner) winners.set(winner.name, winner)
   }
   settings ??= await extensionSettings(projectRoot, userHome)
   const { overrides } = settings

@@ -33,8 +33,8 @@ it('maps with at most the limit running, in input order, and starts nothing afte
   expect(await mapBounded([1, 2, 3, 4], 2, slow)).toEqual([2, 4, 6, 8])
   expect(peak).toBe(2)
   started.length = 0
-  await expect(mapBounded([5, 6, 7, 8, 9], 2, slow)).rejects.toThrow('five')
-  expect(started).not.toContain(9)
+  await expect(mapBounded([5, 6, 7], 1, slow)).rejects.toThrow('five')
+  expect(started).toEqual([5])
 })
 
 it('reads a missing JSON file as the fallback and rejects unreadable JSON', async () => {

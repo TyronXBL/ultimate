@@ -8,7 +8,7 @@ export const PROCESS_CONCURRENCY = 4
 export async function mapBounded<T, R>(
   items: readonly T[],
   limit: number,
-  fn: (item: T, index: number) => Promise<R>,
+  fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
   const results: R[] = Array.from({ length: items.length })
   let next = 0
@@ -17,7 +17,7 @@ export async function mapBounded<T, R>(
     while (!failed && next < items.length) {
       const index = next++
       try {
-        results[index] = await fn(items[index], index)
+        results[index] = await fn(items[index])
       } catch (error) {
         failed = true
         throw error
