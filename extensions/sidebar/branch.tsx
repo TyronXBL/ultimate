@@ -5,27 +5,36 @@ import { isBusy } from '../../lib/activity.ts'
 import type { Activity } from '../../lib/activity.ts'
 import { waitsOnUser } from '../../lib/messages.ts'
 import { branchStanding } from '../../lib/standing.ts'
-import type { Standing } from '../../lib/standing.ts'
+import type { BranchLanding, Standing } from '../../lib/standing.ts'
 import { Committed } from '../coding-tools/ui.tsx'
 import { MessagesDoc, conversationState, emptyMessages } from '../messages/ui.tsx'
 import { StandingDoc } from '../subagents/ui.tsx'
-import { ProgressAction, useWorkspaceIndex } from '../workspaces/ui.tsx'
+import { ProgressAction, RecentLandingsAction, useWorkspaceIndex } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation as ConversationSummary } from '../workspaces/ui.tsx'
 import { useActivity, useConcludedSince, useOverview } from '../conversations/ui.tsx'
-import type { Landing } from './landings.ts'
 import { workOf } from './work.ts'
 
 /**
- * Where each branch stands (`lib/standing.ts`), by the lander's index, the roots' landing notes `landings`
- * (`useLandings`) and the messages log. Its work is under way while it or an owned conversation below it is busy
+ * Where each branch stands (`lib/standing.ts`), by the lander's index, durable landing events and the messages log.
+ * Its work is under way while it or an owned conversation below it is busy
  * (`useActivity`, with `parked` the runs a pause holds).
  */
 export function useStandings(
   conversations: readonly ConversationSummary[],
-  landings: readonly Landing[],
   parked?: ReadonlySet<number>,
 ) {
   const index = useWorkspaceIndex()
+  const recent = useAction(RecentLandingsAction, null)
+  const landingEvents = recent.data ?? []
+  const outcomeKey = Object.values(index.results)
+    .map((result) => `${result.outcome}:${result.sha ?? ''}`)
+    .join(',')
+  useEffect(() => {
+    // A new lander result may have aged out of the index's retained results; refresh the durable event fallback.
+    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
+    void recent.refetch()
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- outcomeKey captures the index changes that matter.
+  }, [outcomeKey, recent.refetch])
   const log = useDocOf(1, MessagesDoc) ?? emptyMessages
   const concludedSince = useConcludedSince()
   const activity = useActivity(parked)
@@ -51,7 +60,7 @@ export function useStandings(
         asks: log.messages.some(waitsOnUser(branch.id)),
       },
       index,
-      landings,
+      landingEvents,
     )
 }
 

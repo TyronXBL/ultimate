@@ -9,7 +9,7 @@ import { UserInputEvent } from '../../shared/events.ts'
 import { git, isolatable } from '../../lib/git.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { SubagentsApi } from '../subagents/api.ts'
-import { SubmissionLanded, WorkspacesApi } from '../workspaces/api.ts'
+import { WorkspacesApi } from '../workspaces/api.ts'
 import { checkReview, reviewText } from './comments.ts'
 import type { ReviewComments } from './comments.ts'
 import { reviewDiff } from './diff.ts'
@@ -66,17 +66,8 @@ async function resolve(host: ExtensionHost, spec: string) {
   if (!doc || owner === undefined) return 'uncommitted'
   // Past the index's latest outcomes, the landing events the roots' landing notes are written from: what the target
   // gained, merged with what landed meanwhile.
-  const events = await host.eventLog.recent({ events: [SubmissionLanded], limit: 200 })
-  const landing = latestLanding(
-    Number(owner),
-    doc,
-    events.map(({ at, data }) => ({
-      from: data.conversationId,
-      sha: data.sha,
-      base: data.base,
-      at: Date.parse(at),
-    })),
-  )
+  const landings = await host.need(WorkspacesApi).recentLandings()
+  const landing = latestLanding(Number(owner), doc, landings)
   return landing?.base ? `${landing.base}...${landing.tip ?? landing.sha}` : 'uncommitted'
 }
 
@@ -108,7 +99,7 @@ async function ranges(host: ExtensionHost): Promise<ReviewRange[]> {
       // No commit yet: nothing to list.
       () => '',
     ),
-    host.eventLog.recent({ events: [SubmissionLanded], limit: 10 }),
+    host.need(WorkspacesApi).recentLandings(),
   ])
   const list: ReviewRange[] = [
     { spec: 'uncommitted', group: 'Working tree', label: 'Uncommitted changes' },
@@ -126,13 +117,13 @@ async function ranges(host: ExtensionHost): Promise<ReviewRange[]> {
       conversation: id,
     })
   }
-  for (const { data, at } of landings)
+  for (const landing of landings.slice(0, 10))
     list.push({
-      spec: `${data.base}...${data.sha}`,
+      spec: `${landing.base}...${landing.sha}`,
       group: 'Landings',
-      label: data.feature ? `${data.feature} · ${data.title}` : data.title || data.sha.slice(0, 7),
-      detail: `${data.sha.slice(0, 7)} · ${data.commitCount} commit${data.commitCount === 1 ? '' : 's'} · ${ago(Date.parse(at) / 1000)}`,
-      conversation: data.conversationId,
+      label: landing.feature ? `${landing.feature} · ${landing.title}` : landing.title || landing.sha.slice(0, 7),
+      detail: `${landing.sha.slice(0, 7)} · ${landing.commitCount} commit${landing.commitCount === 1 ? '' : 's'} · ${ago(landing.at / 1000)}`,
+      conversation: landing.from,
     })
   for (const line of commits.split('\n').filter(Boolean)) {
     const [sha, at, subject] = line.split('\t') as [string, string, string]
@@ -167,7 +158,7 @@ async function recipient(host: ExtensionHost, spec: string): Promise<number> {
     }
     const range = /^[^.]+\.\.\.([^.]+)$/.exec(spec)
     if (range) {
-      const landings = await host.eventLog.recent({ events: [SubmissionLanded], limit: 200 })
+      const landings = await host.need(WorkspacesApi).recentLandings()
       const sha = await git(
         host.projectRoot,
         'rev-parse',
@@ -176,7 +167,7 @@ async function recipient(host: ExtensionHost, spec: string): Promise<number> {
         '--end-of-options',
         `${range[1]}^{commit}`,
       )
-      return landings.find(({ data }) => data.sha === sha)?.data.conversationId
+      return landings.find(({ sha: landed }) => landed === sha)?.from
     }
     if (spec === 'uncommitted' || spec.startsWith('-')) return undefined
     const trailer = await git(

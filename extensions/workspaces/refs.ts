@@ -24,6 +24,22 @@ export const FailingAction = actionRef<
   { tests?: string[]; except?: number; limit?: number },
   FailingTest[]
 >('workspaces', 'failing')
+/** No arguments → the latest 200 durable landing events, with submitter id and timestamp in epoch milliseconds. */
+export const RecentLandingsAction = actionRef<
+  null,
+  {
+    from: number
+    sha: string
+    base: string
+    at: number
+    title: string
+    feature?: string
+    commitCount: number
+  }[]
+>(
+  'workspaces',
+  'recentLandings',
+)
 /** `{ id }` → conversation `id`'s worktree with its branch, tip and changes, or null when it has none. */
 export const InfoAction = actionRef<{ id: number }, WorkspaceInfo | null>('workspaces', 'info')
 /**

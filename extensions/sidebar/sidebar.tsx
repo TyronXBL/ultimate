@@ -276,7 +276,7 @@ function Tree({
   }
   const rootRows = listed.filter((conversation) => roots.has(conversation.id)).toSorted(byInput)
   const landings = useLandings(rootRows.map((root) => root.id))
-  const standingOf = useStandings(all, landings, parked)
+  const standingOf = useStandings(all, parked)
   const standings = new Map<number, ReturnType<typeof standingOf>['state']>()
   /** The listed branches below `id`, at any depth. */
   const branchesBelow = (id: number): ConversationSummary[] =>

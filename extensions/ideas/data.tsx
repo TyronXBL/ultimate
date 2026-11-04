@@ -2,12 +2,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useDocOf, useExtensionUiState } from '@/sdk'
 import type { BranchLanding } from '../../lib/standing.ts'
-import { useRoots } from '../lineage/ui.tsx'
 import { MessagesDoc, emptyMessages } from '../messages/ui.tsx'
 import type { Message } from '../messages/refs.ts'
 import { PlanDoc } from '../plan/ui.tsx'
 import { waiting } from '../questions/ui.tsx'
-import { useFlightWork, useLandings, useStandings } from '../sidebar/ui.tsx'
+import { useFlightWork, useStandings } from '../sidebar/ui.tsx'
 import { useWorkspaceConversations } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation } from '../workspaces/ui.tsx'
 import type { Standing } from '../../lib/standing.ts'
@@ -50,7 +49,7 @@ function PlanProbe({
 export function useBoard(parked?: ReadonlySet<number>) {
   const items = useDocOf(1, IdeasDoc)?.items
   const conversations = useWorkspaceConversations()
-  const standingOf = useStandings(conversations, useLandings(useRoots() ?? []), parked)
+  const standingOf = useStandings(conversations, parked)
   const asks = waiting((useDocOf(1, MessagesDoc) ?? emptyMessages).messages).toReversed()
   // Each watched branch's plan: whether it has an epic, absent while its plan has not streamed in.
   const [planned, setPlanned] = useState<Record<number, boolean>>({})
