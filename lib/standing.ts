@@ -18,7 +18,8 @@ type LanderIndex = {
         sha?: string
         base?: string
         tip: string
-        steps: readonly { at: number }[]
+        steps?: readonly { at: number }[]
+        at?: number
       }
     >
   >
@@ -45,11 +46,12 @@ export function latestLanding(
   for (const result of Object.values(index.results))
     if (result.conversationId === id && result.outcome === 'landed' && result.sha) {
       known.add(result.sha)
+      const at = result.steps?.at(-1)?.at ?? result.at
       take({
         sha: result.sha,
         tip: result.tip,
         ...(result.base === undefined ? {} : { base: result.base }),
-        ...(result.steps.length ? { at: result.steps.at(-1)!.at } : {}),
+        ...(at === undefined ? {} : { at }),
       })
     }
   for (const note of notes)
