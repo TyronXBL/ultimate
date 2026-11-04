@@ -124,7 +124,7 @@ function PhasedFlightRow({
                   state.tone === 'brand'
                     ? 'animate-pulse-dot bg-brand'
                     : state.tone === 'waiting' || state.tone === 'paused'
-                      ? 'bg-amber-400'
+                      ? 'bg-warning'
                       : state.tone === 'success'
                         ? 'bg-success'
                         : state.tone === 'failed'
