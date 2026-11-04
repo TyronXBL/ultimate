@@ -20,17 +20,11 @@ import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
 import { Pin } from '../models/api.ts'
-import { Runs, Standing } from '../subagents/api.ts'
+import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
-import type {
-  BackupNotice,
-  BackupRecord,
-  BackupReturned,
-  BackupState,
-  BackupSwitch,
-  ModelRef,
-} from './refs.ts'
+import { COOLDOWN_MINUTES, decideReturn, decideSwitch, name } from './state.ts'
+import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef } from './refs.ts'
 
 const State = defineDoc<BackupState>({
   kind: BackupDoc.kind,
@@ -42,10 +36,6 @@ const State = defineDoc<BackupState>({
   initial: () => ({}),
 })
 export const docs = [State]
-
-/** Minutes a conversation stays on a backup before a run that starts later puts its primary back. */
-const COOLDOWN_MINUTES = 30
-const COOLDOWN = COOLDOWN_MINUTES * 60_000
 
 type Host = Pick<
   ExtensionHost,
@@ -63,34 +53,9 @@ const model = (ref: { provider: string; modelId: string }): ModelRef => ({
   provider: ref.provider,
   modelId: ref.modelId,
 })
-const name = (ref: { provider: string; modelId: string }) => `${ref.provider}/${ref.modelId}`
-
-/** The record `state` holds, once it holds all of one. */
-function active(state: BackupState): BackupRecord | undefined {
-  const { primary, to, since, tried } = state
-  if (!primary || !to || since === undefined) return undefined
-  return {
-    primary,
-    to,
-    since,
-    tried: tried ?? [],
-    ...(state.thinking ? { thinking: state.thinking } : {}),
-  }
-}
 
 /** A provider's error text, short enough for a card: the first 300 characters. */
 const short = (error: string) => (error.length > 300 ? `${error.slice(0, 300)}…` : error)
-
-/** Drop conversation `id`'s record, and the backup its subagent row and card show. */
-const clear = async (tx: Tx, id: ConversationId, state: BackupState) => {
-  delete state.primary
-  delete state.thinking
-  delete state.to
-  delete state.since
-  delete state.tried
-  const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
-  if (run?.backup) delete run.backup
-}
 
 /** One switch at a time, across reloads: two failures in one publication must not both take the next backup. */
 function serial<T>(host: Pick<ExtensionHost, 'resource'>, work: () => Promise<T>): Promise<T> {
@@ -119,40 +84,29 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       const current = agent.model
       if (!current) return undefined
       const state = await tx.doc(State, id)
-      const failed = `${message.provider}/${message.model}`
-      // A switch made after this response was asked for: the conversation already left the model that failed here.
-      if (failed !== name(current))
-        return (state.tried ?? []).includes(failed) ? { earlier: true as const } : undefined
-      // A model picked since the last switch starts afresh: it is the primary now, and nothing was tried from it.
-      if (state.to && name(state.to) !== failed) await clear(tx, id, state)
       const definition = await host.want(Pin)?.definition(tx, id)
-      const used = new Set([...(state.tried ?? []), failed])
-      const to = definition?.fallback?.find(
-        (candidate) => !used.has(name(candidate)) && hasLogin(available, candidate),
-      )
-      if (!to) return undefined
-      // The first switch keeps the primary; the next one keeps the primary the conversation came from.
-      const primary = state.primary ?? current
-      const thinking = state.primary ? state.thinking : agent.thinkingLevel
-      const level = to.thinking ?? thinking
-      agent.model = model(to)
-      const runtime = host.modelRuntime.getModel(to.provider, to.modelId)
-      if (level && runtime) agent.thinkingLevel = clampThinkingLevel(runtime, level)
-      const switched: Switched = {
-        from: name(current),
-        to: name(to),
+      const step = decideSwitch(state, {
+        current,
+        currentThinking: agent.thinkingLevel,
+        failed: `${message.provider}/${message.model}`,
         reason: limitOf(message.errorMessage ?? '') ?? 'rate limit',
-      }
-      Object.assign(state, {
-        primary,
-        to: agent.model,
-        since: Date.now(),
-        tried: [...(state.tried ?? []), switched.from],
-        ...(thinking ? { thinking } : {}),
+        candidates: definition?.fallback ?? [],
+        hasLogin: (ref) => hasLogin(available, ref),
+        now: Date.now(),
       })
+      if (step.kind === 'cleared') await host.want(SubagentsApi)?.recordBackup(tx, id)
+      if (step.kind === 'earlier') return { earlier: true as const }
+      if (step.kind !== 'switched') return undefined
+      agent.model = model(step.to)
+      const runtime = host.modelRuntime.getModel(step.to.provider, step.to.modelId)
+      if (step.level && runtime) agent.thinkingLevel = clampThinkingLevel(runtime, step.level)
+      const switched: Switched = { from: step.from, to: name(step.to), reason: step.reason }
       // A subagent's row and card say it runs on a backup, and why.
-      const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
-      if (run) run.backup = { from: switched.from, model: to.modelId, reason: switched.reason }
+      await host.want(SubagentsApi)?.recordBackup(tx, id, {
+        from: switched.from,
+        model: step.to.modelId,
+        reason: switched.reason,
+      })
       return switched
     }, context),
   )
@@ -228,22 +182,20 @@ async function returned(
   tx: Tx,
   id: ConversationId,
 ): Promise<{ entries: EntryDraft[] } | undefined> {
-  const state = await tx.doc(State, id)
-  if (!state.to) return undefined
-  const record = active(state)
   const agent = await tx.doc(AgentDoc, id)
-  if (!record || !agent.model || name(agent.model) !== name(record.to)) {
-    await clear(tx, id, state)
-    return undefined
-  }
   const now = Date.now()
-  if (now < record.since + COOLDOWN) return undefined
-  if (!hasLogin(host.modelRuntime.getAvailableSnapshot(), record.primary)) return undefined
-  agent.model = model(record.primary)
-  if (record.thinking) agent.thinkingLevel = record.thinking
+  const step = decideReturn(await tx.doc(State, id), {
+    current: agent.model,
+    now,
+    hasPrimaryLogin: (ref) => hasLogin(host.modelRuntime.getAvailableSnapshot(), ref),
+  })
+  if (step.kind === 'cleared') await host.want(SubagentsApi)?.recordBackup(tx, id)
+  if (step.kind !== 'returned') return undefined
+  agent.model = model(step.primary)
+  if (step.thinking) agent.thinkingLevel = step.thinking
   else delete agent.thinkingLevel
-  await clear(tx, id, state)
-  const data: BackupReturned = { from: name(record.to), to: name(record.primary) }
+  await host.want(SubagentsApi)?.recordBackup(tx, id)
+  const data: BackupReturned = { from: step.from, to: step.to }
   return {
     entries: [
       {

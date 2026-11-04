@@ -14,7 +14,11 @@ import { BackupApi } from '../extensions/backup/api.ts'
 import pauseExtension from '../extensions/pause/server.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
 import { Pin } from '../extensions/models/api.ts'
-import { Runs, Standing } from '../extensions/subagents/api.ts'
+import { activeBackup, decideReturn, decideSwitch } from '../extensions/backup/state.ts'
+import type { BackupState } from '../extensions/backup/refs.ts'
+import { Standing, SubagentsApi } from '../extensions/subagents/api.ts'
+import type { SubagentsService } from '../extensions/subagents/api.ts'
+import { Runs } from '../extensions/subagents/server.ts'
 import { apis, removeTemps, temp, until } from './helpers.ts'
 
 const [State] = docs
@@ -78,6 +82,15 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
       }),
     }),
   })
+  // The owner's write, as `extensions/subagents/server.ts` implements it.
+  services.implement(SubagentsApi, {
+    recordBackup: async (tx, id, backup) => {
+      const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
+      if (!run) return
+      if (backup) run.backup = backup
+      else delete run.backup
+    },
+  } as SubagentsService)
   prepared.registry.install(backupExtension(host))
   prepared.registry.install(pauseExtension(host))
   /** Open as the server does: the openers settle first, then scheduling resumes. */
@@ -332,4 +345,134 @@ it('switches once for a failure reported twice', async () => {
   expect(await f.backup().fallBack(root.id, message, answer.id)).toBe(true)
   expect(await cards(harness, root.id)).toHaveLength(1)
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-2' })
+})
+
+const ref = (modelId: string) => ({ provider: 'faux', modelId })
+const SINCE = 1_000_000
+const COOLDOWN_MS = 30 * 60_000
+const onBackup: BackupState = {
+  primary: ref('a'),
+  thinking: 'high',
+  to: ref('b'),
+  since: SINCE,
+  tried: ['faux/a'],
+}
+const limit = (current: string, failed: string, prior: BackupState, now = SINCE) =>
+  decideSwitch(prior, {
+    current: ref(current),
+    currentThinking: 'medium',
+    failed: `faux/${failed}`,
+    reason: 'rate limit',
+    candidates: [ref('b'), ref('c')],
+    hasLogin: () => true,
+    now,
+  })
+
+it.each([
+  {
+    row: 'the first limit records the primary and its thinking',
+    from: {},
+    current: 'a',
+    failed: 'a',
+    kind: 'switched',
+    after: { primary: ref('a'), thinking: 'medium', to: ref('b'), since: SINCE, tried: ['faux/a'] },
+  },
+  {
+    row: 'a chained limit keeps the first primary and thinking, and accumulates tried',
+    from: onBackup,
+    current: 'b',
+    failed: 'b',
+    kind: 'switched',
+    after: { ...onBackup, to: ref('c'), tried: ['faux/a', 'faux/b'] },
+  },
+  {
+    row: 'a limit of a model switched away from is an earlier one',
+    from: onBackup,
+    current: 'b',
+    failed: 'a',
+    kind: 'earlier',
+    after: onBackup,
+  },
+  {
+    row: 'a limit of a model never tried, answered elsewhere, changes nothing',
+    from: onBackup,
+    current: 'b',
+    failed: 'z',
+    kind: 'none',
+    after: onBackup,
+  },
+  {
+    row: 'a model picked meanwhile restarts from the pick: new primary, nothing tried',
+    from: onBackup,
+    current: 'c',
+    failed: 'c',
+    kind: 'switched',
+    after: { primary: ref('c'), thinking: 'medium', to: ref('b'), since: SINCE, tried: ['faux/c'] },
+  },
+  {
+    row: 'with no backup left the record stays and nothing switches',
+    from: { ...onBackup, tried: ['faux/a', 'faux/b', 'faux/c'] },
+    current: 'b',
+    failed: 'b',
+    kind: 'none',
+    after: { ...onBackup, tried: ['faux/a', 'faux/b', 'faux/c'] },
+  },
+])('limit: $row', ({ from, current, failed, kind, after }) => {
+  const next = structuredClone(from)
+  expect(limit(current, failed, next).kind).toBe(kind)
+  expect(next).toEqual(after)
+})
+
+it.each([
+  {
+    row: 'no record: nothing to return from',
+    from: {},
+    current: 'a',
+    now: SINCE + COOLDOWN_MS,
+    login: true,
+    step: { kind: 'none' },
+    after: {},
+  },
+  {
+    row: 'before the cooldown it waits',
+    from: onBackup,
+    current: 'b',
+    now: SINCE + COOLDOWN_MS - 1,
+    login: true,
+    step: { kind: 'wait' },
+    after: onBackup,
+  },
+  {
+    row: 'without a login for the primary it waits',
+    from: onBackup,
+    current: 'b',
+    now: SINCE + COOLDOWN_MS,
+    login: false,
+    step: { kind: 'wait' },
+    after: onBackup,
+  },
+  {
+    row: 'after the cooldown with a login it restores primary and thinking',
+    from: onBackup,
+    current: 'b',
+    now: SINCE + COOLDOWN_MS,
+    login: true,
+    step: { kind: 'returned', primary: ref('a'), thinking: 'high', from: 'faux/b', to: 'faux/a' },
+    after: {},
+  },
+  {
+    row: 'a model picked meanwhile clears the record without restoring the old primary',
+    from: onBackup,
+    current: 'c',
+    now: SINCE + COOLDOWN_MS,
+    login: true,
+    step: { kind: 'cleared' },
+    after: {},
+  },
+])('return: $row', ({ from, current, now, login, step, after }) => {
+  const next = structuredClone(from)
+  const event = { current: ref(current), now, hasPrimaryLogin: () => login }
+  expect(decideReturn(next, event)).toEqual(step)
+  expect(next).toEqual(after)
+  expect(activeBackup(next)).toEqual(activeBackup(after))
 })

@@ -6,7 +6,7 @@ import type { Context } from '@earendil-works/chord'
 import { defineDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, EntryId, TaskId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
-import { BranchSetupDoc, RunsDoc, StandingDoc } from './refs.ts'
+import { BranchSetupDoc, StandingDoc } from './refs.ts'
 import type { BranchSetupState, Run } from './refs.ts'
 import type { createChild } from './children.ts'
 
@@ -60,17 +60,6 @@ export const Standing = defineDoc<Record<string, ConversationId>>({
   initial: () => ({}),
 })
 
-/** `{ [conversationId]: Run }` of the children `subagent start` made, on the root, for the sidebar and call cards. */
-export const Runs = defineDoc<Record<string, Run>>({
-  kind: RunsDoc.kind,
-  checkpointWhen: () => false,
-  version: 1,
-  scope: 'conversation',
-  history: 'latest',
-  fork: 'initial',
-  initial: () => ({}),
-})
-
 /**
  * The definition a conversation was configured from: children (including automation runs) and standing agents. An agent
  * made on the fly has none: `adhoc`, so nothing looks a definition up by its label.
@@ -106,6 +95,11 @@ export type SubagentsService = {
    * error becomes `given-up`, final. Anything else is left alone.
    */
   giveUp(tx: Tx, parent: ConversationId, child: ConversationId): Promise<void>
+  /**
+   * Inside `tx`, set the backup model that subagent `id`'s row and card say it runs on, or with none drop it. Does
+   * nothing for a conversation `subagent start` did not make.
+   */
+  recordBackup(tx: Tx, id: ConversationId, backup?: Run['backup']): Promise<void>
   /** Create, inside `tx`, a child conversation configured from a definition or as a copy of the parent's agent. */
   createChild: (
     tx: Tx,

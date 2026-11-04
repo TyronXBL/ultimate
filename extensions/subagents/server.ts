@@ -12,6 +12,7 @@ import {
   AssistantEntry,
   configure,
   ToolResultEntry,
+  defineDoc,
   defineExtension,
   defineTask,
   defineTool,
@@ -54,16 +55,29 @@ import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
 import type { AgentMarkStyle } from '../conversations/refs.ts'
 import { Pin } from '../models/api.ts'
-import { BranchSetup, Profile, Runs, Standing, Subagents, SubagentsApi } from './api.ts'
+import { BranchSetup, Profile, Standing, Subagents, SubagentsApi } from './api.ts'
 import { definitionRuns, refName, refOf } from '../../lib/families.ts'
 import { readFamilies } from '../../lib/families-settings.ts'
 import {
   DefinitionAction,
   DefinitionsAction,
   DeleteDefinitionAction,
+  RunsDoc,
   SaveDefinitionAction,
   StandingAction,
 } from './refs.ts'
+import type { Run } from './refs.ts'
+
+/** `{ [conversationId]: Run }` of the children `subagent start` made, on the root, for the sidebar and call cards. */
+export const Runs = defineDoc<Record<string, Run>>({
+  kind: RunsDoc.kind,
+  checkpointWhen: () => false,
+  version: 1,
+  scope: 'conversation',
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({}),
+})
 
 export const docs = [Subagents, Standing, Profile, BranchSetup, Runs]
 
@@ -642,6 +656,12 @@ export default function subagents(
       const input = await tx.submissionByRequest(child, `subagent:${action.reporter}`)
       if (input?.status === 'unanswered' && providerFailure(input.reason))
         action.status = 'given-up'
+    },
+    async recordBackup(tx, id, backup) {
+      const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
+      if (!run) return
+      if (backup) run.backup = backup
+      else delete run.backup
     },
     async createChild(tx, options) {
       const child = await createChild(host, tx, options)
