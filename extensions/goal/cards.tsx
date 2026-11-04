@@ -30,6 +30,7 @@ import type { EntryRecord } from '@/sdk'
 import { ConversationRef } from '../conversations/ui.tsx'
 import { EndAction, GoalDoc, ImagesAction } from './refs.ts'
 import type { Criterion, Decision, Goal, GoalEntry } from './refs.ts'
+import { reminderOf } from './state.ts'
 
 function useGoal(id: number) {
   return useDocOf(1, GoalDoc)?.goals.find((goal) => goal.id === id)
@@ -212,11 +213,12 @@ export function StartedCard({ entry }: { entry: EntryRecord }) {
 /** The goal reminder's state: waking @ultimate every 30 minutes, or paused while it waits on the user. */
 function Reminder({ goal }: { goal: Goal }) {
   const { phase } = goal
-  if (!goal.reminder && phase.state !== 'waiting') return null
+  const reminder = reminderOf(phase)
+  if (!goal.reminder && reminder !== 'paused') return null
   return (
     <p
       className="flex items-start gap-2 border-t border-border/60 px-4 py-2 text-[12px] leading-snug"
-      data-goal-reminder={phase.state === 'waiting' ? 'paused' : 'active'}
+      data-goal-reminder={reminder === 'paused' ? 'paused' : 'active'}
     >
       {phase.state === 'waiting' ? (
         <>

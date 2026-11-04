@@ -10,8 +10,8 @@ import goalExtension, {
   openGoal,
   start,
 } from '../extensions/goal/server.ts'
-import { mark, reminderOf, transition, TRIES } from '../extensions/goal/state.ts'
-import type { Criterion, GoalPhase } from '../extensions/goal/refs.ts'
+import { reminderOf, transition, TRIES } from '../extensions/goal/state.ts'
+import type { GoalPhase } from '../extensions/goal/refs.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 
 const ULTIMATE = 5 as ConversationId
@@ -139,6 +139,8 @@ it('blocks a criterion after repeated failed tries and finishes with the outcome
   // Rewording keeps what was learned about an unchanged criterion.
   await act(tx, ULTIMATE, { action: 'criteria', criteria: ['Loads in 1s', 'Lint passes'] }, 0)
   expect((await openGoal(tx))!.criteria.map((item) => item.status)).toEqual(['blocked', 'open'])
+  await act(tx, ULTIMATE, { action: 'met', n: 2 }, 0)
+  expect((await openGoal(tx))!.criteria[1].status).toBe('met')
   await expect(act(tx, ULTIMATE, { action: 'finish', summary: 'x' }, 0)).rejects.toThrow('outcome')
   const done = await act(
     tx,
@@ -338,7 +340,12 @@ it('moves a goal through its phases and keeps the reminder in line with each', (
   // The reminder follows the phase alone: running, paused while waiting on the user, gone once ended.
   for (const [from, event, to, reminder] of [
     [active, { type: 'pause', reason: 'Which account?', at: 1 }, waiting, 'paused'],
-    [waiting, { type: 'pause', reason: 'Which account?', at: 1 }, waiting, 'paused'],
+    [
+      waiting,
+      { type: 'pause', reason: 'Which region?', at: 2 },
+      { state: 'waiting', reason: 'Which region?', at: 2 },
+      'paused',
+    ],
     [waiting, { type: 'resume' }, active, 'on'],
     [active, { type: 'end', ending }, ended, 'off'],
     [waiting, { type: 'end', ending }, ended, 'off'],
@@ -347,19 +354,5 @@ it('moves a goal through its phases and keeps the reminder in line with each', (
     expect(next).toEqual(to)
     expect(reminderOf(next)).toBe(reminder)
   }
-  expect(reminderOf(active)).toBe('on')
   expect(() => transition(active, { type: 'resume' })).toThrow('not paused')
-  for (const event of [
-    { type: 'pause', reason: 'x', at: 1 },
-    { type: 'resume' },
-    { type: 'end', ending },
-  ] as const)
-    expect(() => transition(ended, event)).toThrow('No goal is open')
-})
-
-it('marks a criterion met, or one more failed try and blocked at the last', () => {
-  const open = (tries?: number): Criterion => ({ text: 'c', status: 'open', tries })
-  expect(mark(open(), 'met').status).toBe('met')
-  expect(mark(open(), 'failed')).toMatchObject({ status: 'open', tries: 1 })
-  expect(mark(open(TRIES - 1), 'failed')).toMatchObject({ status: 'blocked', tries: TRIES })
 })

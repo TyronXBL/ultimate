@@ -7,7 +7,7 @@ import type { Criterion, Ending, Goal, GoalPhase } from './refs.ts'
 /** Failed tries after which a criterion is blocked; work goes on with the others. */
 export const TRIES = 3
 
-export type GoalEvent =
+type GoalEvent =
   | { type: 'pause'; reason: string; at: number }
   | { type: 'resume' }
   | { type: 'end'; ending: Ending }

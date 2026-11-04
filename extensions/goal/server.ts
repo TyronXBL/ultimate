@@ -40,7 +40,6 @@ export const Goals = defineDoc<{ next: number; goals: Goal[] }>({
   migrate: (value) => {
     const doc = value as unknown as { next: number; goals: (Goal & LegacyPhase)[] }
     for (const goal of doc.goals) {
-      if (goal.phase) continue
       goal.phase = goal.ended
         ? { state: 'ended', ...goal.ended }
         : goal.waiting

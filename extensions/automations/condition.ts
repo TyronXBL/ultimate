@@ -4,19 +4,19 @@ import type { Condition } from './types.ts'
  * The context condition as a state machine over the stored `armed` flag: armed until it fires, then waiting until the
  * context drops below `above - 10`. This module is its only writer; everyone else reads `conditionLook`.
  */
-export type ConditionLook = 'armed' | 'waiting'
+type ConditionLook = 'armed' | 'waiting'
 
 export const conditionLook = (condition: Condition): ConditionLook =>
   condition.armed ? 'armed' : 'waiting'
 
-export type ConditionEvent =
+type ConditionEvent =
   /** A context measurement. `createdAt` is where the pause counts from before any input. */
   | { type: 'measured'; percent: number; now: number; createdAt: number }
   /** The user's input to the watched conversation. */
   | { type: 'input'; at: number }
 
 /** What a measurement asks the caller to do: fire, after `paused` ms without the user's input if it waits for one. */
-export type ConditionFire = { paused?: number }
+type ConditionFire = { paused?: number }
 
 /** The condition after `event`, and the fire it calls for; the caller fires, and stores the returned condition. */
 export function step(
