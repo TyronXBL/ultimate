@@ -364,17 +364,23 @@ export const actions: Record<string, ExtensionAction> = {
     return operation
   }),
   status: implementAction(StatusAction, async (_args, { host }) => {
-    const folders = await host.projectExtensions()
+    const [folders, settings, project, user, added] = await Promise.all([
+      host.projectExtensions(),
+      readSettings(userSettingsPath(host.userHome)),
+      host.projectSetup(),
+      // The user's own lists, for the first run's checkboxes.
+      declared(userSettingsPath(host.userHome)),
+      adds(host.projectRoot),
+    ])
     // `"onboarding": false` in the user's settings: an experienced machine skips the first run and Start here.
-    const off = (await readSettings(userSettingsPath(host.userHome))).onboarding === false
+    const off = settings.onboarding === false
     return {
       firstRun: !off && !existsSync(marker(host.userHome)),
       off,
-      project: await host.projectSetup(),
-      // The user's own lists, for the first run's checkboxes.
-      user: await declared(userSettingsPath(host.userHome)),
+      project,
+      user,
       adds: {
-        ...(await adds(host.projectRoot)),
+        ...added,
         extensions: folders.filter((entry) => !entry.replaces).map((entry) => entry.name),
         replaces: folders.filter((entry) => entry.replaces).map((entry) => entry.name),
       },

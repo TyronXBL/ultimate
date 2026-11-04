@@ -74,15 +74,14 @@ export async function standing(git: Git): Promise<Standing> {
     throw new Error('origin has no default branch; run git remote set-head origin --auto')
   })
   const branch = remote.replace(/^origin\//, '')
-  const [ahead = 0, behind = 0] = (
-    await git('rev-list', '--left-right', '--count', `HEAD...${remote}`)
-  )
-    .split(/\s+/)
-    .map(Number)
+  const [counts, current, status] = await Promise.all([
+    git('rev-list', '--left-right', '--count', `HEAD...${remote}`),
+    git('symbolic-ref', '--quiet', '--short', 'HEAD').catch(() => ''),
+    git('status', '--porcelain', '--untracked-files=no'),
+  ])
+  const [ahead = 0, behind = 0] = counts.split(/\s+/).map(Number)
   const result: Standing = { branch, remote, ahead, behind }
-  const current = await git('symbolic-ref', '--quiet', '--short', 'HEAD').catch(() => '')
-  if (await git('status', '--porcelain', '--untracked-files=no'))
-    result.refused = 'The checkout has uncommitted changes'
+  if (status) result.refused = 'The checkout has uncommitted changes'
   else if (current !== branch)
     result.refused = `The checkout is on ${current || 'a detached HEAD'}, not ${branch}`
   else if (ahead && behind) {
