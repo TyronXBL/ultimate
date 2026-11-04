@@ -22,6 +22,7 @@ import { LineageApi } from '../lineage/api.ts'
 import { EndAction, HeardAction, LogAction, StartAction, StatusAction } from './refs.ts'
 import type { VoiceAnswer, VoiceContext, VoiceLine, VoiceSession } from './refs.ts'
 import { voiceBrief } from './brief.ts'
+import { waitsOnUser } from '../../lib/messages.ts'
 
 const SECRET = 'OPENAI_API_KEY'
 const NO_KEY = `Live voice needs an OpenAI API key: add ${SECRET} in ⌘K → Secrets`
@@ -239,9 +240,7 @@ export function answerTask(host: ExtensionHost) {
         let question = await runtime.memo<number | false>('question', ctx)
         if (question === undefined) {
           const log = await runtime.snapshot(Messages, ROOT_CONVERSATION_ID, ctx)
-          const open = log?.messages.findLast(
-            (m) => m.from === main && m.to === 'user' && m.reply && m.state === 'delivered',
-          )
+          const open = log?.messages.findLast(waitsOnUser(main))
           question = await runtime.memo('question', open?.id ?? false, ctx)
         }
         let receipt

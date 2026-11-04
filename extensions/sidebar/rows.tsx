@@ -36,6 +36,7 @@ import { Review } from '../workspaces/ui.tsx'
 import { RunName } from '../subagents/ui.tsx'
 import type { WorkspaceConversation as ConversationSummary } from '../workspaces/ui.tsx'
 import type { OverviewRow } from '../conversations/types.ts'
+import type { Activity } from '../../lib/activity.ts'
 import type { ConversationState } from '../messages/ui.tsx'
 import { SummaryHistory } from './summaries.tsx'
 
@@ -456,8 +457,8 @@ type ChildRowProps = {
   shown: boolean
   /** The primary agent's conversation. */
   primary?: number
-  /** A pause parked its run. */
-  parked?: boolean
+  /** Its activity (`useActivity`). */
+  activity: Activity
 }
 
 /**
@@ -477,7 +478,7 @@ function TaskedSubagentLine({
   row,
   shown,
   primary,
-  parked,
+  activity,
   depth,
   task,
 }: ChildRowProps & { depth: number; task?: { chip: ReactNode; title: string } }) {
@@ -487,9 +488,8 @@ function TaskedSubagentLine({
     {
       id: conversation.id,
       kind: 'subagent',
+      activity,
       runState: row?.runState,
-      busy: conversation.busy,
-      parked,
       primary,
     },
     log,
@@ -600,7 +600,7 @@ function TaskedChildRow({
   row,
   shown,
   primary,
-  parked,
+  activity,
   task,
 }: ChildRowProps & { task?: { chip: ReactNode; title: string } }) {
   const actions = useShell()
@@ -609,9 +609,8 @@ function TaskedChildRow({
     {
       id: conversation.id,
       kind: 'subagent',
+      activity,
       runState: row?.runState,
-      busy: conversation.busy,
-      parked,
       primary,
     },
     log,

@@ -15,6 +15,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { Subagents } from '../subagents/api.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
+import { isOpen } from '../../lib/messages.ts'
 import { Messages } from './api.ts'
 import { terminal } from './log.ts'
 import { send } from './send.ts'
@@ -89,12 +90,7 @@ async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promis
 export async function working(tx: Tx, id: ConversationId): Promise<boolean> {
   if (await busy(tx, id)) return true
   const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
-  if (
-    log.messages.some(
-      (m) => m.from === id && m.reply && (m.state === 'sent' || m.state === 'delivered'),
-    )
-  )
-    return true
+  if (log.messages.some((m) => m.from === id && isOpen(m))) return true
   return children(tx, id)
 }
 async function children(tx: Tx, id: ConversationId): Promise<boolean> {

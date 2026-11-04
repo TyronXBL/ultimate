@@ -25,19 +25,22 @@ import {
   errorMessage,
   events,
   formatAgo,
+  ParkedRuns,
   Provided,
   useUltimate,
 } from '@/sdk'
 import { useAgentRows, useChoices } from '../branch-setup/ui.tsx'
 import type { Choice } from '../branch-setup/ui.tsx'
 import type { Agents } from '../branch-setup/refs.ts'
-import { ConversationPhase, ConversationSpend, useOverview } from '../conversations/ui.tsx'
+import { ConversationPhase, ConversationSpend, useActivity } from '../conversations/ui.tsx'
 import { MessageAnswers } from '../messages/ui.tsx'
 import type { Message } from '../messages/refs.ts'
 import { tones as sidebarTones, useBranchState } from '../sidebar/ui.tsx'
 import { Review } from '../workspaces/ui.tsx'
 import type { WorkspaceConversation } from '../workspaces/ui.tsx'
 import type { Row } from './data.tsx'
+import type { Activity } from '../../lib/activity.ts'
+import type { Standing } from '../../lib/standing.ts'
 import { IdeaForm } from './form.tsx'
 import { Thumbnails, usePictures } from './pictures.tsx'
 import { LaunchAction, ParkAction, RemoveAction, UpdateAction } from './refs.ts'
@@ -202,30 +205,49 @@ function Status({ row }: { row: Row }) {
     return <span className="shrink-0 animate-pulse text-brand">launching</span>
   if (row.note === 'not built') return <span className="shrink-0">not built</span>
   if (row.idea.parked !== undefined) return null
-  if (row.branch) return <BranchState branch={row.branch} />
+  if (row.branch && row.standing) return <BranchState branch={row.branch} standing={row.standing} />
   return null
 }
 
-function BranchState({ branch }: { branch: WorkspaceConversation }) {
-  const runState = useOverview()[branch.id]?.runState
-  const working = branch.busy || runState === 'working'
+function BranchState(props: { branch: WorkspaceConversation; standing: Standing }) {
   return (
-    <Provided input={working ? branch.id : undefined} point={ConversationPhase}>
-      {(phase) => <StateWord branch={branch} phase={phase} working={working} />}
+    <Provided input={null} point={ParkedRuns}>
+      {(parked) => <BranchStateWithParked {...props} parked={parked} />}
+    </Provided>
+  )
+}
+
+function BranchStateWithParked({
+  parked,
+  ...props
+}: {
+  branch: WorkspaceConversation
+  standing: Standing
+  parked?: ReadonlySet<number>
+}) {
+  const activity = useActivity(parked)(props.branch.id)
+  return (
+    <Provided
+      input={activity === 'working' ? props.branch.id : undefined}
+      point={ConversationPhase}
+    >
+      {(phase) => <StateWord {...props} activity={activity} phase={phase} />}
     </Provided>
   )
 }
 
 function StateWord({
   branch,
-  working,
+  standing,
+  activity,
   phase,
 }: {
   branch: WorkspaceConversation
-  working: boolean
+  standing: Standing
+  activity: Activity
   phase?: { word: string; waiting: boolean }
 }) {
-  const state = useBranchState(branch, working, phase)
+  const state = useBranchState(branch, standing, activity, phase)
   // It gives way first on a narrow card, before the branch link, its spend and the age.
   return <span className={cn('min-w-0 truncate', tones[state.tone])}>{state.label}</span>
 }

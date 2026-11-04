@@ -72,13 +72,16 @@
     "extensions/review/drafts.ts",
     "extensions/review/lines.ts",
     "extensions/review/sha256.ts",
+    "lib/activity.ts",
     "lib/ago.ts",
     "lib/compare.ts",
     "lib/context-usage.ts",
     "lib/entries.ts",
     "lib/families.ts",
     "lib/marks.ts",
+    "lib/messages.ts",
     "lib/source-frames.ts",
+    "lib/standing.ts",
     "extensions/subagents/message-types.ts",
     "test/web"
   ]
