@@ -43,7 +43,7 @@ import type { Read } from './projects.ts'
 import { closedChapter, id, limit, readChapter, searchHit } from './chapters.ts'
 import type { HistoryRead, SearchOptions } from './chapters.ts'
 import { ConversationsApi } from '../conversations/api.ts'
-import { concludedOf } from '../../lib/concluded.ts'
+import { concludedIds } from '../../lib/concluded.ts'
 import { MessagesApi } from '../messages/api.ts'
 import type { ResponseReceipt } from '../conversations/summary.ts'
 import type { SummaryModel } from '../conversations/summary-model.ts'
@@ -239,7 +239,7 @@ function localReads(host: ExtensionHost, context: Context) {
    */
   const listed = async () => {
     const summaries = new Map(host.conversations().map((summary) => [summary.id, summary]))
-    const ui = await host.uiState(context)
+    const done = new Set(concludedIds(await host.uiState(context)))
     return (await conversations()).map((record) => {
       const summary = summaries.get(record.id)
       return {
@@ -251,7 +251,7 @@ function localReads(host: ExtensionHost, context: Context) {
           busy: summary.busy,
           inputAt: summary.inputAt,
         }),
-        ...(concludedOf(ui, record.id).state === 'concluded' && { concluded: true }),
+        ...(done.has(record.id) && { concluded: true }),
       }
     })
   }

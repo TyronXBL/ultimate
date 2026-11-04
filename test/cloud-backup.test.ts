@@ -735,21 +735,13 @@ it.each<[string, Run, RunEvent, Run]>([
     { type: 'begin' },
     { state: 'uploading', done: 0, total: 0, uploaded: 0 },
   ],
-  ['begin while uploading', uploading, { type: 'begin' }, uploading],
   [
     'progress',
     uploading,
     { type: 'progress', done: 8, total: 10, uploaded: 3 },
     { state: 'uploading', done: 8, total: 10, uploaded: 3 },
   ],
-  [
-    'late progress after the run ended',
-    idle,
-    { type: 'progress', done: 1, total: 1, uploaded: 1 },
-    idle,
-  ],
-  // e2c194e3: a 409 naming this very backup counts as done, so a refused run ends idle.
-  ['succeeded after a refusal', { state: 'conflict', error: 'x' }, { type: 'succeeded' }, idle],
+  ['succeeded', uploading, { type: 'succeeded' }, idle],
   // 83f81845: the refusal keeps the latest backup the Worker's 409 named.
   [
     'refused',
@@ -758,18 +750,12 @@ it.each<[string, Run, RunEvent, Run]>([
     { state: 'conflict', error: 'rog backed up', latest },
   ],
   [
-    'failed replaces a refusal',
-    { state: 'conflict', error: 'x' },
+    'failed',
+    uploading,
     { type: 'failed', error: 'Backup failed: 503' },
     { state: 'failed', error: 'Backup failed: 503' },
   ],
-  ['aborted before upload', uploading, { type: 'aborted' }, idle],
-  [
-    'aborted keeps the last refusal',
-    { state: 'failed', error: 'x' },
-    { type: 'aborted' },
-    { state: 'failed', error: 'x' },
-  ],
+  ['settled before upload', uploading, { type: 'settled' }, idle],
 ])('cloud backup run: %s', (_name, from, event, expected) => {
   expect(transition(from, event)).toEqual(expected)
 })

@@ -14,7 +14,7 @@ export const concludedKeys = {
 /** `active`: never concluded; `resumed`: concluded before, `at` is when it last was. */
 export type Concluded =
   | { state: 'active' }
-  | { state: 'concluded'; at: number }
+  | { state: 'concluded' }
   | { state: 'resumed'; at: number }
 
 type Keyed = Readonly<Record<string, unknown>>
@@ -30,12 +30,11 @@ function stamps(ui: Keyed): Record<string, unknown> {
   return at && typeof at === 'object' && !Array.isArray(at) ? (at as Record<string, unknown>) : {}
 }
 
-/** Where conversation `id` stands; a concluded id without a stamp (concluded before stamping) counts from 0. */
+/** Where conversation `id` stands. */
 export function concludedOf(ui: Keyed, id: number): Concluded {
+  if (concludedIds(ui).includes(id)) return { state: 'concluded' }
   const stamp = stamps(ui)[id]
-  const at = typeof stamp === 'number' ? stamp : undefined
-  if (concludedIds(ui).includes(id)) return { state: 'concluded', at: at ?? 0 }
-  return at === undefined ? { state: 'active' } : { state: 'resumed', at }
+  return typeof stamp === 'number' ? { state: 'resumed', at: stamp } : { state: 'active' }
 }
 
 /** Conclude `ids` at `now` in `ui`; concluding again re-stamps. */

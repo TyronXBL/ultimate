@@ -43,7 +43,8 @@ function alive(pid: number) {
  * says nothing about whether it is served now.
  */
 async function tailnets(host: Pick<ExtensionHost, 'want' | 'userHome'>) {
-  const published = host.want(TailscaleApi)?.status().url
+  const status = host.want(TailscaleApi)?.status()
+  const published = status?.state === 'ready' ? status.url : undefined
   if (!published) return { byRoot: new Map<string, string>() }
   let registry: { ports?: Record<string, { port: number; owner: string }> }
   try {

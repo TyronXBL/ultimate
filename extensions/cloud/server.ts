@@ -61,8 +61,12 @@ async function record<D extends JsonValue>(host: ExtensionHost, event: EventToke
     .catch((error: unknown) => host.notice(`Cloud backup: ${String(error)}`))
 }
 
-const runningIn = (host: ExtensionHost) =>
-  host.resource('cloud.backup', (): Running => ({ run: idle }))
+const runningIn = (host: ExtensionHost) => {
+  const running = host.resource('cloud.backup', (): Running => ({ run: idle }))
+  // A facet reload from before `run` existed may hand back an older resource object.
+  running.run ??= idle
+  return running
+}
 const send = (running: Running, event: RunEvent) => {
   running.run = transition(running.run, event)
 }
@@ -74,8 +78,9 @@ export async function backup(host: ExtensionHost, force: boolean) {
   if (host.want(PauseApi)?.paused()) throw new Error(PAUSED)
   // Set before the first await, so a second call refuses at once.
   send(running, { type: 'begin' })
+  let ready: Awaited<ReturnType<typeof setup>>
   try {
-    const ready = await setup(host)
+    ready = await setup(host)
     if (ready.status === 'off')
       throw new Error('Cloud backups are off: join them with ⌘K → Join cloud backups')
     if (ready.status === 'satellite')
@@ -84,10 +89,11 @@ export async function backup(host: ExtensionHost, force: boolean) {
       )
     if (ready.status === 'local')
       throw new Error(`${host.projectRoot} has no GitHub origin remote, so it cannot be backed up`)
-    return await upload(host, running, ready, force)
-  } finally {
-    send(running, { type: 'aborted' })
+  } catch (error) {
+    send(running, { type: 'settled' })
+    throw error
   }
+  return await upload(host, running, ready, force)
 }
 
 async function upload(
@@ -107,7 +113,8 @@ async function upload(
     const secret = process.env[SNAPSHOT_KEY] ?? (await readSecret(host.userHome, SNAPSHOT_KEY))
     if (!secret)
       throw new Error(`Missing ${SNAPSHOT_KEY}. Add it in the Secrets panel (⌘K → Secrets).`)
-    const tailnet = host.want(TailscaleApi)?.status().url
+    const status = host.want(TailscaleApi)?.status()
+    const tailnet = status?.state === 'ready' ? status.url : undefined
     const done = await backUp({
       ...ready.config,
       secret,
@@ -122,7 +129,6 @@ async function upload(
         send(running, { type: 'progress', done: read, total, uploaded })
       },
     })
-    send(running, { type: 'succeeded' })
     await record(host, BackupEvent, {
       phase: 'done',
       project: ready.key,
@@ -130,16 +136,10 @@ async function upload(
       uploaded: done.uploaded,
       ms: Date.now() - started,
     })
+    send(running, { type: 'succeeded' })
     return done
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (error instanceof Conflict)
-      send(running, { type: 'refused', error: message, latest: error.latest })
-    else {
-      const failed = `Backup failed: ${message}`
-      send(running, { type: 'failed', error: failed })
-      host.notice(failed)
-    }
     await record(host, BackupEvent, {
       phase: 'failed',
       project: ready.key,
@@ -147,6 +147,13 @@ async function upload(
       reason: classify(error),
       ...(error instanceof Conflict ? { error: message } : {}),
     })
+    if (error instanceof Conflict)
+      send(running, { type: 'refused', error: message, latest: error.latest })
+    else {
+      const failed = `Backup failed: ${message}`
+      send(running, { type: 'failed', error: failed })
+      host.notice(failed)
+    }
     throw error
   }
 }

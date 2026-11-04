@@ -327,7 +327,8 @@ async function stop(instances: Map<string, Instance>, id: string) {
  * the user's registry under an owner token that starts with its pid; the host's tailscale status knows the DNS name.
  */
 async function tailnet(host: Pick<ExtensionHost, 'want' | 'userHome'>) {
-  const published = host.want(TailscaleApi)?.status().url
+  const status = host.want(TailscaleApi)?.status()
+  const published = status?.state === 'ready' ? status.url : undefined
   if (!published) return new Map<number, string>()
   let registry: { ports?: Record<string, { port: number; owner: string }> }
   try {

@@ -20,7 +20,7 @@ import type { EntryRecord, ToolCallView } from '@/sdk'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { FirstRun, GitCard, ProjectCard, Recommended } from './pages.tsx'
 import { IsolationAction } from '../workspaces/ui.tsx'
-import { firstRunView } from './onboarded.ts'
+import { showFirstRun } from './onboarded.ts'
 import { StartComposer } from './survey.tsx'
 import { ExtensionsPanel } from './panel.tsx'
 import { firstRunDialog, gitDialog, projectDialog } from './parts.tsx'
@@ -79,10 +79,7 @@ function Onboarding() {
   return (
     <>
       <FirstRun
-        open={
-          firstRunView(again, !navigator.webdriver && status.data?.firstRun === true, finished) !==
-          'closed'
-        }
+        open={showFirstRun(again, !navigator.webdriver && status.data?.firstRun === true, finished)}
         onClosed={() => ui.focusComposer()}
         onDone={async (skipped) => {
           if (!skipped) {

@@ -16,12 +16,8 @@ export const firstRunOf = (off: boolean, marked: boolean): FirstRun =>
   off ? 'off' : marked ? 'done' : 'pending'
 
 /**
- * Whether the first-run dialog shows: reopened from ⌘K Get ready… (whatever the first run's state), as the first run
- * itself until the user finishes or skips it, or not at all.
+ * Whether the first-run dialog shows: reopened from ⌘K Get ready… (whatever the first run's state), or as the first
+ * run itself until the user finishes or skips it.
  */
-export const firstRunView = (
-  reopened: boolean,
-  pending: boolean,
-  finished: boolean,
-): 'closed' | 'reopened' | 'first-run' =>
-  reopened ? 'reopened' : pending && !finished ? 'first-run' : 'closed'
+export const showFirstRun = (reopened: boolean, pending: boolean, finished: boolean) =>
+  reopened || (pending && !finished)

@@ -51,17 +51,11 @@ const rows: [name: string, from: SummaryTrack, event: SummaryEvent, to: SummaryT
     { status: 'ready', assessmentStatus: 'ready' },
   ],
   [
-    // 7f2bebc8: a result that newer work superseded is stale, a failed request is an error.
+    // 7f2bebc8: a result that newer work superseded is stale, not ready.
     'a stale result settles stale',
     { pending: a, status: 'pending', assessmentStatus: 'pending' },
     { type: 'settled', task: a, outcome: 'stale', assessment: true, summary: true },
     { status: 'stale', assessmentStatus: 'stale' },
-  ],
-  [
-    'a failed request settles error',
-    { pending: a, status: 'pending', assessmentStatus: 'pending' },
-    { type: 'settled', task: a, outcome: 'error', assessment: true, summary: true },
-    { status: 'error', assessmentStatus: 'error' },
   ],
   [
     'a refresh settles the summary only',

@@ -7,22 +7,19 @@ export type RunEvent =
   | { type: 'succeeded' }
   | { type: 'refused'; error: string; latest?: { id: string; machine: string; at: number } }
   | { type: 'failed'; error: string }
-  /** The run stopped before it uploaded (backups off, satellite, no GitHub origin). */
-  | { type: 'aborted' }
+  /** Setup stopped before the upload started (backups off, satellite, no GitHub origin). */
+  | { type: 'settled' }
 
 export const idle: Run = { state: 'idle' }
 
 export function transition(run: Run, event: RunEvent): Run {
   switch (event.type) {
     case 'begin':
-      return run.state === 'uploading'
-        ? run
-        : { state: 'uploading', done: 0, total: 0, uploaded: 0 }
+      return { state: 'uploading', done: 0, total: 0, uploaded: 0 }
     case 'progress':
-      return run.state === 'uploading'
-        ? { state: 'uploading', done: event.done, total: event.total, uploaded: event.uploaded }
-        : run
+      return { state: 'uploading', done: event.done, total: event.total, uploaded: event.uploaded }
     case 'succeeded':
+    case 'settled':
       return idle
     case 'refused':
       return {
@@ -32,8 +29,6 @@ export function transition(run: Run, event: RunEvent): Run {
       }
     case 'failed':
       return { state: 'failed', error: event.error }
-    case 'aborted':
-      return run.state === 'uploading' ? idle : run
     default:
       return event satisfies never
   }

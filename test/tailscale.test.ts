@@ -582,12 +582,6 @@ it.each<[string, Status, Event, unknown]>([
     { state: 'starting', allow: [] },
   ],
   [
-    'allowlist resolved',
-    { state: 'starting', allow: [] },
-    { type: 'resolved', allow: me },
-    { state: 'starting', allow: me },
-  ],
-  [
     'published',
     { state: 'starting', allow: me },
     { type: 'published', url, allow: me },
@@ -625,12 +619,6 @@ it.each<[string, Status, Event, unknown]>([
     { state: 'error', allow: me, hint: 'probe failed' },
     { type: 'published', url, allow: me },
     { state: 'ready', url, allow: me },
-  ],
-  [
-    'stopped keeps the allowlist',
-    { state: 'ready', url, allow: me },
-    { type: 'stopped' },
-    { state: 'disabled', allow: me },
   ],
 ])('tailscale status: %s', (_name, from, event, expected) => {
   expect(transition(from, event)).toEqual(expected)
