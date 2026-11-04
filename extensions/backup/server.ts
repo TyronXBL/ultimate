@@ -23,19 +23,28 @@ import { Pin } from '../models/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
-import { COOLDOWN_MINUTES, decideReturn, decideSwitch, name } from './state.ts'
+import { backupStep, COOLDOWN_MINUTES, fromLegacy, name } from './state.ts'
 import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef } from './refs.ts'
 
 const State = defineDoc<BackupState>({
   kind: BackupDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
-  initial: () => ({}),
+  initial: () => ({ kind: 'primary' }),
+  // Version 1 held the record's fields, all optional, and `{}` while on the primary.
+  migrate: (value) => fromLegacy(value),
 })
 export const docs = [State]
+
+/** Store `next` as the document's value: the one place the server writes it, with what `backupStep` returned. */
+const store = (doc: BackupState, next: BackupState) => {
+  if (doc === next) return
+  for (const key of Object.keys(doc)) Reflect.deleteProperty(doc, key)
+  Object.assign(doc, next)
+}
 
 type Host = Pick<
   ExtensionHost,
@@ -83,9 +92,10 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       // Every conversation runs on a model of its own: Pi answers a run without one `no_model`, never with a limit.
       const current = agent.model
       if (!current) return undefined
-      const state = await tx.doc(State, id)
+      const doc = await tx.doc(State, id)
       const definition = await host.want(Pin)?.definition(tx, id)
-      const step = decideSwitch(state, {
+      const { state, outcome: step } = backupStep(doc, {
+        type: 'limit',
         current,
         currentThinking: agent.thinkingLevel,
         failed: `${message.provider}/${message.model}`,
@@ -94,6 +104,7 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
         hasLogin: (ref) => hasLogin(available, ref),
         now: Date.now(),
       })
+      store(doc, state)
       if (step.kind === 'cleared') await host.want(SubagentsApi)?.recordBackup(tx, id)
       if (step.kind === 'earlier') return { earlier: true as const }
       if (step.kind !== 'switched') return undefined
@@ -184,11 +195,14 @@ async function returned(
 ): Promise<{ entries: EntryDraft[] } | undefined> {
   const agent = await tx.doc(AgentDoc, id)
   const now = Date.now()
-  const step = decideReturn(await tx.doc(State, id), {
+  const doc = await tx.doc(State, id)
+  const { state, outcome: step } = backupStep(doc, {
+    type: 'run',
     current: agent.model,
     now,
     hasPrimaryLogin: (ref) => hasLogin(host.modelRuntime.getAvailableSnapshot(), ref),
   })
+  store(doc, state)
   if (step.kind === 'cleared') await host.want(SubagentsApi)?.recordBackup(tx, id)
   if (step.kind !== 'returned') return undefined
   agent.model = model(step.primary)

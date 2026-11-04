@@ -19,8 +19,8 @@ export type BackupRecord = {
   tried: string[]
 }
 
-/** The backup a conversation runs on: `backup.state`, on that conversation. Unset while it runs on its primary. */
-export type BackupState = Partial<BackupRecord>
+/** `backup.state`, on that conversation: `primary` while it runs on its own model, else the record of its backup. */
+export type BackupState = { kind: 'primary' } | ({ kind: 'backup' } & BackupRecord)
 
 /**
  * The card in the conversation that switched: the model that answered with the limit, the backup it runs on now, which

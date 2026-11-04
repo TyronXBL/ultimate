@@ -14,8 +14,8 @@ import { BackupApi } from '../extensions/backup/api.ts'
 import pauseExtension from '../extensions/pause/server.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
 import { Pin } from '../extensions/models/api.ts'
-import { activeBackup, decideReturn, decideSwitch } from '../extensions/backup/state.ts'
-import type { BackupState } from '../extensions/backup/refs.ts'
+import { backupStep } from '../extensions/backup/state.ts'
+import type { BackupRecord, BackupState } from '../extensions/backup/refs.ts'
 import { Standing, SubagentsApi } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { Runs } from '../extensions/subagents/server.ts'
@@ -158,11 +158,12 @@ it('switches to the next backup model on a rate limit, and the retry answers on 
   })
   const record = await state(harness, root.id)
   expect(record).toMatchObject({
+    kind: 'backup',
     primary: { provider: 'faux', modelId: 'faux-1' },
     to: { provider: 'faux', modelId: 'faux-2' },
     tried: ['faux/faux-1'],
   })
-  expect(record!.since).toBeGreaterThan(Date.now() - 60_000)
+  expect((record as BackupRecord).since).toBeGreaterThan(Date.now() - 60_000)
   // @ultimate hears about it once, in its own conversation.
   const notices = await dividers(harness, ultimate.id, 'backup.notice')
   expect(notices).toHaveLength(1)
@@ -209,6 +210,7 @@ it('takes the next backup on a second limit, keeping the first primary', async (
   ])
   const record = await state(harness, root.id)
   expect(record).toMatchObject({
+    kind: 'backup',
     primary: { provider: 'faux', modelId: 'faux-1' },
     to: { provider: 'faux', modelId: 'faux-3' },
     tried: ['faux/faux-1', 'faux/faux-2'],
@@ -254,7 +256,7 @@ it('stays on its model when the answer failed for another reason', async () => {
     (await (await root.submit({ type: 'input', content: 'A' }, context)).wait(context)).status,
   ).toBe('unanswered')
   expect(await cards(harness, root.id)).toEqual([])
-  expect(await state(harness, root.id)).toEqual({})
+  expect(await state(harness, root.id)).toEqual({ kind: 'primary' })
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-1' })
 })
 
@@ -279,7 +281,7 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   })
   // The cooldown passed while the conversation was idle on the backup.
   await harness.commit(async (tx) => {
-    ;(await tx.doc(State, root.id)).since = Date.now() - 31 * 60_000
+    Object.assign(await tx.doc(State, root.id), { since: Date.now() - 31 * 60_000 })
   }, context)
 
   expect(
@@ -288,7 +290,7 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-1' })
   const [divider] = await dividers(harness, root.id, 'backup.return')
   expect(divider.data).toEqual({ from: 'faux/faux-2', to: 'faux/faux-1' })
-  expect(await state(harness, root.id)).toEqual({})
+  expect(await state(harness, root.id)).toEqual({ kind: 'primary' })
   expect((await harness.snapshot(Runs, ROOT_CONVERSATION_ID, context))?.[root.id]).toEqual({
     model: 'faux-1',
   })
@@ -321,13 +323,13 @@ it('drops the record when someone picked another model meanwhile', async () => {
   await until(async () => (await cards(harness, root.id)).length === 1)
   await harness.commit(async (tx) => {
     await configure(tx, root.id, { model: { provider: 'faux', modelId: 'faux-3' } })
-    ;(await tx.doc(State, root.id)).since = Date.now() - 31 * 60_000
+    Object.assign(await tx.doc(State, root.id), { since: Date.now() - 31 * 60_000 })
     await Promise.resolve()
   }, context)
   await (await root.submit({ type: 'input', content: 'picked' }, context)).wait(context)
   expect(await dividers(harness, root.id, 'backup.return')).toEqual([])
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-3' })
-  expect(await state(harness, root.id)).toEqual({})
+  expect(await state(harness, root.id)).toEqual({ kind: 'primary' })
 })
 
 it('switches once for a failure reported twice', async () => {
@@ -350,32 +352,37 @@ it('switches once for a failure reported twice', async () => {
 const ref = (modelId: string) => ({ provider: 'faux', modelId })
 const SINCE = 1_000_000
 const COOLDOWN_MS = 30 * 60_000
+const primary: BackupState = { kind: 'primary' }
 const onBackup: BackupState = {
+  kind: 'backup',
   primary: ref('a'),
   thinking: 'high',
   to: ref('b'),
   since: SINCE,
   tried: ['faux/a'],
 }
-const limit = (current: string, failed: string, prior: BackupState, now = SINCE) =>
-  decideSwitch(prior, {
+const limit = (current: string, failed: string, from: BackupState) =>
+  backupStep(from, {
+    type: 'limit',
     current: ref(current),
     currentThinking: 'medium',
     failed: `faux/${failed}`,
     reason: 'rate limit',
     candidates: [ref('b'), ref('c')],
     hasLogin: () => true,
-    now,
+    now: SINCE,
   })
+const run = (current: string, now: number, login: boolean, from: BackupState) =>
+  backupStep(from, { type: 'run', current: ref(current), now, hasPrimaryLogin: () => login })
 
 it.each([
   {
     row: 'the first limit records the primary and its thinking',
-    from: {},
+    from: primary,
     current: 'a',
     failed: 'a',
     kind: 'switched',
-    after: { primary: ref('a'), thinking: 'medium', to: ref('b'), since: SINCE, tried: ['faux/a'] },
+    after: { ...onBackup, thinking: 'medium' },
   },
   {
     row: 'a chained limit keeps the first primary and thinking, and accumulates tried',
@@ -407,7 +414,7 @@ it.each([
     current: 'c',
     failed: 'c',
     kind: 'switched',
-    after: { primary: ref('c'), thinking: 'medium', to: ref('b'), since: SINCE, tried: ['faux/c'] },
+    after: { ...onBackup, primary: ref('c'), thinking: 'medium', tried: ['faux/c'] },
   },
   {
     row: 'with no backup left the record stays and nothing switches',
@@ -417,21 +424,21 @@ it.each([
     kind: 'none',
     after: { ...onBackup, tried: ['faux/a', 'faux/b', 'faux/c'] },
   },
-])('limit: $row', ({ from, current, failed, kind, after }) => {
-  const next = structuredClone(from)
-  expect(limit(current, failed, next).kind).toBe(kind)
+] as const)('limit: $row', ({ from, current, failed, kind, after }) => {
+  const { state: next, outcome } = limit(current, failed, structuredClone(from) as BackupState)
+  expect(outcome.kind).toBe(kind)
   expect(next).toEqual(after)
 })
 
 it.each([
   {
-    row: 'no record: nothing to return from',
-    from: {},
+    row: 'on the primary there is nothing to return from',
+    from: primary,
     current: 'a',
     now: SINCE + COOLDOWN_MS,
     login: true,
-    step: { kind: 'none' },
-    after: {},
+    outcome: { kind: 'none' },
+    after: primary,
   },
   {
     row: 'before the cooldown it waits',
@@ -439,7 +446,7 @@ it.each([
     current: 'b',
     now: SINCE + COOLDOWN_MS - 1,
     login: true,
-    step: { kind: 'wait' },
+    outcome: { kind: 'wait' },
     after: onBackup,
   },
   {
@@ -448,7 +455,7 @@ it.each([
     current: 'b',
     now: SINCE + COOLDOWN_MS,
     login: false,
-    step: { kind: 'wait' },
+    outcome: { kind: 'wait' },
     after: onBackup,
   },
   {
@@ -457,8 +464,14 @@ it.each([
     current: 'b',
     now: SINCE + COOLDOWN_MS,
     login: true,
-    step: { kind: 'returned', primary: ref('a'), thinking: 'high', from: 'faux/b', to: 'faux/a' },
-    after: {},
+    outcome: {
+      kind: 'returned',
+      primary: ref('a'),
+      thinking: 'high',
+      from: 'faux/b',
+      to: 'faux/a',
+    },
+    after: primary,
   },
   {
     row: 'a model picked meanwhile clears the record without restoring the old primary',
@@ -466,13 +479,10 @@ it.each([
     current: 'c',
     now: SINCE + COOLDOWN_MS,
     login: true,
-    step: { kind: 'cleared' },
-    after: {},
+    outcome: { kind: 'cleared' },
+    after: primary,
   },
-])('return: $row', ({ from, current, now, login, step, after }) => {
-  const next = structuredClone(from)
-  const event = { current: ref(current), now, hasPrimaryLogin: () => login }
-  expect(decideReturn(next, event)).toEqual(step)
-  expect(next).toEqual(after)
-  expect(activeBackup(next)).toEqual(activeBackup(after))
+] as const)('return: $row', ({ from, current, now, login, outcome, after }) => {
+  const next = run(current, now, login, structuredClone(from))
+  expect(next).toEqual({ state: after, outcome })
 })
