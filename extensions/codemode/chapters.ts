@@ -8,6 +8,7 @@ import type {
 } from '@earendil-works/pi-durable'
 import { DatabaseSync } from 'node:sqlite'
 import { chapterFiles, readChapters } from '../../lib/chapters.ts'
+import { concludedOf } from '../../lib/concluded.ts'
 import { shortTitle } from '../../lib/title.ts'
 
 export const limit = (value: unknown, fallback = 100) => {
@@ -129,8 +130,7 @@ export function readChapter(database: string, op: HistoryRead, args: unknown[]) 
     }
     if (op === 'conversations') {
       // The same listing as the live read: summary fields with short titles, busy from live foreground tasks, concluded from the UI state.
-      const concluded = doc('ultimate.ui', 1)?.['ext.conversations.concluded']
-      const done = new Set(Array.isArray(concluded) ? concluded : [])
+      const ui = doc('ultimate.ui', 1) ?? {}
       const busy = new Set(
         db
           .prepare(
@@ -150,7 +150,7 @@ export function readChapter(database: string, op: HistoryRead, args: unknown[]) 
           ...(cwd !== undefined && { cwd }),
           busy: busy.has(record.id),
           ...(metadata.inputAt !== undefined && { inputAt: metadata.inputAt }),
-          ...(done.has(record.id) && { concluded: true }),
+          ...(concludedOf(ui, record.id).state === 'concluded' && { concluded: true }),
         }
       })
     }

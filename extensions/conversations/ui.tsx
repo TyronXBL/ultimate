@@ -8,6 +8,7 @@ import type { ReactNode } from 'react'
 import { definePoint, useTasks, useUiState } from '@/sdk'
 import { activityOf } from '../../lib/activity.ts'
 import type { Activity } from '../../lib/activity.ts'
+import { concludedIds, concludedKeys, concludedOf } from '../../lib/concluded.ts'
 import { useOverview } from './feature.tsx'
 
 /**
@@ -67,14 +68,31 @@ export { AgentMark, agentTitle } from './marks.tsx'
 export type { Presence } from './marks.tsx'
 export { hiddenConversationIds } from './visible.tsx'
 
+function useConcludedState() {
+  const [ids] = useUiState<number[]>(concludedKeys.ids, [])
+  const [at] = useUiState<Record<string, number>>(concludedKeys.at, {})
+  return { [concludedKeys.ids]: ids, [concludedKeys.at]: at }
+}
+
+/** The concluded conversations' ids. */
+export function useConcludedIds(): number[] {
+  return concludedIds(useConcludedState())
+}
+
 /**
  * Since when each conversation counts as concluded: forever while it is, else when it was last concluded (kept when
  * it is resumed); undefined for one never concluded. What it said before then is settled.
  */
 export function useConcludedSince(): (id: number) => number | undefined {
-  const [concluded] = useUiState<number[]>('ext.conversations.concluded', [])
-  const [at] = useUiState<Record<string, number>>('ext.conversations.concludedAt', {})
-  return (id) => (concluded.includes(id) ? Infinity : at[id])
+  const ui = useConcludedState()
+  return (id) => {
+    const concluded = concludedOf(ui, id)
+    return concluded.state === 'concluded'
+      ? Infinity
+      : concluded.state === 'resumed'
+        ? concluded.at
+        : undefined
+  }
 }
 export {
   Compacted,

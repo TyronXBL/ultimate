@@ -14,7 +14,6 @@ import {
   useNow,
   useTasks,
   useUltimate,
-  useUiState,
 } from '@/sdk'
 import type { TaskGraph, TaskGraphNode } from '@/sdk'
 import type { WorkspaceConversation as ConversationSummary } from '../workspaces/ui.tsx'
@@ -22,7 +21,12 @@ import {
   useWorkspaceConversations as useConversations,
   useWorkspaceIndex,
 } from '../workspaces/ui.tsx'
-import { FeatureTag, hiddenConversationIds, useOverview } from '../conversations/ui.tsx'
+import {
+  FeatureTag,
+  hiddenConversationIds,
+  useConcludedIds,
+  useOverview,
+} from '../conversations/ui.tsx'
 import { Address, MessagesDoc } from '../messages/ui.tsx'
 import { TaskChip, useTaskOf } from '../plan/ui.tsx'
 import { groups, meaning } from './kinds.ts'
@@ -406,7 +410,7 @@ function Background({ tasks, tree }: { tasks: TaskGraphNode[]; tree: Tree }) {
 function TasksPanel() {
   const graph = useTasks()
   const conversations = useConversations()
-  const [concluded] = useUiState<number[]>('ext.conversations.concluded', [])
+  const concluded = useConcludedIds()
   const { tasks, children, roots, summaries } = build(graph, conversations, concluded)
   const log = useDocOf(1, MessagesDoc)
   const overview = useOverview()

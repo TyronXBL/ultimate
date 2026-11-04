@@ -30,6 +30,8 @@ import type {
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { Trees } from './api.ts'
 import { summaryModel } from './summary-model.ts'
+import { summaryStep } from './summary-status.ts'
+import type { SummaryEvent } from './summary-status.ts'
 import { isInput } from '../../lib/entries.ts'
 import type { SummaryModel, SummaryModelHost } from './summary-model.ts'
 import type {
@@ -106,6 +108,17 @@ export const Summaries = defineDoc<SummaryState>({
   fork: 'initial',
   initial: () => ({ exchanges: 0, revision: 0 }),
 })
+
+/** The only writer of `pending`, `status` and `assessmentStatus`. */
+function transition(state: SummaryState, event: SummaryEvent) {
+  const { pending, status, assessmentStatus } = summaryStep(state, event)
+  if (pending === undefined) delete state.pending
+  else state.pending = pending
+  if (status === undefined) delete state.status
+  else state.status = status
+  if (assessmentStatus === undefined) delete state.assessmentStatus
+  else state.assessmentStatus = assessmentStatus
+}
 
 const terminal = {
   status: 'terminal' as const,
@@ -550,8 +563,7 @@ export async function requestSummary(
     { ownership: { kind: 'conversation' }, conversationId: id, background: true },
   )
   if (request.reason !== 'reply') {
-    state.pending = task
-    state.status = 'pending'
+    transition(state, { type: 'requested', task })
   }
 }
 
@@ -617,11 +629,7 @@ export function summaryBehavior(host: SummaryHost, generate = generateSummary) {
           const summary = !(await tx.conversation(runtime.conversationId))!.owner
           // An older observer still counts, but cannot supersede the newest reply's assessment.
           if (answer !== state.lastAnswer) return terminal
-          state.pending = task.id
-          state.assessmentStatus = 'pending'
-          if (summary) state.status = 'pending'
-          // An assessment-only task supersedes any spawn refresh, but cannot settle its status later.
-          else if (state.status === 'pending') state.status = 'stale'
+          transition(state, { type: 'observed', task: task.id, summary })
           return { status: 'running', checkpoint: { phase: 'prepare', answer, summary } }
         }, context)
       },
@@ -716,11 +724,8 @@ export function summaryBehavior(host: SummaryHost, generate = generateSummary) {
             // Nothing was asked: settle quietly, as when no model is available at request time.
             await runtime.commit(async (tx) => {
               const state = await tx.doc(Summaries, runtime.conversationId)
-              if (state.pending === task.id && state.revision === task.input.revision) {
-                delete state.pending
-                if (state.assessmentStatus === 'pending') delete state.assessmentStatus
-                if (state.status === 'pending') delete state.status
-              }
+              if (state.revision === task.input.revision)
+                transition(state, { type: 'released', task: task.id })
               return terminal
             }, context)
             return
@@ -779,11 +784,9 @@ export function summaryBehavior(host: SummaryHost, generate = generateSummary) {
               ...modelOf(response, model),
               at: now,
             })
-          delete state.pending
           // A task admitted before the conversation turned its summaries off settles without writing its result.
           if (!(await automatic(tx, runtime.conversationId))) {
-            if (state.assessmentStatus === 'pending') delete state.assessmentStatus
-            if (state.status === 'pending') delete state.status
+            transition(state, { type: 'released', task: task.id })
             return terminal
           }
           // Intent, spawn and steer refreshes publish while busy; a reply summary needs its answer current and idle.
@@ -796,8 +799,13 @@ export function summaryBehavior(host: SummaryHost, generate = generateSummary) {
                 state.lastAnswer === checkpoint.answer &&
                 (await currentAnswer(tx, runtime.conversationId, checkpoint.answer)))
           const outcome = !result ? 'error' : usable ? 'ready' : 'stale'
-          if (!refresh) state.assessmentStatus = outcome
-          if (checkpoint.summary) state.status = outcome
+          transition(state, {
+            type: 'settled',
+            task: task.id,
+            outcome,
+            assessment: !refresh,
+            summary: checkpoint.summary,
+          })
           if (!result || !usable)
             return discard(tx, runtime.conversationId, {
               reason: result ? 'stale' : 'error',
@@ -874,9 +882,11 @@ export function summaryBehavior(host: SummaryHost, generate = generateSummary) {
         await accountResponse(tx, runtime.conversationId, response)
         const state = await tx.doc(Summaries, runtime.conversationId)
         if (state.pending === task.id) {
-          delete state.pending
-          if (task.input.generation) state.assessmentStatus = 'error'
-          if (state.status === 'pending') state.status = 'error'
+          transition(state, {
+            type: 'aborted',
+            task: task.id,
+            assessment: task.input.generation !== undefined,
+          })
           await tx.appendEntry(SummaryDiscarded, runtime.conversationId, {
             data: {
               reason: 'error',

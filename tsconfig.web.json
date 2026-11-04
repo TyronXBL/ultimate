@@ -76,6 +76,7 @@
     "extensions/review/lines.ts",
     "extensions/review/sha256.ts",
     "lib/activity.ts",
+    "lib/concluded.ts",
     "lib/ago.ts",
     "lib/compare.ts",
     "lib/context-usage.ts",

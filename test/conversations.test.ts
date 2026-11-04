@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { JsonValue } from '@earendil-works/chord'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { LiveDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { Conversation, ConversationId } from '@earendil-works/pi-durable'
@@ -24,6 +25,8 @@ import {
   setStanding,
 } from '../extensions/conversations/server.ts'
 import { UiState } from '../server/ui-state.ts'
+import { conclude, concludedOf, resume } from '../lib/concluded.ts'
+import type { Concluded } from '../lib/concluded.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import { actionExec } from '../server/actions.ts'
 import { Overview } from '../extensions/conversations/overview.ts'
@@ -129,6 +132,39 @@ it('reads concluded IDs from the current transaction without exposing mutable do
     expect(await concludedIn(tx)).toEqual(new Set())
     ui['ext.conversations.concluded'] = []
   }, context)
+})
+
+type Event = { conclude: number[]; now: number } | { resume: number[] }
+const concludedRows: [name: string, events: Event[], id: number, expected: Concluded][] = [
+  ['never concluded is active', [], 1, { state: 'active' }],
+  ['conclude stamps', [{ conclude: [1], now: 10 }], 1, { state: 'concluded', at: 10 }],
+  [
+    // 47a26d86: a resumed conversation keeps when it was last concluded, so earlier reports stay settled.
+    'resume keeps the stamp',
+    [{ conclude: [1], now: 10 }, { resume: [1] }],
+    1,
+    { state: 'resumed', at: 10 },
+  ],
+  [
+    'concluding again re-stamps',
+    [{ conclude: [1], now: 10 }, { resume: [1] }, { conclude: [1], now: 20 }],
+    1,
+    { state: 'concluded', at: 20 },
+  ],
+  [
+    'concluding others leaves one alone',
+    [{ conclude: [1], now: 10 }, { conclude: [2], now: 20 }, { resume: [2] }],
+    1,
+    { state: 'concluded', at: 10 },
+  ],
+  ['resuming one never concluded stays active', [{ resume: [1] }], 1, { state: 'active' }],
+]
+it.each(concludedRows)('concluded: %s', (_name, events, id, expected) => {
+  const ui: Record<string, JsonValue> = {}
+  for (const event of events)
+    if ('conclude' in event) conclude(ui, event.conclude, event.now)
+    else resume(ui, new Set(event.resume))
+  expect(concludedOf(ui, id)).toEqual(expected)
 })
 
 it('tells each top-level conversation about the others in a fixed text', async () => {

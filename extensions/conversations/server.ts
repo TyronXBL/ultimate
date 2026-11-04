@@ -12,6 +12,11 @@ import {
 import type { ConversationId, Cursor, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { ConversationSubject } from './types.ts'
+import {
+  conclude as markConcluded,
+  concludedIds,
+  resume as markResumed,
+} from '../../lib/concluded.ts'
 // oxlint-disable-next-line no-restricted-imports -- conversations publishes the core UI state document
 import { UiState } from '../../server/ui-state.ts'
 import {
@@ -138,7 +143,7 @@ export const actions = {
   ),
   resume: implementAction(ResumeAction, async (args, { host }) => {
     const ids = conversationIds(args)
-    const resumed = await resume(host, ids)
+    const resumed = await resumeIds(host, ids)
     return { resumed }
   }),
   /** `{id, title}`: a blank title removes it, so the first message names the conversation again. */
@@ -246,17 +251,7 @@ export async function concludeIn(host: Pick<ExtensionHost, 'doc'>, tx: Tx, ids: 
     await refuseFixed(host, tx, id, 'concluded')
   }
   const ui = await tx.doc(UiState, ROOT_CONVERSATION_ID)
-  const previous = ui['ext.conversations.concluded']
-  ui['ext.conversations.concluded'] = [
-    ...new Set([...(Array.isArray(previous) ? previous : []), ...ids]),
-  ]
-  // When each was last concluded, kept on resume: a report from before it stays settled (messages' open.tsx).
-  const at = ui['ext.conversations.concludedAt']
-  const now = Date.now()
-  ui['ext.conversations.concludedAt'] = {
-    ...(at && typeof at === 'object' && !Array.isArray(at) ? at : {}),
-    ...Object.fromEntries(ids.map((id) => [id, now])),
-  }
+  markConcluded(ui, ids, Date.now())
 }
 
 function conversationIds(args: ActionInput<{ ids: number[] }>): ConversationId[] {
@@ -269,7 +264,7 @@ function conversationIds(args: ActionInput<{ ids: number[] }>): ConversationId[]
   return [...new Set(ids)] as ConversationId[]
 }
 
-function resume(host: ExtensionHost, ids: ConversationId[]) {
+function resumeIds(host: ExtensionHost, ids: ConversationId[]) {
   return host.harness().commit((tx) => resumeIn(tx, ids), context)
 }
 
@@ -286,17 +281,7 @@ async function resumeIn(tx: Tx, ids: ConversationId[]) {
     }
   }
   const ui = await tx.doc(UiState, ROOT_CONVERSATION_ID)
-  const previous = ui['ext.conversations.concluded']
-  const removed = Array.isArray(previous)
-    ? previous.filter(
-        (id): id is number => typeof id === 'number' && ancestors.has(id as ConversationId),
-      )
-    : []
-  if (removed.length)
-    ui['ext.conversations.concluded'] = (previous as JsonValue[]).filter(
-      (id) => !ancestors.has(id as ConversationId),
-    )
-  return removed
+  return markResumed(ui, ancestors)
 }
 
 export async function subject(
@@ -317,8 +302,7 @@ export async function subject(
 
 /** Read the concluded set without leaving the caller's transaction. */
 export async function concludedIn(tx: Tx): Promise<Set<ConversationId>> {
-  const ids = (await tx.doc(UiState, ROOT_CONVERSATION_ID))['ext.conversations.concluded']
-  return new Set(Array.isArray(ids) ? (ids as ConversationId[]) : [])
+  return new Set(concludedIds(await tx.doc(UiState, ROOT_CONVERSATION_ID)) as ConversationId[])
 }
 
 /** Tells each top-level conversation which other conversations work in this project. */
@@ -338,10 +322,8 @@ export default (host: ExtensionHost) => {
     setStanding,
     askSummaryModel,
     accountResponse,
-    concluded: async (caller) => {
-      const ids = (await host.uiState(caller))['ext.conversations.concluded']
-      return new Set(Array.isArray(ids) ? (ids as ConversationId[]) : [])
-    },
+    concluded: async (caller) =>
+      new Set(concludedIds(await host.uiState(caller)) as ConversationId[]),
     // A rename or summary since the conversation was named chose the title; it stays.
     generatedTitle: async (tx, id, title) => {
       const state = await tx.doc(Summaries, id)

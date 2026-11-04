@@ -4,6 +4,7 @@ import { defineDoc, InboxDoc, LiveDoc, ROOT_CONVERSATION_ID } from '@earendil-wo
 import type { ConversationId, Cursor, SubmissionRecord } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { resetAfter, Summaries } from './summary.ts'
+import { summaryStatuses } from './summary-status.ts'
 import { isInput } from '../../lib/entries.ts'
 import { activityOf } from '../../lib/activity.ts'
 import { OverviewDoc } from './refs.ts'
@@ -102,9 +103,8 @@ export function overviewBehavior(
           ...(answerId !== undefined ? { answerId } : {}),
           ...(state?.summary ? { summary: state.summary } : {}),
           ...(state?.feature ? { feature: state.feature } : {}),
-          ...(state?.status ? { summaryStatus: state.status } : {}),
+          ...(state ? summaryStatuses(state) : {}),
           ...(state?.activity ? { activity: state.activity } : {}),
-          ...(state?.assessmentStatus ? { assessmentStatus: state.assessmentStatus } : {}),
         }
         if (JSON.stringify(index.conversations[id]) !== JSON.stringify(row))
           index.conversations[id] = row
