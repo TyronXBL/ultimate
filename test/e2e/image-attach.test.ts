@@ -5,9 +5,8 @@
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
-import { chromium } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
+import { launchBrowser } from '../../extensions/browser/server.ts'
 import { fauxServer, removeTemp, temp, until } from '../helpers.ts'
 
 const cleanup: (() => Promise<void>)[] = []
@@ -41,11 +40,7 @@ it('attaches an image picked with the paperclip and sends it', async () => {
       return fauxAssistantMessage('Got it.')
     },
   ])
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(server.url)
@@ -79,11 +74,7 @@ it('uploads a PDF picked with the paperclip and sends its path, not its bytes', 
       return fauxAssistantMessage('Read it.')
     },
   ])
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(server.url)

@@ -19,6 +19,7 @@ const profile = flag('--profile')
 
 const browser = await chromium.launch({
   executablePath: await browserBinary(),
+  chromiumSandbox: true,
   args: ['--enable-precise-memory-info'],
 })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })

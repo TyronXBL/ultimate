@@ -1,9 +1,8 @@
 // On a phone the right panel's tabs scroll the shown one into view. Chromium's scrollIntoView returns a promise, and an
 // effect that returned it crashed the Agent surface as soon as the panel opened or switched tabs.
 import { join, resolve } from 'node:path'
-import { chromium } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
+import { launchBrowser } from '../../extensions/browser/server.ts'
 import { fauxServer, removeTemp, temp } from '../helpers.ts'
 
 const cleanup: (() => Promise<void>)[] = []
@@ -24,12 +23,7 @@ it('opens the right panel and switches its tabs on a phone', async () => {
   })
   cleanup.push(() => server.close())
 
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    // Keep the profile in the test's TMPDIR, but let Chromium put its singleton socket in the short system temp path.
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage({
     viewport: { width: 390, height: 797 },

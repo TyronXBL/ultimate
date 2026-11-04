@@ -9,6 +9,7 @@ it('emits draft-2020-compatible browser fill schemas for Anthropic and OpenRoute
   const host = {
     resource: <T>(_name: string, create: () => T) => create(),
     onClose() {},
+    implement() {},
   } as unknown as ExtensionHost
   const tools = browserExtension(host).tools?.map(toToolDeclaration)
   const models = createModels()

@@ -20,6 +20,7 @@ import { implementAction } from '../../lib/actions.ts'
 import { readSettings, userSettingsPath } from '../../lib/settings.ts'
 import { readSecret, secretMetadata } from '../../lib/secrets.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import { BrowserApi } from '../browser/api.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { HealthApi } from '../health/api.ts'
 import type { MemoryDoc, RootsDoc } from '../lineage/refs.ts'
@@ -225,6 +226,26 @@ async function cloudArea(host: CheckHost): Promise<SetupIssue | undefined> {
   return { area: 'Cloud backup', status: 'ok', summary: 'joined' }
 }
 
+async function browserArea(host: CheckHost): Promise<SetupIssue | undefined> {
+  const service = host.want(BrowserApi)
+  if (!service) return undefined
+  const chromium = await service.chromium()
+  if (!chromium)
+    return {
+      area: 'Browser',
+      status: 'info',
+      summary: 'no Chromium: the screenshot and browser tools cannot run',
+    }
+  const name = `${shortPath(host, chromium.path)}${chromium.version ? ` ${chromium.version}` : ''}`
+  if (!chromium.stale) return { area: 'Browser', status: 'ok', summary: name }
+  return {
+    area: 'Browser',
+    status: 'warn',
+    summary: `${name}: ${chromium.stale}`,
+    impact: `The screenshot and browser tools run it, sandboxed and on local pages only. Update it${chromium.update ? `: ${chromium.update}` : ''}, or point ULTIMATE_CHROMIUM at a current one.`,
+  }
+}
+
 function tailscaleArea(host: CheckHost): SetupIssue | undefined {
   const service = host.want(TailscaleApi)
   if (!service) return undefined
@@ -330,6 +351,7 @@ export async function check(
         secretsArea,
         extensionsArea,
         cloudArea,
+        browserArea,
         tailscaleArea,
         landerArea,
         worktreeArea,

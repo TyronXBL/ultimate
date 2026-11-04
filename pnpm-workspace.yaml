@@ -3,6 +3,10 @@ allowBuilds:
   esbuild: true
   protobufjs: false
   workerd: set this to true or false
+# Accepted advisories: `pnpm audit --audit-level high` in CI and the lander skips the GHSA ids listed here. Each entry
+# gets a comment saying why it is safe here and when to drop it; prefer upgrading the package.
+auditConfig:
+  ignoreGhsas: []
 minimumReleaseAgeExclude:
   - '@earendil-works/chord@1.5.0'
   - '@earendil-works/pi-agent-core@1.5.0'

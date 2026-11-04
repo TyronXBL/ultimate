@@ -7,9 +7,8 @@ import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { JsonValue } from '@earendil-works/chord'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
-import { chromium } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
+import { launchBrowser } from '../../extensions/browser/server.ts'
 import { Messages } from '../../extensions/messages/api.ts'
 import { context } from '../../server/harness.ts'
 import { fauxServer, post, removeTemp, temp, until } from '../helpers.ts'
@@ -87,12 +86,7 @@ async function openCard() {
   await until(async () => !!(await ask()))
   const asked = (await ask())!
 
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    // Keep the profile in the test's TMPDIR, but let Chromium put its singleton socket in the short system temp path.
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${server.url}/?conversation=${ultimate}`)

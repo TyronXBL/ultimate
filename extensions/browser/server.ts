@@ -1,4 +1,4 @@
-import { access, mkdir, readdir } from 'node:fs/promises'
+import { access, mkdir, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +20,9 @@ import { formatDimensionNote, resizeImage } from '@earendil-works/pi-coding-agen
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import { BrowserApi, type ChromiumStatus } from './api.ts'
+import { chromiumStatus } from './chromium-version.ts'
+import { refusal, scopeProxy } from './scope.ts'
 
 /** Chromium executables Playwright may have installed under `home` for `platform`, newest first. */
 export async function playwrightChromiums(
@@ -63,6 +66,18 @@ export async function browserBinary() {
   throw new Error(
     'No Chromium found. Set ULTIMATE_CHROMIUM, install /usr/bin/chromium or /usr/bin/google-chrome-stable (Google Chrome in /Applications on macOS), or run `npx playwright install chromium` (~/.cache/ms-playwright on Linux, ~/Library/Caches/ms-playwright on macOS).',
   )
+}
+
+/** Chromium as Ultimate launches it, for the browser tools and the browser tests: headless and inside its sandbox. */
+export async function launchBrowser() {
+  return chromium.launch({
+    executablePath: await browserBinary(),
+    headless: true,
+    // Playwright turns Chromium's sandbox off unless asked; without it a renderer exploit runs as the user.
+    chromiumSandbox: true,
+    // Chromium's singleton socket needs a short system temp path. Playwright still puts the profile in our TMPDIR.
+    env: { ...process.env, TMPDIR: undefined },
+  })
 }
 
 /** The PNG's absolute path: `path` against the conversation's cwd, else a new file in the home's screenshots. */
@@ -138,6 +153,19 @@ export default function browserExtension(host: ExtensionHost) {
       if (resource.launched) await (await resource.launched).close()
     })
     return resource
+  })
+  // Reading the version runs the binary and the package manager: cached until the binary changes, for 10 min at most.
+  let checked: { key: string; at: number; status: Promise<ChromiumStatus> } | undefined
+  host.implement(BrowserApi, {
+    async chromium() {
+      // No Chromium installed: there is nothing to check, and the tools say so when called.
+      const path = await browserBinary().catch(() => undefined)
+      if (!path) return undefined
+      const key = `${path}:${(await stat(path)).mtimeMs}`
+      if (checked?.key !== key || Date.now() - checked.at > 600_000)
+        checked = { key, at: Date.now(), status: chromiumStatus(path) }
+      return checked.status
+    },
   })
   const base = {
     url: opt(str({ description: 'Page to load; relative URLs resolve against this UI.' })),
@@ -377,18 +405,17 @@ export default function browserExtension(host: ExtensionHost) {
         : within(stepMs + extraMs, work)
     }
     const abort = () => void close(isolated)
+    let proxy: Awaited<ReturnType<typeof scopeProxy>> | undefined
     try {
       const png = screenshotFile(host.home, api.env?.cwd ?? host.projectRoot, args.path)
+      const url = new URL(args.url ?? '', host.system().process.url)
+      const refused = await refusal(url)
+      if (refused) throw new Error(refused)
+      proxy = await scopeProxy()
       context.abortSignal?.throwIfAborted()
       if (!state.launched) {
-        const launched: Promise<Browser> = browserBinary()
-          .then(async (executablePath) => {
-            const browser = await chromium.launch({
-              executablePath,
-              headless: true,
-              // Chromium's singleton socket needs a short system temp path. Playwright still puts the profile in our TMPDIR.
-              env: { ...process.env, TMPDIR: undefined },
-            })
+        const launched: Promise<Browser> = launchBrowser()
+          .then((browser) => {
             if (state.launched === launched) state.browser = browser
             browser.once('disconnected', () => {
               if (state.launched === launched) state.launched = undefined
@@ -408,9 +435,20 @@ export default function browserExtension(host: ExtensionHost) {
           viewport: { width: args.width ?? 1440, height: args.height ?? 900 },
           // Ultimate pages follow the system light or dark; dark unless the call asks for light.
           colorScheme: args.theme ?? 'dark',
+          // Every connection goes through the scope proxy, redirects and subresources included.
+          proxy: { server: proxy.server },
         }),
       )
       context.abortSignal?.addEventListener('abort', abort, { once: true })
+      // The page's own requests the proxy refused, once per host; Chromium's background requests stay unreported.
+      const reported = new Set<string>()
+      isolated.on('requestfailed', (request) => {
+        const target = new URL(request.url()).hostname
+        const reason = proxy?.refused.get(target)
+        if (!reason || reported.has(target)) return
+        reported.add(target)
+        outcomes.push(`Blocked ${request.url()}: ${reason}`)
+      })
       const page = await guard(isolated.newPage())
       page.setDefaultTimeout(stepMs)
       page.setDefaultNavigationTimeout(stepMs)
@@ -419,16 +457,15 @@ export default function browserExtension(host: ExtensionHost) {
         if (message.type() === 'error') outcomes.push(`Console error: ${message.text()}`)
       })
       page.on('pageerror', (error) => outcomes.push(`Page error: ${error.message}`))
-      const url = new URL(args.url ?? '', host.system().process.url).href
       // Any Ultimate page, this UI or a preview, gets `window.ultimate` for send/until steps.
       await guard(page.addInitScript(() => sessionStorage.setItem('ultimate.driven', '1')))
-      if (new URL(url).origin === new URL(host.system().process.url).origin) {
+      if (url.origin === new URL(host.system().process.url).origin) {
         // Own UI: this page is detached from the shared UI state (web/src/sdk/client.ts), so its `?conversation=`
         // and clicks never move the user's tabs.
         await guard(page.addInitScript(() => sessionStorage.setItem('ultimate.detached', '1')))
       }
-      api.output(`Loading ${url}\n`)
-      await guard(page.goto(url, { waitUntil: 'domcontentloaded' }), ownTimeoutMs)
+      api.output(`Loading ${url.href}\n`)
+      await guard(page.goto(url.href, { waitUntil: 'domcontentloaded' }), ownTimeoutMs)
       const result = await action(page, outcomes, png, guard)
       const title = await guard(page.title())
       context.abortSignal?.throwIfAborted()
@@ -469,6 +506,7 @@ export default function browserExtension(host: ExtensionHost) {
     } finally {
       context.abortSignal?.removeEventListener('abort', abort)
       await close(isolated)
+      proxy?.close()
     }
   }
 

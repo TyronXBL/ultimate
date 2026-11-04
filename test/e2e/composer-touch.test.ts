@@ -1,9 +1,8 @@
 // A touch keyboard has no Alt+Enter: while a run is busy, a draft offers Queue and Steer, and Stop shows only for an
 // empty draft, so a slip next to Send never ends the run.
 import { join, resolve } from 'node:path'
-import { chromium } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
+import { launchBrowser } from '../../extensions/browser/server.ts'
 import { context } from '../../server/harness.ts'
 import { fauxServer, held, post, removeTemp, temp, until } from '../helpers.ts'
 import { InboxDoc } from '@earendil-works/pi-durable'
@@ -34,12 +33,7 @@ it('queues and steers from a touch composer while a run is busy', async () => {
   const conversation = (await server.harness.conversation(ultimate, context))!
   await conversation.submit({ type: 'input', content: 'work' }, context)
 
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    // Keep the profile in the test's TMPDIR, but let Chromium put its singleton socket in the short system temp path.
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage({
     viewport: { width: 390, height: 797 },

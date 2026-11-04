@@ -2,9 +2,8 @@
 // move the user's tabs: it once wrote its selection into the shared UI state and the user's tab followed it.
 import { join, resolve } from 'node:path'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
-import { chromium } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
+import { launchBrowser } from '../../extensions/browser/server.ts'
 import { context } from '../../server/harness.ts'
 import { UiState } from '../../server/ui-state.ts'
 import { fauxServer, post, removeTemp, temp } from '../helpers.ts'
@@ -32,11 +31,7 @@ it('leaves the shared selection alone when a plain Playwright page opens another
     (await server.harness.snapshot(UiState, ROOT_CONVERSATION_ID, context))?.['shell.conversation']
   expect(await shared()).toBe(user)
 
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage()
   await page.goto(`${server.url}/?conversation=${other}`)

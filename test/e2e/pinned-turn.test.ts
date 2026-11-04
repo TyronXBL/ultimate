@@ -3,9 +3,8 @@
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import type { ConversationId } from '@earendil-works/pi-durable'
-import { chromium } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
+import { launchBrowser } from '../../extensions/browser/server.ts'
 import { context } from '../../server/harness.ts'
 import { fauxServer, post, removeTemp, temp } from '../helpers.ts'
 
@@ -44,11 +43,7 @@ it('pins the answered user turn while scrolled up and reveals it on click', asyn
   ])
     await (await conversation.submit({ type: 'input', content }, context)).wait(context)
 
-  const browser = await chromium.launch({
-    executablePath: await browserBinary(),
-    headless: true,
-    env: { ...process.env, TMPDIR: undefined },
-  })
+  const browser = await launchBrowser()
   cleanup.push(() => browser.close())
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${server.url}/?conversation=${ultimate}`)

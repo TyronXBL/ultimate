@@ -1,9 +1,11 @@
-import { access } from 'node:fs/promises'
+import { access, chmod, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { join } from 'node:path'
 import type { ToolExecutionApi } from '@earendil-works/pi-durable'
 import { expect, it } from 'vitest'
 import { context } from '../../server/harness.ts'
 import browserExtension from '../../extensions/browser/server.ts'
+import { chromiumStatus, MINIMUM_CHROMIUM } from '../../extensions/browser/chromium-version.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { removeTemp, temp } from '../helpers.ts'
 
@@ -18,6 +20,7 @@ it('times out a hung step, closes its page and keeps later calls working', async
     onClose: (close: () => Promise<void>) => closers.push(close),
     notice: (message: string) => notices.push(message),
     system: () => ({ process: { url: 'http://127.0.0.1:1/' } }),
+    implement() {},
   } as unknown as ExtensionHost
   const browser = browserExtension(host).tools!.find((tool) => tool.name === 'browser')!
   const api = { output() {} } as unknown as ToolExecutionApi
@@ -63,6 +66,7 @@ it('saves screenshots at the given path, relative to the conversation cwd, creat
     resource: <T>(_name: string, create: () => T) => create(),
     onClose: (close: () => Promise<void>) => closers.push(close),
     system: () => ({ process: { url: 'http://127.0.0.1:1/' } }),
+    implement() {},
   } as unknown as ExtensionHost
   const tools = new Map(browserExtension(host).tools!.map((tool) => [tool.name, tool]))
   const cwd = join(directory, 'worktree')
@@ -99,6 +103,76 @@ it('saves screenshots at the given path, relative to the conversation cwd, creat
     expect(JSON.stringify(wrong.output)).toContain('must end in .png')
   } finally {
     for (const close of closers) await close()
+    await removeTemp(directory)
+  }
+})
+
+it('opens local pages only: refuses a public URL and blocks a redirect or request leaving the scope', async () => {
+  const directory = await temp('ultimate-browser-scope-')
+  const closers: (() => Promise<void>)[] = []
+  // 203.0.113.0/24 is a documentation range: public, and never reached, since the proxy refuses it before connecting.
+  const outside = 'http://203.0.113.7/'
+  const server = createServer((request, response) => {
+    if (request.url === '/away') response.writeHead(302, { location: outside }).end()
+    else response.end(`<title>Local</title><img src="${outside}pixel.png">`)
+  })
+  await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening))
+  const local = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  const host = {
+    home: join(directory, 'home'),
+    projectRoot: directory,
+    resource: <T>(_name: string, create: () => T) => create(),
+    onClose: (close: () => Promise<void>) => closers.push(close),
+    system: () => ({ process: { url: `${local}/` } }),
+    implement() {},
+  } as unknown as ExtensionHost
+  const browser = browserExtension(host).tools!.find((tool) => tool.name === 'browser')!
+  const api = { output() {} } as unknown as ToolExecutionApi
+  const drive = async (url: string) => {
+    const result = await browser.execute(
+      { url, steps: [{ eval: 'location.href' }], screenshot: false },
+      api,
+      context,
+    )
+    return { isError: result.isError, text: JSON.stringify(result.output) }
+  }
+  try {
+    const refused = await drive(outside)
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain(`Refused ${outside}: 203.0.113.7 is a public address`)
+    expect(refused.text).toContain('read public pages with web_fetch')
+
+    const page = await drive('/')
+    expect(page.isError).toBeFalsy()
+    expect(page.text).toContain(`Step 1: OK \\"${local}/\\"`)
+    expect(page.text).toContain(`Blocked ${outside}pixel.png: 203.0.113.7 is a public address`)
+
+    const redirected = await drive('/away')
+    expect(redirected.isError).toBe(true)
+    expect(redirected.text).toContain(`Blocked ${outside}: 203.0.113.7 is a public address`)
+    expect(redirected.text).not.toContain('Step 1: OK')
+  } finally {
+    for (const close of closers) await close()
+    server.close()
+    await removeTemp(directory)
+  }
+})
+
+it('calls a Chromium older than the recorded minimum stale', async () => {
+  const directory = await temp('ultimate-chromium-version-')
+  const binary = join(directory, 'chromium')
+  const answering = async (version: string) => {
+    await writeFile(binary, `#!/bin/sh\necho "Chromium ${version} Test"\n`)
+    await chmod(binary, 0o755)
+    return chromiumStatus(binary)
+  }
+  try {
+    expect(await answering('156.0.8078.47')).toMatchObject({
+      version: '156.0.8078.47',
+      stale: expect.stringContaining(`fixed in ${MINIMUM_CHROMIUM}`),
+    })
+    expect(await answering(MINIMUM_CHROMIUM)).toEqual({ path: binary, version: MINIMUM_CHROMIUM })
+  } finally {
     await removeTemp(directory)
   }
 })

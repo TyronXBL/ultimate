@@ -22,6 +22,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      # High and critical advisories fail; accepted ones go in pnpm-workspace.yaml's auditConfig with a reason.
+      - run: pnpm audit --audit-level high
 
   test:
     runs-on: ubuntu-24.04
