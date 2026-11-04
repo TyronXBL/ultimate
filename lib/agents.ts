@@ -491,20 +491,43 @@ export async function discoverAgents(
   const errors: AgentDiscovery['errors'] = []
   const builtins = new Set<string>()
   const replaced: AgentDiscovery['replaced'] = []
-  for (const { source, path: directory } of await agentRoots(ultimateRoot, projectRoot, userHome)) {
-    let files: string[]
-    try {
-      files = await readdir(directory)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-        errors.push({ name: directory, path: directory, source, error: String(error) })
+  // Every file is read at once and applied in order below: a later file replaces or extends an earlier one.
+  const settle = <T>(promise: Promise<T>) =>
+    promise.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+  const readRoot = async (directory: string) => {
+    const listing = await settle(readdir(directory))
+    if ('error' in listing) return listing
+    const files = listing.value.filter(
+      (file) => file.endsWith('.md') && join(directory, file) !== skip,
+    )
+    return {
+      value: await Promise.all(
+        files.toSorted().map(async (file) => {
+          const path = join(directory, file)
+          return { file, path, read: await settle(readFile(path, 'utf8')) }
+        }),
+      ),
+    }
+  }
+  const [roots, families] = await Promise.all([
+    agentRoots(ultimateRoot, projectRoot, userHome).then((list) =>
+      Promise.all(list.map(async (root) => ({ ...root, files: await readRoot(root.path) }))),
+    ),
+    readFamilies(userHome, projectRoot),
+  ])
+  for (const { source, path: directory, files } of roots) {
+    if ('error' in files) {
+      if ((files.error as NodeJS.ErrnoException).code !== 'ENOENT')
+        errors.push({ name: directory, path: directory, source, error: String(files.error) })
       continue
     }
-    for (const file of files.filter((entry) => entry.endsWith('.md')).toSorted()) {
-      const path = join(directory, file)
-      if (path === skip) continue
+    for (const { file, path, read } of files.value) {
       try {
-        const text = await readFile(path, 'utf8')
+        if ('error' in read) throw read.error
+        const text = read.value
         if (isOverlay(text)) {
           const overlay = parseOverlay(text, path, modelRuntime)
           const base = definitions.get(overlay.name)
@@ -546,7 +569,6 @@ export async function discoverAgents(
     }
   }
   const decision = projectDecision(projectRoot, userHome)
-  const families = await readFamilies(userHome, projectRoot)
   return {
     definitions: [...definitions.values()].map((definition) => ({
       ...definition,

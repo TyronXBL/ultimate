@@ -1,6 +1,7 @@
 import { lstat, mkdir, readdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
+import { mapBounded } from '../lib/bounded.ts'
 import { git, isolatable, noCommit, noRepository } from '../lib/git.ts'
 import { readJson, updateJson, writeJson } from '../lib/json-file.ts'
 import { readSettings, updateSettings } from '../lib/settings.ts'
@@ -14,6 +15,26 @@ it('titles a long Markdown prompt by its first meaningful line, cut short', () =
   expect(title.length).toBeLessThanOrEqual(60)
   expect(shortTitle('**Task:** find the callers')).toBe('Task: find the callers')
   expect(shortTitle('fork task')).toBe('fork task')
+})
+
+it('maps with at most the limit running, in input order, and starts nothing after a failure', async () => {
+  let running = 0
+  let peak = 0
+  const started: number[] = []
+  const slow = async (item: number) => {
+    started.push(item)
+    peak = Math.max(peak, ++running)
+    // Later items finish first, so results in input order are not completion order.
+    for (let tick = 0; tick < 10 - item; tick++) await Promise.resolve()
+    running--
+    if (item === 5) throw new Error('five')
+    return item * 2
+  }
+  expect(await mapBounded([1, 2, 3, 4], 2, slow)).toEqual([2, 4, 6, 8])
+  expect(peak).toBe(2)
+  started.length = 0
+  await expect(mapBounded([5, 6, 7, 8, 9], 2, slow)).rejects.toThrow('five')
+  expect(started).not.toContain(9)
 })
 
 it('reads a missing JSON file as the fallback and rejects unreadable JSON', async () => {
