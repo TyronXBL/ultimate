@@ -93,6 +93,9 @@ see [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 - Plain TypeScript, ESM, Node 26 runs `.ts` directly: erasable syntax only (no enums, namespaces, or parameter
   properties), relative imports end in `.ts`.
 - Core server/web contracts live in `shared/protocol.ts`; extension-local types live with their extension.
+- No implicit state machines: anything that moves through states gets one typed union of states (not flags, optional
+  fields or untyped strings), one transition function as its only writer, one derivation every reader uses, and a
+  table test over its transitions; other extensions change it through the owner's API.
 - Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental.
 - Checks: `pnpm check` (format, lint, types) and the tests covering your change must pass before a commit; the lander
   runs every suite. Run `pnpm fix` while you work: it formats with `vp fmt` (Vite+) first, so formatting never fails a

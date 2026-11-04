@@ -17,6 +17,7 @@ Your only question: does this change lean on Ultimate's architecture, or build b
 - browser-side derivations that belong in server state, or server code that belongs in an extension;
 - new UI that ignores existing cards, primitives or surfaces;
 - a new dependency where an installed one or a platform feature would do;
+- an implicit state machine: a lifecycle kept as flags, optional fields or untyped strings, written from several places, derived differently by its readers, or changed by another extension writing the owner's document instead of calling its API (`AGENTS.md` Conventions);
 - anything that makes the next change harder (a new concept with one user, a contract wider than needed).
 
 Questioning is the job: name the existing piece that fits, with path:line, and the simpler shape. "None" is a fine answer; do not invent findings, and skip correctness, security and style, which other reviewers cover.
