@@ -34,8 +34,10 @@ const userFile = (host: Pick<ExtensionHost, 'userHome'>) => userSettingsPath(hos
 /** The raw `fastModels` value: the project's settings, else the user's. */
 async function fastSetting(host: Pick<FastHost, 'userHome' | 'projectSettings'>) {
   // Invalid settings JSON is reported where settings load; here it counts as unset.
-  const user: JsonObject = await readSettings(userFile(host)).catch(() => ({}))
-  const project = await host.projectSettings()
+  const [user, project] = await Promise.all([
+    readSettings(userFile(host)).catch((): JsonObject => ({})),
+    host.projectSettings(),
+  ])
   return Object.hasOwn(project, 'fastModels')
     ? { value: project.fastModels, project: true }
     : { value: user.fastModels, project: false }
@@ -67,10 +69,10 @@ async function listedModels(host: FastHost): Promise<Set<string>> {
   return new Set()
 }
 
-const status = async (host: FastHost) => ({
-  models: [...(await fastModels(host))],
-  project: (await fastSetting(host)).project,
-})
+const status = async (host: FastHost) => {
+  const [models, setting] = await Promise.all([fastModels(host), fastSetting(host)])
+  return { models: [...models], project: setting.project }
+}
 
 export const actions = {
   /** `{ models, project }`: the fast models, and whether the project's settings decide them. */

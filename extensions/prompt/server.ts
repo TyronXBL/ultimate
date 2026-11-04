@@ -106,7 +106,7 @@ export async function landings(
 const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16)
 
 /** Ultimate's own docs the primary agent reads on demand, by absolute path: `AGENTS.md`, `docs/*.md`, `agents/*.md`. */
-async function cloneDocs(ultimateRoot: string, files: Record<string, string>) {
+async function cloneDocs(ultimateRoot: string) {
   const listed = async (folder: string) =>
     // A missing folder lists nothing.
     (await readdir(join(ultimateRoot, folder)).catch(() => [] as string[]))
@@ -114,14 +114,16 @@ async function cloneDocs(ultimateRoot: string, files: Record<string, string>) {
       .map((name) => join(ultimateRoot, folder, name))
   const paths = [
     join(ultimateRoot, 'AGENTS.md'),
-    ...(await listed('docs')),
-    ...(await listed('agents')),
+    ...(await Promise.all([listed('docs'), listed('agents')])).flat(),
   ]
-  for (const path of paths) {
-    // A doc removed between the listing and the read is simply not there.
-    const text = await readFile(path, 'utf8').catch(() => undefined)
-    if (text !== undefined) files[path] = digest(text)
-  }
+  const read = await Promise.all(
+    paths.map(async (path) => {
+      // A doc removed between the listing and the read is simply not there.
+      const text = await readFile(path, 'utf8').catch(() => undefined)
+      return text === undefined ? [] : [[path, digest(text)] as const]
+    }),
+  )
+  return read.flat()
 }
 
 /**
@@ -150,12 +152,10 @@ async function instructionChanges(
   const name = 'ultimate'
   if ((await tx.doc(Standing, ROOT_CONVERSATION_ID))[name] !== conversationId)
     return { instructions: [], docs: [] }
-  const { definitions } = await discoverAgents(
-    host.ultimateRoot,
-    host.projectRoot,
-    host.userHome,
-    host.modelRuntime,
-  )
+  const [{ definitions }, cloned] = await Promise.all([
+    discoverAgents(host.ultimateRoot, host.projectRoot, host.userHome, host.modelRuntime),
+    cloneDocs(host.ultimateRoot),
+  ])
   const definition = definitions.find((candidate) => candidate.name === name)
   // Messages deliveries refresh a standing agent; a typed input did not, so an updated definition waited for a message.
   const reapplied =
@@ -164,8 +164,7 @@ async function instructionChanges(
   if (reapplied) await configure(tx, conversationId, { instructions: definition.instructions })
   // Keyed by absolute path, so the project's and the clone's AGENTS.md stay apart (and are one file when the clone is
   // the project).
-  const files: Record<string, string> = {}
-  await cloneDocs(host.ultimateRoot, files)
+  const files: Record<string, string> = Object.fromEntries(cloned)
   for (const file of loadProjectContextFiles({
     cwd: host.projectRoot,
     agentDir: join(host.userHome, '.ultimate'),
@@ -173,7 +172,8 @@ async function instructionChanges(
     files[file.path] = digest(file.content)
   // The file was just parsed; one removed since then hashes as empty and counts as changed.
   const own = definition ? [definition.path, ...(definition.overlays ?? [])] : []
-  for (const path of own) files[path] = digest(await readFile(path, 'utf8').catch(() => ''))
+  const texts = await Promise.all(own.map((path) => readFile(path, 'utf8').catch(() => '')))
+  for (const [index, path] of own.entries()) files[path] = digest(texts[index])
   const previous = seen.files
   seen.files = files
   // The first run records what it saw; afterwards every added, changed or removed file counts.

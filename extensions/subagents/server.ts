@@ -1321,15 +1321,13 @@ export default function subagents(
               workspace?.state === 'ready'
                 ? [
                     ...new Set(
-                      await Promise.all([
-                        list('diff', '--cached', '--name-only'),
-                        list('diff', '--name-only'),
-                        list('ls-files', '--others', '--exclude-standard'),
-                      ]).then(([staged, unstaged, untracked]) => [
-                        ...staged,
-                        ...unstaged,
-                        ...untracked,
-                      ]),
+                      (
+                        await Promise.all([
+                          list('diff', '--cached', '--name-only'),
+                          list('diff', '--name-only'),
+                          list('ls-files', '--others', '--exclude-standard'),
+                        ])
+                      ).flat(),
                     ),
                   ]
                 : []
