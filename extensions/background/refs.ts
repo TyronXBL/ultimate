@@ -2,7 +2,8 @@
 export type BackgroundResult = {
   command: string
   cwd: string
-  outcome: 'finished' | 'timeout' | 'lost'
+  /** `not-started`: it waited for RAM above the floor (`memory.minAvailableMiB`) and gave up. */
+  outcome: 'finished' | 'timeout' | 'lost' | 'not-started'
   exitCode: number | null
   seconds: number
   tail: string

@@ -8,16 +8,17 @@ const labels = {
   finished: 'Command finished',
   timeout: 'Command timed out',
   lost: 'Command lost',
+  'not-started': 'Command not started',
 } as const
 function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const result = entry.data as BackgroundResult
   const failed = result.outcome !== 'finished' || result.exitCode !== 0
-  const Icon = failed
-    ? result.outcome === 'timeout' || result.outcome === 'lost'
-      ? TriangleAlertIcon
-      : XIcon
-    : CheckIcon
+  const Icon = failed ? (result.outcome === 'finished' ? XIcon : TriangleAlertIcon) : CheckIcon
   const color = failed ? 'text-error' : 'text-success'
+  const meta =
+    result.outcome === 'not-started'
+      ? `waited ${result.seconds}s for RAM`
+      : `exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s`
   return (
     <Fold
       card={entry.id}
@@ -25,9 +26,7 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
         <>
           <Icon className={cn('size-3 shrink-0', color)} />
           <span className={color}>{labels[result.outcome]}</span>
-          <span>
-            · exit {result.exitCode ?? 'unknown'} · {result.seconds}s
-          </span>
+          <span>· {meta}</span>
         </>
       }
     >
@@ -40,9 +39,7 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
         <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
           <Icon className={cn('size-3.5', color)} />
           <span className={color}>{labels[result.outcome]}</span>
-          <span className="text-muted-foreground">
-            exit {result.exitCode ?? 'unknown'} · {result.seconds}s
-          </span>
+          <span className="text-muted-foreground">{meta}</span>
         </header>
         <div className="space-y-2 px-3 py-2.5">
           <p className="break-words text-foreground">{result.command}</p>

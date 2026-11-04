@@ -29,6 +29,13 @@ import {
 import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
+import {
+  checkRam,
+  commandNeedMiB,
+  describeShort,
+  listUsers,
+  memoryUsers,
+} from '../../lib/memory.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { CancelAction, CancelledDoc, Committed } from './refs.ts'
@@ -369,7 +376,9 @@ async function madeCommits(path: string, conversation: number) {
   return events
 }
 
-export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectRoot' | 'skills'>) {
+export default function codingTools(
+  host: Pick<ExtensionHost, 'emit' | 'projectRoot' | 'skills' | 'projectSettings'>,
+) {
   const shell = createBashTool()
   const parameters = obj({
     command: str({ description: 'Bash command to execute' }),
@@ -395,6 +404,13 @@ export default function codingTools(host: Pick<ExtensionHost, 'emit' | 'projectR
       if (change)
         throw new Error(
           `An interruptible command must only wait, but this one changes things (${change}). Run the change in its own bash call, then wait in a separate interruptible one.`,
+        )
+      // A known heavy command (tests, checks, installs, a server) never starts below the RAM floor.
+      const need = commandNeedMiB(args.command)
+      const short = need ? await checkRam(await host.projectSettings(), need) : undefined
+      if (short)
+        throw new Error(
+          `Not enough RAM for this command: ${describeShort(short)}. Run it with the background tool, which waits until enough is free, or stop a job of yours first; what this Ultimate runs, by RSS:\n${listUsers(await memoryUsers())}`,
         )
       if (api.env)
         for (const message of bashHints(args.command, api.env.cwd))

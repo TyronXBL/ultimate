@@ -30,6 +30,7 @@ import type { WorkspaceService } from '../workspaces/api.ts'
 import { cleanPreview, sweepPreviews } from './cleanup.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { git, isolatable } from '../../lib/git.ts'
+import { checkRam, describeShort, listUsers, memoryUsers, PREVIEW_MIB } from '../../lib/memory.ts'
 import { spawnGroup, stopGroup } from '../../lib/process-group.ts'
 import type { Group, GroupProcess } from '../../lib/process-group.ts'
 import { Previews } from '../conversations/api.ts'
@@ -455,6 +456,15 @@ export default function instanceExtension(
       context.abortSignal?.throwIfAborted()
       if ([...instances.values()].filter(live).length + starts.pending >= 3)
         throw new Error('At most three instances may run at once')
+      const short = await checkRam(await host.projectSettings(), PREVIEW_MIB)
+      if (short) {
+        const names = new Map(
+          [...instances.values()].filter(live).map((item) => [item.pid, `preview ${item.id}`]),
+        )
+        throw new Error(
+          `Not enough RAM for an instance: ${describeShort(short)}. Stop one of your previews (instance stop) or another job of yours first; what this Ultimate runs, by RSS:\n${listUsers(await memoryUsers(process.pid, { names }))}`,
+        )
+      }
       starts.pending++
       reserved = true
       const { cwd, project, conversationId } = await prepare()

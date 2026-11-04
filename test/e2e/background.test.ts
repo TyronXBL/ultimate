@@ -34,7 +34,13 @@ it('runs in the background and delivers one result; concluding its owner kills t
     home: `${root}/home`,
     faux: fauxProvider(),
   })
-  prepared.registry.install(backgroundExtension({ projectRoot: root, home: `${root}/home` }))
+  prepared.registry.install(
+    backgroundExtension({
+      projectRoot: root,
+      home: `${root}/home`,
+      projectSettings: async () => ({}),
+    }),
+  )
   prepared.faux!.setResponses([
     fauxAssistantMessage(
       [fauxToolCall('background', { command: "printf 'line one\\nline two\\n'; exit 3" })],

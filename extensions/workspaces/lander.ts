@@ -10,6 +10,15 @@ import { withAbortSignal } from '@earendil-works/chord/context'
 import { defineEntry, defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/pi-durable'
 import { git } from '../../lib/git.ts'
+import {
+  checkRam,
+  commandNeedMiB,
+  describeShort,
+  listUsers,
+  memoryUsers,
+  RAM_POLL_MS,
+  RAM_WAIT_MS,
+} from '../../lib/memory.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionLanded } from './api.ts'
@@ -298,8 +307,8 @@ const landedOutcome = (landed: Landed): LanderOutcome => ({
 })
 type State =
   | { phase: 'next' }
-  /** A rejected push integrates again once. */
-  | { phase: 'land'; id: string; attempt: number; pushRetried?: boolean }
+  /** A rejected push integrates again once. `ramSince`: since when the checks wait for RAM above the floor. */
+  | { phase: 'land'; id: string; attempt: number; pushRetried?: boolean; ramSince?: number }
   | {
       phase: 'report'
       id: string
@@ -361,7 +370,7 @@ export function createLander(
           return { status: 'running', checkpoint: { phase: 'land', id: entry.id, attempt: 1 } }
         }, context),
       land: async (task, runtime, context) => {
-        const { id, attempt, pushRetried } = task.state.checkpoint
+        const { id, attempt, pushRetried, ramSince } = task.state.checkpoint
         const { signal } = runtime
         const index = (await runtime.snapshot(Workspaces, ROOT_CONVERSATION_ID, context))!
         const entry = index.queue.find((item) => item.id === id)!
@@ -654,6 +663,38 @@ export function createLander(
               )
             }
             const { base } = merged
+            // Below the RAM floor the checks wait, durably and for a bounded time, for their heaviest group.
+            const need = Math.max(
+              0,
+              ...settings.checks.map((group) =>
+                [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
+              ),
+            )
+            const short = await checkRam(await host.projectSettings(), need)
+            if (short) {
+              const now = runtime.now()
+              if (ramSince !== undefined && now - ramSince >= RAM_WAIT_MS)
+                return await fail(
+                  `not enough RAM for the checks after waiting ${RAM_WAIT_MS / 60_000} min: ${describeShort(short)}`,
+                  listUsers(await memoryUsers()),
+                  'Stop what uses RAM, then submit again.',
+                )
+              if (ramSince === undefined) await step(`waiting for RAM: ${describeShort(short)}`)
+              return await runtime.commit(
+                () => ({
+                  status: 'sleeping',
+                  until: now + RAM_POLL_MS,
+                  checkpoint: {
+                    phase: 'land',
+                    id,
+                    attempt,
+                    ...(pushRetried ? { pushRetried } : {}),
+                    ramSince: ramSince ?? now,
+                  },
+                }),
+                context,
+              )
+            }
             // Setup prepares the merged revision, for example installs its lockfile.
             await step('setting up')
             await setup(source, path, await host.projectSettings(), signal)
