@@ -121,7 +121,9 @@ async function ranges(host: ExtensionHost): Promise<ReviewRange[]> {
     list.push({
       spec: `${landing.base}...${landing.sha}`,
       group: 'Landings',
-      label: landing.feature ? `${landing.feature} · ${landing.title}` : landing.title || landing.sha.slice(0, 7),
+      label: landing.feature
+        ? `${landing.feature} · ${landing.title}`
+        : landing.title || landing.sha.slice(0, 7),
       detail: `${landing.sha.slice(0, 7)} · ${landing.commitCount} commit${landing.commitCount === 1 ? '' : 's'} · ${ago(landing.at / 1000)}`,
       conversation: landing.from,
     })

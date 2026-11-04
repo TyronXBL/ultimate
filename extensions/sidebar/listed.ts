@@ -4,6 +4,12 @@
  * branch, so it never shows in In flight, Earlier or Concluded; the side-chat extension nests it under @ultimate
  * instead. Browser-safe.
  */
+import type { Standing } from '../../lib/standing.ts'
+
+/** Whether the sidebar lists a branch In flight. */
+export const listedInFlight = (standing: Standing) =>
+  standing !== 'landed' && standing !== 'concluded'
+
 export const topLevelRows = <T extends { id: number; parentConversationId?: number }>(
   conversations: readonly T[],
   unlisted: ReadonlySet<number>,

@@ -36,10 +36,7 @@ export const RecentLandingsAction = actionRef<
     feature?: string
     commitCount: number
   }[]
->(
-  'workspaces',
-  'recentLandings',
-)
+>('workspaces', 'recentLandings')
 /** `{ id }` → conversation `id`'s worktree with its branch, tip and changes, or null when it has none. */
 export const InfoAction = actionRef<{ id: number }, WorkspaceInfo | null>('workspaces', 'info')
 /**

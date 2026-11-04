@@ -5,7 +5,7 @@ import { isBusy } from '../../lib/activity.ts'
 import type { Activity } from '../../lib/activity.ts'
 import { waitsOnUser } from '../../lib/messages.ts'
 import { branchStanding } from '../../lib/standing.ts'
-import type { BranchLanding, Standing } from '../../lib/standing.ts'
+import type { Standing } from '../../lib/standing.ts'
 import { Committed } from '../coding-tools/ui.tsx'
 import { MessagesDoc, conversationState, emptyMessages } from '../messages/ui.tsx'
 import { StandingDoc } from '../subagents/ui.tsx'
@@ -26,8 +26,8 @@ export function useStandings(
   const index = useWorkspaceIndex()
   const recent = useAction(RecentLandingsAction, null)
   const landingEvents = recent.data ?? []
-  const outcomeKey = Object.values(index.results)
-    .map((result) => `${result.outcome}:${result.sha ?? ''}`)
+  const outcomeKey = Object.entries(index.results)
+    .map(([id, result]) => `${id}:${result.outcome}:${result.sha ?? ''}`)
     .join(',')
   useEffect(() => {
     // A new lander result may have aged out of the index's retained results; refresh the durable event fallback.
@@ -63,10 +63,6 @@ export function useStandings(
       landingEvents,
     )
 }
-
-/** Whether the sidebar lists a branch In flight: everything but a landing without a question for the user. */
-export const listedInFlight = (standing: Standing) =>
-  standing !== 'landed' && standing !== 'concluded'
 
 /** A branch state's tone. */
 export type BranchTone = 'failed' | 'success' | 'brand' | 'waiting' | 'paused' | 'quiet'

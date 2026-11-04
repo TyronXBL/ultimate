@@ -25,12 +25,12 @@ type LanderIndex = {
   >
 }
 
-/** A root's landing note (lineage's `RootEvent` of type `landed`): which branch landed what, and when. */
+/** A durable landing event: which branch landed what, and when. */
 type LandingNote = { from?: number; sha: string; base?: string; at?: number }
 
 /**
  * Branch `id`'s latest known landing: the newest of the lander's landed results, which it keeps only for the latest
- * submissions, and the roots' landing notes, the one record of landings older than those.
+ * submissions, and durable landing events, the fallback for older results.
  */
 export function latestLanding(
   id: number,
@@ -46,7 +46,8 @@ export function latestLanding(
   for (const result of Object.values(index.results))
     if (result.conversationId === id && result.outcome === 'landed' && result.sha) {
       known.add(result.sha)
-      const at = result.steps?.at(-1)?.at ?? result.at
+      const event = notes.find((note) => note.from === id && note.sha === result.sha)
+      const at = result.steps?.at(-1)?.at ?? event?.at ?? result.at
       take({
         sha: result.sha,
         tip: result.tip,
@@ -76,7 +77,7 @@ export type Standing = 'in-flight' | 'submitted' | 'landing' | 'landed' | 'waits
 /**
  * Where branch `branch.id` stands, and its latest known landing (also when it is in flight again). `busy`: work of it
  * or of a subagent below it is under way (`lib/activity.ts`); `asks`: a question of it waits on the user; `inputAt` its
- * latest input (ms). `notes` are the roots' landing notes.
+ * latest input (ms). `notes` are durable landing events.
  */
 export function branchStanding(
   branch: { id: number; inputAt?: number; busy: boolean; concluded: boolean; asks: boolean },

@@ -43,7 +43,7 @@ import {
   stateTone,
   stateWord,
 } from '../messages/ui.tsx'
-import { listedInFlight, useStandings } from './branch.tsx'
+import { useStandings } from './branch.tsx'
 import { InFlight, MemoryRow, useMemorySummary } from './root.tsx'
 import type { Flight } from './root.tsx'
 import { Landed, useLandings } from './landed.tsx'
@@ -53,7 +53,7 @@ import type { KeptWork } from '../conversations/types.ts'
 import { LanderState } from './lander.tsx'
 import { StandingPhase, WaitingOnUser } from './ultimate.tsx'
 import { useShell, useSidebarState } from './state.tsx'
-import { topLevelRows } from './listed.ts'
+import { listedInFlight, topLevelRows } from './listed.ts'
 import { UnderUltimate, Unlisted } from './ui.tsx'
 
 /**
