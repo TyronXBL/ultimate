@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { activityOf, isBusy } from '../../lib/activity.ts'
 import { branchStanding } from '../../lib/standing.ts'
 import { stageOf } from '../../extensions/ideas/stage.ts'
+import { listedInFlight } from '../../extensions/sidebar/branch.tsx'
 import type { Idea } from '../../extensions/ideas/refs.ts'
 
 describe('conversation activity', () => {
@@ -92,7 +93,9 @@ describe('branch standing', () => {
       'landed',
     ],
   ] as const)('%s: %s', (_, facts, index, notes, state) => {
-    expect(branchStanding(facts, index, notes).state).toBe(state)
+    const standing = branchStanding(facts, index, notes).state
+    expect(standing).toBe(state)
+    if (facts.asks) expect(listedInFlight(standing)).toBe(true)
   })
 
   it('knows its latest landing, a result over the note written from it', () => {

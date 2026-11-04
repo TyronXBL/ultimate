@@ -40,7 +40,7 @@ import type { State } from './store.ts'
 import { errorMessage, formatDuration } from './format.ts'
 import type { CompactDocs, CompactRow, ToolCallView, UltimateContext } from './types.ts'
 import { useViewport } from './viewport.ts'
-import { activityOf, isBusy } from '../../../lib/activity.ts'
+import { activityOf } from '../../../lib/activity.ts'
 import type { Activity } from '../../../lib/activity.ts'
 import { ConversationIdContext, TranscriptContext } from './conversation-scope.tsx'
 export { TranscriptContext } from './conversation-scope.tsx'
@@ -82,7 +82,7 @@ export interface ConversationState {
   inbox: readonly InboxItem[]
   /** What it is doing, from its run and inbox (`lib/activity.ts`); a pause shows in the `ParkedRuns` point instead. */
   activity: Activity
-  /** Work of it is under way: it runs or has input queued. */
+  /** Its run is under way; queued input alone does not count. */
   busy: boolean
   view?: StreamedView
 }
@@ -119,7 +119,7 @@ function derive(view: StreamedView | undefined): ConversationState {
       live,
       inbox,
       activity,
-      busy: isBusy(activity),
+      busy: activity === 'working',
       view,
     }
     derived.set(view, state)
