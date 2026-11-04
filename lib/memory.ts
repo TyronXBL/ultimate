@@ -8,7 +8,7 @@
  * lock for every starter on the machine (previews share `TMPDIR` with their host), and each admitted job reserves its
  * need for a minute, until its own allocations show in `MemAvailable`, so two starters never both pass on the same RAM.
  */
-import { lstat, open, readdir, readFile, readlink, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, readlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -80,7 +80,24 @@ export function ramShort(
 /** How long an admitted job's need stays reserved: about until its allocations show in `MemAvailable`. */
 const SETTLE_MS = 60_000
 type Reservation = { need: number; until: number }
-const admissions = (dir: string) => join(dir, 'ultimate-ram-admissions.json')
+const admissions = (dir: string) => join(dir, 'admissions.json')
+
+/**
+ * The admission state's folder in `parent`: this user's own, mode 700, never a link, so nobody else can plant a file
+ * or a symlink the admission writes through.
+ */
+async function stateDir(parent: string) {
+  const uid = process.getuid?.()
+  const dir = join(parent, `ultimate-ram-${uid ?? 'user'}`)
+  await mkdir(dir, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+    // Made by an earlier admission; checked below like a new one.
+    if (error.code !== 'EEXIST') throw error
+  })
+  const found = await lstat(dir)
+  if (!found.isDirectory() || (uid !== undefined && found.uid !== uid) || found.mode & 0o077)
+    throw new Error(`${dir} must be a directory of this user's own, mode 700: remove it`)
+  return dir
+}
 async function reservations(dir: string, now: number) {
   const saved = await readJson<unknown>(admissions(dir), []).catch(
     // A torn or foreign file reserves nothing; the next admission rewrites it.
@@ -91,7 +108,10 @@ async function reservations(dir: string, now: number) {
   )
 }
 
-/** Run `critical` holding the machine's admission lock: a lock file, taken over once it is 10 s old. */
+/**
+ * Run `critical` holding the machine's admission lock: a lock file, taken over once it is 10 s old. Two waiters taking
+ * over the same stale lock at once may both enter; admission is best effort, and that needs a holder stuck for 10 s.
+ */
 async function locked<T>(dir: string, critical: () => Promise<T>) {
   const lock = join(dir, 'ultimate-ram.lock')
   for (;;) {
@@ -116,17 +136,19 @@ async function locked<T>(dir: string, critical: () => Promise<T>) {
 }
 
 /** Whether a job needing `need` MiB fits now above `floor` (`memoryFloor`), without admitting it. */
-export async function checkRam(floor: number | undefined, need: number, dir = tmpdir()) {
+export async function checkRam(floor: number | undefined, need: number, parent = tmpdir()) {
   if (floor === undefined) return undefined
+  const dir = await stateDir(parent)
   const reserved = (await reservations(dir, Date.now())).reduce((sum, item) => sum + item.need, 0)
   return ramShort(await availableMiB(), need, floor, reserved)
 }
 
 /** Admit a job needing `need` MiB: undefined when it fits, and its need is then reserved; else what falls short. */
-export async function admitRam(floor: number | undefined, need: number, dir = tmpdir()) {
+export async function admitRam(floor: number | undefined, need: number, parent = tmpdir()) {
   if (floor === undefined) return undefined
+  const dir = await stateDir(parent)
   return locked(dir, async () => {
-    const short = await checkRam(floor, need, dir)
+    const short = await checkRam(floor, need, parent)
     if (!short && need) {
       const now = Date.now()
       await writeJson(admissions(dir), [

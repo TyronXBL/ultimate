@@ -5,9 +5,6 @@ import { cn, defineWebExtension, useAction, useNow } from '@/sdk'
 import { StateAction } from './refs.ts'
 import type { MemoryState } from './refs.ts'
 
-/** How close to the floor available RAM gets before the chip shows, in MiB; the server lists users from here on. */
-const MARGIN = 1024
-
 const gib = (mib: number) => `${(mib / 1024).toFixed(1)} GB`
 
 /** Where a group runs: the conversation of a worktree, else the folder's name. */
@@ -55,8 +52,7 @@ function Chip() {
     // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
     void refetch()
   }, [now, refetch])
-  if (state?.floor === undefined || state.available === undefined) return null
-  if (state.available >= state.floor + MARGIN) return null
+  if (!state?.near || state.floor === undefined || state.available === undefined) return null
   const below = state.available < state.floor
   return (
     <Popover>

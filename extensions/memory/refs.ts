@@ -17,7 +17,9 @@ export type MemoryState = {
   floor?: number
   /** Available RAM in MiB; unset where it cannot be read (not Linux). */
   available?: number
-  /** What this Ultimate runs, by RSS, listed while available RAM is within 1 GiB of the floor. */
+  /** Available RAM is within 1 GiB of the floor, or below it: the status line shows it. */
+  near?: boolean
+  /** What this Ultimate runs, by RSS, listed while `near`. */
   users: MemoryUser[]
   /** The memory controller of the cgroup Ultimate runs in (MiB), when it limits memory: the hard guarantee. */
   cgroup?: { current: number; high?: number; max?: number }

@@ -31,7 +31,8 @@ stays at or above the floor:
 
 A command's need comes from what it runs outside quotes: test runs (`pnpm test`, `test:e2e`, `vitest`, `playwright`)
 and Ultimate servers (`node server/main.ts`) about 1536 MiB; `pnpm check`, `fix`, `install` and builds about
-1024 MiB; anything else 0, so it only waits once the floor is already breached. The `ci` tool runs nothing on this
+1024 MiB; anything else 0, so it only waits once the floor is already breached. The match is by name, not by command
+position: an unquoted `vitest` in a path or a search pattern counts too, so quote such arguments or use `background`. The `ci` tool runs nothing on this
 machine and is not gated; test suites are gated where they start, not per server a test boots.
 
 ## Status line

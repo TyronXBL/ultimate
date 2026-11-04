@@ -95,6 +95,11 @@ const createRun = (host: Pick<ExtensionHost, 'userHome'>) =>
     initial: () => ({ phase: 'start' }),
     phases: {
       start: async (task, runtime, ctx) => {
+        const files = paths(task)
+        // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started,
+        // before anything else: what follows may wait for RAM, or report that the command never started.
+        const left = await readPidFile(files.pid)
+        if (left) await stopGroup(left, { pidFile: files.pid })
         const short = await admitRam(
           await memoryFloor(host.userHome),
           commandNeedMiB(task.input.command),
@@ -123,11 +128,7 @@ const createRun = (host: Pick<ExtensionHost, 'userHome'>) =>
           await runtime.commit(() => next, ctx)
           return
         }
-        const files = paths(task)
         await mkdir(join(task.input.home, 'background'), { recursive: true })
-        // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started.
-        const left = await readPidFile(files.pid)
-        if (left) await stopGroup(left, { pidFile: files.pid })
         await rm(files.status, { force: true })
         const began = runtime.now()
         const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', LEADER], {
@@ -258,6 +259,11 @@ export default function backgroundExtension(
         // Not replay-safe (the default): an interrupted call is never rerun, so it starts at most one command.
         async execute(args, api, ctx) {
           const cwd = (await api.agent(ctx)).cwd ?? host.projectRoot
+          // Looked at before the task exists, so its own admission is not counted against it.
+          const short = await checkRam(
+            await memoryFloor(host.userHome),
+            commandNeedMiB(args.command),
+          )
           await api.commit(
             (tx) =>
               tx.createTask(
@@ -276,10 +282,6 @@ export default function backgroundExtension(
                 },
               ),
             ctx,
-          )
-          const short = await checkRam(
-            await memoryFloor(host.userHome),
-            commandNeedMiB(args.command),
           )
           const text = short
             ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min; you will be woken once with its result either way. Keep working or end your turn.`

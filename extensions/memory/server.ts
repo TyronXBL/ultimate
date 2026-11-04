@@ -20,7 +20,7 @@ export const actions = {
     if (available === undefined) return { floor, users: [] }
     if (available >= floor + MARGIN) return { floor, available, users: [] }
     const [users, cgroup] = await Promise.all([memoryUsers(), cgroupMemory()])
-    return { floor, available, users, ...(cgroup && { cgroup }) }
+    return { floor, available, near: true, users, ...(cgroup && { cgroup }) }
   }),
 }
 

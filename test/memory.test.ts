@@ -25,11 +25,11 @@ it.each([
 
 it('reserves what it admits, so concurrent starters cannot both pass on the same RAM', async () => {
   const dir = await temp('ultimate-memory-')
-  // Room for exactly one 1024 MiB job above the floor, while RAM moves less than 400 MiB during the test.
-  const floor = (await availableMiB())! - 1500
-  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(floor, 1024, dir)))
+  // Room for exactly one 2000 MiB job above the floor, while available RAM moves less than 1000 MiB during the test.
+  const floor = (await availableMiB())! - 3000
+  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(floor, 2000, dir)))
   expect(admitted.filter((short) => short === undefined)).toHaveLength(1)
-  expect(admitted.find(Boolean)).toMatchObject({ need: 1024, reserved: 1024 })
+  expect(admitted.find(Boolean)).toMatchObject({ need: 2000, reserved: 2000 })
 })
 
 it.each([
