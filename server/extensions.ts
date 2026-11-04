@@ -115,6 +115,8 @@ export async function loadExtensions(
   runtime: Pick<ExtensionHost, 'harness' | 'system' | 'conversations' | 'access'>,
   watch: Watch,
   notice: (message: string) => void = () => {},
+  /** Bring the web bundle up to date with the settings just applied. */
+  rebuildWeb: () => Promise<void> = async () => {},
 ) {
   const trace = host.callTrace
   const log = eventLog(runtime.harness, trace.run, trace.keep)
@@ -425,16 +427,7 @@ export async function loadExtensions(
       // The caller gets the failure; the chain recovers so later reloads still run.
       chain = work.catch(() => changed())
       await work
-      for (const id of [
-        '\0virtual:ultimate/web-facets',
-        join(host.ultimateRoot, 'web/src/index.css'),
-      ]) {
-        const module = vite.moduleGraph.getModuleById(id)
-        if (module) {
-          vite.moduleGraph.invalidateModule(module)
-          await vite.reloadModule(module)
-        }
-      }
+      await rebuildWeb()
     },
     doc: findDoc,
     metadata: Metadata,

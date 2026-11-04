@@ -61,8 +61,7 @@ it('gates project resources, remembers choices, and applies onboarding settings 
     }
     const enabled = (name: string) =>
       server!.extensions.info().find((entry) => entry.name === name)?.enabled
-    const web = async () =>
-      Object.keys((await server!.vite.ssrLoadModule('virtual:ultimate/web-facets')).loaders)
+    const web = async () => server!.web.facets()
     const tools = async () => (await server!.root.agent(context)).tools.map((tool) => tool.name)
     for (const args of [
       {},
