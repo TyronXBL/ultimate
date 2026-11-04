@@ -143,7 +143,10 @@ export interface DocumentContribution {
 
 /** Navigation and shell actions, passed to commands and returned by `useUltimate()`. */
 export interface UltimateActions {
-  /** `replace` takes the current browser history entry instead of adding one, as a redirect does. */
+  /**
+   * Closes the sidebar and panel where they cover the conversation. `replace` takes the current browser history entry
+   * instead of adding one and leaves both open, as a redirect does.
+   */
   switchConversation: (id: number, options?: { replace?: boolean }) => void
   /** Show surface `id` (`agent` is the home); the conversation keeps running. */
   showSurface: (id: string) => void

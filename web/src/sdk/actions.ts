@@ -107,8 +107,10 @@ function closeOverlays() {
 
 export const actions: UltimateActions = {
   switchConversation: (id, options) => {
-    closeOverlays()
+    // A redirect, such as the landing on @ultimate while the page loads, is not the user going somewhere: it leaves
+    // open what they opened meanwhile.
     if (options?.replace) replaceNextSelection()
+    else closeOverlays()
     uiState.set(shellKeys.conversation, id)
   },
   showSurface: (id) => {
