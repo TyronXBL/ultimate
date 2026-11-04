@@ -785,10 +785,11 @@ export function createLander(
               flaky.push(...commands.filter((_command, member) => results[member].flaky))
             }
             // Only the commit every check ran on lands: nothing may have moved or touched the checkout meanwhile.
-            if (
-              (await git(path, 'rev-parse', 'HEAD')) !== merged.sha ||
-              (await git(path, 'status', '--porcelain'))
-            )
+            const [current, status] = await Promise.all([
+              git(path, 'rev-parse', 'HEAD'),
+              git(path, 'status', '--porcelain'),
+            ])
+            if (current !== merged.sha || status)
               return await fail(
                 'the integration checkout changed during checks',
                 `${await git(path, 'log', '--oneline', '-3')}\n${await git(path, 'status', '--short')}`.trim(),
@@ -833,11 +834,15 @@ export function createLander(
           }
           // The first fast-forward decides what the submission landed, durably on its queue entry with the target's
           // new tip, so any later lander task reports that landing; a push retry integrates again from there.
+          const [commitLog, changedPaths] = await Promise.all([
+            git(source, 'log', '--oneline', `${base}..${integrated}`),
+            git(source, 'diff', '--name-only', base, integrated),
+          ])
           const candidate: Landed = {
             sha: integrated,
             base,
-            commits: lines(await git(source, 'log', '--oneline', `${base}..${integrated}`)),
-            paths: lines(await git(source, 'diff', '--name-only', base, integrated)),
+            commits: lines(commitLog),
+            paths: lines(changedPaths),
             flaky,
           }
           let landed = candidate

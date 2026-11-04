@@ -112,6 +112,9 @@ it('keeps listing and supervising scripts after a reload bumps the ledger versio
   const previous = loaded()
   const bumped = source.replace('  version: 3,\n  scope: ', '  version: 4,\n  scope: ')
   expect(bumped).not.toBe(source)
+  // One reload, from the emit below: the real watcher's event for the same write could arrive after it and reload
+  // again while the test's resume is launching, which fails that launch as the supervisor closes.
+  app.vite.watcher.unwatch(file)
   await writeFile(file, bumped)
   app.vite.watcher.emit('change', file)
   await until(() => loaded() !== previous)
