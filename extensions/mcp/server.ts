@@ -24,25 +24,24 @@ import type { ExtensionAction } from '../../server/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ReconnectAction, StatusAction } from './refs.ts'
 import type { McpServerStatus } from './refs.ts'
+import { advance, statusOf } from './state.ts'
+import type { Connection, ConnectionEvent } from './state.ts'
 
 export const reloadOnSettings = true
 export const pollActions = ['status']
 
 /** A tool call may run long; progress notifications from the server renew it. */
 const CALL_TIMEOUT = 10 * 60_000
-const FIRST_RETRY = 5_000
-const LAST_RETRY = 5 * 60_000
 
 /** One `mcpServers` entry, as Claude Desktop and Cursor write it. */
 type Entry =
   | { command: string; args: string[]; env: Record<string, string>; cwd?: string }
   | { url: string; headers: Record<string, string> }
 
-type Server = Omit<McpServerStatus, 'tools'> & {
+type Server = Pick<McpServerStatus, 'name' | 'source' | 'transport'> & {
+  connection: Connection
   entry?: Entry
   client?: McpClient
-  tools: Tool[]
-  attempts: number
   timer?: ReturnType<typeof setTimeout>
   /** The connect or reconnect running now; the next one queues behind it. */
   connecting?: Promise<void>
@@ -140,10 +139,8 @@ async function configured(host: ExtensionHost) {
         source,
         transport: isObject(value) && typeof value.url === 'string' ? 'http' : 'stdio',
         ...(typeof entry === 'string'
-          ? { state: 'failed', error: `Invalid entry: ${entry}` }
-          : { state: 'connecting', entry }),
-        tools: [],
-        attempts: 0,
+          ? { connection: { state: 'invalid', error: `Invalid entry: ${entry}` } }
+          : { connection: { state: 'connecting', attempts: 0 }, entry }),
         secrets: [],
       })
     }
@@ -163,10 +160,10 @@ export async function secrets(host: ExtensionHost) {
   }))
 }
 
-const listing = (server: Server) =>
+const listing = (name: string, tools: Tool[]) =>
   [
-    `${server.name}: ${server.tools.length} tools. Call one with mcp {server, tool, args}.`,
-    ...server.tools.map(
+    `${name}: ${tools.length} tools. Call one with mcp {server, tool, args}.`,
+    ...tools.map(
       (tool) =>
         `\n${tool.name}: ${tool.description?.trim() ?? tool.title ?? ''}\n  input: ${JSON.stringify(tool.inputSchema)}`,
     ),
@@ -193,22 +190,18 @@ export default async function mcp(host: ExtensionHost) {
   const servers = await configured(host)
   let closed = false
 
-  function fail(server: Server, error: string) {
+  /** Moves the server to its next connection; a failure drops the client and schedules the retry. */
+  function move(server: Server, event: ConnectionEvent) {
+    clearTimeout(server.timer)
+    server.connection = advance(server.connection, event)
+    if (server.connection.state !== 'failed') return
     server.client = undefined
-    server.state = 'failed'
-    server.error = error
-    const delay = Math.min(FIRST_RETRY * 2 ** server.attempts++, LAST_RETRY)
-    server.retryAt = Date.now() + delay
-    server.timer = setTimeout(() => void begin(server), delay)
+    server.timer = setTimeout(() => void begin(server), server.connection.retryAt - Date.now())
     server.timer.unref?.()
   }
 
   async function connect(server: Server) {
-    clearTimeout(server.timer)
-    delete server.retryAt
-    delete server.error
-    delete server.missing
-    server.state = 'connecting'
+    move(server, { type: 'connect' })
     const entry = server.entry!
     const found: string[] = []
     server.secrets = found
@@ -220,8 +213,8 @@ export default async function mcp(host: ExtensionHost) {
     server.client = client
     // Once connected, a dropped connection fails the server and retries; closing it here does not.
     client.onClose(() => {
-      if (!closed && server.client === client && server.state === 'connected')
-        fail(server, 'Disconnected')
+      if (!closed && server.client === client && server.connection.state === 'connected')
+        move(server, { type: 'failed', error: 'Disconnected', now: Date.now() })
     })
     let stdio: StdioTransport | undefined
     try {
@@ -242,7 +235,7 @@ export default async function mcp(host: ExtensionHost) {
         client
           .listTools()
           .then((tools) => {
-            if (server.client === client) server.tools = tools
+            if (server.client === client) move(server, { type: 'tools', tools })
           })
           // The list stays as it was; the next reconnect reads it again.
           .catch((error: unknown) =>
@@ -251,17 +244,16 @@ export default async function mcp(host: ExtensionHost) {
       })
       const tools = await client.listTools()
       if (closed || server.client !== client) return
-      server.tools = tools
-      server.state = 'connected'
-      server.attempts = 0
+      move(server, { type: 'connected', tools })
     } catch (error) {
       if (closed || server.client !== client) return
-      if (error instanceof MissingSecret) server.missing = error.secret
       const stderr = stdio?.stderr.trim().split('\n').at(-1)
-      fail(
-        server,
-        [redact(server, error), stderr && redact(server, stderr)].filter(Boolean).join(': '),
-      )
+      move(server, {
+        type: 'failed',
+        error: [redact(server, error), stderr && redact(server, stderr)].filter(Boolean).join(': '),
+        missing: error instanceof MissingSecret ? error.secret : undefined,
+        now: Date.now(),
+      })
       await close(client)
     }
   }
@@ -299,7 +291,7 @@ export default async function mcp(host: ExtensionHost) {
       const previous = server.client
       server.client = undefined
       await close(previous)
-      server.attempts = 0
+      move(server, { type: 'restart' })
       await connect(server)
     })
   }
@@ -310,11 +302,7 @@ export default async function mcp(host: ExtensionHost) {
         name: server.name,
         source: server.source,
         transport: server.transport,
-        state: server.state,
-        ...(server.state === 'connected' ? { tools: server.tools.length } : {}),
-        ...(server.error ? { error: server.error } : {}),
-        ...(server.missing ? { missing: server.missing } : {}),
-        ...(server.retryAt ? { retryAt: server.retryAt } : {}),
+        ...statusOf(server.connection),
       })),
     async reconnect(name) {
       const server = servers.get(name)
@@ -362,11 +350,13 @@ export default async function mcp(host: ExtensionHost) {
               if (!server)
                 return failure(`No MCP server named ${name}. Configured: ${names.join(', ')}`)
               await server.connecting
-              if (server.state !== 'connected' || !server.client)
+              const { connection } = server
+              if (connection.state !== 'connected' || !server.client)
                 return failure(
-                  `MCP server ${name} is ${server.state}: ${server.error ?? 'not connected'}`,
+                  `MCP server ${name} is ${connection.state}: ${connection.state === 'failed' ? connection.error : 'not connected'}`,
                 )
-              if (!tool) return { output: [{ type: 'text', text: listing(server) }] }
+              if (!tool)
+                return { output: [{ type: 'text', text: listing(name, connection.tools) }] }
               const client = server.client
               try {
                 const result = await client.callTool(tool, args ?? {}, {

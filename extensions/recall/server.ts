@@ -19,6 +19,7 @@ import type { MemoryItem } from '../lineage/refs.ts'
 import { Standing } from '../subagents/api.ts'
 import { RecallDoc } from './refs.ts'
 import type { RecallState } from './refs.ts'
+import { recallStep } from './state.ts'
 import { RECALL_ENTRY } from './types.ts'
 import type { Recalled } from './types.ts'
 
@@ -147,12 +148,12 @@ export default function recall(host: ExtensionHost) {
             !Object.keys(memories).length
           ) {
             await host.harness().commit(async (tx) => {
-              ;(await tx.doc(Recall, id)).last = input.id
+              recallStep(await tx.doc(Recall, id), { type: 'skip', input: input.id })
             }, ctx)
             return undefined
           }
           await host.harness().commit(async (tx) => {
-            ;(await tx.doc(Recall, id)).pending = message.id
+            recallStep(await tx.doc(Recall, id), { type: 'start', message: message.id })
           }, ctx)
           let probabilities: Record<string, number> = {}
           try {
@@ -172,8 +173,7 @@ export default function recall(host: ExtensionHost) {
             if (ctx.abortSignal?.aborted) {
               // A stopped run never reaches the commit below: end the check, or the bubble keeps shimmering.
               await host.harness().commit(async (tx) => {
-                const doc = await tx.doc(Recall, id)
-                if (doc.pending === message.id) delete doc.pending
+                recallStep(await tx.doc(Recall, id), { type: 'abort', message: message.id })
               }, BACKGROUND_CONTEXT)
               throw error
             }
@@ -190,9 +190,7 @@ export default function recall(host: ExtensionHost) {
             .map(([slug, confidence]) => ({ slug, item: memories[slug], confidence }))
           let recalled: Message | undefined
           await host.harness().commit(async (tx) => {
-            const doc = await tx.doc(Recall, id)
-            delete doc.pending
-            doc.last = input.id
+            recallStep(await tx.doc(Recall, id), { type: 'finish', input: input.id })
             if (!picked.length) return
             recalled = { role: 'user', content: recallText(picked), timestamp: Date.now() }
             const data: Recalled = {
