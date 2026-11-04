@@ -1,5 +1,5 @@
 diff --git a/src/claude-cli.ts b/src/claude-cli.ts
-index 6c0595e212349b18f3d980cd2de5ea07e8b5ab65..39519edd6ad154dd51f7bb1556f6a796f089d461 100644
+index 6c0595e212349b18f3d980cd2de5ea07e8b5ab65..84ea5dde00f9fa72c9c29d294325e25a8bba6c62 100644
 --- a/src/claude-cli.ts
 +++ b/src/claude-cli.ts
 @@ -19,7 +19,7 @@ import type {
@@ -103,7 +103,7 @@ index 6c0595e212349b18f3d980cd2de5ea07e8b5ab65..39519edd6ad154dd51f7bb1556f6a796
  function spawnCommand(
    command: string,
    args: string[],
-@@ -324,12 +343,15 @@ function spawnCommand(
+@@ -324,23 +343,31 @@ function spawnCommand(
    if (process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(command)) {
      const comspec = options?.env?.COMSPEC || process.env.COMSPEC || "cmd.exe";
      const quote = (value: string) => `"${value.replace(/"/gu, '""')}"`;
@@ -115,13 +115,19 @@ index 6c0595e212349b18f3d980cd2de5ea07e8b5ab65..39519edd6ad154dd51f7bb1556f6a796
  }
  
  function childExit(child: ChildProcess): Promise<number> {
-+  // "exit" may come before stdout ends, so it may have passed while the caller read the output.
-+  if (child.exitCode !== null) return Promise.resolve(child.exitCode);
-+  if (child.signalCode !== null) return Promise.reject(new Error(`Claude Code exited from signal ${child.signalCode}`));
    return new Promise((resolve, reject) => {
-     child.once("error", reject);
-     child.once("exit", (code, signal) => {
-@@ -340,7 +362,12 @@ function childExit(child: ChildProcess): Promise<number> {
+-    child.once("error", reject);
+-    child.once("exit", (code, signal) => {
++    const exited = (code: number | null, signal: NodeJS.Signals | null) => {
+       if (code !== null) resolve(code);
+       else reject(new Error(`Claude Code exited from signal ${signal ?? "unknown"}`));
+-    });
++    };
++    // 'exit' can come before stdout ends, so a caller that read its output first may have missed it.
++    if (child.exitCode !== null || child.signalCode !== null) return exited(child.exitCode, child.signalCode);
++    child.once("error", reject);
++    child.once("exit", exited);
+   });
  }
  
  export function killProcessTree(child: ChildProcess): void {

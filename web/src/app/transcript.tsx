@@ -780,6 +780,10 @@ function BetweenLine({
     .flatMap((row) => ('aside' in row ? row.aside : [row]))
     .flatMap((row) => ('work' in row ? [] : [{ entry: row.entry, calls: shownCalls(row) }]))
   const steps = group.between.reduce((sum, row) => sum + ('work' in row ? row.steps : 0), 0)
+  const entries = group.between
+    .flatMap((row) => ('aside' in row ? row.aside : [row]))
+    .flatMap((row) => ('work' in row ? row.work : [row]))
+    .map((part) => part.entry)
   const fallback = <>{rows.length} updates</>
   return (
     <button
@@ -797,7 +801,7 @@ function BetweenLine({
             variant="inline"
             version={Summary.version}
           >
-            <Summary.component rows={rows} steps={steps} working={working} />
+            <Summary.component entries={entries} rows={rows} steps={steps} working={working} />
           </ExtensionBoundary>
         ) : (
           fallback
