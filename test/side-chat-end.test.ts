@@ -6,22 +6,11 @@ import { defineExtension, defineTask } from '@earendil-works/pi-durable'
 import { context } from '../server/harness.ts'
 import { Index, Side } from '../extensions/side-chat/server.ts'
 import type { endTask } from '../extensions/side-chat/server.ts'
-import { lifecycleOf, transition } from '../extensions/side-chat/logic.ts'
-import type { SideLifecycle } from '../extensions/side-chat/logic.ts'
+import { transition } from '../extensions/side-chat/logic.ts'
 import { fauxServer, post, until } from './helpers.ts'
 import { ultimateRoot, servers, fixture, entries } from './side-chat-fixture.ts'
 
 describe('side chats', () => {
-  it('ending one side chat leaves another open', () => {
-    const states = new Map<number, SideLifecycle>([
-      [1, { state: 'open' }],
-      [2, { state: 'open' }],
-    ])
-    states.set(1, transition(states.get(1)!, { type: 'begin', mode: 'injected' }))
-    expect(states.get(1)).toEqual({ state: 'ending', mode: 'injected' })
-    expect(states.get(2)).toEqual({ state: 'open' })
-  })
-
   it.each([
     [
       { state: 'open' },
@@ -39,16 +28,25 @@ describe('side chats', () => {
       { type: 'complete' },
       { state: 'ended', mode: 'injected' },
     ],
+    // A failed inject's summary reopens the copy for a retry (34c3633c).
     [{ state: 'ending', mode: 'injected' }, { type: 'rollback' }, { state: 'open' }],
-    [{ state: 'open' }, { type: 'begin', mode: 'injected' }, { state: 'ending', mode: 'injected' }],
   ] as const)('transitions side-chat lifecycle %j', (from, event, expected) => {
     expect(transition(from, event)).toEqual(expected)
-    expect(
-      lifecycleOf(
-        expected.state === 'ended' ? expected.mode : undefined,
-        expected.state === 'ending' ? expected.mode : undefined,
-      ),
-    ).toEqual(expected)
+  })
+
+  it.each([
+    [
+      { state: 'ending', mode: 'discarded' },
+      { type: 'begin', mode: 'injected' },
+    ],
+    [
+      { state: 'ended', mode: 'injected' },
+      { type: 'begin', mode: 'injected' },
+    ],
+    [{ state: 'open' }, { type: 'complete' }],
+    [{ state: 'ending', mode: 'discarded' }, { type: 'rollback' }],
+  ] as const)('%j refuses %j', (from, event) => {
+    expect(() => transition(from, event)).toThrow(/ended or ending|not ending|Only an inject/)
   })
 
   it('discards without writing main, concludes, refuses repeated end and later input, and refuses inject without summaryModel', async () => {

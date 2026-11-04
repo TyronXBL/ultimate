@@ -45,7 +45,7 @@ import {
 import type { EntryRenderer, UltimateActions } from '@/sdk'
 import { ConversationPhase } from '../conversations/ui.tsx'
 import { Body, Bubble } from '../messages/ui.tsx'
-import { SideChatsDoc, useSideChatFront } from '../side-chat/ui.tsx'
+import { openSides, SideChatsDoc, useSideChatFront } from '../side-chat/ui.tsx'
 import { UnderUltimate, Unlisted } from '../sidebar/ui.tsx'
 import { openAgentSource, StandingDoc, talkToUltimate } from '../subagents/ui.tsx'
 import * as live from './live.tsx'
@@ -376,8 +376,7 @@ function Stage() {
   const { main, voice } = useIds()
   const mode = useMode()
   const [sideFront, setSideFront] = useSideChatFront()
-  const sides = useDocOf(main, SideChatsDoc)?.sides
-  const sideOpen = sides?.some((side) => side.id === sideFront && side.ended === undefined)
+  const sideOpen = openSides(useDocOf(main, SideChatsDoc)).some((side) => side.id === sideFront)
   const phone = useViewport() === 'phone'
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)

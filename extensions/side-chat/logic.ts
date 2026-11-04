@@ -1,8 +1,10 @@
 /** Side chat decisions the web facet makes, pure for tests. Browser-safe. */
 import type { SideChat, SideChatIndex } from './refs.ts'
 
+/** How a side chat ends: thrown away, or summarized into main. */
 export type EndMode = 'discarded' | 'injected'
-export type SideLifecycle =
+/** A side chat is open until Discard or Inject starts its ending; a failed inject's summary reopens it. */
+type SideLifecycle =
   | { state: 'open' }
   | { state: 'ending'; mode: EndMode }
   | { state: 'ended'; mode: EndMode }
@@ -11,6 +13,7 @@ export type EndEvent =
   | { type: 'complete' }
   | { type: 'rollback' }
 
+/** The only way a side chat's lifecycle moves; anything else throws. */
 export function transition(state: SideLifecycle, event: EndEvent): SideLifecycle {
   switch (event.type) {
     case 'begin':
@@ -23,12 +26,11 @@ export function transition(state: SideLifecycle, event: EndEvent): SideLifecycle
       if (state.state !== 'ending' || state.mode !== 'injected')
         throw new Error('Only an inject can roll back')
       return { state: 'open' }
-    default: {
-      const exhaustive: never = event
-      return exhaustive
-    }
+    default:
+      return event satisfies never
   }
 }
+/** Where a side chat stands, from its stored end (on the chat or its index entry) and its Ending's mode. */
 export const lifecycleOf = (ended?: EndMode, ending?: EndMode): SideLifecycle =>
   ended
     ? { state: 'ended', mode: ended }
@@ -69,7 +71,7 @@ export function togglesSideMode(
 }
 
 /** Side chats still open, oldest first: ended ones went back to main as a summary or were thrown away. */
-export const openSides = (index: SideChatIndex | undefined) =>
+export const openSides = (index: Readonly<SideChatIndex> | null | undefined) =>
   (index?.sides ?? []).filter((side) => isOpen(lifecycleOf(side.ended)))
 
 /** The side chat in front, if it is still open; a parked or ended one leaves main in front. */

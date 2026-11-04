@@ -13,14 +13,7 @@ import type { ConversationId, Cursor, EntryId, JsonObject, Tx } from '@earendil-
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { Branch } from '../lineage/api.ts'
 import { PlanDoc, TaskIndexDoc } from './refs.ts'
-import {
-  epicStatuses,
-  isEpicStatus,
-  isTaskStatus,
-  setEpicStatus,
-  setTaskStatus,
-  taskStatuses,
-} from './types.ts'
+import { epicStatuses, isEpicStatus, isTaskStatus, taskStatuses } from './types.ts'
 import type { EpicStatus, TaskStatus } from './types.ts'
 
 export type Task = {
@@ -213,7 +206,7 @@ export default (host: ExtensionHost) => {
               description: 'A returned key: epic E1 or task E1.1; note takes a task key.',
             }),
           ),
-          status: opt(oneOf([...epicStatuses, ...taskStatuses] as const)),
+          status: opt(oneOf([...new Set([...epicStatuses, ...taskStatuses])])),
           child: opt(int({ minimum: 1 })),
           verdict: opt(str()),
           text: opt(str()),
@@ -295,16 +288,11 @@ export default (host: ExtensionHost) => {
                 if (task && args.body !== undefined) throw new Error('body requires an epic key')
                 if (!task && (args.description !== undefined || args.child !== undefined))
                   throw new Error('description and child require a task key')
+                // Agents move statuses freely; each kind only to its own.
                 if (args.status !== undefined) {
-                  if (task) {
-                    if (!isTaskStatus(args.status))
-                      throw new Error(`Invalid status for ${item.key}: ${args.status}`)
-                    setTaskStatus(item, args.status)
-                  } else {
-                    if (!isEpicStatus(args.status))
-                      throw new Error(`Invalid status for ${item.key}: ${args.status}`)
-                    setEpicStatus(item, args.status)
-                  }
+                  if (task ? !isTaskStatus(args.status) : !isEpicStatus(args.status))
+                    throw new Error(`Invalid status for ${item.key}: ${args.status}`)
+                  item.status = args.status
                 }
                 if (args.title !== undefined) item.title = args.title
                 if (args.verdict !== undefined) item.verdict = args.verdict

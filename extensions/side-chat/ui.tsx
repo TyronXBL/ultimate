@@ -4,6 +4,7 @@ import { definePoint, useUiState } from '@/sdk'
 import type { ComposerTarget } from '@/sdk'
 
 export { OpenAction, SideChatsDoc } from './refs.ts'
+export { lifecycleOf, openSides } from './logic.ts'
 
 /** The side chat in front of main, by id; durable UI state, so a reload brings the depth view back. */
 export const useSideChatFront = () => useUiState<number | null>('ext.side-chat.front', null)

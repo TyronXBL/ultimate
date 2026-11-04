@@ -15,10 +15,3 @@ export const isEpicStatus = (status: string): status is EpicStatus =>
   epicStatuses.includes(status as EpicStatus)
 export const isTaskStatus = (status: string): status is TaskStatus =>
   taskStatuses.includes(status as TaskStatus)
-
-export const setEpicStatus = (epic: { status: EpicStatus }, status: EpicStatus) => {
-  epic.status = status
-}
-export const setTaskStatus = (task: { status: TaskStatus }, status: TaskStatus) => {
-  task.status = status
-}

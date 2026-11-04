@@ -17,6 +17,7 @@ import type { ResponseReceipt } from '../conversations/summary.ts'
 import type { SummaryModel } from '../conversations/summary-model.ts'
 import { DiscardAction, InjectAction, OpenAction, SideChatDoc, SideChatsDoc } from './refs.ts'
 import { isOpen, lifecycleOf, transition } from './logic.ts'
+import type { EndEvent, EndMode } from './logic.ts'
 import type { SideChat, SideChatIndex, SideChatSummary } from './refs.ts'
 
 export const Side = defineDoc<Partial<SideChat>>({
@@ -109,25 +110,31 @@ function sideId(args: unknown): ConversationId {
   return id as ConversationId
 }
 
-function writeLifecycle(
-  side: Partial<SideChat>,
-  listed: SideChatIndex['sides'][number],
-  ending: { mode?: 'discarded' | 'injected' },
-  next: ReturnType<typeof transition>,
-) {
-  if (next.state === 'open') {
-    delete side.ended
-    delete listed.ended
-    delete ending.mode
-  } else if (next.state === 'ending') ending.mode = next.mode
-  else {
-    side.ended = next.mode
-    listed.ended = next.mode
-    ending.mode = next.mode
+/** The only writer of a side chat's lifecycle: its Ending holds the mode once it ends; the chat and its index entry, the end. */
+async function move(tx: Tx, id: ConversationId, event: EndEvent) {
+  const side = await tx.doc(Side, id)
+  const ending = await tx.doc(Ending, id)
+  const next = transition(lifecycleOf(side.ended, ending.mode), event)
+  switch (next.state) {
+    case 'open':
+      delete side.ended
+      delete ending.mode
+      return
+    case 'ending':
+      ending.mode = next.mode
+      return
+    case 'ended':
+      side.ended = next.mode
+      ;(await tx.doc(Index, side.of as ConversationId)).sides.find(
+        (item) => item.id === id,
+      )!.ended = next.mode
+      return
+    default:
+      next satisfies never
   }
 }
 
-async function end(host: ExtensionHost, id: ConversationId, mode: 'discarded' | 'injected') {
+async function end(host: ExtensionHost, id: ConversationId, mode: EndMode) {
   const summaries = host.need(ConversationsApi)
   const model = mode === 'injected' ? await summaries.summaryModel() : undefined
   if (mode === 'injected' && !model)
@@ -150,10 +157,7 @@ async function end(host: ExtensionHost, id: ConversationId, mode: 'discarded' | 
     if (!isOpen(state)) throw new Error(`Side chat #${id} is already ended or ending`)
     if (mode === 'discarded' && side.effects)
       throw new Error(`Side chat #${id} has effects; inject its summary instead`)
-    const listed = (await tx.doc(Index, side.of as ConversationId)).sides.find(
-      (item) => item.id === id,
-    )!
-    writeLifecycle(side, listed, ending, transition(state, { type: 'begin', mode }))
+    await move(tx, id, { type: 'begin', mode })
     ending.task = await tx.createTask(
       endTask(host),
       { side: id, ...(model ? { model } : {}) },
@@ -216,9 +220,9 @@ export function endTask(host: ExtensionHost) {
       summarize: async (task, runtime, ctx) => {
         const id = task.input.side as ConversationId
         const side = (await runtime.snapshot(Side, id, ctx))!
-        const endingDoc = (await runtime.snapshot(Ending, id, ctx))!
-        const life = lifecycleOf(side.ended, endingDoc.mode)
-        if (life.state !== 'ending') throw new Error(`Side chat #${id} is not ending`)
+        const life = lifecycleOf(side.ended, (await runtime.snapshot(Ending, id, ctx))!.mode)
+        // Only an ending creates this task; a crash after the end replays it to the guard below.
+        if (life.state === 'open') throw new Error(`Side chat #${id} is not ending`)
         const mode = life.mode
         let response: ResponseReceipt | undefined
         if (mode === 'injected') {
@@ -264,18 +268,8 @@ export function endTask(host: ExtensionHost) {
             // Shutdown resumes this same task. A model failure before admission instead reopens the copy for a retry.
             if (runtime.signal.aborted) throw error
             await runtime.commit(async (tx) => {
-              const ending = await tx.doc(Ending, id)
-              const failedSide = await tx.doc(Side, id)
-              const listed = (await tx.doc(Index, failedSide.of as ConversationId)).sides.find(
-                (item) => item.id === id,
-              )!
-              writeLifecycle(
-                failedSide,
-                listed,
-                ending,
-                transition(lifecycleOf(failedSide.ended, ending.mode), { type: 'rollback' }),
-              )
-              delete ending.task
+              await move(tx, id, { type: 'rollback' })
+              delete (await tx.doc(Ending, id)).task
               if (response) await summaries.accountResponse(tx, id, response)
               return {
                 status: 'terminal',
@@ -313,15 +307,11 @@ export function endTask(host: ExtensionHost) {
         }
         await runtime.commit(async (tx) => {
           const state = await tx.doc(Side, id)
-          const ending = await tx.doc(Ending, id)
-          const lifecycle = lifecycleOf(state.ended, ending.mode)
-          if (lifecycle.state === 'ended') return terminal
+          if (lifecycleOf(state.ended, (await tx.doc(Ending, id)).mode).state === 'ended')
+            return terminal
           await summaries.concludeIn(tx, [id])
           if (response) await summaries.accountResponse(tx, id, response)
-          const listed = (await tx.doc(Index, side.of as ConversationId)).sides.find(
-            (item) => item.id === id,
-          )!
-          writeLifecycle(state, listed, ending, transition(lifecycle, { type: 'complete' }))
+          await move(tx, id, { type: 'complete' })
           return terminal
         }, ctx)
       },

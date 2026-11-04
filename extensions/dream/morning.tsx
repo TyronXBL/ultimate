@@ -25,7 +25,7 @@ import {
   useUiState,
 } from '@/sdk'
 import type { EntryRecord } from '@/sdk'
-import { OpenAction, SideChatsDoc, useSideChatFront } from '../side-chat/ui.tsx'
+import { lifecycleOf, OpenAction, SideChatsDoc, useSideChatFront } from '../side-chat/ui.tsx'
 import { StandingDoc } from '../subagents/ui.tsx'
 import { BusyBlocker, chapterLabel, Refusal, switchChapter, useBusyElsewhere } from './chapters.tsx'
 import type { Seed } from './types.ts'
@@ -119,6 +119,8 @@ function Awake({ data }: { data: ChapterEntry }) {
   const [failure, setFailure] = useState<string>()
   const side = checks[data.name]
   const check = side === undefined ? undefined : index?.sides.find((item) => item.id === side)
+  const life = check && lifecycleOf(check.ended)
+  const ended = life?.state === 'ended' ? life.mode : undefined
   const waking = conversations.find((item) => item.id === ultimate)?.busy
   const open = async () => {
     if (ultimate === undefined) return
@@ -140,7 +142,7 @@ function Awake({ data }: { data: ChapterEntry }) {
   }
   const footer = 'flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/60 px-4 py-2.5'
 
-  if (check?.ended === 'injected')
+  if (ended === 'injected')
     return (
       <div className={cn(footer, 'text-[12px]')} data-dream-awake="checked">
         <span className="flex items-center gap-1.5 text-foreground">
@@ -161,7 +163,7 @@ function Awake({ data }: { data: ChapterEntry }) {
       </div>
     )
 
-  if (check?.ended === 'discarded')
+  if (ended === 'discarded')
     return (
       <>
         <Off data={data} onAgain={() => void open()} opening={opening || !!waking} />
