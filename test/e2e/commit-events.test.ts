@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -41,6 +42,7 @@ async function bash(command: string, dir = cwd) {
     },
     projectRoot: dir,
     skills: () => [],
+    userHome: tmpdir(),
   })
   const tool = extension.tools!.find((candidate) => candidate.name === 'bash') as ReturnType<
     typeof createBashTool

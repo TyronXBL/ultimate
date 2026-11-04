@@ -16,6 +16,10 @@ durable `background.run` task then:
 4. submits one `background.result` input (request id `background.result:<task>`): outcome, exit code, duration, the
    last 40 lines of output (at most 4 KB) and the log path.
 
+Below the RAM floor (`memory.minAvailableMiB`, `extensions/memory/README.md`) a command whose estimated need does not
+fit waits before step 1: the task sleeps durably, looks again every 10 s, and after 30 min delivers a `not-started`
+card listing what uses RAM instead. The tool's answer says when it waits.
+
 The shell, not the host, writes the log and the code, so a command keeps running through a host restart and its
 result still arrives. The command keeps running across the caller's turns and its Stop button; concluding the
 conversation aborts the task, which stops the command's group and wakes nobody.
