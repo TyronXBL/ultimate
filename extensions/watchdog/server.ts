@@ -25,7 +25,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { concurrencyCapped, limited, rateLimited } from '../../lib/rate-limit.ts'
 import { Messages } from '../messages/api.ts'
 import { Pin } from '../models/api.ts'
-import { Standing, Subagents } from '../subagents/api.ts'
+import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { idleNote } from './idle.ts'
 import { WatchdogApi } from './api.ts'
 import type { ReportedFailure } from './api.ts'
@@ -284,15 +284,7 @@ export default function watchdog(host: ExtensionHost) {
           reported.failures.sort((a, b) => b.at - a.at)
           reported.failures.splice(FAILURE_LIMIT)
           // Reporting ends the watchdog's hold on a subagent's provider failure: its action has given up.
-          const actions = Object.values((await tx.doc(Subagents, recipient)).actions)
-          const action = actions.findLast((candidate) => candidate.conversationId === conversation)
-          if (action?.status === 'failed') {
-            const input = await tx.submissionByRequest(
-              conversation as ConversationId,
-              `subagent:${action.reporter}`,
-            )
-            if (input && failedInput(input)) action.status = 'given-up'
-          }
+          await host.want(SubagentsApi)?.giveUp(tx, recipient, conversation as ConversationId)
           return terminal
         }, ctx)
       },

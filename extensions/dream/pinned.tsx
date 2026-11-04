@@ -1,7 +1,7 @@
 import { MoonIcon } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useDialog, useDocOf, useUltimate } from '@/sdk'
-import { AwakeSection, nextDialog, useAwake } from './awake.tsx'
+import { AwakeSection, nextDialog, useAwake, waiting } from './awake.tsx'
 import { NextChapter } from './sleep.tsx'
 import { DreamDoc } from './refs.ts'
 
@@ -9,10 +9,7 @@ import { DreamDoc } from './refs.ts'
 const awakeDialog = 'dream.awake'
 
 /** The prepared next chapter while it waits for Fall asleep, or a sleep that failed or runs. */
-function usePinned() {
-  const doc = useDocOf(1, DreamDoc)
-  return doc?.prepared && doc.sleep?.phase !== 'asleep' ? doc : undefined
-}
+const usePinned = () => waiting(useDocOf(1, DreamDoc))
 
 /**
  * In the status line, on every surface and on phones: a finished dream waiting for Fall asleep, then the fresh chapter

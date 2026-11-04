@@ -12,6 +12,13 @@ import type { createChild } from './children.ts'
 
 export { Started, StandingDoc } from './refs.ts'
 
+/**
+ * Where a subagent action stands: `pending` while its reporter delivers; then `done`, `unanswered` (stopped by the
+ * parent), `interrupted` (stopped in the child), `failed` (a provider error the watchdog holds, or a delivery error) or
+ * `given-up` (the watchdog reported that provider error instead of retrying it: final).
+ */
+type ActionStatus = 'pending' | 'done' | 'unanswered' | 'interrupted' | 'failed' | 'given-up'
+
 /** Each conversation's subagents and pending subagent actions, on the conversation that started them. */
 export const Subagents = defineDoc<{
   agents: Record<
@@ -29,12 +36,7 @@ export const Subagents = defineDoc<{
       conversationId: ConversationId
       reporter: TaskId
       answer?: EntryId
-      /**
-       * Unset while delivering; then `done`, `unanswered` (stopped by the parent), `interrupted` (stopped in the
-       * child), `failed` (a provider error the watchdog holds, or a delivery error) or `given-up` (the watchdog
-       * reported that provider error instead of retrying it: final).
-       */
-      status?: string
+      status: ActionStatus
     }
   >
 }>({
@@ -99,6 +101,11 @@ export type SubagentsService = {
   residents(ctx: Context): Promise<{ name: string; description: string }[]>
   /** The conversation of standing agent `name`, created or refreshed from its definition; throws for unknown names. */
   standing(name: string, ctx: Context): Promise<ConversationId>
+  /**
+   * Inside `tx`, end the watchdog's hold on `child`'s latest action under `parent`: an action `failed` on a provider
+   * error becomes `given-up`, final. Anything else is left alone.
+   */
+  giveUp(tx: Tx, parent: ConversationId, child: ConversationId): Promise<void>
   /** Create, inside `tx`, a child conversation configured from a definition or as a copy of the parent's agent. */
   createChild: (
     tx: Tx,

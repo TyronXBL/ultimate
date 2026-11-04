@@ -12,6 +12,7 @@ import {
 } from '@earendil-works/pi-durable'
 import type { ConversationId, Cursor, TaskId, Tx } from '@earendil-works/pi-durable'
 import { exec } from '../../lib/exec.ts'
+import { mapBounded, PROCESS_CONCURRENCY } from '../../lib/bounded.ts'
 import { git, isolatable } from '../../lib/git.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi } from '../conversations/api.ts'
@@ -99,20 +100,17 @@ async function changes(
   id: ConversationId,
   workspace: WorkspaceIndex['items'][string],
 ): Promise<KeptWork> {
-  return {
-    id,
-    uncommitted: (await git(workspace.path, 'status', '--porcelain')).split('\n').filter(Boolean)
-      .length,
-    unlanded: Number(
-      await git(
-        workspace.path,
-        'rev-list',
-        '--count',
-        `${workspace.target}..${workspace.branch}`,
-        `${workspace.target}..HEAD`,
-      ),
+  const [status, count] = await Promise.all([
+    git(workspace.path, 'status', '--porcelain'),
+    git(
+      workspace.path,
+      'rev-list',
+      '--count',
+      `${workspace.target}..${workspace.branch}`,
+      `${workspace.target}..HEAD`,
     ),
-  }
+  ])
+  return { id, uncommitted: status.split('\n').filter(Boolean).length, unlanded: Number(count) }
 }
 async function onDisk(path: string) {
   return lstat(path).then(
@@ -136,22 +134,11 @@ async function atRisk(
   const branch = (await git(workspace.path, 'branch', '--list', workspace.branch))
     ? [workspace.branch]
     : []
-  return {
-    id,
-    uncommitted: (await git(workspace.path, 'status', '--porcelain')).split('\n').filter(Boolean)
-      .length,
-    unlanded: Number(
-      await git(
-        workspace.path,
-        'rev-list',
-        '--count',
-        'HEAD',
-        '--not',
-        workspace.target,
-        ...branch,
-      ),
-    ),
-  }
+  const [status, count] = await Promise.all([
+    git(workspace.path, 'status', '--porcelain'),
+    git(workspace.path, 'rev-list', '--count', 'HEAD', '--not', workspace.target, ...branch),
+  ])
+  return { id, uncommitted: status.split('\n').filter(Boolean).length, unlanded: Number(count) }
 }
 const held = (
   id: ConversationId,
@@ -522,31 +509,32 @@ export function workspaces(host: Host) {
   }
   /** The commits and uncommitted changes of each ready worktree among `ids`, without their subagents'. */
   async function progress(ids: number[], context: Context): Promise<KeptWork[]> {
-    const result = await Promise.all(
-      ids.map(async (id) => {
-        const workspace = await get(id as ConversationId, context)
-        // Its `.git` file, not `git worktree list`: the sidebar asks often, and every git process blocks the host while
-        // it forks. `git worktree remove` deletes that file and leaves only ignored files behind.
-        if (workspace?.state !== 'ready' || !(await onDisk(join(workspace.path, '.git'))))
-          return undefined
-        return changes(id as ConversationId, workspace).catch(
-          // A checkout gone from disk or mid-removal has nothing to show.
-          () => undefined,
-        )
-      }),
-    )
+    const result = await mapBounded(ids, PROCESS_CONCURRENCY, async (id) => {
+      const workspace = await get(id as ConversationId, context)
+      // Its `.git` file, not `git worktree list`: the sidebar asks often, and every git process blocks the host while
+      // it forks. `git worktree remove` deletes that file and leaves only ignored files behind.
+      if (workspace?.state !== 'ready' || !(await onDisk(join(workspace.path, '.git'))))
+        return undefined
+      return changes(id as ConversationId, workspace).catch(
+        // A checkout gone from disk or mid-removal has nothing to show.
+        () => undefined,
+      )
+    })
     return result.filter((item) => item !== undefined)
   }
   async function pending(ids: number[], context: Context): Promise<KeptWork[]> {
-    const result: KeptWork[] = []
-    for (const id of (await candidates(ids, context)).ids) {
-      const checkout = await recordedCheckout(id, context)
-      // Concluding keeps a branch's commits; the warning still names them, since they have not landed.
-      if (!checkout?.registered) continue
-      const item = await changes(id, checkout.workspace)
-      if (item.uncommitted || item.unlanded) result.push(item)
-    }
-    return result
+    const result = await mapBounded(
+      (await candidates(ids, context)).ids,
+      PROCESS_CONCURRENCY,
+      async (id) => {
+        const checkout = await recordedCheckout(id, context)
+        // Concluding keeps a branch's commits; the warning still names them, since they have not landed.
+        if (!checkout?.registered) return undefined
+        const item = await changes(id, checkout.workspace)
+        return item.uncommitted || item.unlanded ? item : undefined
+      },
+    )
+    return result.filter((item) => item !== undefined)
   }
   /** Finish an interrupted removal, or keep newly found work and make the checkout usable again. */
   async function finishRemoval(
@@ -754,8 +742,10 @@ export function workspaces(host: Host) {
       )
         throw new Error(`Target branch changed; check out ${workspace.target} first`)
       await onBranch(workspace)
-      const tip = await git(workspace.path, 'rev-parse', 'HEAD')
-      const head = await git(source, 'rev-parse', 'HEAD')
+      const [tip, head] = await Promise.all([
+        git(workspace.path, 'rev-parse', 'HEAD'),
+        git(source, 'rev-parse', 'HEAD'),
+      ])
       const integrated = await git(source, 'merge-base', '--is-ancestor', tip, head).then(
         () => true,
         () => false,
@@ -777,10 +767,12 @@ export function workspaces(host: Host) {
           throw new Error(
             `Target moved or diverged; update the workspace onto ${workspace.target} and verify again`,
           )
-        const commits = (await git(workspace.path, 'log', '--oneline', `${head}..${tip}`))
-          .split('\n')
-          .filter(Boolean)
-        const files = (await git(workspace.path, 'diff', '--numstat', '--no-renames', head, tip))
+        const [commitLog, numstat] = await Promise.all([
+          git(workspace.path, 'log', '--oneline', `${head}..${tip}`),
+          git(workspace.path, 'diff', '--numstat', '--no-renames', head, tip),
+        ])
+        const commits = commitLog.split('\n').filter(Boolean)
+        const files = numstat
           .split('\n')
           .filter(Boolean)
           .map((line) => {
@@ -1061,21 +1053,17 @@ export function workspaces(host: Host) {
     async info(id: ConversationId, context: Context): Promise<WorkspaceInfo | null> {
       const workspace = await get(id, context)
       if (!workspace) return null
-      return {
-        ...workspace,
-        ahead: await git(workspace.source, 'rev-list', '--count', `HEAD..${workspace.branch}`).then(
+      const [ahead, tip, sourceTip, currentBranch, sourceBranch] = await Promise.all([
+        git(workspace.source, 'rev-list', '--count', `HEAD..${workspace.branch}`).then(
           Number,
           () => null,
         ),
-        tip: await git(workspace.path, 'rev-parse', 'HEAD').catch(() => null),
-        sourceTip: await git(workspace.source, 'rev-parse', 'HEAD').catch(() => null),
-        currentBranch: await git(workspace.path, 'symbolic-ref', '--short', 'HEAD').catch(
-          () => null,
-        ),
-        sourceBranch: await git(workspace.source, 'symbolic-ref', '--short', 'HEAD').catch(
-          () => null,
-        ),
-      }
+        git(workspace.path, 'rev-parse', 'HEAD').catch(() => null),
+        git(workspace.source, 'rev-parse', 'HEAD').catch(() => null),
+        git(workspace.path, 'symbolic-ref', '--short', 'HEAD').catch(() => null),
+        git(workspace.source, 'symbolic-ref', '--short', 'HEAD').catch(() => null),
+      ])
+      return { ...workspace, ahead, tip, sourceTip, currentBranch, sourceBranch }
     },
     async discard(id: ConversationId, context: Context, options: { force?: boolean } = {}) {
       await idle(id, context)
@@ -1125,29 +1113,30 @@ export function workspaces(host: Host) {
         fresh: 0,
         dirty: 0,
       }
-      await Promise.all(
-        items.map(async (workspace) => {
-          stats[workspace.state]++
-          if (workspace.state !== 'ready') return
-          const tip = await git(workspace.path, 'rev-parse', 'HEAD').catch(() => '')
-          if (await git(workspace.path, 'status', '--porcelain').catch(() => '')) stats.dirty++
-          if (!tip || tip === workspace.base) stats.fresh++
-          else if (
-            await git(
-              workspace.source,
-              'merge-base',
-              '--is-ancestor',
-              tip,
-              `refs/heads/${workspace.target}`,
-            ).then(
-              () => true,
-              () => false,
-            )
+      await mapBounded(items, PROCESS_CONCURRENCY, async (workspace) => {
+        stats[workspace.state]++
+        if (workspace.state !== 'ready') return
+        const [tip, status] = await Promise.all([
+          git(workspace.path, 'rev-parse', 'HEAD').catch(() => ''),
+          git(workspace.path, 'status', '--porcelain').catch(() => ''),
+        ])
+        if (status) stats.dirty++
+        if (!tip || tip === workspace.base) stats.fresh++
+        else if (
+          await git(
+            workspace.source,
+            'merge-base',
+            '--is-ancestor',
+            tip,
+            `refs/heads/${workspace.target}`,
+          ).then(
+            () => true,
+            () => false,
           )
-            stats.landed++
-          else stats.ahead++
-        }),
-      )
+        )
+          stats.landed++
+        else stats.ahead++
+      })
       return stats
     },
     /**

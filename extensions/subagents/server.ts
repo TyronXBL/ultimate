@@ -123,6 +123,8 @@ const replyText = (id: ConversationId, message: AssistantMessage | undefined) =>
   answered(message)
     ? answerText(message)
     : `Subagent ${id} ${unanswered(message)}. Message it to continue.`
+/** A provider error the watchdog holds: it retries or reports it, and its continuation answers the action. */
+const providerFailure = (reason: string) => reason === 'model_error' || reason === 'no_model'
 function createReporter() {
   return defineTask<
     {
@@ -195,10 +197,7 @@ function createReporter() {
             // Provider failures belong to the watchdog, which marks the action `given-up` once it reports
             // instead of retrying. Either way recover() delivers the answer of a later watchdog retry (or
             // manual continuation).
-            if (
-              settled.status === 'unanswered' &&
-              (settled.reason === 'model_error' || settled.reason === 'no_model')
-            ) {
+            if (settled.status === 'unanswered' && providerFailure(settled.reason)) {
               action.status = 'failed'
               return { status: 'running', checkpoint: { phase: 'report' } }
             }
@@ -635,6 +634,15 @@ export default function subagents(
     },
   })
   host.implement(SubagentsApi, {
+    async giveUp(tx, parent, child) {
+      const action = Object.values((await tx.doc(Subagents, parent)).actions).findLast(
+        (candidate) => candidate.conversationId === child,
+      )
+      if (action?.status !== 'failed') return
+      const input = await tx.submissionByRequest(child, `subagent:${action.reporter}`)
+      if (input?.status === 'unanswered' && providerFailure(input.reason))
+        action.status = 'given-up'
+    },
     async createChild(tx, options) {
       const child = await createChild(host, tx, options)
       await started(host, tx, child, options.definition?.name ?? options.label, 'child')
@@ -799,7 +807,7 @@ export default function subagents(
         ((input?.kind === 'board.message' && message.reply === false) ||
           input?.kind === 'board.reply')
       for (const action of childActions) {
-        if (!messaged || action.status !== undefined) continue
+        if (!messaged || action.status !== 'pending') continue
         const sibling = await tx.submissionByRequest(
           submission.conversationId,
           `subagent:${action.reporter}`,
@@ -812,7 +820,7 @@ export default function subagents(
         const interrupted = action?.status === 'interrupted'
         if (
           !action ||
-          (!['unanswered', 'failed', 'given-up'].includes(action.status ?? '') && !interrupted)
+          (!['unanswered', 'failed', 'given-up'].includes(action.status) && !interrupted)
         )
           return
         const failed = await tx.submissionByRequest(
@@ -935,11 +943,7 @@ export default function subagents(
         const running: string[] = []
         const pending = new Set<ConversationId>()
         for (const action of Object.values(state?.actions ?? {}))
-          if (
-            action.status === undefined &&
-            (await host.harness().getTask(action.reporter, context))?.state.status !== 'terminal'
-          )
-            pending.add(action.conversationId)
+          if (action.status === 'pending') pending.add(action.conversationId)
         const queued: string[] = []
         for (const agent of Object.values(state?.agents ?? {})) {
           const label = `${agent.conversationId} (${agent.agent})`
@@ -1212,7 +1216,7 @@ export default function subagents(
                 },
                 { ownership: { kind: 'conversation' }, background: true },
               )
-              const createdAction = { conversationId, reporter }
+              const createdAction = { conversationId, reporter, status: 'pending' as const }
               state.actions[api.callId] = createdAction
               return createdAction
             }, context)
@@ -1350,11 +1354,15 @@ export default function subagents(
             const uncommitted =
               workspace?.state === 'ready'
                 ? [
-                    ...new Set([
-                      ...(await list('diff', '--cached', '--name-only')),
-                      ...(await list('diff', '--name-only')),
-                      ...(await list('ls-files', '--others', '--exclude-standard')),
-                    ]),
+                    ...new Set(
+                      (
+                        await Promise.all([
+                          list('diff', '--cached', '--name-only'),
+                          list('diff', '--name-only'),
+                          list('ls-files', '--others', '--exclude-standard'),
+                        ])
+                      ).flat(),
+                    ),
                   ]
                 : []
             return finish(

@@ -56,21 +56,20 @@ const piDefault = (host: Pick<ExtensionHost, 'settings'>) => {
 }
 
 async function read(host: ExtensionHost) {
-  const project = await host.projectSettings()
-  const layers = await readFamilyLayers(host.userHome, host.projectRoot, project)
+  const [{ project, layers }, { definitions }, user] = await Promise.all([
+    host.projectSettings().then(async (settings) => ({
+      project: settings,
+      layers: await readFamilyLayers(host.userHome, host.projectRoot, settings),
+    })),
+    discoverAgents(host.ultimateRoot, host.projectRoot, host.userHome, host.modelRuntime),
+    readSettings(userSettingsPath(host.userHome)).catch((): JsonObject => ({})),
+  ])
   const config = mergeFamilies(layers.base, layers.project)
-  const { definitions } = await discoverAgents(
-    host.ultimateRoot,
-    host.projectRoot,
-    host.userHome,
-    host.modelRuntime,
-  )
-  return { project, layers, config, definitions }
+  return { project, layers, config, definitions, user }
 }
 
 export async function familiesView(host: ExtensionHost): Promise<FamiliesView> {
-  const { project, layers, config, definitions } = await read(host)
-  const user: JsonObject = await readSettings(userSettingsPath(host.userHome)).catch(() => ({}))
+  const { project, layers, config, definitions, user } = await read(host)
   const pi = piDefault(host)
   const families = Object.entries(config.families).map(([name, spec]) => {
     const follows = name === DEFAULT_FAMILY && !spec.model && pi.model
