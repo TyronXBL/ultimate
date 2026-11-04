@@ -226,7 +226,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome'>) {
             requestId: `background.result:${task.id}`,
             content: `Background command ${ended}: ${result.command}${result.log ? `\nFull log: ${result.log}` : ''}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
             entry: { kind: 'background.result', data: result },
-            whenBusy: 'followUp',
+            whenBusy: 'steer',
           },
           ctx,
         )
@@ -257,7 +257,7 @@ export default function backgroundExtension(
       defineTool({
         name: 'background',
         description:
-          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. Returns immediately; you are woken once with a result card: exit code, duration, the last 40 lines of output and the full log path. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
+          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. Returns immediately; its result card (exit code, duration, the last 40 lines of output and the full log path) steers your current run after its tool round, or wakes you when idle. Never sleep or poll for it. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
         parameters: obj({
           command: str(),
           timeout: opt(
@@ -296,8 +296,8 @@ export default function backgroundExtension(
             ctx,
           )
           const text = short
-            ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min; you will be woken once with its result either way. Keep working or end your turn.`
-            : `Started in the background in ${cwd}. You will be woken once with its result; keep working or end your turn.`
+            ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min; its result steers you or wakes you once either way. Keep working or end your turn; never sleep or poll for it.`
+            : `Started in the background in ${cwd}. Its result steers you or wakes you once; keep working or end your turn, never sleep or poll for it.`
           return { output: [{ type: 'text', text }] }
         },
       }),

@@ -511,7 +511,7 @@ function lineage(host: ExtensionHost) {
           ? `lineage:notify:${target}:answer:${answer}`
           : `lineage:notify:${target}:${task.id}`
         const caller = runtime.conversationId
-        // A delivery found here (follow-up or note: a re-arm may switch `wake`) only lacks its record.
+        // A delivery found here (steer or note: a re-arm may switch `wake`) only lacks its record.
         const delivered = await host
           .harness()
           .commit((tx) => tx.submissionByRequest(caller, requestId), ctx)
@@ -520,7 +520,7 @@ function lineage(host: ExtensionHost) {
             {
               type: 'input',
               content: finishedText(target, title, text),
-              whenBusy: 'followUp',
+              whenBusy: 'steer',
               requestId,
               entry: {
                 kind: 'lineage.finished',
