@@ -6,6 +6,9 @@ import mcp, { actions, secrets } from '../extensions/mcp/server.ts'
 import { actions as secretActions } from '../extensions/secrets/server.ts'
 import { writeSecret } from '../extensions/secrets/store.ts'
 import type { McpServerStatus } from '../extensions/mcp/refs.ts'
+import type { Tool } from '@earendil-works/pi-mcp'
+import { advance } from '../extensions/mcp/state.ts'
+import type { Connection, ConnectionEvent } from '../extensions/mcp/state.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import { removeTemp, temp, until } from './helpers.ts'
 
@@ -164,4 +167,59 @@ it('declares each ${NAME} of the configured servers as a secret, missing until i
 
   await writeSecret(root, 'CF_ACCESS_CLIENT_ID', 'id')
   expect(await list()).toMatchObject([{ name: 'CF_ACCESS_CLIENT_ID', set: true }])
+})
+
+const connecting = (attempts: number): Connection => ({ state: 'connecting', attempts })
+const tool: Tool = { name: 't', inputSchema: { type: 'object' } }
+const connected = (tools: Tool[] = []): Connection => ({ state: 'connected', tools })
+const failed = (attempts: number, retryAt: number, extra = {}): Connection => ({
+  state: 'failed',
+  error: 'x',
+  retryAt,
+  attempts,
+  ...extra,
+})
+const fail = (now: number, extra = {}): ConnectionEvent => ({
+  type: 'failed',
+  error: 'x',
+  now,
+  ...extra,
+})
+
+it.each<[string, Connection, ConnectionEvent, Connection]>([
+  ['connects', connecting(0), { type: 'connected', tools: [] }, connected()],
+  ['a first failure retries after 5 s', connecting(0), fail(100), failed(1, 5100)],
+  ['each failure in a row doubles the delay', connecting(2), fail(0), failed(3, 20_000)],
+  ['the delay stops at 5 minutes', connecting(9), fail(0), failed(10, 300_000)],
+  ['a scheduled retry keeps the failures so far', failed(3, 0), { type: 'connect' }, connecting(3)],
+  // After transport failures the server reconnects with backoff, and a reconnect starts the backoff over (16a71d81).
+  ['a dropped connection retries after 5 s', connected(), fail(0), failed(1, 5000)],
+  ['a reconnect resets the failures', failed(6, 0), { type: 'restart' }, connecting(0)],
+  // A missing secret is reported as missing until the next connect (90fa141d).
+  [
+    'a failure names the missing secret',
+    connecting(0),
+    fail(0, { missing: 'KEY' }),
+    failed(1, 5000, { missing: 'KEY' }),
+  ],
+  [
+    'the next connect forgets the error and the secret',
+    failed(1, 0, { missing: 'KEY' }),
+    { type: 'connect' },
+    connecting(1),
+  ],
+  [
+    'a changed tool list replaces the tools',
+    connected(),
+    { type: 'tools', tools: [tool] },
+    connected([tool]),
+  ],
+  [
+    'a tool list change while not connected is ignored',
+    connecting(0),
+    { type: 'tools', tools: [] },
+    connecting(0),
+  ],
+])('mcp connection: %s', (_name, from, event, to) => {
+  expect(advance(from, event)).toEqual(to)
 })

@@ -3,6 +3,8 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { readSecret } from '../../lib/secrets.ts'
 import { ClassifyApi } from './api.ts'
 import type { ClassifyAnswer, ClassifyService } from './api.ts'
+import { advance, blocked, cooldownMs } from './state.ts'
+import type { Pause } from './state.ts'
 
 export const secrets = [
   {
@@ -17,12 +19,6 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/**
- * After a billing (402) or auth (401/403) failure, no request goes out for this long: neither fixes itself between
- * tool rounds, and callers like phase ask on every round. 15 minutes caps a stuck account at four calls an hour and
- * still recovers soon after a top-up without a restart; a changed key retries at once.
- */
-export const cooldownMs = 15 * 60_000
 const rejected: Record<number, string> = {
   401: 'TypeSafe: API key rejected',
   402: 'TypeSafe: out of credits',
@@ -30,7 +26,7 @@ const rejected: Record<number, string> = {
 }
 
 export default function classify(host: ExtensionHost) {
-  let paused: { key: string; until: number; error: string } | undefined
+  let pause: Pause = { state: 'active' }
   const service: ClassifyService = {
     async ask(request, signal) {
       // The key the user pasted in Secrets wins; Pi's `typesafe` provider auth (models.json, auth.json or its env
@@ -45,7 +41,9 @@ export default function classify(host: ExtensionHost) {
           'Missing TYPESAFE_API_KEY. Enable secrets and add TYPESAFE_API_KEY in the Secrets panel (⌘K → Secrets).',
         )
       }
-      if (paused?.key === key && Date.now() < paused.until) throw new Error(paused.error)
+      pause = advance(pause, { type: 'ask', key, now: Date.now() })
+      const paused = blocked(pause)
+      if (paused) throw new Error(paused)
       const base =
         host.modelRuntime.getProvider('typesafe')?.baseUrl ?? 'https://api.typesafe.ai/v1'
       const response = await fetch(`${base.replace(/\/+$/, '')}/systemone`, {
@@ -58,7 +56,7 @@ export default function classify(host: ExtensionHost) {
         const status = rejected[response.status]
         const error = `TypeSafe ${response.status}: ${(await response.text()).slice(0, 1000)}${status ? ` (sent ${source})` : ''}`
         if (status) {
-          paused = { key, until: Date.now() + cooldownMs, error }
+          pause = advance(pause, { type: 'reject', key, error, now: Date.now() })
           host.notice(
             `${status} (sent ${source}); classification paused for ${cooldownMs / 60_000} minutes`,
           )

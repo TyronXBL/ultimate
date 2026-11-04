@@ -2,7 +2,9 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { afterEach, expect, it, vi } from 'vitest'
-import classify, { cooldownMs, secrets } from '../extensions/classify/server.ts'
+import classify, { secrets } from '../extensions/classify/server.ts'
+import { advance, blocked, cooldownMs } from '../extensions/classify/state.ts'
+import type { Pause, PauseEvent } from '../extensions/classify/state.ts'
 import { ClassifyApi } from '../extensions/classify/api.ts'
 import type { ClassifyService } from '../extensions/classify/api.ts'
 import { writeSecret } from '../extensions/secrets/store.ts'
@@ -186,4 +188,28 @@ it.each([
   await expect(service.ask(request, new AbortController().signal)).rejects.toThrow(
     'Malformed TypeSafe response',
   )
+})
+
+const paused = (key: string, until: number): Pause => ({ state: 'paused', key, until, error: 'e' })
+const ask = (key: string, now: number): PauseEvent => ({ type: 'ask', key, now })
+
+it.each<[string, Pause, PauseEvent, Pause]>([
+  [
+    'a rejected key pauses for the cooldown',
+    { state: 'active' },
+    { type: 'reject', key: 'a', error: 'e', now: 100 },
+    paused('a', 100 + cooldownMs),
+  ],
+  ['asking while active stays active', { state: 'active' }, ask('a', 100), { state: 'active' }],
+  [
+    'the same key stays paused within the cooldown',
+    paused('a', 1000),
+    ask('a', 999),
+    paused('a', 1000),
+  ],
+  ['the pause ends when the cooldown does', paused('a', 1000), ask('a', 1000), { state: 'active' }],
+  ['a changed key ends the pause at once', paused('a', 1000), ask('b', 10), { state: 'active' }],
+])('pause: %s', (_name, from, event, to) => {
+  expect(advance(from, event)).toEqual(to)
+  expect(blocked(to)).toBe(to.state === 'paused' ? 'e' : undefined)
 })
