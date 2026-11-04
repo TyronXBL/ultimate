@@ -109,7 +109,7 @@ export const tones: Record<BranchTone, string> = {
   failed: 'text-error',
   success: 'text-success',
   brand: 'text-brand',
-  waiting: 'text-amber-700 dark:text-amber-300',
+  waiting: 'text-warning',
   paused: 'text-warning',
   quiet: 'text-muted-foreground/70',
 }

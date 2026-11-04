@@ -363,7 +363,7 @@ function LaunchSetups({
   const { choices } = useChoices(rows, chosen?.agents ?? {})
   return (
     <div className="mt-1 border-t border-border/60 pt-1" data-idea-launch-setups>
-      <DropdownMenuLabel className="pt-1 pb-0.5 font-mono text-[10.5px] font-normal tracking-wider text-muted-foreground uppercase">
+      <DropdownMenuLabel className="pt-1 pb-0.5 text-[11px] font-normal section-label">
         Agents
       </DropdownMenuLabel>
       {choices.length === 0 && (

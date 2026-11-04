@@ -80,7 +80,12 @@ function BoardContent({ parked }: { parked: ReadonlySet<number> | undefined }) {
               )}
             >
               {rows.filter((row) => row.column !== 'parked').length} ideas
-              {needs > 0 && <span className="text-warning"> · {needs} need you</span>}
+              {needs > 0 && (
+                <span className="text-warning">
+                  {' '}
+                  · {needs} {needs === 1 ? 'needs' : 'need'} you
+                </span>
+              )}
             </span>
           </span>
         </Header>
@@ -115,11 +120,13 @@ function UltimateDock() {
 function ColumnHead({ label, rows, loading }: { label: string; rows: Row[]; loading: boolean }) {
   const needs = rows.filter((row) => row.asks.length > 0).length
   return (
-    <h2 className="flex items-baseline gap-1.5 px-1 font-mono text-[10.5px] tracking-wider text-muted-foreground uppercase">
+    <h2 className="flex items-baseline gap-1.5 px-1 section-label">
       {label}
-      {!loading && <span className="tracking-normal text-muted-foreground/60">{rows.length}</span>}
+      {!loading && <span className="text-muted-foreground/60 tabular-nums">{rows.length}</span>}
       {needs > 0 && (
-        <span className="ml-auto tracking-normal normal-case text-warning">{needs} need you</span>
+        <span className="ml-auto text-warning">
+          {needs} {needs === 1 ? 'needs' : 'need'} you
+        </span>
       )}
     </h2>
   )
@@ -199,13 +206,13 @@ function Fold({
     <div className="mt-2 flex flex-col gap-2" data-ideas-parked>
       <button
         aria-expanded={open}
-        className="flex cursor-pointer items-center gap-1 px-1 py-1 font-mono text-[10.5px] tracking-wider text-muted-foreground uppercase outline-none hover:text-foreground focus-visible:text-foreground"
+        className="flex cursor-pointer items-center gap-1 px-1 py-1 section-label outline-none hover:text-foreground focus-visible:text-foreground"
         onClick={() => setOpen(!open)}
         type="button"
       >
         <ChevronRightIcon className={cn('size-3 transition-transform', open && 'rotate-90')} />
         Parked
-        <span className="tracking-normal text-muted-foreground/60">{count}</span>
+        <span className="text-muted-foreground/60 tabular-nums">{count}</span>
       </button>
       {open && children}
     </div>

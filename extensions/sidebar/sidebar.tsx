@@ -678,7 +678,8 @@ function Tree({
           <Collapsible className="pt-1" open={earlierOpen} onOpenChange={setEarlierOpen}>
             <CollapsibleTrigger className="group/earlier flex w-full cursor-pointer items-center gap-1 px-4 py-1 section-label pointer-coarse:h-9 outline-none hover:text-foreground">
               <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/earlier:rotate-90" />
-              Earlier · {earlier.length}
+              Earlier
+              <span className="text-muted-foreground/60 tabular-nums">{earlier.length}</span>
             </CollapsibleTrigger>
             <CollapsibleContent
               aria-label="Earlier"
@@ -693,7 +694,8 @@ function Tree({
           <Collapsible className="pt-1" open={concludedOpen} onOpenChange={setConcludedOpen}>
             <CollapsibleTrigger className="group/concluded flex w-full cursor-pointer items-center gap-1 px-4 py-1 section-label pointer-coarse:h-9 outline-none hover:text-foreground focus-visible:text-foreground">
               <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/concluded:rotate-90" />
-              Concluded · {hidden.length}
+              Concluded
+              <span className="text-muted-foreground/60 tabular-nums">{hidden.length}</span>
             </CollapsibleTrigger>
             <CollapsibleContent
               aria-label="Concluded"
