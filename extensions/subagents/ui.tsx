@@ -57,38 +57,63 @@ function runReason(run: Run | undefined, name: string) {
 }
 
 /**
- * A child's name as rows and cards show it: its label, then the model it runs on, muted, and why when that is not its
- * definition's (truncated first, the reason in full on hover), and a wand when `subagent start` made it on the fly
- * rather than from a definition.
+ * A child's name as rows and cards show it: its label, then the model it runs on, muted, and a wand when `subagent
+ * start` made it on the fly rather than from a definition. When that model is not its definition's, a card says why
+ * after it (truncated first) and a `compact` sidebar row underlines the model, dotted; both tell the whole story on hover.
  */
-export function RunName({ id, label }: { id: number | undefined; label: ReactNode }) {
+export function RunName({
+  id,
+  label,
+  compact,
+}: {
+  id: number | undefined
+  label: ReactNode
+  compact?: boolean
+}) {
   const run = useRun(id)
   const reason = runReason(run, typeof label === 'string' ? label : 'This agent')
   const model = run?.backup?.model ?? run?.model
-  return (
-    <span className="inline-flex max-w-full min-w-0 items-baseline overflow-hidden">
-      <span className="max-w-full shrink-0 truncate">
-        {run?.adhoc && (
-          <WandSparklesIcon
-            aria-label="Made on the fly"
-            className="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground"
-          >
-            <title>Made on the fly, without a definition</title>
-          </WandSparklesIcon>
-        )}
-        {label}
-        {model && <span className="text-muted-foreground/70"> · {model}</span>}
-      </span>
-      {reason && (
-        <span
-          className="min-w-0 shrink-[1000] truncate text-muted-foreground/60"
-          data-run-reason
-          title={reason.detail}
+  const name = (
+    <>
+      {run?.adhoc && (
+        <WandSparklesIcon
+          aria-label="Made on the fly"
+          className="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground"
         >
-          {'\u00a0· '}
-          {reason.word}
+          <title>Made on the fly, without a definition</title>
+        </WandSparklesIcon>
+      )}
+      {label}
+      {model && (
+        <span className="text-muted-foreground/70">
+          {' · '}
+          {compact && reason ? (
+            <span
+              className="underline decoration-dotted underline-offset-2"
+              data-run-reason
+              title={`${reason.word}\n${reason.detail}`}
+            >
+              {model}
+            </span>
+          ) : (
+            model
+          )}
         </span>
       )}
+    </>
+  )
+  if (compact || !reason) return name
+  return (
+    <span className="inline-flex max-w-full min-w-0 items-baseline overflow-hidden">
+      <span className="max-w-full shrink-0 truncate">{name}</span>
+      <span
+        className="min-w-0 shrink-[1000] truncate text-muted-foreground/60"
+        data-run-reason
+        title={reason.detail}
+      >
+        {'\u00a0· '}
+        {reason.word}
+      </span>
     </span>
   )
 }

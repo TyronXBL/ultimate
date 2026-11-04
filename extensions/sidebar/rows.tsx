@@ -529,11 +529,9 @@ function TaskedSubagentLine({
       <span className="w-2 shrink-0 text-muted-foreground/40">└</span>
       <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
       {task?.chip}
-      <span className="flex min-w-0 flex-1 items-baseline text-foreground/75">
-        <RunName id={conversation.id} label={conversation.label ?? 'agent'} />
-        <span className="shrink-0 text-muted-foreground/60">
-          {'\u00a0'}#{conversation.id}
-        </span>
+      <span className="min-w-0 flex-1 truncate text-foreground/75">
+        <RunName compact id={conversation.id} label={conversation.label ?? 'agent'} />
+        <span className="text-muted-foreground/60"> #{conversation.id}</span>
       </span>
       <span
         className={cn(
@@ -646,11 +644,9 @@ function TaskedChildRow({
       <span className="flex w-full items-center gap-1.5">
         <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
         {task?.chip}
-        <span className="flex min-w-0 flex-1 items-baseline font-mono text-[10.5px] text-foreground/80">
-          <RunName id={conversation.id} label={conversation.label ?? 'Agent'} />
-          <span className="shrink-0">
-            {'\u00a0'}· #{conversation.id}
-          </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-foreground/80">
+          <RunName compact id={conversation.id} label={conversation.label ?? 'Agent'} /> · #
+          {conversation.id}
         </span>
         {conversation.workspace && (
           <GitBranchIcon
