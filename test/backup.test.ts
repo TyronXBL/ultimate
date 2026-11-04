@@ -14,7 +14,7 @@ import { BackupApi } from '../extensions/backup/api.ts'
 import pauseExtension from '../extensions/pause/server.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
 import { Pin } from '../extensions/models/api.ts'
-import { Standing } from '../extensions/subagents/api.ts'
+import { Runs, Standing } from '../extensions/subagents/api.ts'
 import { apis, removeTemps, temp, until } from './helpers.ts'
 
 const [State] = docs
@@ -253,9 +253,17 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
     () => fauxAssistantMessage([fauxText('again')]),
   ])
   const { root, harness } = await f.open()
+  // It stands in for a subagent: its row and card say it runs on a backup while it does.
+  await harness.commit(async (tx) => {
+    ;(await tx.doc(Runs, ROOT_CONVERSATION_ID))[root.id] = { model: 'faux-1' }
+  }, context)
   const submission = await root.submit({ type: 'input', content: 'go' }, context)
   await submission.wait(context)
   await until(async () => (await cards(harness, root.id)).length === 1)
+  expect((await harness.snapshot(Runs, ROOT_CONVERSATION_ID, context))?.[root.id]).toEqual({
+    model: 'faux-1',
+    backup: { from: 'faux/faux-1', model: 'faux-2', reason: 'rate limit' },
+  })
   // The cooldown passed while the conversation was idle on the backup.
   await harness.commit(async (tx) => {
     ;(await tx.doc(State, root.id)).since = Date.now() - 31 * 60_000
@@ -268,6 +276,9 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   const [divider] = await dividers(harness, root.id, 'backup.return')
   expect(divider.data).toEqual({ from: 'faux/faux-2', to: 'faux/faux-1' })
   expect(await state(harness, root.id)).toEqual({})
+  expect((await harness.snapshot(Runs, ROOT_CONVERSATION_ID, context))?.[root.id]).toEqual({
+    model: 'faux-1',
+  })
 })
 
 it('returns only once the cooldown passed', async () => {

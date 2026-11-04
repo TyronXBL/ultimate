@@ -1087,6 +1087,10 @@ export default function subagents(
                   ).definitions
                 : undefined
             const definition = definitions && (await spawnDefinition(args, definitions))
+            // What the named definition runs on without this call's family or model, to tell an override apart.
+            const own = args.agent
+              ? definitions?.find((d) => d.name === args.agent)?.runs
+              : undefined
             if (definition?.tools?.some((name) => !parent.tools.some((tool) => tool.name === name)))
               throw new Error('Definition tools must be a subset of parent tools')
             const label = definition && (args.agent ? (args.label ?? definition.name) : args.label!)
@@ -1119,6 +1123,9 @@ export default function subagents(
                 definition && args.agent && args.family === undefined && args.model === undefined
                   ? await setupFor(tx, api.conversationId, definition.name)
                   : undefined
+              const caller =
+                (await tx.doc(Profile, api.conversationId)).definition ??
+                (await tx.doc(host.metadata, api.conversationId)).label
               if (definition) {
                 await conversations.requestSummary(
                   tx,
@@ -1151,9 +1158,32 @@ export default function subagents(
                 await started(host, tx, child, label!, 'child')
                 const runs = await tx.doc(Runs, ROOT_CONVERSATION_ID)
                 const { model: ran } = await tx.doc(AgentDoc, child.id)
+                // A pin with no login here runs on the parent's model, as the child would.
+                const ownModel = hasLogin(host.modelRuntime.getAvailableSnapshot(), own?.model)
+                  ? own?.model
+                  : parent.model
+                const asked = setup
+                  ? setup.model
+                  : args.family !== undefined || args.model !== undefined
+                    ? (definition.runs?.model ?? parent.model)
+                    : undefined
+                const overridden = own && asked && ownModel && refName(asked) !== refName(ownModel)
                 runs[String(child.id)] = {
                   ...(ran ? { model: ran.modelId } : {}),
                   ...(args.agent ? {} : { adhoc: true as const }),
+                  ...(overridden && {
+                    override: {
+                      by: setup ? ('setup' as const) : ('call' as const),
+                      ...(setup
+                        ? {}
+                        : {
+                            ...(caller ? { caller } : {}),
+                            asked: args.model ? `model ${args.model}` : `family ${args.family}`,
+                          }),
+                      ...(own.family ? { family: own.family } : {}),
+                      own: refName(ownModel),
+                    },
+                  }),
                 }
                 state.agents[String(child.id)] = {
                   conversationId,

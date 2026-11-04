@@ -20,7 +20,7 @@ import { defaultModel, hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
 import { Pin } from '../models/api.ts'
-import { Standing } from '../subagents/api.ts'
+import { Runs, Standing } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
 import type {
@@ -82,12 +82,15 @@ function active(state: BackupState): BackupRecord | undefined {
 /** A provider's error text, short enough for a card: the first 300 characters. */
 const short = (error: string) => (error.length > 300 ? `${error.slice(0, 300)}…` : error)
 
-const clear = (state: BackupState) => {
+/** Drop conversation `id`'s record, and the backup its subagent row and card show. */
+const clear = async (tx: Tx, id: ConversationId, state: BackupState) => {
   delete state.primary
   delete state.thinking
   delete state.to
   delete state.since
   delete state.tried
+  const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
+  if (run?.backup) delete run.backup
 }
 
 /** One switch at a time, across reloads: two failures in one publication must not both take the next backup. */
@@ -122,7 +125,7 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       if (failed !== name(current))
         return (state.tried ?? []).includes(failed) ? { earlier: true as const } : undefined
       // A model picked since the last switch starts afresh: it is the primary now, and nothing was tried from it.
-      if (state.to && name(state.to) !== failed) clear(state)
+      if (state.to && name(state.to) !== failed) await clear(tx, id, state)
       const definition = await host.want(Pin)?.definition(tx, id)
       const used = new Set([...(state.tried ?? []), failed])
       const to = definition?.fallback?.find(
@@ -148,6 +151,9 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
         tried: [...(state.tried ?? []), switched.from],
         ...(thinking ? { thinking } : {}),
       })
+      // A subagent's row and card say it runs on a backup, and why.
+      const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
+      if (run) run.backup = { from: switched.from, model: to.modelId, reason: switched.reason }
       return switched
     }, context),
   )
@@ -228,7 +234,7 @@ async function returned(
   const record = active(state)
   const agent = await tx.doc(AgentDoc, id)
   if (!record || !agent.model || name(agent.model) !== name(record.to)) {
-    clear(state)
+    await clear(tx, id, state)
     return undefined
   }
   const now = Date.now()
@@ -237,7 +243,7 @@ async function returned(
   agent.model = model(record.primary)
   if (record.thinking) agent.thinkingLevel = record.thinking
   else delete agent.thinkingLevel
-  clear(state)
+  await clear(tx, id, state)
   const data: BackupReturned = { from: name(record.to), to: name(record.primary) }
   return {
     entries: [
