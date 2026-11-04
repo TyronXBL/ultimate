@@ -1,6 +1,6 @@
 import type { RecallState } from './refs.ts'
 
-export type RecallEvent =
+type RecallEvent =
   /** The input needs no check: it counts as checked. */
   | { type: 'skip'; input: number }
   /** The check of this message begins. */

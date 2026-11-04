@@ -3,7 +3,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { readSecret } from '../../lib/secrets.ts'
 import { ClassifyApi } from './api.ts'
 import type { ClassifyAnswer, ClassifyService } from './api.ts'
-import { advance, blocked, cooldownMs } from './state.ts'
+import { blocked, cooldownMs, reject } from './state.ts'
 import type { Pause } from './state.ts'
 
 export const secrets = [
@@ -41,8 +41,7 @@ export default function classify(host: ExtensionHost) {
           'Missing TYPESAFE_API_KEY. Enable secrets and add TYPESAFE_API_KEY in the Secrets panel (⌘K → Secrets).',
         )
       }
-      pause = advance(pause, { type: 'ask', key, now: Date.now() })
-      const paused = blocked(pause)
+      const paused = blocked(pause, key, Date.now())
       if (paused) throw new Error(paused)
       const base =
         host.modelRuntime.getProvider('typesafe')?.baseUrl ?? 'https://api.typesafe.ai/v1'
@@ -56,7 +55,7 @@ export default function classify(host: ExtensionHost) {
         const status = rejected[response.status]
         const error = `TypeSafe ${response.status}: ${(await response.text()).slice(0, 1000)}${status ? ` (sent ${source})` : ''}`
         if (status) {
-          pause = advance(pause, { type: 'reject', key, error, now: Date.now() })
+          pause = reject(key, error, Date.now())
           host.notice(
             `${status} (sent ${source}); classification paused for ${cooldownMs / 60_000} minutes`,
           )

@@ -9,24 +9,14 @@ export type Pause =
   | { state: 'active' }
   | { state: 'paused'; key: string; until: number; error: string }
 
-export type PauseEvent =
-  | { type: 'reject'; key: string; error: string; now: number }
-  /** A request is about to go out with `key`. */
-  | { type: 'ask'; key: string; now: number }
+/** The only writer of the pause: TypeSafe rejected `key`, so it pauses for the cooldown. */
+export const reject = (key: string, error: string, now: number): Pause => ({
+  state: 'paused',
+  key,
+  until: now + cooldownMs,
+  error,
+})
 
-/** The only writer of the pause: a rejected key pauses; asking ends the pause once it expired or the key changed. */
-export function advance(pause: Pause, event: PauseEvent): Pause {
-  switch (event.type) {
-    case 'reject':
-      return { state: 'paused', key: event.key, until: event.now + cooldownMs, error: event.error }
-    case 'ask':
-      return pause.state === 'paused' && pause.key === event.key && event.now < pause.until
-        ? pause
-        : { state: 'active' }
-    default:
-      return event satisfies never
-  }
-}
-
-/** The error to throw instead of sending a request, while paused. */
-export const blocked = (pause: Pause) => (pause.state === 'paused' ? pause.error : undefined)
+/** The error to throw instead of sending a request with `key` at `now`: only that key, and only until the pause ends. */
+export const blocked = (pause: Pause, key: string, now: number) =>
+  pause.state === 'paused' && pause.key === key && now < pause.until ? pause.error : undefined

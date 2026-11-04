@@ -139,7 +139,7 @@ async function configured(host: ExtensionHost) {
         source,
         transport: isObject(value) && typeof value.url === 'string' ? 'http' : 'stdio',
         ...(typeof entry === 'string'
-          ? { connection: { state: 'failed', error: `Invalid entry: ${entry}`, attempts: 0 } }
+          ? { connection: { state: 'invalid', error: `Invalid entry: ${entry}` } }
           : { connection: { state: 'connecting', attempts: 0 }, entry }),
         secrets: [],
       })
@@ -196,7 +196,6 @@ export default async function mcp(host: ExtensionHost) {
     server.connection = advance(server.connection, event)
     if (server.connection.state !== 'failed') return
     server.client = undefined
-    if (server.connection.retryAt === undefined) return
     server.timer = setTimeout(() => void begin(server), server.connection.retryAt - Date.now())
     server.timer.unref?.()
   }

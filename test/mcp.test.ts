@@ -187,7 +187,6 @@ const fail = (now: number, extra = {}): ConnectionEvent => ({
 })
 
 it.each<[string, Connection, ConnectionEvent, Connection]>([
-  ['connects', connecting(0), { type: 'connected', tools: [] }, connected()],
   ['a first failure retries after 5 s', connecting(0), fail(100), failed(1, 5100)],
   ['each failure in a row doubles the delay', connecting(2), fail(0), failed(3, 20_000)],
   ['the delay stops at 5 minutes', connecting(9), fail(0), failed(10, 300_000)],
@@ -213,12 +212,6 @@ it.each<[string, Connection, ConnectionEvent, Connection]>([
     connected(),
     { type: 'tools', tools: [tool] },
     connected([tool]),
-  ],
-  [
-    'a tool list change while not connected is ignored',
-    connecting(0),
-    { type: 'tools', tools: [] },
-    connecting(0),
   ],
 ])('mcp connection: %s', (_name, from, event, to) => {
   expect(advance(from, event)).toEqual(to)

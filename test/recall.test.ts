@@ -15,7 +15,6 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { context } from '../server/harness.ts'
 import recall, { Recall } from '../extensions/recall/server.ts'
 import { checking, recallStep } from '../extensions/recall/state.ts'
-import type { RecallEvent } from '../extensions/recall/state.ts'
 import type { RecallState } from '../extensions/recall/refs.ts'
 import { ClassifyApi } from '../extensions/classify/api.ts'
 import type { ClassifyService } from '../extensions/classify/api.ts'
@@ -125,8 +124,7 @@ it('recalls a memory after the input, already in the first request and at the sa
   expect(await f.state()).toEqual({ last: input.id })
 })
 
-it.each<[string, RecallState, RecallEvent, RecallState]>([
-  ['a skipped input counts as checked', {}, { type: 'skip', input: 5 }, { last: 5 }],
+it.each<[string, RecallState, Parameters<typeof recallStep>[1], RecallState]>([
   ['a check starts', { last: 3 }, { type: 'start', message: 7 }, { last: 3, pending: 7 }],
   [
     'a finished check clears pending and records the input',

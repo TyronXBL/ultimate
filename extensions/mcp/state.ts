@@ -5,10 +5,11 @@ const FIRST_RETRY = 5_000
 const LAST_RETRY = 5 * 60_000
 
 /**
- * One server's connection. `attempts` counts the failures in a row (a success resets it). A failed server with no
- * `retryAt` never retries: its configuration is invalid.
+ * One server's connection. `attempts` counts the failures in a row (a success resets it). An invalid entry in the
+ * settings never connects.
  */
 export type Connection =
+  | { state: 'invalid'; error: string }
   | { state: 'connecting'; attempts: number }
   | { state: 'connected'; tools: Tool[] }
   | {
@@ -16,7 +17,7 @@ export type Connection =
       error: string
       /** The `${NAME}` secret its last connect could not find. */
       missing?: string
-      retryAt?: number
+      retryAt: number
       attempts: number
     }
 
@@ -31,7 +32,7 @@ export type ConnectionEvent =
   | { type: 'failed'; error: string; missing?: string; now: number }
 
 const attemptsOf = (connection: Connection) =>
-  connection.state === 'connected' ? 0 : connection.attempts
+  connection.state === 'connecting' || connection.state === 'failed' ? connection.attempts : 0
 
 /** The only writer of a server's connection: its next state, with the backoff for a failure computed here. */
 export function advance(connection: Connection, event: ConnectionEvent): Connection {
@@ -64,6 +65,8 @@ export function statusOf(
   connection: Connection,
 ): Pick<McpServerStatus, 'state' | 'tools' | 'error' | 'missing' | 'retryAt'> {
   switch (connection.state) {
+    case 'invalid':
+      return { state: 'failed', error: connection.error }
     case 'connecting':
       return { state: 'connecting' }
     case 'connected':
@@ -73,7 +76,7 @@ export function statusOf(
         state: 'failed',
         error: connection.error,
         ...(connection.missing ? { missing: connection.missing } : {}),
-        ...(connection.retryAt ? { retryAt: connection.retryAt } : {}),
+        retryAt: connection.retryAt,
       }
     default:
       return connection satisfies never
