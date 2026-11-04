@@ -88,6 +88,8 @@ export async function branched(
   const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
   if (requested === undefined || requested <= (doc.dream?.requested ?? 0)) return
   doc.dream = { branch: id, requested, at }
+  // A chapter prepared after an earlier dream and never slept into is superseded: this dream prepares its own.
+  delete doc.prepared
 }
 
 const LEARNED_LINES = 3

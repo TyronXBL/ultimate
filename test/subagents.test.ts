@@ -84,12 +84,13 @@ async function fixture(
   let opened: OpenHost | undefined
   const onOpen: (() => Promise<void>)[] = []
   const onClose: (() => Promise<void>)[] = []
+  const provided = new Map<string, unknown>()
   const backend = subagents({
     projectSettings: () => projectSettings(prepared.projectRoot, prepared.userHome),
     ...prepared,
     harness: () => opened!.harness,
     metadata: Metadata,
-    implement: () => {},
+    implement: (api, value) => void provided.set(api.name, value),
     need: idleNeed,
     resource: (_key, create) => create(),
     extensions: () => [],
@@ -142,6 +143,7 @@ async function fixture(
         metadata: Metadata,
         implement: () => {},
         need: idleNeed,
+        want: (api: { name: string }) => provided.get(api.name),
         notice: (message: string) => errors.push(message),
         onOpen: (callback: () => Promise<void>) => {
           onOpen.push(callback)
@@ -1110,7 +1112,7 @@ describe('turns without an answer', () => {
     await until(async () =>
       Object.values(
         (await f.opened.harness.snapshot(Subagents, f.opened.root.id, context))!.actions,
-      ).every((action) => action.status !== undefined),
+      ).every((action) => action.status !== 'pending'),
     )
     await f.opened.harness.waitForIdle(context)
     // The follow-up ran after the one-way message's run: two distinct answers, each reported once.
