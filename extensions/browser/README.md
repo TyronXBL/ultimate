@@ -4,7 +4,7 @@ Install Chromium separately; playwright-core does not download browsers. Resolut
 
 ## Security
 
-Chromium runs inside its own sandbox (`chromiumSandbox: true`; Playwright turns it off unless asked), so a renderer exploit stays confined. `launchBrowser()` is the one launch, shared with the browser tests; on Linux the sandbox needs unprivileged user namespaces.
+Chromium runs inside its own sandbox (`chromiumSandbox: true`; Playwright turns it off unless asked), so a renderer exploit stays confined. `launchBrowser()` is the one launch, shared with the browser tests; on Linux the sandbox needs unprivileged user namespaces, which Ubuntu 23.10+ restricts through AppArmor (`sysctl kernel.apparmor_restrict_unprivileged_userns=0`, as CI sets, or an AppArmor profile for the browser). Without them the launch fails with Playwright's "Chromium sandboxing failed!"; there is no unsandboxed fallback.
 
 The tools open only Ultimate's UI, previews, loopback, private (RFC 1918, IPv6 ULA, link-local) and tailnet (`100.64.0.0/10`) addresses, and `file:`, `data:` and `about:` URLs. Any other URL is refused before the browser starts, with a pointer to `web_fetch`, which reads public pages without running JavaScript. Inside a page, every connection goes through a per-call SOCKS5 proxy on loopback (`scope.ts`) that resolves the host itself, connects only to a local address it checked, and refuses the rest, so redirects, subresources, `fetch` and WebSockets stay in scope too, and a name cannot resolve to another address afterwards. Each refused request the page made adds a `Blocked <url>: <reason>` outcome.
 

@@ -63,5 +63,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: git config --global user.name CI && git config --global user.email ci@example.com
-      # The browser tests use the runner's preinstalled Chrome (/usr/bin/google-chrome-stable).
+      # The browser tests use the runner's preinstalled Chrome (/usr/bin/google-chrome-stable), inside its sandbox,
+      # which needs the unprivileged user namespaces Ubuntu's AppArmor restricts by default.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm test:e2e --shard=${{ matrix.shard }}/4
