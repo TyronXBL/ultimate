@@ -107,21 +107,27 @@ it('sends the pinned model, JSON questions, stored key and abort signal; parses 
   })
 })
 
-it("sends to the endpoint and key of Pi's configured typesafe provider over the stored secret", async () => {
+it("sends the stored secret over Pi's typesafe provider key, to the provider's endpoint", async () => {
   vi.stubEnv('EXAMPLE_PROXY_KEY', 'proxy-sentinel')
-  const { service } = await fixture(true, {
+  const models = {
     providers: {
       typesafe: { baseUrl: 'https://proxy.example.com/typesafe/v1', apiKey: '$EXAMPLE_PROXY_KEY' },
     },
-  })
+  }
   const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => Response.json(body))
   vi.stubGlobal('fetch', fetch)
-  await service.ask(request, new AbortController().signal)
-  expect(fetch.mock.calls[0][0]).toBe('https://proxy.example.com/typesafe/v1/systemone')
-  expect(fetch.mock.calls[0][1]?.headers).toEqual({
-    Authorization: 'Bearer proxy-sentinel',
-    'Content-Type': 'application/json',
-  })
+  for (const [stored, sent] of [
+    [true, 'test-sentinel'],
+    [false, 'proxy-sentinel'],
+  ] as const) {
+    const { service } = await fixture(stored, models)
+    await service.ask(request, new AbortController().signal)
+    expect(fetch.mock.lastCall?.[0]).toBe('https://proxy.example.com/typesafe/v1/systemone')
+    expect(fetch.mock.lastCall?.[1]?.headers).toEqual({
+      Authorization: `Bearer ${sent}`,
+      'Content-Type': 'application/json',
+    })
+  }
 })
 
 it('names the missing key and Secrets panel without sending a request', async () => {
@@ -155,7 +161,9 @@ it('stops sending after a 402 until the cooldown ends', async () => {
     .mockImplementation(async () => Response.json(body))
   vi.stubGlobal('fetch', fetch)
   const signal = new AbortController().signal
-  await expect(service.ask(request, signal)).rejects.toThrow('TypeSafe 402: billing_error')
+  await expect(service.ask(request, signal)).rejects.toThrow(
+    'TypeSafe 402: billing_error (sent the Secrets key)',
+  )
   await expect(service.ask(request, signal)).rejects.toThrow('TypeSafe 402: billing_error')
   expect(fetch).toHaveBeenCalledTimes(1)
   expect(notice).toHaveBeenCalledWith(expect.stringContaining('TypeSafe: out of credits'))

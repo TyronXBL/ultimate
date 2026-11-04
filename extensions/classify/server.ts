@@ -33,11 +33,13 @@ export default function classify(host: ExtensionHost) {
   let paused: { key: string; until: number; error: string } | undefined
   const service: ClassifyService = {
     async ask(request, signal) {
-      // Pi's `typesafe` provider auth (models.json, auth.json or its env key) wins over the stored secret. An
-      // unresolvable models.json key throws rather than sending the stored secret to a configured endpoint.
-      const key =
-        (await host.modelRuntime.getAuth('typesafe'))?.auth.apiKey ??
-        (await readSecret(host.userHome, 'TYPESAFE_API_KEY'))
+      // The key the user pasted in Secrets wins; Pi's `typesafe` provider auth (models.json, auth.json or its env
+      // key) is the fallback, so a stale login there never shadows a fresh secret.
+      const secret = await readSecret(host.userHome, 'TYPESAFE_API_KEY')
+      const key = secret ?? (await host.modelRuntime.getAuth('typesafe'))?.auth.apiKey
+      const source = secret
+        ? 'the Secrets key'
+        : "Pi's typesafe login (~/.pi/agent/models.json, auth.json or the TYPESAFE_API_KEY env)"
       if (!key) {
         throw new Error(
           'Missing TYPESAFE_API_KEY. Enable secrets and add TYPESAFE_API_KEY in the Secrets panel (⌘K → Secrets).',
@@ -53,11 +55,13 @@ export default function classify(host: ExtensionHost) {
         signal,
       })
       if (!response.ok) {
-        const error = `TypeSafe ${response.status}: ${(await response.text()).slice(0, 1000)}`
         const status = rejected[response.status]
+        const error = `TypeSafe ${response.status}: ${(await response.text()).slice(0, 1000)}${status ? ` (sent ${source})` : ''}`
         if (status) {
           paused = { key, until: Date.now() + cooldownMs, error }
-          host.notice(`${status}; classification paused for ${cooldownMs / 60_000} minutes`)
+          host.notice(
+            `${status} (sent ${source}); classification paused for ${cooldownMs / 60_000} minutes`,
+          )
         }
         throw new Error(error)
       }

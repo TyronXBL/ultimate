@@ -4,7 +4,7 @@ The service pins `jev-1.14.0`; aliases move and confidence thresholds are tuned 
 
 ## Endpoint and key
 
-Pi's `typesafe` provider configures both, through `~/.pi/agent/models.json` like any other provider. Its `baseUrl` replaces `https://api.typesafe.ai/v1` (requests go to `<baseUrl>/systemone`), and its key (models.json `apiKey`, with `$ENV` references resolved, `auth.json` or the `TYPESAFE_API_KEY` environment variable) wins over the stored secret. Once it has a key, the setup check no longer reports `TYPESAFE_API_KEY` missing. To go through a proxy:
+The key stored in the Secrets panel wins. Without one, the key of Pi's `typesafe` provider is used (models.json `apiKey`, with `$ENV` references resolved, `auth.json` or the `TYPESAFE_API_KEY` environment variable); once it has a key, the setup check no longer reports `TYPESAFE_API_KEY` missing. A rejected key's error names which of the two was sent. The provider's `baseUrl` in `~/.pi/agent/models.json` replaces `https://api.typesafe.ai/v1` (requests go to `<baseUrl>/systemone`), and whichever key is used goes there. To go through a proxy:
 
 ```json
 {
@@ -28,4 +28,4 @@ The result is `{ model, answers, usage: { inputTokens } }`; each answer is discr
 
 Calls forward the supplied abort signal and throw on a missing key, HTTP failure or malformed response envelope / missing or mismatched answer type. There are no retries or caching. Callers are responsible for durable memoization.
 
-A 402 (out of credits), 401 or 403 pauses the service for 15 minutes: every `ask` throws that error again without a request, and a notice names the cause once. A changed key ends the pause at once.
+A 402 (out of credits), 401 or 403 pauses the service for 15 minutes: every `ask` throws that error again without a request, and a notice names the cause once. A changed key, such as a fresh one saved in Secrets, ends the pause at once.
