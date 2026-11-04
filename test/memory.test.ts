@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { availableMiB, commandNeedMiB, memoryFloor, ramShort } from '../lib/memory.ts'
+import { admitRam, availableMiB, commandNeedMiB, memoryFloor, ramShort } from '../lib/memory.ts'
 import { temp } from './helpers.ts'
 
 it.each([
@@ -11,12 +11,25 @@ it.each([
   { available: 3000, need: 0, floor: 3072, short: true },
   { available: 2000, need: 1536, floor: undefined, short: false },
   { available: undefined, need: 1536, floor: 3072, short: false },
+  { available: 6144, need: 1536, floor: 3072, reserved: 1536, short: false },
+  { available: 6144, need: 1536, floor: 3072, reserved: 1537, short: true },
 ])(
-  'decides whether $need MiB fits with $available MiB available above a $floor MiB floor',
-  ({ available, need, floor, short }) => {
-    expect(ramShort(available, need, floor)).toEqual(short ? { available, need, floor } : undefined)
+  'decides whether $need MiB fits with $available MiB available ($reserved reserved) above a $floor MiB floor',
+  ({ available, need, floor, reserved, short }) => {
+    expect(ramShort(available, need, floor, reserved)).toEqual(
+      short ? { available, need, floor, ...(reserved && { reserved }) } : undefined,
+    )
   },
 )
+
+it('reserves what it admits, so concurrent starters cannot both pass on the same RAM', async () => {
+  const dir = await temp('ultimate-memory-')
+  // Room for exactly one 1024 MiB job above the floor, while RAM moves less than 400 MiB during the test.
+  const settings = { memory: { minAvailableMiB: (await availableMiB())! - 1500 } }
+  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(settings, 1024, dir)))
+  expect(admitted.filter((short) => short === undefined)).toHaveLength(1)
+  expect(admitted.find(Boolean)).toMatchObject({ need: 1024, reserved: 1024 })
+})
 
 it.each([
   ['cd app && pnpm test', 1536],

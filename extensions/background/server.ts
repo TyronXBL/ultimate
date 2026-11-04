@@ -10,6 +10,7 @@ import type { ConversationId } from '@earendil-works/pi-durable'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  admitRam,
   checkRam,
   commandNeedMiB,
   describeShort,
@@ -93,7 +94,7 @@ const createRun = (host: Pick<ExtensionHost, 'projectSettings'>) =>
     initial: () => ({ phase: 'start' }),
     phases: {
       start: async (task, runtime, ctx) => {
-        const short = await checkRam(
+        const short = await admitRam(
           await host.projectSettings(),
           commandNeedMiB(task.input.command),
         )

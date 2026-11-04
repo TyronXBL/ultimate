@@ -4,7 +4,7 @@
  */
 import { defineExtension } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
-import { availableMiB, memoryFloor, memoryUsers } from '../../lib/memory.ts'
+import { availableMiB, cgroupMemory, memoryFloor, memoryUsers } from '../../lib/memory.ts'
 import { StateAction } from './refs.ts'
 
 export default defineExtension({ name: 'memory' })
@@ -18,11 +18,9 @@ export const actions = {
     if (floor === undefined) return { users: [] }
     const available = await availableMiB()
     if (available === undefined) return { floor, users: [] }
-    return {
-      floor,
-      available,
-      users: available < floor + MARGIN ? await memoryUsers() : [],
-    }
+    if (available >= floor + MARGIN) return { floor, available, users: [] }
+    const [users, cgroup] = await Promise.all([memoryUsers(), cgroupMemory()])
+    return { floor, available, users, ...(cgroup && { cgroup }) }
   }),
 }
 

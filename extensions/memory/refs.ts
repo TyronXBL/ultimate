@@ -19,6 +19,8 @@ export type MemoryState = {
   available?: number
   /** What this Ultimate runs, by RSS, listed while available RAM is within 1 GiB of the floor. */
   users: MemoryUser[]
+  /** The memory controller of the cgroup Ultimate runs in (MiB), when it limits memory: the hard guarantee. */
+  cgroup?: { current: number; high?: number; max?: number }
 }
 
 /** → the floor, available RAM and, close to the floor, the largest process groups this Ultimate started. */

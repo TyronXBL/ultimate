@@ -3,9 +3,17 @@
  * Ultimate starts (background commands, lander checks, previews, heavy bash commands) look here first and wait or
  * refuse when their estimated need would take available RAM below it. Linux only: elsewhere nothing is read and
  * nothing is gated.
+ *
+ * Admission is best effort: an estimate, and RAM that something else may take later. It is serialized, though: one
+ * lock for every starter on the machine (previews share `TMPDIR` with their host), and each admitted job reserves its
+ * need for a minute, until its own allocations show in `MemAvailable`, so two starters never both pass on the same RAM.
  */
-import { readdir, readFile, readlink } from 'node:fs/promises'
+import { lstat, open, readdir, readFile, readlink, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
+import { readJson, writeJson } from './json-file.ts'
 
 /** About what a preview or a scratch server needs: a booted Ultimate with its web build. */
 export const PREVIEW_MIB = 1536
@@ -44,22 +52,110 @@ export function commandNeedMiB(command: string) {
   return heavy.find(([pattern]) => pattern.test(unquoted))?.[1] ?? 0
 }
 
-export type RamShort = { available: number; need: number; floor: number }
-/** The decision: undefined when a job needing `need` MiB fits above the floor, else what falls short. */
-export function ramShort(available: number | undefined, need: number, floor: number | undefined) {
-  if (available === undefined || floor === undefined || available - need >= floor) return undefined
-  return { available, need, floor } satisfies RamShort
+/** `reserved`: MiB of `available` promised to jobs admitted within the last minute. */
+export type RamShort = { available: number; need: number; floor: number; reserved?: number }
+/**
+ * The decision: undefined when a job needing `need` MiB fits above the floor, with `reserved` MiB already promised,
+ * else what falls short.
+ */
+export function ramShort(
+  available: number | undefined,
+  need: number,
+  floor: number | undefined,
+  reserved = 0,
+) {
+  if (available === undefined || floor === undefined || available - reserved - need >= floor)
+    return undefined
+  return { available, need, floor, ...(reserved && { reserved }) } satisfies RamShort
 }
 
-/** Whether a job needing `need` MiB fits now, by the floor in `settings`. */
-export const checkRam = async (settings: JsonObject, need: number) => {
+/** How long an admitted job's need stays reserved: about until its allocations show in `MemAvailable`. */
+const SETTLE_MS = 60_000
+type Reservation = { need: number; until: number }
+const admissions = (dir: string) => join(dir, 'ultimate-ram-admissions.json')
+const reservations = async (dir: string, now: number) =>
+  (
+    await readJson<Reservation[]>(admissions(dir), []).catch(
+      // A torn or foreign file reserves nothing; the next admission rewrites it.
+      () => [],
+    )
+  ).filter((reservation) => reservation.until > now)
+
+/** Run `critical` holding the machine's admission lock: a lock file, taken over once it is 10 s old. */
+async function locked<T>(dir: string, critical: () => Promise<T>) {
+  const lock = join(dir, 'ultimate-ram.lock')
+  for (;;) {
+    try {
+      await (await open(lock, 'wx')).close()
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    const held = await lstat(lock).catch(
+      // Released between the two looks: try again at once.
+      () => undefined,
+    )
+    if (held && Date.now() - held.mtimeMs > 10_000) await rm(lock, { force: true })
+    else if (held) await sleep(50)
+  }
+  try {
+    return await critical()
+  } finally {
+    await rm(lock, { force: true })
+  }
+}
+
+/** Whether a job needing `need` MiB fits now, by the floor in `settings`, without admitting it. */
+export async function checkRam(settings: JsonObject, need: number, dir = tmpdir()) {
   const floor = memoryFloor(settings)
-  return floor === undefined ? undefined : ramShort(await availableMiB(), need, floor)
+  if (floor === undefined) return undefined
+  const reserved = (await reservations(dir, Date.now())).reduce((sum, item) => sum + item.need, 0)
+  return ramShort(await availableMiB(), need, floor, reserved)
 }
 
-/** "4200 MiB available, needs 1536 MiB above the 3072 MiB floor". */
-export const describeShort = ({ available, need, floor }: RamShort) =>
-  `${available} MiB available, needs ${need ? `${need} MiB above ` : 'more than '}the ${floor} MiB floor`
+/** Admit a job needing `need` MiB: undefined when it fits, and its need is then reserved; else what falls short. */
+export async function admitRam(settings: JsonObject, need: number, dir = tmpdir()) {
+  if (memoryFloor(settings) === undefined) return undefined
+  return locked(dir, async () => {
+    const short = await checkRam(settings, need, dir)
+    if (!short && need) {
+      const now = Date.now()
+      await writeJson(admissions(dir), [
+        ...(await reservations(dir, now)),
+        { need, until: now + SETTLE_MS },
+      ])
+    }
+    return short
+  })
+}
+
+/** "4200 MiB available (1536 MiB of it reserved by jobs just started), needs 1536 MiB above the 3072 MiB floor". */
+export const describeShort = ({ available, need, floor, reserved }: RamShort) =>
+  `${available} MiB available${reserved ? ` (${reserved} MiB of it reserved by jobs just started)` : ''}, needs ${need ? `${need} MiB above ` : 'more than '}the ${floor} MiB floor`
+
+/** The memory controller of this process's cgroup (v2), in MiB; `high` and `max` unset when unlimited. */
+export async function cgroupMemory() {
+  const path = /^0::(\/.*)$/m.exec(
+    await readFile('/proc/self/cgroup', 'utf8').catch(
+      // Not Linux: no cgroup.
+      () => '',
+    ),
+  )?.[1]
+  if (!path) return undefined
+  const read = (name: string) =>
+    readFile(join('/sys/fs/cgroup', path, name), 'utf8').then(
+      (text) => (/^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined),
+      // No memory controller for this cgroup.
+      () => undefined,
+    )
+  const [current, high, max] = await Promise.all([
+    read('memory.current'),
+    read('memory.high'),
+    read('memory.max'),
+  ])
+  if (current === undefined || (high === undefined && max === undefined)) return undefined
+  return { current, ...(high !== undefined && { high }), ...(max !== undefined && { max }) }
+}
 
 /** A process group Ultimate started and the RAM its processes use. */
 export type MemoryUser = {

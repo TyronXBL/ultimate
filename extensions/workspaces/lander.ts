@@ -11,7 +11,7 @@ import { defineEntry, defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/p
 import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/pi-durable'
 import { git } from '../../lib/git.ts'
 import {
-  checkRam,
+  admitRam,
   commandNeedMiB,
   describeShort,
   listUsers,
@@ -670,7 +670,7 @@ export function createLander(
                 [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
               ),
             )
-            const short = await checkRam(await host.projectSettings(), need)
+            const short = await admitRam(await host.projectSettings(), need)
             if (short) {
               const now = runtime.now()
               if (ramSince !== undefined && now - ramSince >= RAM_WAIT_MS)

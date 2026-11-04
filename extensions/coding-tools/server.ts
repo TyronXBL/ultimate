@@ -30,7 +30,7 @@ import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
 import {
-  checkRam,
+  admitRam,
   commandNeedMiB,
   describeShort,
   listUsers,
@@ -407,7 +407,7 @@ export default function codingTools(
         )
       // A known heavy command (tests, checks, installs, a server) never starts below the RAM floor.
       const need = commandNeedMiB(args.command)
-      const short = need ? await checkRam(await host.projectSettings(), need) : undefined
+      const short = need ? await admitRam(await host.projectSettings(), need) : undefined
       if (short)
         throw new Error(
           `Not enough RAM for this command: ${describeShort(short)}. Run it with the background tool, which waits until enough is free, or stop a job of yours first; what this Ultimate runs, by RSS:\n${listUsers(await memoryUsers())}`,

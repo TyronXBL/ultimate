@@ -7,6 +7,15 @@ Keeps a RAM floor: heavy jobs Ultimate starts wait or are refused while they wou
 `memory.minAvailableMiB` (settings, user or project; off by default) is how much RAM, in MiB, must stay available
 (`MemAvailable` in `/proc/meminfo`). Linux only: elsewhere nothing is read and nothing is gated.
 
+## What it guarantees
+
+Nothing hard: admission is best effort. The hard limit, where there is one, comes from the operating system, for
+example a systemd cgroup cap on the service Ultimate runs in (`MemoryHigh=`, `MemoryMax=`), which holds everything
+Ultimate starts. Admission keeps jobs from starting into that cap: it estimates, and RAM that something else takes
+later is not counted. It is serialized, though: every starter takes one lock file in `TMPDIR` (previews share it with
+their host), and each admitted job reserves its need for a minute, until its own allocations show in `MemAvailable`,
+so two starters never both pass on the same free RAM.
+
 ## Gates
 
 Each starter estimates its job's need with `lib/memory.ts` and starts it only when available RAM minus that need
@@ -28,4 +37,5 @@ machine and is not gated; test suites are gated where they start, not per server
 
 While available RAM is within 1 GiB of the floor, an amber chip shows it. Its popover lists the largest process groups
 this Ultimate started (previews, scratch servers, background commands, test runs), by RSS, with the conversation whose
-worktree they run in. The chip polls `memory/state` every 15 s.
+worktree they run in, and, when Ultimate's cgroup limits memory, its `memory.current` beside `memory.high` and
+`memory.max`. The chip polls `memory/state` every 15 s.

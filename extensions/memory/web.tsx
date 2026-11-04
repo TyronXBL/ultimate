@@ -84,6 +84,24 @@ function Chip() {
           </span>
           <span className="ml-auto text-muted-foreground">floor {state.floor} MiB</span>
         </header>
+        {state.cgroup && (
+          <div
+            className="flex items-baseline gap-2 border-b border-border/70 px-3 py-1.5"
+            title="memory.current of the cgroup Ultimate runs in; at memory.high the kernel throttles it, at memory.max it stops processes"
+          >
+            <span className="text-foreground/85">Ultimate&apos;s cgroup</span>
+            <span className="tabular-nums">{state.cgroup.current} MiB</span>
+            <span className="ml-auto text-muted-foreground tabular-nums">
+              {[
+                state.cgroup.high !== undefined && `high ${state.cgroup.high}`,
+                state.cgroup.max !== undefined && `max ${state.cgroup.max}`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}{' '}
+              MiB
+            </span>
+          </div>
+        )}
         <Users state={state} />
         <div className="border-t border-border/70 px-3 py-1.5 text-[10.5px] text-muted-foreground/80">
           Jobs that would go below the floor wait (background commands, landings) or are refused
