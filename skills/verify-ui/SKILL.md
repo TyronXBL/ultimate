@@ -51,5 +51,6 @@ Never claim a UI change works without an image of it.
    3. folding: fold and unfold tool calls and update groups;
    4. phone width: a screenshot at `width: 390`.
 4. No new console errors.
+5. When the project has a `ui-craft` skill, the change passes its rules and slop signs.
 
 Say what you could not reach as unverified, with the reason.
