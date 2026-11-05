@@ -27,9 +27,18 @@ export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
   if (event.type === 'login-fallback')
     return { by: 'login-fallback', from: event.from, reason: event.reason }
   if (event.type === 'backup') {
-    const under =
-      state.by === 'backup' ? state.under : state.by === 'login-wait' ? state.under : state
-    return { by: 'backup', ...event.record, under }
+    // A chain of backups keeps the owner the first one found.
+    const found = state.by === 'login-wait' ? state.under : state
+    const { primary, thinking, to, since, tried } = event.record
+    return {
+      by: 'backup',
+      primary: { provider: primary.provider, modelId: primary.modelId },
+      ...(thinking ? { thinking } : {}),
+      to: { provider: to.provider, modelId: to.modelId },
+      since,
+      tried: [...tried],
+      under: found.by === 'backup' ? found.under : found,
+    }
   }
   if (event.type === 'return' || event.type === 'backup-left')
     return state.by === 'backup' ? state.under : state

@@ -53,6 +53,21 @@ export type SwitchReason = 'same' | 'pin' | 'default'
  * (`under`), so the way back to it survives the wait; `backup` temporarily runs on a backup model and keeps the
  * original owner underneath. Only `ownerStep` (owner.ts) decides it.
  */
+export type ModelOwner =
+  | OwnerBeforeWait
+  | { by: 'login-wait'; from: string; under: OwnerBeforeWait }
+type OwnerBeforeWait =
+  | OwnerBeforeBackup
+  | ({ by: 'backup' } & BackupRecord & { under: OwnerBeforeBackup })
+type OwnerBeforeBackup =
+  | { by: 'default' }
+  | { by: 'user' }
+  | { by: 'login-fallback'; from: string; reason: SwitchReason }
+/**
+ * One switch away from the primary after a limit, so the next limit can switch again from there: the model and thinking
+ * level the conversation runs on otherwise, the backup it runs on now and since when (ms), and the models it already
+ * left (`provider/modelId`), so a chain of limits tries each backup once.
+ */
 export type BackupRecord = {
   primary: { provider: string; modelId: string }
   thinking?: ModelThinkingLevel
@@ -60,14 +75,6 @@ export type BackupRecord = {
   since: number
   tried: string[]
 }
-export type ModelOwner =
-  | OwnerBeforeWait
-  | { by: 'login-wait'; from: string; under: OwnerBeforeWait }
-type OwnerBeforeWait =
-  | { by: 'default' }
-  | { by: 'user' }
-  | { by: 'login-fallback'; from: string; reason: SwitchReason }
-  | ({ by: 'backup' } & BackupRecord & { under: OwnerBeforeWait })
 /** Who set the conversation's model, on that conversation; a conversation without it reads `default`. */
 export const ModelOwnerDoc = docRef<ModelOwner>('models.owner')
 
