@@ -15,6 +15,7 @@ import { ContextUsageDoc } from '../extensions/conversations/api.ts'
 import { Standing } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
+import { resultIn } from '../extensions/conversations/server.ts'
 import automations, { actions, Automations } from '../extensions/automations/server.ts'
 import type { Automation } from '../extensions/automations/types.ts'
 import { runConversation } from '../extensions/automations/state.ts'
@@ -70,7 +71,12 @@ async function fixture() {
     onClose: (fn: () => Promise<void>) => {
       closer = fn
     },
-    ...apis(new Map<string, unknown>([['messages', { send }]])),
+    ...apis(
+      new Map<string, unknown>([
+        ['messages', { send }],
+        ['conversations', { resultIn }],
+      ]),
+    ),
     extensions: () => [{ name: 'subagents', enabled: true }],
     projectSetup: async () => ({ decision: false }),
     notice: (message: string) => {

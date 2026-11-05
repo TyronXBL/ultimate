@@ -9,6 +9,7 @@ import { obj } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { Context } from '@earendil-works/chord'
+import { ConversationsApi } from '../../../extensions/conversations/api.ts'
 import { WorkspacesApi } from '../../../extensions/workspaces/api.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import {
@@ -302,22 +303,22 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
       // The request id makes a second submit after a crash find the first.
       deliver: async (task, runtime, ctx) => {
         const { result } = task.state.checkpoint
-        await (
-          await runtime.conversation(task.input.to as ConversationId, ctx)
-        )?.submit(
-          {
-            type: 'input',
-            requestId: `ci.result:${task.id}`,
-            content: summary(result),
-            entry: { kind: 'ci.result', data: result },
-            whenBusy: 'steer',
-          },
-          ctx,
-        )
-        await runtime.commit(
-          () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
-          ctx,
-        )
+        const to = task.input.to as ConversationId
+        const conversation = await runtime.conversation(to, ctx)
+        await runtime.commit(async (tx) => {
+          if (conversation)
+            await conversation.submit(
+              tx,
+              await extension.need(ConversationsApi).resultIn(tx, to, {
+                type: 'input',
+                requestId: `ci.result:${task.id}`,
+                content: summary(result),
+                entry: { kind: 'ci.result', data: result },
+                whenBusy: 'steer',
+              }),
+            )
+          return { status: 'terminal', outcome: { status: 'completed', result: null } }
+        }, ctx)
       },
     },
     // A concluded conversation stops its run's polling (Stop leaves background tasks running); the ref goes with it.

@@ -575,21 +575,26 @@ function lineage(host: ExtensionHost) {
         const delivered = await host
           .harness()
           .commit((tx) => tx.submissionByRequest(caller, requestId), ctx)
-        if (!delivered && wake)
-          await (await runtime.conversation(caller, ctx))!.submit(
-            {
-              type: 'input',
-              content: finishedText(target, title, text),
-              whenBusy: 'steer',
-              requestId,
-              entry: {
-                kind: 'lineage.finished',
-                data: { from: target, text, ...(title ? { title } : {}) },
-              },
-            },
+        if (!delivered && wake) {
+          const conversation = (await runtime.conversation(caller, ctx))!
+          await host.harness().commit(
+            async (tx) =>
+              conversation.submit(
+                tx,
+                await host.need(ConversationsApi).resultIn(tx, caller, {
+                  type: 'input',
+                  content: finishedText(target, title, text),
+                  whenBusy: 'steer',
+                  requestId,
+                  entry: {
+                    kind: 'lineage.finished',
+                    data: { from: target, text, ...(title ? { title } : {}) },
+                  },
+                }),
+              ),
             ctx,
           )
-        else if (!delivered)
+        } else if (!delivered)
           await leaveNote(host, caller, text, {
             from: target,
             source: 'finished',
@@ -649,17 +654,23 @@ function lineage(host: ExtensionHost) {
         // Keyed by the compaction, so a rerun after a crash finds the input it already submitted.
         const ultimate =
           (await host.harness().snapshot(Standing, ROOT_CONVERSATION_ID, ctx))?.ultimate === id
-        if (placed)
-          await (await host.harness().conversation(id, ctx))!.submit(
-            {
-              type: 'input',
-              content: ultimate ? WOKEN_TEXT : WOKEN_OTHER_TEXT,
-              whenBusy: 'followUp',
-              requestId: `lineage:woken:${compaction}`,
-              entry: { kind: 'lineage.woken', data: {} },
-            },
+        if (placed) {
+          const conversation = (await host.harness().conversation(id, ctx))!
+          await host.harness().commit(
+            async (tx) =>
+              conversation.submit(
+                tx,
+                await host.need(ConversationsApi).resultIn(tx, id, {
+                  type: 'input',
+                  content: ultimate ? WOKEN_TEXT : WOKEN_OTHER_TEXT,
+                  whenBusy: 'followUp',
+                  requestId: `lineage:woken:${compaction}`,
+                  entry: { kind: 'lineage.woken', data: {} },
+                }),
+              ),
             ctx,
           )
+        }
         await runtime.commit(() => done, ctx)
       },
     },

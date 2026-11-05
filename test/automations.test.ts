@@ -20,6 +20,7 @@ import type { Run, RunEvent } from '../extensions/automations/state.ts'
 import type { ActionContext } from '../server/actions.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
+import { resultIn } from '../extensions/conversations/server.ts'
 import { apis, eventHost, temp, until as waitFor } from './helpers.ts'
 
 // Advance scheduler time while the shared helper measures IO against a real deadline: 50 ms per 5 ms of real time
@@ -40,7 +41,7 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 async function fixture() {
-  const provided = new Map<string, unknown>()
+  const provided = new Map<string, unknown>([['conversations', { resultIn }]])
   const root = await temp('ultimate-automations-')
   const userHome = await temp()
   await mkdir(join(root, 'agents'))

@@ -50,8 +50,8 @@ async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promis
       .checkpoint
     if (checkpoint?.phase === 'report' && checkpoint.conversationId === id) return true
   }
-  // Not part of `working`: a landing still concludes a branch that waits on a job, which stops the job. A job in its
-  // `deliver` phase no longer counts: an answer in between still reports.
+  // Not part of `working`: a landing still concludes a branch that waits on a job, whose result then arrives as a note
+  // (`resultIn`). A job in its `deliver` phase no longer counts: an answer in between still reports.
   if (await awaitsJob(tx, id)) return true
   return working(tx, id)
 }

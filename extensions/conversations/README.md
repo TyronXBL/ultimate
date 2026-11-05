@@ -183,6 +183,11 @@ thinking level is stripped, so model ids may contain colons (`x-ai/grok-4.3:batc
 It provides the `conversations` service: `subject(id)` returns a conversation's current title, summary and feature,
 which workspaces snapshots for each submission. `concluded(caller)` returns a `Promise<Set<ConversationId>>`
 from the server-owned concluded list, used by workspaces to release checkouts on open.
+`resultIn(tx, id, input)` is the one rule for results a conversation asked for (a background command, a CI run, a
+waking notify, an automation it subscribed to): while `id` or a conversation above it is concluded (`concludedTreeIn`),
+the input becomes the same entry written as a note, which starts no run and resumes nothing; otherwise it is returned
+unchanged. Submitters call it in the commit that submits. Subagent reports apply the same `concludedTreeIn` check with
+their own note. Only a message from the user or @ultimate wakes a concluded conversation.
 `generatedTitle(tx, id, title)` marks a new branch's or root's intent title as generated, so its summary may replace
 it; lineage calls it from its `named` reactor. This extension declares two extension points in `api.ts`:
 `conversations.trees` (`rootOf`, `branchOf`, `abstract`; lineage provides it) and `conversations.release`

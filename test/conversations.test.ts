@@ -23,6 +23,7 @@ import {
   actions as conversationActions,
   concludedIn,
   concludedTreeIn,
+  resultIn,
   setStanding,
 } from '../extensions/conversations/server.ts'
 import { UiState } from '../server/ui-state.ts'
@@ -809,4 +810,51 @@ it('finds a conversation concluded through a concluded ancestor', async () => {
     expect(await concludedTreeIn(tx, child.id)).toBe(true)
     expect(await concludedTreeIn(tx, unrelated)).toBe(false)
   }, context)
+})
+// #151003: dev server and Postgres exits woke landed branches and their subagents, and each run resumed the branch.
+it('records a result for a concluded branch or its subagent as a note that starts no run', async () => {
+  const { server, create, action } = await launch()
+  const branch = await create()
+  const open = await create()
+  const at = await server.harness.commit(
+    async (tx) => (await tx.appendEntry(branch, { kind: 'test.branch', data: {} })).id,
+    context,
+  )
+  const child = await (await server.harness.conversation(branch, context))!.fork(
+    at,
+    { ownership: { kind: 'ownerless' } },
+    context,
+  )
+  await action('conclude', { ids: [branch] })
+  const result = (id: ConversationId) => ({
+    type: 'input' as const,
+    requestId: `background.result:${id}`,
+    content: 'Background command finished with exit code 143 after 60 s: pnpm dev',
+    entry: { kind: 'background.result', data: { exitCode: 143 } },
+    whenBusy: 'steer' as const,
+  })
+  await server.harness.commit(async (tx) => {
+    expect(await resultIn(tx, open, result(open))).toEqual(result(open))
+  }, context)
+  for (const id of [branch, child.id]) {
+    const conversation = (await server.harness.conversation(id, context))!
+    await server.harness.commit(
+      async (tx) => conversation.submit(tx, await resultIn(tx, id, result(id))),
+      context,
+    )
+    await server.harness.waitForIdle(context)
+    const entries = (await conversation.context(context)).entries
+    expect(entries.some((entry) => entry.kind === 'pi.assistant')).toBe(false)
+    expect(entries.at(-1)).toMatchObject({
+      kind: 'background.result',
+      data: { exitCode: 143 },
+      model: [
+        {
+          role: 'user',
+          content: `Note (recorded while this conversation was concluded, so it did not wake it):\n${result(id).content}`,
+        },
+      ],
+    })
+  }
+  expect((await server.host.uiState(context))['ext.conversations.concluded']).toEqual([branch])
 })

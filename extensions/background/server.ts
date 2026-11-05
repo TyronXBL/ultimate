@@ -23,6 +23,7 @@ import {
 import { groupAlive, readPidFile, spawnGroup, stopGroup } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { BackgroundResult } from './refs.ts'
+import { ConversationsApi } from '../conversations/api.ts'
 
 type Input = { to: number; cwd: string; command: string; timeout: number; home: string }
 type Checkpoint =
@@ -89,7 +90,7 @@ async function tail(log: string) {
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
 
-function createRun(host: Pick<ExtensionHost, 'userHome'>) {
+function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
   /** Start the command, or wait for RAM first; `wait` comes back here every poll. */
   const begin: PhaseHandler<
     Input,
@@ -218,25 +219,26 @@ function createRun(host: Pick<ExtensionHost, 'userHome'>) {
           result.outcome === 'not-started'
             ? `not started after waiting ${result.seconds} s for RAM`
             : `${result.outcome}${exit} after ${result.seconds} s`
-        await (
-          await runtime.conversation(task.input.to as ConversationId, ctx)
-        )?.submit(
-          {
-            type: 'input',
-            requestId: `background.result:${task.id}`,
-            content: `Background command ${ended}: ${result.command}${result.log ? `\nFull log: ${result.log}` : ''}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
-            entry: { kind: 'background.result', data: result },
-            whenBusy: 'steer',
-          },
-          ctx,
-        )
-        await runtime.commit(
-          () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
-          ctx,
-        )
+        const to = task.input.to as ConversationId
+        const conversation = await runtime.conversation(to, ctx)
+        await runtime.commit(async (tx) => {
+          if (conversation)
+            await conversation.submit(
+              tx,
+              await host.need(ConversationsApi).resultIn(tx, to, {
+                type: 'input',
+                requestId: `background.result:${task.id}`,
+                content: `Background command ${ended}: ${result.command}${result.log ? `\nFull log: ${result.log}` : ''}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
+                entry: { kind: 'background.result', data: result },
+                whenBusy: 'steer',
+              }),
+            )
+          return { status: 'terminal', outcome: { status: 'completed', result: null } }
+        }, ctx)
       },
     },
-    // Concluding the conversation aborts its background tasks: the command stops and nobody is woken.
+    // Concluding the conversation aborts its background tasks: the command stops and nobody is woken. One that ends
+    // anyway (a landing concludes without stopping it) reaches the concluded conversation as a note.
     abort: async (task, runtime, ctx) => {
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
@@ -247,7 +249,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome'>) {
 }
 
 export default function backgroundExtension(
-  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome'>,
+  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome' | 'need'>,
 ) {
   const Run = createRun(host)
   return defineExtension({

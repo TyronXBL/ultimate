@@ -16,8 +16,9 @@ and returns at once. A durable `ci.run` task then:
 5. looks at the run every 20 s, or every 3 min without a stored credential (60 unauthenticated calls an hour are the
    whole machine's), until it ends, no run started within 5 minutes, it has not finished an hour after the push
    (`timeout`), or GitHub has failed for 5 minutes (`unreachable`);
-6. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it. A
-   ref that could not be deleted is named on the card.
+6. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it (a
+   note that starts no run while the caller is concluded: the conversations service's `resultIn`). A ref that could
+   not be deleted is named on the card.
 
 Each failing test is looked up in the lander's record (`workspaces.failing`, without the caller's own submissions): one
 that also failed at other branches' landings says so in the model text and on the card, with links to those branches.

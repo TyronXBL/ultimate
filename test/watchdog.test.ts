@@ -40,7 +40,7 @@ import { Branch } from '../extensions/lineage/api.ts'
 import { Standing, Subagents } from '../extensions/subagents/api.ts'
 import subagents from '../extensions/subagents/server.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
-import { concludedIn } from '../extensions/conversations/server.ts'
+import { concludedIn, concludedTreeIn, resultIn } from '../extensions/conversations/server.ts'
 import { Metadata } from '../server/metadata.ts'
 import { UiState } from '../server/ui-state.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
@@ -77,7 +77,6 @@ async function fixture(
     phase: 'retry' | 'report'
     entered: boolean
     promise: Promise<void>
-    before?: boolean
   },
 ) {
   let now = 1_000_000
@@ -112,7 +111,7 @@ async function fixture(
       void services.set(api.name, implementation),
     need: (api: { name: string }) =>
       api.name === 'conversations'
-        ? { concludedIn }
+        ? { concludedIn, concludedTreeIn, resultIn }
         : api.name === 'subagents'
           ? { recordBackup: async () => {} }
           : api.name === 'models'
@@ -176,9 +175,8 @@ async function fixture(
                               await awaitWithContext(effectGate.promise, ctx)
                             }
                           }
-                          if (effectGate.before) await pause()
                           const receipt = await handle.submit(...input)
-                          if (!effectGate.before) await pause()
+                          await pause()
                           return receipt
                         }
                       },
@@ -448,55 +446,35 @@ it.each([false, true])(
   },
 )
 
-it.each(['queued', 'running'] as const)(
-  'subagent Stop cancels a %s watchdog continuation',
-  async (state) => {
-    const barrier = Promise.withResolvers<void>()
-    const admission = {
-      phase: 'retry' as const,
-      entered: false,
-      promise: barrier.promise,
-      before: true,
-    }
-    const f = await fixture(
-      (transcript) => {
-        const text = inputText(transcript)
-        if (text === 'fail') return error(overloaded)
-        return fauxAssistantMessage([fauxToolCall('hold', {})], { stopReason: 'toolUse' })
-      },
-      true,
-      state === 'queued' ? admission : undefined,
-    )
-    const parent = await f.conversation('Coordinator')
-    const child = await f.conversation('Scout', parent)
-    await (await f.submit(child, 'fail')).wait(context)
-    await f.sleeping()
-    f.advance(60_000)
-    if (state === 'queued') {
-      await until(async () => admission.entered)
-      await f.submit(child, 'hold')
-      await until(async () => f.held())
-      barrier.resolve()
-    }
-    await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
-    await until(async () =>
-      (await f.host.scanSubmissions({ conversationId: child }, 100, undefined, context)).items.some(
-        (input) => input.requestId?.startsWith('watchdog-retry:'),
-      ),
-    )
-    await f.stop(child, parent)
-    f.release()
-    const inputs = (
-      await f.host.scanSubmissions({ conversationId: child }, 100, undefined, context)
-    ).items
-    expect(inputs.find((input) => input.requestId?.startsWith('watchdog-retry:'))).toMatchObject({
-      status: 'unanswered',
-      reason: 'aborted',
-    })
-    expect((await f.harness.snapshot(LiveDoc, child, context))?.run).toBeUndefined()
-    expect(await f.entries(parent)).toHaveLength(0)
-  },
-)
+// The retry is decided and submitted in one commit, so it never queues behind a run that started in between.
+it('subagent Stop cancels a running watchdog continuation', async () => {
+  const f = await fixture((transcript) => {
+    const text = inputText(transcript)
+    if (text === 'fail') return error(overloaded)
+    return fauxAssistantMessage([fauxToolCall('hold', {})], { stopReason: 'toolUse' })
+  })
+  const parent = await f.conversation('Coordinator')
+  const child = await f.conversation('Scout', parent)
+  await (await f.submit(child, 'fail')).wait(context)
+  await f.sleeping()
+  f.advance(60_000)
+  await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
+  await until(async () =>
+    (await f.host.scanSubmissions({ conversationId: child }, 100, undefined, context)).items.some(
+      (input) => input.requestId?.startsWith('watchdog-retry:'),
+    ),
+  )
+  await f.stop(child, parent)
+  f.release()
+  const inputs = (await f.host.scanSubmissions({ conversationId: child }, 100, undefined, context))
+    .items
+  expect(inputs.find((input) => input.requestId?.startsWith('watchdog-retry:'))).toMatchObject({
+    status: 'unanswered',
+    reason: 'aborted',
+  })
+  expect((await f.harness.snapshot(LiveDoc, child, context))?.run).toBeUndefined()
+  expect(await f.entries(parent)).toHaveLength(0)
+})
 
 it.each([false, true])('waits 60 s, retries once; retry failure: %s', async (retryFails) => {
   const seen: string[] = []
