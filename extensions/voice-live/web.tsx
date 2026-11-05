@@ -49,7 +49,8 @@ import { openSides, SideChatsDoc, useSideChatFront } from '../side-chat/ui.tsx'
 import { UnderUltimate, Unlisted } from '../sidebar/ui.tsx'
 import { openAgentSource, StandingDoc, talkToUltimate } from '../subagents/ui.tsx'
 import * as live from './live.tsx'
-import type { VoiceMode } from './live.tsx'
+import { stateLabel, waitingOf } from './mode.ts'
+import type { VoiceMode } from './mode.ts'
 import { StatusAction } from './refs.ts'
 import type { VoiceAnswer, VoiceContext, VoiceLine, VoiceSession, VoiceUtterance } from './refs.ts'
 
@@ -119,15 +120,6 @@ function Level({ className, bar }: { className?: string; bar: string }) {
       ))}
     </span>
   )
-}
-
-/** What the mode is, in two or three words. */
-function stateLabel(mode: VoiceMode) {
-  if (mode.phase === 'starting') return 'Connecting…'
-  if (mode.phase === 'ending') return 'Ending…'
-  if (mode.waiting) return 'Answer waiting'
-  if (mode.phase === 'paused') return 'Listening paused'
-  return mode.muted ? 'Muted' : 'Live'
 }
 
 // ---- composer: the way in ------------------------------------------------------------------------------------------
@@ -234,7 +226,7 @@ function LiveIndicator() {
       className={cn(
         'flex h-6 items-center gap-0.5 rounded-full border pr-0.5 pl-1 text-foreground max-md:h-8',
         hot ? 'border-error/40 bg-error/10' : 'border-border bg-muted/40',
-        mode.waiting && 'border-brand/60 bg-brand/10',
+        waitingOf(mode) && 'border-brand/60 bg-brand/10',
       )}
       data-voice-live-indicator={mode.phase}
       role="group"
@@ -254,7 +246,7 @@ function LiveIndicator() {
             className={cn(
               'size-1.5 shrink-0 rounded-full',
               hot ? 'bg-error motion-safe:animate-pulse' : 'bg-muted-foreground/60',
-              mode.waiting && 'bg-brand motion-safe:animate-pulse',
+              waitingOf(mode) && 'bg-brand motion-safe:animate-pulse',
             )}
           />
         )}
@@ -262,10 +254,10 @@ function LiveIndicator() {
           className={cn(
             'truncate',
             hot ? 'text-error' : 'text-muted-foreground',
-            mode.waiting && 'text-brand',
+            waitingOf(mode) && 'text-brand',
           )}
         >
-          {phone && asleep && !mode.waiting ? 'Paused' : label}
+          {phone && asleep && !waitingOf(mode) ? 'Paused' : label}
         </span>
         {mode.phase === 'live' && mode.since !== undefined && (
           <span className="text-muted-foreground tabular-nums">{clock(now - mode.since)}</span>
@@ -284,11 +276,11 @@ function LiveIndicator() {
       {asleep ? (
         <button
           className="h-full shrink-0 cursor-pointer rounded-full px-2 text-brand outline-none hover:bg-brand/15 focus-visible:ring-1 focus-visible:ring-ring"
-          onClick={() => void live.open(mode.waiting)}
+          onClick={() => void live.open(waitingOf(mode))}
           title="Resume listening: starts a new session"
           type="button"
         >
-          {mode.waiting ? 'Tap to hear' : 'Resume'}
+          {waitingOf(mode) ? 'Tap to hear' : 'Resume'}
         </button>
       ) : (
         <button
@@ -547,10 +539,10 @@ function Collapsed({ phone }: { phone: boolean }) {
       {asleep ? (
         <button
           className="h-8 shrink-0 cursor-pointer rounded-lg px-2 text-[12px] text-brand outline-none hover:bg-brand/15 focus-visible:ring-1 focus-visible:ring-ring"
-          onClick={() => void live.open(mode.waiting)}
+          onClick={() => void live.open(waitingOf(mode))}
           type="button"
         >
-          {mode.waiting ? 'Hear it' : 'Resume'}
+          {waitingOf(mode) ? 'Hear it' : 'Resume'}
         </button>
       ) : (
         <button
@@ -606,7 +598,7 @@ function StepLine({ step, mode }: { step: Step; mode: VoiceMode }) {
                         ? 'Ending…'
                         : 'Listening'
   const detail =
-    step.step === 'hearing' && mode.partial
+    step.step === 'hearing' && mode.phase === 'live' && mode.partial
       ? mode.partial
       : step.step === 'working'
         ? step.request
@@ -681,7 +673,7 @@ function useStep(mode: VoiceMode): Step {
   )
   const briefed =
     started < 0 || transcript.slice(started).some((entry) => entry.kind === 'voice.context')
-  if (mode.phase === 'paused') return { step: mode.waiting ? 'waiting' : 'paused' }
+  if (mode.phase === 'paused') return { step: waitingOf(mode) ? 'waiting' : 'paused' }
   if (mode.floor === 'user') return { step: 'hearing' }
   if (!briefed) return { step: 'loading' }
   if (mode.floor === 'voice') return { step: 'speaking' }
@@ -850,11 +842,11 @@ function VoiceDock({ core }: { core: ReactNode }) {
           {off || asleep ? (
             <button
               className="flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-brand/50 px-3 text-[13px] hover:border-brand focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
-              onClick={() => void (off ? start() : live.open(mode.waiting))}
+              onClick={() => void (off ? start() : live.open(waitingOf(mode)))}
               type="button"
             >
               <AudioLinesIcon className="size-4 text-brand" />
-              {off ? 'Start' : mode.waiting ? 'Hear it' : 'Resume'}
+              {off ? 'Start' : waitingOf(mode) ? 'Hear it' : 'Resume'}
             </button>
           ) : (
             <button
@@ -907,7 +899,7 @@ function useVoiceRow(main: number | undefined): ReactNode {
         ? 'muted'
         : 'live'
       : mode.phase === 'paused'
-        ? mode.waiting
+        ? waitingOf(mode)
           ? 'answer waiting'
           : 'paused'
         : mode.phase === 'starting'
@@ -942,7 +934,7 @@ function useVoiceRow(main: number | undefined): ReactNode {
       <span
         className={cn(
           'flex shrink-0 items-center gap-1 font-mono text-[10px]',
-          hot ? 'text-error' : mode.waiting ? 'text-brand' : 'text-muted-foreground',
+          hot ? 'text-error' : waitingOf(mode) ? 'text-brand' : 'text-muted-foreground',
         )}
       >
         {hot && <span className="size-1.5 rounded-full bg-error motion-safe:animate-pulse" />}
@@ -1140,7 +1132,11 @@ function Answer({
   return (
     <>
       <div className={cn(!open && !spoken && 'line-clamp-4')}>
-        {!full && spoken && spokenId !== undefined && mode.speaking?.entry === spokenId ? (
+        {!full &&
+        spoken &&
+        spokenId !== undefined &&
+        mode.phase === 'live' &&
+        mode.speaking?.entry === spokenId ? (
           <p className="min-w-0 px-3 py-3 text-[13px] leading-relaxed break-words">
             <Spoken entry={spokenId} text={spoken.text} />
           </p>
@@ -1322,7 +1318,8 @@ function HeardRow({ entry }: { entry: EntryRecord }) {
  * voice and the layout never jumps. Any other line shows whole.
  */
 function Spoken({ entry, text }: { entry: number; text: string }) {
-  const { speaking } = useMode()
+  const mode = useMode()
+  const speaking = mode.phase === 'live' ? mode.speaking : undefined
   if (speaking?.entry !== entry) return text
   const words = text.split(' ')
   return words.map((word, index) => (
@@ -1346,7 +1343,8 @@ function LiveTurn() {
   const id = useConversation((conversation) => conversation.id)
   const transcript = useTranscript()
   const { voice } = useIds()
-  const { partial, sending } = useMode()
+  const mode = useMode()
+  const { partial, sending } = mode.phase === 'live' ? mode : {}
   if (id === undefined || id !== voice) return null
   const last = transcript.findLast((entry) => entry.kind === 'voice.heard')
   const arrived = sending && (last?.data as { text?: string } | undefined)?.text === sending.text

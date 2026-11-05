@@ -9,34 +9,12 @@ import { playNotes } from '../sounds/ui.tsx'
 import type { Note } from '../sounds/ui.tsx'
 import { StatusAction } from './refs.ts'
 import type { VoiceStatus } from './refs.ts'
+import { stepVoiceMode } from './mode.ts'
+import type { VoiceCue, VoiceMode, VoiceModeEvent } from './mode.ts'
 import { IDLE_MS } from './relay.ts'
 import type { LiveEvent } from './relay.ts'
 import { startLive } from './session.ts'
 import type { LiveSession } from './session.ts'
-
-/** `paused`: in voice mode without a session, listening paused until an answer or a tap wakes it. */
-type Phase = 'off' | 'starting' | 'live' | 'paused' | 'ending'
-export type VoiceMode = {
-  phase: Phase
-  /** When the current session went live: its billed time. */
-  since?: number
-  /** Kept across sessions, so a session that wakes for an answer never opens a muted microphone. */
-  muted: boolean
-  /** Why the session stopped, or what failed: shown in the indicator, never only in the console. */
-  problem?: string
-  /** An answer that arrived while paused, when this browser would not restart without a tap. */
-  waiting?: string
-  /** The Voice conversation sits in front of @ultimate's. Not durable: voice mode ends with its page. */
-  front: boolean
-  /** Who has the floor in the live session: the user mid-sentence, or GPT-Live talking. */
-  floor?: 'user' | 'voice'
-  /** The words of the line the user is saying now, before a pause finishes it. */
-  partial?: string
-  /** A line just finished and on its way to Voice: shown until its `voice.heard` entry arrives. */
-  sending?: { text: string; at: number }
-  /** The Voice line GPT-Live is reading out now, and how many of its words it has said so far. */
-  speaking?: { entry: number; words: number; at: number }
-}
 
 let mode: VoiceMode = { phase: 'off', muted: false, front: false }
 let session: LiveSession | undefined
@@ -52,7 +30,7 @@ const listeners = new Set<() => void>()
  * (C6, G5), ended steps down to rest (G5, E5, C5), failed drops low (E4, C♯4). Part of using voice, so the sounds
  * switch does not mute them.
  */
-const cues: Record<'ready' | 'paused' | 'ended' | 'failed', Note[]> = {
+const cues: Record<VoiceCue, Note[]> = {
   ready: [
     [0, 783.99, 0.25],
     [0.1, 1046.5, 0.45],
@@ -70,15 +48,6 @@ const cues: Record<'ready' | 'paused' | 'ended' | 'failed', Note[]> = {
     [0, 329.63, 0.25],
     [0.14, 277.18, 0.5],
   ],
-}
-
-/** The cue a phase change sounds: going live, an idle or dropped session pausing, voice mode ending. */
-function cueOf(from: Phase, to: Phase) {
-  if (from === to) return undefined
-  if (to === 'live') return cues.ready
-  if (to === 'paused' && from === 'live') return cues.paused
-  if (to === 'off' && from !== 'starting') return cues.ended
-  return undefined
 }
 
 /**
@@ -138,14 +107,18 @@ function stopHum() {
   }, 120)
 }
 
-function set(next: Partial<VoiceMode>, failed = false) {
-  const cue = failed ? cues.failed : next.phase && cueOf(mode.phase, next.phase)
-  // The connecting hum lasts exactly as long as `starting`: it hands over to the ready, failed or no cue.
-  if (next.phase === 'starting' && mode.phase !== 'starting') startHum()
-  else if (next.phase && next.phase !== 'starting') stopHum()
-  mode = { ...mode, ...next }
+/** The one way the mode changes: `stepVoiceMode` decides, this plays what it asks for and tells the readers. */
+function dispatch(event: VoiceModeEvent) {
+  const step = stepVoiceMode(mode, event)
+  if (step.mode === mode) return
+  mode = step.mode
+  if (step.hum === 'start') startHum()
+  else if (step.hum === 'stop') stopHum()
   // The indicator already shows the phase; a cue the browser refuses is only worth a warning.
-  if (cue) playNotes(cue, 0.08).catch((error: unknown) => console.warn('Voice cue failed', error))
+  if (step.cue)
+    playNotes(cues[step.cue], 0.08).catch((error: unknown) =>
+      console.warn('Voice cue failed', error),
+    )
   for (const listener of listeners) listener()
 }
 
@@ -154,8 +127,8 @@ export const subscribe = (listener: () => void) => {
   return () => void listeners.delete(listener)
 }
 export const voiceMode = () => mode
-export const setFront = (front: boolean) => set({ front })
-export const clearProblem = () => set({ problem: undefined })
+export const setFront = (front: boolean) => dispatch({ type: 'front', front })
+export const clearProblem = () => dispatch({ type: 'problem' })
 
 /** The last key status the composer read: a command then starts without a round trip, inside the user's gesture. */
 let status: VoiceStatus | undefined
@@ -178,22 +151,15 @@ const describe = (error: unknown) => {
 }
 
 /** Close the session we hold; `phase` is where the mode goes once it has. */
-function release(next: VoiceMode['phase'], problem?: string) {
+function release(phase: 'off' | 'paused') {
   const current = session
   session = undefined
   clearInterval(ticker)
-  set({
-    phase: next,
-    since: undefined,
-    floor: undefined,
-    partial: undefined,
-    speaking: undefined,
-    ...(problem ? { problem } : {}),
-  })
+  dispatch({ type: 'release', phase })
   if (!current) return
   closing = current
     .close()
-    .catch((error: unknown) => set({ problem: describe(error) }))
+    .catch((error: unknown) => dispatch({ type: 'problem', problem: describe(error) }))
     .finally(() => (closing = undefined))
 }
 
@@ -204,34 +170,21 @@ function tick() {
     // startLive already released it and recorded the end; the mode sleeps, as after idling.
     session = undefined
     clearInterval(ticker)
-    set({
-      phase: 'paused',
-      since: undefined,
-      floor: undefined,
-      partial: undefined,
-      speaking: undefined,
-      problem: mode.problem ?? 'The session closed',
-    })
+    dispatch({ type: 'closedUnderUs' })
     return
   }
   const now = Date.now()
   const floor = session.relay.hearing() ? 'user' : session.relay.talking() ? 'voice' : undefined
   const partial = session.relay.partial() || undefined
-  if (floor !== mode.floor || partial !== mode.partial)
-    set({
-      floor,
-      partial,
-      sending: partial ? undefined : mode.partial ? { text: mode.partial, at: now } : mode.sending,
-    })
-  else if (mode.sending && now - mode.sending.at > 6000) set({ sending: undefined })
+  dispatch({ type: 'floor', floor, partial, now })
   // Follow the line being read out word by word; once GPT-Live falls quiet after it, show it whole.
-  if (mode.speaking) {
-    const words = session.relay.spokenWords()
-    // GPT-Live may never read it (it was interrupted, or paraphrased into silence): then show it whole after 8 s.
-    const silent = words === 0 && now - mode.speaking.at > 8000
-    if ((words > 0 && !session.relay.talking()) || silent) set({ speaking: undefined })
-    else if (words !== mode.speaking.words) set({ speaking: { ...mode.speaking, words } })
-  }
+  if (mode.phase === 'live' && mode.speaking)
+    dispatch({
+      type: 'speakingProgress',
+      words: session.relay.spokenWords(),
+      talking: session.relay.talking(),
+      now,
+    })
   // A forwarded request still unanswered: a short spoken "still on it", first after 20 s, then every 45 s.
   if (asked !== undefined && now - asked >= (nudged ? 45_000 : 20_000)) {
     asked = now
@@ -239,7 +192,7 @@ function tick() {
     try {
       session.speak('Still on it.')
     } catch (error) {
-      set({ problem: describe(error) })
+      dispatch({ type: 'problem', problem: describe(error) })
     }
   }
   if (session.relay.idleFor(now) >= IDLE_MS) release('paused')
@@ -253,7 +206,8 @@ let nudged = false
 
 function onEvent(event: LiveEvent) {
   if (event.type === 'session.closed' && session && mode.phase === 'live')
-    set({
+    dispatch({
+      type: 'problem',
       problem: event.reason ? `Session closed: ${event.reason}` : 'The session closed',
     })
 }
@@ -264,12 +218,7 @@ export async function open(speech?: string, entry?: number): Promise<void> {
   if (mode.phase === 'starting' || mode.phase === 'live' || mode.phase === 'ending') return
   const from = mode.phase
   cancelled = false
-  set({
-    phase: 'starting',
-    problem: undefined,
-    waiting: undefined,
-    ...(from === 'off' ? { front: true } : {}),
-  })
+  dispatch({ type: 'start' })
   // Awaiting nothing would still yield, and Safari wants getUserMedia within the tap.
   if (closing) await closing
   let started: LiveSession
@@ -279,31 +228,23 @@ export async function open(speech?: string, entry?: number): Promise<void> {
       action: <A, R>(ref: ActionRef<A, R>, args: A) =>
         api.action(ref as ActionRef<null, R>, args as null),
       onEvent,
-      onError: (error) => set({ problem: describe(error) }),
+      onError: (error) => dispatch({ type: 'problem', problem: describe(error) }),
     })
   } catch (error) {
     const waiting = queued.at(-1)?.text
     queued = []
-    if (cancelled) return set({ phase: 'off', problem: undefined, front: false })
     // An answer that could not wake the session waits for a tap; a failed first start leaves voice mode.
-    return set(
-      {
-        phase: from === 'paused' ? 'paused' : 'off',
-        problem: describe(error),
-        ...(waiting ? { waiting } : {}),
-      },
-      true,
-    )
+    return dispatch({ type: 'startFailed', from, problem: describe(error), waiting, cancelled })
   }
   session = started
   if (cancelled) return release('off')
   ticker = setInterval(tick, TICK_MS)
-  set({ phase: 'live', since: Date.now() })
+  dispatch({ type: 'started', now: Date.now() })
   try {
     if (mode.muted) started.mute()
     for (const item of queued) say(started, item.text, item.entry)
   } catch (error) {
-    set({ problem: describe(error) })
+    dispatch({ type: 'problem', problem: describe(error) })
   }
   queued = []
 }
@@ -326,14 +267,14 @@ export function note(text: string) {
       content: text,
     })
   } catch (error) {
-    set({ problem: describe(error) })
+    dispatch({ type: 'problem', problem: describe(error) })
   }
 }
 
 /** Read a line out, following it word by word when it is a Voice line on screen. */
 function say(live: LiveSession, text: string, entry?: number) {
   live.speak(text)
-  set({ speaking: entry === undefined ? undefined : { entry, words: 0, at: Date.now() } })
+  dispatch({ type: 'speaking', entry, at: Date.now() })
 }
 
 /** An answer to speak: now while live, after the start in flight, or by waking a paused session. */
@@ -342,12 +283,13 @@ export function hear(text: string, entry?: number) {
     try {
       say(session, text, entry)
     } catch (error) {
-      set({ problem: describe(error) })
+      dispatch({ type: 'problem', problem: describe(error) })
     }
   } else if (mode.phase === 'starting') queued.push({ text, entry })
   else if (mode.phase === 'paused') {
     // Without an earlier gesture on this page the browser keeps the microphone and audio shut: ask for a tap.
-    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) set({ waiting: text })
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive)
+      dispatch({ type: 'waiting', text })
     // oxlint-disable-next-line typescript/no-floating-promises -- open never rejects: its failures become `problem`.
     else void open(text, entry)
   }
@@ -359,9 +301,9 @@ export function setMuted(muted: boolean) {
       if (muted) session.mute()
       else session.unmute()
     }
-    set({ muted })
+    dispatch({ type: 'muted', muted })
   } catch (error) {
-    set({ problem: describe(error) })
+    dispatch({ type: 'problem', problem: describe(error) })
   }
 }
 
@@ -371,10 +313,9 @@ export function end() {
   queued = []
   if (mode.phase === 'starting') {
     cancelled = true
-    return set({ phase: 'ending' })
+    return dispatch({ type: 'end' })
   }
   release('off')
-  set({ problem: undefined, waiting: undefined, muted: false, front: false })
 }
 
 // A session never outlives its page.
