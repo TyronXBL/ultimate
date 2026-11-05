@@ -22,8 +22,11 @@ import {
 import { Moon } from './moon.tsx'
 import { DreamDoc } from './refs.ts'
 import type { Prepared, Sleep } from './refs.ts'
+import { preparedOf, sleepOf } from './state.ts'
 
 type Step = Exclude<Sleep['phase'], 'asleep' | 'failed'>
+type Failed = Extract<Sleep, { phase: 'failed' }>
+type Running = Extract<Sleep, { phase: Step }>
 const STEPS: Step[] = ['seeding', 'backing up', 'switching']
 
 const titles: Record<Step, string> = {
@@ -43,7 +46,8 @@ export function PreparedCard({ entry }: { entry: EntryRecord }) {
   const doc = useDocOf(1, DreamDoc)
   const at = (entry.data as { at: number }).at
   if (doc === undefined) return null
-  if (doc?.prepared?.at !== at)
+  const prepared = doc && preparedOf(doc.journey)
+  if (!doc || prepared?.at !== at)
     return (
       <Card data-dream-prepared="replaced">
         <p className="flex items-center gap-2 px-3 py-2 font-mono text-[11px] text-muted-foreground">
@@ -52,7 +56,7 @@ export function PreparedCard({ entry }: { entry: EntryRecord }) {
         </p>
       </Card>
     )
-  return <NextChapter prepared={doc.prepared} sleep={doc.sleep} />
+  return <NextChapter prepared={prepared} sleep={sleepOf(doc.journey)} />
 }
 
 /** The prepared next chapter and the way into it; the status line's dialog shows the same card. */
@@ -104,7 +108,7 @@ export function NextChapter({
   )
 }
 
-function Ready({ prepared, failed }: { prepared: Prepared; failed?: Sleep }) {
+function Ready({ prepared, failed }: { prepared: Prepared; failed?: Failed }) {
   const chapters = useChapters()
   const busy = useBusyElsewhere()
   const pid = useSystem()?.process.pid
@@ -123,7 +127,7 @@ function Ready({ prepared, failed }: { prepared: Prepared; failed?: Sleep }) {
   }
   return (
     <section className="border-t border-border/60 px-4 pt-3 pb-3.5" data-dream-sleep="ready">
-      {failed && <Failed sleep={failed} />}
+      {failed && <FailedSleep sleep={failed} />}
       <div className="flex items-start gap-3">
         <MoonIcon className="mt-0.5 size-4 shrink-0 text-brand" />
         <div className="min-w-0 flex-1 space-y-2.5">
@@ -197,7 +201,7 @@ function Ready({ prepared, failed }: { prepared: Prepared; failed?: Sleep }) {
 }
 
 /** What a failed sleep stopped at, its error, and that nothing moved. */
-function Failed({ sleep }: { sleep: Sleep }) {
+function FailedSleep({ sleep }: { sleep: Failed }) {
   const chapters = useChapters()
   return (
     <div
@@ -235,7 +239,7 @@ function Failed({ sleep }: { sleep: Sleep }) {
 }
 
 /** The three steps while a sleep runs, and the outcome once it switched (seen when this chapter is opened again). */
-function Progress({ sleep }: { sleep: Sleep }) {
+function Progress({ sleep }: { sleep: Exclude<Sleep, Failed> }) {
   const chapters = useChapters()
   const actions = useUltimate()
   const running = sleep.phase !== 'asleep'
@@ -308,7 +312,7 @@ function Progress({ sleep }: { sleep: Sleep }) {
 }
 
 /** One step's quiet second half: what it does, or what it found. */
-function detail(step: Step, sleep: Sleep) {
+function detail(step: Step, sleep: Running) {
   if (step === 'seeding') return '— memories, open to-dos, questions, automations, my handover'
   if (step === 'backing up') {
     if (sleep.backup?.id) return `— backup ${sleep.backup.id.slice(0, 12)}`

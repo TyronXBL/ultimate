@@ -11,7 +11,7 @@ A dream is ordinary work; code keeps only which branch is the dream, so its end 
    passes as `dream-pass` subagents (`agents/dream-pass.md`) and answers with its journal and a `Decisions:` block.
    The `dream-branch` reactor reads each `lineage.branched` event, from the start of the log: a branch @ultimate
    started in a turn that answered a `dream.requested` entry newer than the last dream's (its stamp's entry, read back
-   to the turn's start) becomes `dream.next.dream { branch, requested, at }`.
+   to the turn's start) becomes the dream (`woke`, below); one recorded while a sleep runs is ignored.
 3. **Decided.** @ultimate weighs in and the dream branch asks the user with a questions card; approved ones become ordinary branches or
    `remember` batches.
 4. **Woke.** Once the dream branch is concluded, the sidebar (`awake.tsx`) and the status line show "The dream is
@@ -21,6 +21,16 @@ A dream is ordinary work; code keeps only which branch is the dream, so its end 
    `dream.next` on conversation 1 and shows as the `dream.prepared` card in @ultimate's conversation, pinned in the
    status line until it is slept into. A second `prepare` replaces it.
 6. **Asleep.** The user presses Fall asleep on the card (`asleep`, below).
+
+### The journey
+
+`dream.next` on conversation 1 is `{ journey }`, one state each with exactly its fields (`Journey` in `refs.ts`):
+`idle`, `woke {dream}`, `preparing {dream, asked}`, `dismissed {dream}`, `prepared {prepared}`,
+`sleeping {prepared, chapter, phase: seeding | backing up | switching, backup?}`, `failed {prepared, chapter, error}`,
+`asleep {prepared, chapter}`. `dreamStep(journey, event)` (`state.ts`) is its only writer; an event the state cannot
+take throws. Readers use `waiting`, `sleepOf`, `preparedOf` and `awakeOf` from the same file, never the raw fields.
+A new dream supersedes an unslept preparation (and a finished sleep's record); progress runs in order, and a sleep
+cannot be restarted from `asleep`.
 
 ### Built-in triggers
 
@@ -86,7 +96,7 @@ automations' own open hook; each enabled user script becomes an @ultimate-owned 
 User-only `asleep { name? }` refuses without a prepared chapter, while any top-level conversation is busy (@ultimate
 included: a switch parks whatever is live, and parked work keeps the chapter left behind from being switched back to),
 or when the name (default: the prepared one) already exists; an existing chapter is reached with `switch`. Chapter
-changes are serialized. Each step commits as `sleep` in `dream.next`: `seeding`, `backing up`, `switching`, or
+changes are serialized. Each step commits to the journey: `seeding`, `backing up`, `switching`, then `asleep` or
 `failed`, with the backup id or skip reason, error and timestamp.
 
 After the seed is built, optional `CloudApi` takes a final non-forced backup of the current chapter. Missing, off or

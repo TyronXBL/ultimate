@@ -22,6 +22,7 @@ import {
 } from '@/sdk'
 import { ConversationRef } from '../conversations/ui.tsx'
 import { AsleepAction, ChaptersAction, DreamDoc, SwitchAction } from './refs.ts'
+import { sleepOf } from './state.ts'
 import { busyElsewhere } from './types.ts'
 
 /** How a chapter reads everywhere: "Chapter 2 · fresh-roots". The status line names later ones by name alone. */
@@ -126,7 +127,8 @@ export function SwitchVeil() {
   const system = useSystem()
   const connection = useConnection()
   const doc = useDocOf(1, DreamDoc)
-  const sleep = doc?.sleep?.phase === 'switching' ? doc.sleep : undefined
+  const switching = doc && sleepOf(doc.journey)
+  const sleep = switching?.phase === 'switching' ? switching : undefined
   const current = useChapters()
   const now = useNow(1000, ours !== undefined)
   const pid = system?.process.pid

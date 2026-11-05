@@ -9,35 +9,16 @@ import { api, errorMessage, useDocOf, useUltimate } from '@/sdk'
 import { useConcludedSince } from '../conversations/ui.tsx'
 import { talkToUltimate } from '../subagents/ui.tsx'
 import { DismissAction, DreamDoc, ReadyAction } from './refs.ts'
-import type { Dream, Prepared, Sleep } from './refs.ts'
+import { awakeOf } from './state.ts'
 
 /** The dialog the pinned line opens: the Fall asleep card. */
 export const nextDialog = 'dream.next'
 
-/**
- * The chapter prepared since the last dream, with its sleep, while it waits to be slept into (or that sleep runs or
- * failed); undefined once slept into, or when a newer dream supersedes it.
- */
-export function waiting(doc?: { prepared?: Prepared; sleep?: Sleep; dream?: Dream } | null) {
-  const { prepared, sleep, dream } = doc ?? {}
-  if (!prepared || sleep?.phase === 'asleep' || (dream && prepared.at <= dream.at)) return undefined
-  return { prepared, sleep }
-}
-
-/**
- * Where the way into a fresh chapter stands: `woke` once the dream branch is concluded, `preparing` after the user
- * pressed Fall asleep, `prepared` while a prepared chapter waits; undefined when there is nothing to do.
- */
+/** Where the way into a fresh chapter stands (`awakeOf`), once the dream's branch is concluded. */
 export function useAwake() {
   const doc = useDocOf(1, DreamDoc)
   const concluded = useConcludedSince()
-  if (!doc) return undefined
-  const { dream, prepared, sleep } = doc
-  const chapter = waiting(doc)?.prepared.chapter
-  if (chapter) return { phase: 'prepared' as const, chapter }
-  if (!dream || dream.dismissed || concluded(dream.branch) !== Infinity) return undefined
-  if (sleep?.phase === 'asleep' && prepared && prepared.at > dream.at) return undefined
-  return { phase: dream.asked ? ('preparing' as const) : ('woke' as const), branch: dream.branch }
+  return awakeOf(doc?.journey, (branch) => concluded(branch) === Infinity)
 }
 
 /** The sidebar's cue: what the dream left to do, and the button that does it; `onAct` after it did. */

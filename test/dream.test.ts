@@ -28,6 +28,9 @@ import dream, {
   toolStats,
   userActions,
 } from '../extensions/dream/server.ts'
+import type { Journey, Prepared } from '../extensions/dream/refs.ts'
+import { awakeOf, dreamStep } from '../extensions/dream/state.ts'
+import type { DreamEvent } from '../extensions/dream/state.ts'
 import {
   AUTOMATION_NAME,
   BuiltInDoc,
@@ -265,7 +268,10 @@ it("asks @ultimate to dream on the user's Dream, prepares the next chapter, and 
     type: 'write',
   })
   const second = await actions.prepare({ ...ready, chapter: 'second-try' }, f.call)
-  expect((await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))?.prepared).toEqual(second)
+  expect((await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))?.journey).toEqual({
+    state: 'prepared',
+    prepared: second,
+  })
 })
 
 it("marks the branch a dream request's turn started as the dream, and asks @ultimate to prepare on Fall asleep", async () => {
@@ -293,7 +299,12 @@ it("marks the branch a dream request's turn started as the dream, and asks @ulti
     )
   const mark = (id: number, call: number, by: number = f.ultimate) =>
     f.harness.commit((tx) => branched(tx, { id, by, call, at: 1000 + id }), context)
-  const dreamOf = async () => (await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))?.dream
+  const journeyOf = async () =>
+    (await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))!.journey
+  const dreamOf = async () => {
+    const journey = await journeyOf()
+    return 'dream' in journey ? journey.dream : undefined
+  }
   // An ordinary branch, with no dream request in its turn, is not a dream.
   await mark(900, await append('pi.assistant', { stopReason: 'toolUse' }))
   expect(await dreamOf()).toBeUndefined()
@@ -305,15 +316,14 @@ it("marks the branch a dream request's turn started as the dream, and asks @ulti
   expect(await dreamOf()).toBeUndefined()
   // A chapter prepared after an earlier dream and never slept into kept hiding this dream's cue.
   await f.harness.commit(async (tx) => {
-    ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).prepared = {
-      chapter: 'stale',
-      learned: ['one', 'two', 'three'],
-      handoff: 'old',
-      at: 5000,
+    ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).journey = {
+      state: 'prepared',
+      prepared: { chapter: 'stale', learned: ['one', 'two', 'three'], handoff: 'old', at: 5000 },
     }
   }, context)
   await mark(902, call)
-  expect(await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context)).toEqual({
+  expect(await journeyOf()).toEqual({
+    state: 'woke',
     dream: { branch: 902, requested, at: 1902 },
   })
   // A later turn's branch, after @ultimate's answer ended the dream turn, leaves the dream as it was.
@@ -322,9 +332,218 @@ it("marks the branch a dream request's turn started as the dream, and asks @ulti
   expect((await dreamOf())?.branch).toBe(902)
   // Fall asleep asks @ultimate to prepare, as an input that wakes it.
   const { asked } = await actions.ready(null, f.call)
-  expect((await dreamOf())?.asked).toBe(asked)
+  expect(await journeyOf()).toMatchObject({ state: 'preparing', asked })
   await until(async () => (await f.requests()).length === 1)
   expect(await f.requests()).toEqual([{ requestId: `dream.ready:${asked}`, type: 'input' }])
+})
+
+const PREPARED: Prepared = { chapter: 'fresh', learned: ['a', 'b', 'c'], handoff: 'h', at: 50 }
+const DREAM = { branch: 7, requested: 10, at: 40 }
+const LATER = { branch: 8, requested: 11, at: 60 }
+const sleeping = (phase: 'seeding' | 'backing up' | 'switching', backup?: { id: string }) =>
+  ({ state: 'sleeping', prepared: PREPARED, chapter: 'next', phase, at: 1, backup }) as const
+const IDLE: Journey = { state: 'idle' }
+const WOKE: Journey = { state: 'woke', dream: DREAM }
+const PREPARING: Journey = { state: 'preparing', dream: DREAM, asked: 45 }
+const DISMISSED: Journey = { state: 'dismissed', dream: DREAM }
+const PREPARED_STATE: Journey = { state: 'prepared', prepared: PREPARED }
+const FAILED: Journey = {
+  state: 'failed',
+  prepared: PREPARED,
+  chapter: 'next',
+  backup: { id: 'b' },
+  error: 'x',
+  at: 2,
+}
+const ASLEEP: Journey = { state: 'asleep', prepared: PREPARED, chapter: 'next', at: 3 }
+const dreamed = (recorded = LATER): DreamEvent => ({ type: 'dreamed', dream: recorded })
+/** A refused event: the message it throws. */
+const refused = (error: string) => ({ error })
+
+it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
+  ['records the first dream', IDLE, dreamed(DREAM), WOKE],
+  ['records a newer dream', PREPARING, dreamed(), { state: 'woke', dream: LATER }],
+  ['keeps the dream when a second branch of its turn is not newer', WOKE, dreamed(DREAM), WOKE],
+  // The unslept preparation of an earlier dream kept hiding the new dream's Fall asleep cue (1037052).
+  [
+    'a dream supersedes an unslept preparation',
+    PREPARED_STATE,
+    dreamed(),
+    { state: 'woke', dream: LATER },
+  ],
+  ['a dream after a failed sleep drops it', FAILED, dreamed(), { state: 'woke', dream: LATER }],
+  [
+    'a dream after a finished sleep starts the next journey',
+    ASLEEP,
+    dreamed(),
+    { state: 'woke', dream: LATER },
+  ],
+  // Bug fixed here: it deleted the preparation under the running sleep, so the Fall asleep card lost the sleep.
+  [
+    'a dream during a sleep changes nothing',
+    sleeping('backing up'),
+    dreamed(),
+    sleeping('backing up'),
+  ],
+  [
+    'Fall asleep asks @ultimate to prepare',
+    WOKE,
+    { type: 'asked', at: 70 },
+    { state: 'preparing', dream: DREAM, asked: 70 },
+  ],
+  [
+    'Fall asleep after staying asks again',
+    DISMISSED,
+    { type: 'asked', at: 70 },
+    { state: 'preparing', dream: DREAM, asked: 70 },
+  ],
+  [
+    'Fall asleep needs a dream',
+    IDLE,
+    { type: 'asked', at: 70 },
+    refused('No dream to wake from: start one with Dream'),
+  ],
+  [
+    'Fall asleep refuses once prepared',
+    PREPARED_STATE,
+    { type: 'asked', at: 70 },
+    refused('Chapter fresh is already prepared'),
+  ],
+  ['staying dismisses a woken dream', WOKE, { type: 'dismissed' }, DISMISSED],
+  ['staying dismisses a dream being prepared for', PREPARING, { type: 'dismissed' }, DISMISSED],
+  [
+    'staying with nothing to dismiss changes nothing',
+    PREPARED_STATE,
+    { type: 'dismissed' },
+    PREPARED_STATE,
+  ],
+  [
+    'a preparation replaces a dream',
+    PREPARING,
+    { type: 'prepared', prepared: PREPARED },
+    PREPARED_STATE,
+  ],
+  [
+    'a second preparation replaces the first',
+    FAILED,
+    { type: 'prepared', prepared: { ...PREPARED, at: 80 } },
+    { state: 'prepared', prepared: { ...PREPARED, at: 80 } },
+  ],
+  [
+    'no preparation while a sleep runs',
+    sleeping('switching'),
+    { type: 'prepared', prepared: PREPARED },
+    refused('Falling asleep is under way (switching)'),
+  ],
+  [
+    'a sleep starts on the prepared name',
+    PREPARED_STATE,
+    { type: 'sleep started', at: 1 },
+    { ...sleeping('seeding'), chapter: 'fresh', backup: undefined },
+  ],
+  [
+    'a failed sleep retries under a new name and forgets the old backup',
+    FAILED,
+    { type: 'sleep started', chapter: 'next', at: 1 },
+    { ...sleeping('seeding'), backup: undefined },
+  ],
+  [
+    'a sleep needs a preparation',
+    WOKE,
+    { type: 'sleep started', at: 1 },
+    refused('Nothing is prepared: @ultimate prepares the next chapter first'),
+  ],
+  [
+    'a slept-into chapter cannot be slept into again',
+    ASLEEP,
+    { type: 'sleep started', at: 1 },
+    refused('Nothing is prepared: @ultimate prepares the next chapter first'),
+  ],
+  [
+    'one sleep at a time',
+    sleeping('seeding'),
+    { type: 'sleep started', at: 1 },
+    refused('Falling asleep is under way (seeding)'),
+  ],
+  [
+    'the backup step follows seeding',
+    sleeping('seeding'),
+    { type: 'backing up', at: 5 },
+    { ...sleeping('backing up'), at: 5 },
+  ],
+  [
+    'the backup is recorded in its step',
+    sleeping('backing up'),
+    { type: 'backed up', backup: { id: 'b' }, at: 6 },
+    { ...sleeping('backing up', { id: 'b' }), at: 6 },
+  ],
+  [
+    'the switch follows the backup',
+    sleeping('backing up', { id: 'b' }),
+    { type: 'switching', at: 7 },
+    { ...sleeping('switching', { id: 'b' }), at: 7 },
+  ],
+  [
+    'the switch ends asleep',
+    sleeping('switching', { id: 'b' }),
+    { type: 'asleep', at: 8 },
+    { ...ASLEEP, at: 8 },
+  ],
+  [
+    'a step fails the sleep with the backup so far',
+    sleeping('switching', { id: 'b' }),
+    { type: 'failed', error: 'x', at: 2 },
+    FAILED,
+  ],
+  [
+    'progress cannot skip a step',
+    sleeping('seeding'),
+    { type: 'switching', at: 5 },
+    refused('Falling asleep cannot switching from seeding'),
+  ],
+  [
+    'progress cannot finish early',
+    sleeping('backing up'),
+    { type: 'asleep', at: 5 },
+    refused('Falling asleep cannot asleep from backing up'),
+  ],
+  [
+    'progress cannot repeat a step',
+    sleeping('switching'),
+    { type: 'backing up', at: 5 },
+    refused('Falling asleep cannot backing up from switching'),
+  ],
+  [
+    'progress needs a running sleep',
+    FAILED,
+    { type: 'switching', at: 5 },
+    refused('No sleep is running to switching'),
+  ],
+])('journey: %s', (_name, from, event, expected) => {
+  const outcome = (() => {
+    try {
+      return dreamStep(from, event)
+    } catch (error) {
+      return refused((error as Error).message)
+    }
+  })()
+  expect(outcome).toEqual(expected)
+})
+
+it.each<[string, Journey, boolean, unknown]>([
+  ['shows nothing while the dream branch runs', WOKE, false, undefined],
+  ['shows the finished dream', WOKE, true, { phase: 'woke', branch: 7 }],
+  ['shows the chapter being prepared', PREPARING, true, { phase: 'preparing', branch: 7 }],
+  ['shows nothing after staying', DISMISSED, true, undefined],
+  [
+    'shows a prepared chapter, also while its sleep failed',
+    FAILED,
+    true,
+    { phase: 'prepared', chapter: 'fresh' },
+  ],
+  ['shows nothing once slept into', ASLEEP, true, undefined],
+])('awake: %s', (_name, journey, concluded, expected) => {
+  expect(awakeOf(journey, () => concluded)).toEqual(expected)
 })
 
 it('reads tool numbers from the trace, with unused tools and frequent errors', async () => {

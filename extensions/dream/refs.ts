@@ -7,33 +7,49 @@ import { actionRef, docRef } from '../../shared/extension-api.ts'
  */
 export type Prepared = { chapter: string; learned: string[]; handoff: string; at: number }
 
-export type Sleep = {
-  chapter: string
-  /** `asleep`: the switch happened; this chapter is the one it left. */
-  phase: 'seeding' | 'backing up' | 'switching' | 'asleep' | 'failed'
-  backup?: { id?: string; skipped?: string }
-  error?: string
-  at: number
-}
+export type Backup = { id?: string; skipped?: string }
+
+/** A sleep as the cards show it, derived from the journey. `asleep`: the switch happened; this chapter is the one it left. */
+export type Sleep =
+  | { phase: 'seeding' | 'backing up' | 'switching'; chapter: string; backup?: Backup; at: number }
+  | { phase: 'failed'; chapter: string; backup?: Backup; error: string; at: number }
+  | { phase: 'asleep'; chapter: string; at: number }
+
+/** The latest dream: `branch`, the branch @ultimate started in the turn that answered `requested` (its `dream.requested` entry), at `at`. */
+export type Dream = { branch: number; requested: number; at: number }
 
 /**
- * The latest dream: `branch`, the branch @ultimate started in the turn that answered `requested` (its `dream.requested`
- * entry), at `at`. Once the branch is concluded the user is shown Fall asleep; `asked` when they pressed it (@ultimate
- * prepares then), `dismissed` when they chose to stay in this chapter.
+ * The way from a dream into a fresh chapter, each state with exactly its fields; `dreamStep` (`state.ts`) is its only
+ * writer. `woke`: the dream is recorded, and once its branch is concluded the user is shown Fall asleep. `preparing`:
+ * they pressed it at `asked`, @ultimate prepares. `dismissed`: they chose to stay in this chapter. `prepared`: the
+ * Fall asleep card waits. `sleeping`/`failed`/`asleep`: the sleep into `chapter`, which keeps the `prepared` it is for.
  */
-export type Dream = {
-  branch: number
-  requested: number
-  at: number
-  asked?: number
-  dismissed?: true
-}
+export type Journey =
+  | { state: 'idle' }
+  | { state: 'woke'; dream: Dream }
+  | { state: 'preparing'; dream: Dream; asked: number }
+  | { state: 'dismissed'; dream: Dream }
+  | { state: 'prepared'; prepared: Prepared }
+  | {
+      state: 'sleeping'
+      prepared: Prepared
+      chapter: string
+      phase: 'seeding' | 'backing up' | 'switching'
+      backup?: Backup
+      at: number
+    }
+  | {
+      state: 'failed'
+      prepared: Prepared
+      chapter: string
+      backup?: Backup
+      error: string
+      at: number
+    }
+  | { state: 'asleep'; prepared: Prepared; chapter: string; at: number }
 
-/**
- * `{ prepared?, sleep?, dream? }` on conversation 1: the next chapter @ultimate prepared, the sleep into it, and the
- * latest dream.
- */
-export const DreamDoc = docRef<{ prepared?: Prepared; sleep?: Sleep; dream?: Dream }>('dream.next')
+/** `{ journey }` on conversation 1: where the way into the next chapter stands. */
+export const DreamDoc = docRef<{ journey: Journey }>('dream.next')
 
 /**
  * A `dream.requested` entry in @ultimate's conversation: who asked for the dream, the user's Dream button or a

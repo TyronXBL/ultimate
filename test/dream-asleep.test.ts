@@ -22,6 +22,7 @@ import { Messages } from '../extensions/messages/api.ts'
 import { Todos } from '../extensions/todos/server.ts'
 import { actions, Next, userActions } from '../extensions/dream/server.ts'
 import type { Sleep } from '../extensions/dream/refs.ts'
+import { sleepOf } from '../extensions/dream/state.ts'
 import type { Seed } from '../extensions/dream/types.ts'
 import { temp } from './helpers.ts'
 
@@ -83,7 +84,8 @@ async function fixture() {
       resume: () => harness.resume(),
       commit: async (run: Parameters<Harness['commit']>[0]) => {
         const result = await harness.commit(run, context)
-        const sleep = (await harness.snapshot(Next, ROOT_CONVERSATION_ID, context))?.sleep
+        const journey = (await harness.snapshot(Next, ROOT_CONVERSATION_ID, context))?.journey
+        const sleep = journey && sleepOf(journey)
         if (sleep && JSON.stringify(sleep) !== previous) {
           phases.push(structuredClone(sleep))
           previous = JSON.stringify(sleep)
@@ -112,7 +114,10 @@ async function fixture() {
   /** What @ultimate's `prepare` stores, without the card it delivers. */
   const prepare = () =>
     harness.commit(async (tx) => {
-      ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).prepared = { ...READY, at: 1 }
+      ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).journey = {
+        state: 'prepared',
+        prepared: { ...READY, at: 1 },
+      }
     }, context)
   return { host, home, harness, call, prepare, cloud, services, phases, invoke, hold }
 }

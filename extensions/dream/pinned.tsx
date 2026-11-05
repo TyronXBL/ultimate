@@ -1,22 +1,23 @@
 import { MoonIcon } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useDialog, useDocOf, useUltimate } from '@/sdk'
-import { AwakeSection, nextDialog, useAwake, waiting } from './awake.tsx'
+import { AwakeSection, nextDialog, useAwake } from './awake.tsx'
 import { NextChapter } from './sleep.tsx'
 import { DreamDoc } from './refs.ts'
+import { waiting } from './state.ts'
 
 /** The dialog the pinned line opens after a dream, before a chapter is prepared: the sidebar's cue. */
 const awakeDialog = 'dream.awake'
 
 /** The prepared next chapter while it waits for Fall asleep, or a sleep that failed or runs. */
-const usePinned = () => waiting(useDocOf(1, DreamDoc))
+const usePinned = () => waiting(useDocOf(1, DreamDoc)?.journey)
 
 /**
  * In the status line, on every surface and on phones: a finished dream waiting for Fall asleep, then the fresh chapter
  * prepared and not yet slept into.
  */
 export function DreamStatus() {
-  const doc = usePinned()
+  const pinned = usePinned()
   const awake = useAwake()
   const actions = useUltimate()
   if (awake && awake.phase !== 'prepared')
@@ -38,19 +39,23 @@ export function DreamStatus() {
         </span>
       </button>
     )
-  if (!doc?.prepared) return null
-  const failed = doc.sleep?.phase === 'failed'
+  if (!pinned) return null
+  const { prepared, sleep } = pinned
   return (
     <button
       className="-mx-1 flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 transition-colors hover:bg-accent hover:text-foreground"
-      data-dream-status={doc.prepared.chapter}
+      data-dream-status={prepared.chapter}
       onClick={() => actions.open(nextDialog)}
-      title={`Chapter ${doc.prepared.chapter} is prepared: show the Fall asleep card`}
+      title={`Chapter ${prepared.chapter} is prepared: show the Fall asleep card`}
       type="button"
     >
       <MoonIcon className="size-3 shrink-0 text-brand" />
       <span className="truncate">
-        {doc.sleep ? (failed ? 'falling asleep failed' : 'falling asleep') : 'ready to fall asleep'}
+        {sleep
+          ? sleep.phase === 'failed'
+            ? 'falling asleep failed'
+            : 'falling asleep'
+          : 'ready to fall asleep'}
       </span>
     </button>
   )
@@ -81,7 +86,7 @@ export function NextDialog() {
       >
         <DialogTitle className="sr-only">Fall asleep</DialogTitle>
         <DialogDescription className="sr-only">The next chapter I prepared</DialogDescription>
-        {doc?.prepared && (
+        {doc && (
           <NextChapter
             className="rounded-none border-0"
             prepared={doc.prepared}

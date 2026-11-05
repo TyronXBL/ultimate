@@ -31,6 +31,7 @@
     "extensions/tailscale/state.ts",
     "extensions/cloud/run.ts",
     "extensions/conversations/types.ts",
+    "extensions/dream/state.ts",
     "extensions/dream/types.ts",
     "extensions/lineage/types.ts",
     "extensions/phase/types.ts",

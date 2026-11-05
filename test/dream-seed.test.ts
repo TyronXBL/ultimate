@@ -22,6 +22,7 @@ import automations, {
 import type { Automation } from '../extensions/automations/types.ts'
 import type { Seed } from '../extensions/dream/types.ts'
 import dream, { Next } from '../extensions/dream/server.ts'
+import { sleepOf } from '../extensions/dream/state.ts'
 import { applySeed, buildSeed, SeedState, writeSeed } from '../extensions/dream/seed.ts'
 import { CloudApi } from '../extensions/cloud/api.ts'
 import type { CloudService, LastBackup } from '../extensions/cloud/api.ts'
@@ -128,6 +129,24 @@ async function fixture() {
     },
     cloud: (service: CloudService | undefined) => {
       cloud = service
+    },
+    /** The document as a restart leaves it: a sleep into `sleep.chapter` that had not finished. */
+    sleeping: (sleep: {
+      chapter: string
+      phase: 'seeding' | 'backing up' | 'switching'
+      backup?: { id: string }
+      at: number
+    }) =>
+      opened.harness.commit(async (tx) => {
+        ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).journey = {
+          state: 'sleeping',
+          prepared: PREPARED,
+          ...sleep,
+        }
+      }, context),
+    async sleep() {
+      const doc = await opened.harness.snapshot(Next, ROOT_CONVERSATION_ID, context)
+      return doc && sleepOf(doc.journey)
     },
     async source() {
       // Fall asleep is prepared in @ultimate's conversation: it exists before the seed is built.
@@ -434,9 +453,7 @@ it.each([true, false])(
   async (switched) => {
     const f = await fixture()
     const sleep = { chapter: 'next', phase: 'switching' as const, backup: { id: 'final' }, at: 1 }
-    await f.harness.commit(async (tx) => {
-      ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).sleep = sleep
-    }, context)
+    await f.sleeping(sleep)
     const lock = f.host.resource('dream.switching', () => ({ busy: false }))
     lock.busy = true
     await f.close()
@@ -446,13 +463,17 @@ it.each([true, false])(
         chapters: [{ name: 'the-beginning' }, { name: 'next' }],
       })
     await f.open()
-    const settled = (await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))!.sleep
-    expect(settled).toEqual({
-      ...sleep,
-      phase: switched ? 'asleep' : 'failed',
-      ...(switched ? {} : { error: 'The restart into the new chapter failed' }),
-      at: expect.any(Number),
-    })
+    const settled = await f.sleep()
+    expect(settled).toMatchObject(
+      switched
+        ? { chapter: 'next', phase: 'asleep' }
+        : {
+            chapter: 'next',
+            phase: 'failed',
+            backup: sleep.backup,
+            error: 'The restart into the new chapter failed',
+          },
+    )
     expect(settled!.at).toBeGreaterThan(sleep.at)
     expect(lock.busy).toBe(false)
   },
@@ -462,12 +483,10 @@ it.each(['seeding', 'backing up'] as const)(
   'fails a sleep a restart stopped in %s, so nothing stays stuck and a retry is allowed',
   async (phase) => {
     const f = await fixture()
-    await f.harness.commit(async (tx) => {
-      ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).sleep = { chapter: 'next', phase, at: 1 }
-    }, context)
+    await f.sleeping({ chapter: 'next', phase, at: 1 })
     await f.close()
     await f.open()
-    expect((await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))!.sleep).toMatchObject({
+    expect(await f.sleep()).toMatchObject({
       phase: 'failed',
       error: expect.stringContaining('nothing moved'),
     })
@@ -477,15 +496,13 @@ it.each(['seeding', 'backing up'] as const)(
 it('keeps a running chapter change when a facet reload runs onOpen again', async () => {
   const f = await fixture()
   const sleep = { chapter: 'next', phase: 'switching' as const, at: 1 }
-  await f.harness.commit(async (tx) => {
-    ;(await tx.doc(Next, ROOT_CONVERSATION_ID)).sleep = sleep
-  }, context)
+  await f.sleeping(sleep)
   const lock = f.host.resource('dream.switching', () => ({ busy: false }))
   lock.busy = true
   // A reinstalled facet's onOpen on the same, still open harness.
   await f.reopen()
   expect(lock.busy).toBe(true)
-  expect((await f.harness.snapshot(Next, ROOT_CONVERSATION_ID, context))!.sleep).toEqual(sleep)
+  expect(await f.sleep()).toEqual(sleep)
 })
 
 it('rolls back the entire application when a required document is unavailable', async () => {

@@ -35,20 +35,71 @@ import {
   StatsAction,
   SwitchAction,
 } from './refs.ts'
-import type { Dream, Prepared, Sleep, ToolStats } from './refs.ts'
+import type { Backup, Dream, Journey, Prepared, ToolStats } from './refs.ts'
+import { dreamStep, sleepOf } from './state.ts'
+import type { DreamEvent } from './state.ts'
 import { busyElsewhere } from './types.ts'
 import { deliver, deliverTask } from './delivery.ts'
 import { applySeed, buildSeed, SeedState, writeSeed } from './seed.ts'
 import { BuiltInDoc, DREAM_ASK, ensureAutomation, fired, PauseDoc } from './built-ins.ts'
 
-export const Next = defineDoc<{ prepared?: Prepared; sleep?: Sleep; dream?: Dream }>({
+type LegacySleep = {
+  chapter: string
+  phase: 'seeding' | 'backing up' | 'switching' | 'asleep' | 'failed'
+  backup?: Backup
+  error?: string
+  at: number
+}
+
+/**
+ * Version 1 was `{ prepared?, sleep?, dream? }` with the journey implied by which fields existed. A preparation counts
+ * only if newer than the dream (otherwise that dream superseded it, and its sleep record with it); a dream is
+ * `dismissed` over `asked` over just recorded.
+ */
+function fromLegacy(value: unknown): { journey: Journey } {
+  const old = value as {
+    prepared?: Prepared
+    sleep?: LegacySleep
+    dream?: Dream & { asked?: number; dismissed?: true }
+  }
+  const { sleep, dream: last } = old
+  const prepared = old.prepared && (!last || old.prepared.at > last.at) ? old.prepared : undefined
+  if (prepared && sleep) {
+    const { chapter, phase, backup, at } = sleep
+    if (phase === 'asleep') return { journey: { state: 'asleep', prepared, chapter, at } }
+    if (phase === 'failed')
+      return {
+        journey: {
+          state: 'failed',
+          prepared,
+          chapter,
+          ...(backup && { backup }),
+          error: sleep.error ?? 'Falling asleep failed',
+          at,
+        },
+      }
+    return {
+      journey: { state: 'sleeping', prepared, chapter, phase, ...(backup && { backup }), at },
+    }
+  }
+  if (prepared) return { journey: { state: 'prepared', prepared } }
+  if (!last) return { journey: { state: 'idle' } }
+  const { branch, requested, at } = last
+  const recorded = { branch, requested, at }
+  if (last.dismissed) return { journey: { state: 'dismissed', dream: recorded } }
+  if (last.asked) return { journey: { state: 'preparing', dream: recorded, asked: last.asked } }
+  return { journey: { state: 'woke', dream: recorded } }
+}
+
+export const Next = defineDoc<{ journey: Journey }>({
   kind: DreamDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
-  initial: () => ({}),
+  initial: () => ({ journey: { state: 'idle' } }),
+  migrate: fromLegacy,
 })
 export const docs = [Next, SeedState, BuiltInDoc, PauseDoc]
 export const userActions = ['start', 'ready', 'dismiss', 'asleep', 'switch']
@@ -85,11 +136,12 @@ export async function branched(
   const ultimate = (await tx.doc(Standing, ROOT_CONVERSATION_ID)).ultimate
   if (ultimate === undefined || by !== ultimate || call === undefined) return
   const requested = await requestOf(tx, ultimate, call)
-  const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-  if (requested === undefined || requested <= (doc.dream?.requested ?? 0)) return
-  doc.dream = { branch: id, requested, at }
+  if (requested === undefined) return
   // A chapter prepared after an earlier dream and never slept into is superseded: this dream prepares its own.
-  delete doc.prepared
+  step(await tx.doc(Next, ROOT_CONVERSATION_ID), {
+    type: 'dreamed',
+    dream: { branch: id, requested, at },
+  })
 }
 
 const LEARNED_LINES = 3
@@ -99,6 +151,11 @@ export const HANDOFF_CHARS = 12_000
 
 /** A document value copied out of its transaction's overlay. */
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+/** The journey's one writer: `event` applied to the document, and the journey it left. */
+const step = (doc: { journey: Journey }, event: DreamEvent) => {
+  doc.journey = dreamStep(plain(doc.journey), event)
+  return plain(doc.journey)
+}
 const fields = (args: unknown) =>
   args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
 const text = (value: unknown, name: string, max: number) => {
@@ -227,7 +284,7 @@ function idle(host: ExtensionHost) {
  * The final cloud backup of the current chapter before a switch touches another store, or why there is none. A failed
  * backup throws: no switch without it.
  */
-async function finalBackup(host: ExtensionHost): Promise<NonNullable<Sleep['backup']>> {
+async function finalBackup(host: ExtensionHost): Promise<Backup> {
   const cloud = host.want(CloudApi)
   const status = await cloud?.status()
   if (status === 'on') return { id: (await cloud!.backup()).id }
@@ -297,20 +354,23 @@ async function settleSleep(host: ExtensionHost) {
   const { chapters } = await readChapters(host.home)
   await harness.commit(async (tx) => {
     const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-    const sleep = doc.sleep
-    if (!sleep || sleep.phase === 'asleep' || sleep.phase === 'failed') return
+    const sleep = doc.journey.state === 'sleeping' ? sleepOf(plain(doc.journey)) : undefined
+    if (!sleep) return
     const switched = sleep.phase === 'switching' && chapters.some((c) => c.name === sleep.chapter)
-    doc.sleep = switched
-      ? { ...sleep, phase: 'asleep', at: Date.now() }
-      : {
-          ...sleep,
-          phase: 'failed',
-          error:
-            sleep.phase === 'switching'
-              ? 'The restart into the new chapter failed'
-              : 'A restart stopped Fall asleep before the switch; nothing moved',
-          at: Date.now(),
-        }
+    const at = Date.now()
+    step(
+      doc,
+      switched
+        ? { type: 'asleep', at }
+        : {
+            type: 'failed',
+            error:
+              sleep.phase === 'switching'
+                ? 'The restart into the new chapter failed'
+                : 'A restart stopped Fall asleep before the switch; nothing moved',
+            at,
+          },
+    )
   }, context)
 }
 
@@ -319,32 +379,30 @@ async function fallAsleep(host: ExtensionHost, input: { name?: unknown }) {
   const chapters = await readChapters(host.home)
   const { prepared, name } = await host.harness().commit(async (tx) => {
     const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-    if (!doc.prepared)
-      throw new Error('Nothing is prepared: @ultimate prepares the next chapter first')
+    const named = input.name === undefined ? {} : { chapter: chapterName(input.name) }
+    const started = step(doc, { type: 'sleep started', ...named, at: Date.now() })
+    if (started.state !== 'sleeping') throw new Error('Falling asleep did not start')
     idle(host)
-    const chapter = chapterName(input.name ?? doc.prepared.chapter)
-    if (chapters.chapters.some((item) => item.name === chapter))
-      throw new Error(`Chapter ${chapter} already exists; use switch instead`)
-    doc.sleep = { chapter, phase: 'seeding', at: Date.now() }
-    return { prepared: plain(doc.prepared), name: chapter }
+    if (chapters.chapters.some((item) => item.name === started.chapter))
+      throw new Error(`Chapter ${started.chapter} already exists; use switch instead`)
+    return { prepared: started.prepared, name: started.chapter }
   }, context)
-  const progress = (change: Partial<Sleep>) =>
+  const progress = (event: DreamEvent) =>
     host.harness().commit(async (tx) => {
       const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-      doc.sleep = { ...doc.sleep!, ...change, at: Date.now() }
-      return plain(doc.sleep)
+      return sleepOf(step(doc, event))!
     }, context)
   try {
     const seed = await buildSeed(host, prepared)
-    await progress({ phase: 'backing up' })
-    await progress({ backup: await finalBackup(host) })
+    await progress({ type: 'backing up', at: Date.now() })
+    await progress({ type: 'backed up', backup: await finalBackup(host), at: Date.now() })
     // The backup can take time; work started since must also finish before we switch.
     idle(host)
-    await progress({ phase: 'switching' })
+    await progress({ type: 'switching', at: Date.now() })
     await writeSeed(chapterFiles(host.home, name).dir, seed)
     return await restartChapter(host, name)
   } catch (error) {
-    return { sleep: await progress({ phase: 'failed', error: String(error) }) }
+    return { sleep: await progress({ type: 'failed', error: String(error), at: Date.now() }) }
   }
 }
 
@@ -398,18 +456,15 @@ export const actions = {
   ready: implementAction(ReadyAction, async (_args, { host }) => {
     const asked = await host.harness().commit(async (tx) => {
       const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-      if (!doc.dream) throw new Error('No dream to wake from: start one with Dream')
-      if (doc.prepared && doc.prepared.at > doc.dream.at)
-        throw new Error(`Chapter ${doc.prepared.chapter} is already prepared`)
       const at = Date.now()
-      doc.dream.asked = at
-      delete doc.dream.dismissed
+      const preparing = step(doc, { type: 'asked', at })
+      if (preparing.state !== 'preparing') throw new Error('Fall asleep did not start preparing')
       await deliver(host, tx, await ultimateOf(tx), {
         type: 'input',
         requestId: `dream.ready:${at}`,
         kind: 'dream.ready',
-        data: { branch: doc.dream.branch },
-        content: `The user pressed Fall asleep after dream #${doc.dream.branch}. Follow "Prepare the fresh chapter" in the clone's extensions/dream/DREAM.md and call prepare now: the Fall asleep card it puts up is what the user waits for. Name in the handoff any branch still running or waiting on an answer.`,
+        data: { branch: preparing.dream.branch },
+        content: `The user pressed Fall asleep after dream #${preparing.dream.branch}. Follow "Prepare the fresh chapter" in the clone's extensions/dream/DREAM.md and call prepare now: the Fall asleep card it puts up is what the user waits for. Name in the handoff any branch still running or waiting on an answer.`,
       })
       return at
     }, context)
@@ -420,27 +475,25 @@ export const actions = {
   dismiss: implementAction(DismissAction, async (_args, { host }) => {
     await host.harness().commit(async (tx) => {
       const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-      if (doc.dream) doc.dream.dismissed = true
+      step(doc, { type: 'dismissed' })
     }, context)
     return { dismissed: true as const }
   }),
   prepare: implementAction(PrepareAction, async (args, { host }) => {
     const prepared = await host.harness().commit(async (tx) => {
       const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-      if (doc.sleep && !['asleep', 'failed'].includes(doc.sleep.phase))
-        throw new Error(`Falling asleep is under way (${doc.sleep.phase})`)
-      doc.prepared = prepare(args, Date.now())
       // A new preparation is a new card: the record of an earlier sleep from this chapter goes.
-      delete doc.sleep
+      const next = prepare(args, Date.now())
+      step(doc, { type: 'prepared', prepared: next })
       // The Fall asleep card, in @ultimate's conversation; a passive write its running turn reads.
       await deliver(host, tx, await ultimateOf(tx), {
         type: 'write',
-        requestId: `dream.prepared:${doc.prepared.at}`,
+        requestId: `dream.prepared:${next.at}`,
         kind: 'dream.prepared',
-        data: { at: doc.prepared.at },
-        content: `You prepared Chapter ${doc.prepared.chapter}; the Fall asleep card above shows it to the user, who taps Fall asleep. Never call asleep yourself.`,
+        data: { at: next.at },
+        content: `You prepared Chapter ${next.chapter}; the Fall asleep card above shows it to the user, who taps Fall asleep. Never call asleep yourself.`,
       })
-      return plain(doc.prepared)
+      return next
     }, context)
     host.harness().resume()
     return prepared
