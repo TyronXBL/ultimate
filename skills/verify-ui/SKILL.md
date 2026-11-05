@@ -30,8 +30,8 @@ Never claim a UI change works without an image of it.
   appears. A timeout says what was still busy. `conversation: <id>` targets another conversation. Click and fill only
   when the interaction itself is under test; never a fixed `wait <ms>`.
 - Set up state (model, thinking, Play/Pause, abort) through the page's SDK in one `eval`, or curl the preview's HTTP
-  API, not by clicking menus: `{eval: "window.ultimate.api.configure({model: {provider: 'openai-codex', modelId:
-  'gpt-6.1-sol'}}, 2)"}`. Also `api.abort(id)`, `api.compact(undefined, id)`, `api.action({extension: 'pause', name:
+  API, not by clicking menus: `{eval: "window.ultimate.api.action({extension: 'models', name: 'pick'}, {provider:
+  'openai-codex', modelId: 'gpt-6.1-sol'}, {conversationId: 2})"}`. Also `api.configure({thinkingLevel: 'high'}, id)`, `api.abort(id)`, `api.compact(undefined, id)`, `api.action({extension: 'pause', name:
   'play'}, null)`; `extensions/browser/README.md` has the rest.
 - `where` matches only fields the event carries, and events never carry text: after a send, match
   `{event: 'user.input', where: {conversation: <id>, kind: 'prompt'}}`, not the prompt. Each event's fields are in

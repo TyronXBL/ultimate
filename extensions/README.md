@@ -958,7 +958,7 @@ are watched with `useDocOf` (the shown one included), replays their changes, and
 | `useStore(select)`                                                        | Any slice of the client state (`State`), re-rendering when it changes                                                                                                                                                    |
 | `useTranscriptScroll()`                                                   | In `transcript.*` slots: `{ scrollRef, contentRef, atBottom }`, the transcript's scroller, the element whose children are its rows (`data-entry-id`), and whether it follows its newest row                              |
 
-`api` sends commands: `submit(text, whenBusy?)`, `abort()`, `configure({ model, thinkingLevel })`, `compact()`,
+`api` sends commands: `submit(text, whenBusy?)`, `abort()`, `configure({ thinkingLevel })` (the model is the models `pick` action's), `compact()`,
 `createConversation()`, `restart()`, and `action(extension, name, args?)`. Conversation commands default to the shown
 conversation.
 
