@@ -1524,6 +1524,8 @@ export default function lineageExtension(host: ExtensionHost) {
               { model: agent.model, thinkingLevel: agent.thinkingLevel },
               ctx,
             )
+            // Pi upstream: @earendil-works/pi-durable@1.5.0 — patched `fail` decision: the compaction fails with this
+            // message instead of Pi summarizing once more on the limited model. Drop when Pi lets a hook fail one.
             if ('fail' in answer) return answer
             summary = await api.memo(
               'lineage.summary',
