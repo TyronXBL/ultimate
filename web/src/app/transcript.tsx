@@ -206,11 +206,10 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   // A windowed stream pages on from its oldest entry; a whole one is the whole history.
   // A fork's history before its own first entry is its source's and stays hidden: paging stops at the fork point.
   const forked = reachedFork([...active, ...history], id)
-  const { cursor, pending, error, filling } = pagingView(paging, older, forked)
-  // Set at once, so a second read cannot start before the loading page renders; aborted when the transcript goes.
+  const { cursor, pending, canLoad, error, filling } = pagingView(paging, older, forked)
+  // The page read in flight, aborted when the transcript goes. Set at once, it also keeps a second read from starting
+  // in the same tick, before the loading phase renders.
   const request = useRef<AbortController | null>(null)
-  /** Numbers the page reads, so the paging state tells a late reply from the current one. */
-  const reads = useRef(0)
   const anchor = useRef<{
     entryId: number
     /** The last entry of a folded run: its row keeps that id when a page brings earlier entries into the run. */
@@ -357,11 +356,10 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     return () => scroll.removeEventListener('scroll', releaseTail)
   }, [tailSpace, active, scrollRef, contentRef])
   const loadEarlier = useEffectEvent(async () => {
-    if (id === undefined || request.current || error || cursor === undefined) return
+    if (id === undefined || request.current || !canLoad) return
     const controller = new AbortController()
     request.current = controller
-    const read = ++reads.current
-    dispatch({ type: 'load', request: read })
+    dispatch({ type: 'load' })
     try {
       const page = await api.history(id, cursor, controller.signal)
       if (controller.signal.aborted) return
@@ -438,17 +436,14 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         for (const entry of page.entries) rows.set(entry.id, entry)
         return [...rows.values()]
       })
-      dispatch({ type: 'loaded', request: read, before: page.before })
+      dispatch({ type: 'loaded', before: page.before })
     } catch (failure) {
-      dispatch(
-        controller.signal.aborted
-          ? { type: 'aborted', request: read }
-          : {
-              type: 'failed',
-              request: read,
-              error: failure instanceof Error ? failure.message : String(failure),
-            },
-      )
+      // Aborted: the transcript is gone, nothing reads its state.
+      if (controller.signal.aborted) return
+      dispatch({
+        type: 'failed',
+        error: failure instanceof Error ? failure.message : String(failure),
+      })
     } finally {
       request.current = null
     }
@@ -471,11 +466,10 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   }, [scrollRef, loading, pending, error, cursor, history])
   /** Read stored history down to entry `target`, in large pages bounded by it, so a reveal can scroll there. */
   const loadDown = async (target: number) => {
-    if (id === undefined || request.current || error || cursor === undefined) return
+    if (id === undefined || request.current || !canLoad) return
     const controller = new AbortController()
     request.current = controller
-    const read = ++reads.current
-    dispatch({ type: 'load', request: read })
+    dispatch({ type: 'load' })
     try {
       const rows: EntryRecord[] = []
       for (let next: number | undefined = cursor; next !== undefined;) {
@@ -490,17 +484,14 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         for (const entry of rows) merged.set(entry.id, entry)
         return [...merged.values()]
       })
-      dispatch({ type: 'loadedDown', request: read, target })
+      dispatch({ type: 'loadedDown', target })
     } catch (failure) {
-      dispatch(
-        controller.signal.aborted
-          ? { type: 'aborted', request: read }
-          : {
-              type: 'failed',
-              request: read,
-              error: failure instanceof Error ? failure.message : String(failure),
-            },
-      )
+      // Aborted: the transcript is gone, nothing reads its state.
+      if (controller.signal.aborted) return
+      dispatch({
+        type: 'failed',
+        error: failure instanceof Error ? failure.message : String(failure),
+      })
     } finally {
       request.current = null
     }
