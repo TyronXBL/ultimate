@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { fauxAssistantMessage, fauxProvider, fauxText } from '@earendil-works/pi-ai/providers/faux'
 import type { AssistantMessage } from '@earendil-works/pi-ai'
-import { AgentDoc, ROOT_CONVERSATION_ID, configure } from '@earendil-works/pi-durable'
+import { AgentDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -9,19 +9,20 @@ import { afterEach, expect, it } from 'vitest'
 import { prepareHarness } from '../server/harness.ts'
 import type { OpenHost } from '../server/harness.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
-import backupExtension, { docs } from '../extensions/backup/server.ts'
+import backupExtension from '../extensions/backup/server.ts'
 import { BackupApi } from '../extensions/backup/api.ts'
 import pauseExtension from '../extensions/pause/server.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
-import { Pin } from '../extensions/models/api.ts'
+import { ModelsApi, Pin } from '../extensions/models/api.ts'
+import modelsExtension from '../extensions/models/server.ts'
+import { Owner } from '../extensions/models/set-model.ts'
 import { backupOrder, backupStep } from '../extensions/backup/state.ts'
-import type { BackupRecord, BackupState } from '../extensions/backup/refs.ts'
+import type { BackupRecord } from '../extensions/models/refs.ts'
+import type { BackupState } from '../extensions/backup/refs.ts'
 import type { Run } from '../extensions/subagents/refs.ts'
 import { Standing, SubagentsApi } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { apis, removeTemps, temp, until } from './helpers.ts'
-
-const [State] = docs
 
 const hosts: OpenHost[] = []
 afterEach(async () => {
@@ -87,6 +88,7 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
   services.implement(SubagentsApi, {
     recordBackup: async (_tx, id, backup) => void recorded.push({ id, backup }),
   } as SubagentsService)
+  prepared.registry.install(modelsExtension(host))
   prepared.registry.install(backupExtension(host))
   prepared.registry.install(pauseExtension(host))
   /** Open as the server does: the openers settle first, then scheduling resumes. */
@@ -106,6 +108,7 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
     },
     recorded,
     backup: () => services.want(BackupApi)!,
+    models: () => services.want(ModelsApi)!,
     paused: () => services.want(PauseApi)!.paused(),
   }
 }
@@ -118,7 +121,7 @@ const dividers = async (harness: Harness, id: ConversationId, kind: string) =>
   (await entries(harness, id)).filter((entry) => entry.kind === kind)
 const agent = async (harness: Harness, id: ConversationId) =>
   (await harness.conversation(id, context))!.agent(context)
-const state = (harness: Harness, id: ConversationId) => harness.snapshot(State, id, context)
+const state = (harness: Harness, id: ConversationId) => harness.snapshot(Owner, id, context)
 
 it('switches to the next backup model on a rate limit, and the retry answers on it', async () => {
   const f = await fixture()
@@ -155,7 +158,7 @@ it('switches to the next backup model on a rate limit, and the retry answers on 
   })
   const record = await state(harness, root.id)
   expect(record).toMatchObject({
-    kind: 'backup',
+    by: 'backup',
     primary: { provider: 'faux', modelId: 'faux-1' },
     to: { provider: 'faux', modelId: 'faux-2' },
     tried: ['faux/faux-1'],
@@ -207,7 +210,7 @@ it('takes the next backup on a second limit, keeping the first primary', async (
   ])
   const record = await state(harness, root.id)
   expect(record).toMatchObject({
-    kind: 'backup',
+    by: 'backup',
     primary: { provider: 'faux', modelId: 'faux-1' },
     to: { provider: 'faux', modelId: 'faux-3' },
     tried: ['faux/faux-1', 'faux/faux-2'],
@@ -253,7 +256,7 @@ it('stays on its model when the answer failed for another reason', async () => {
     (await (await root.submit({ type: 'input', content: 'A' }, context)).wait(context)).status,
   ).toBe('unanswered')
   expect(await cards(harness, root.id)).toEqual([])
-  expect(await state(harness, root.id)).toEqual({ kind: 'primary' })
+  expect(await state(harness, root.id)).toEqual({ by: 'default' })
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-1' })
 })
 
@@ -274,7 +277,7 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   ])
   // The cooldown passed while the conversation was idle on the backup.
   await harness.commit(async (tx) => {
-    Object.assign(await tx.doc(State, root.id), { since: Date.now() - 31 * 60_000 })
+    Object.assign(await tx.doc(Owner, root.id), { since: Date.now() - 31 * 60_000 })
   }, context)
 
   expect(
@@ -283,7 +286,7 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-1' })
   const [divider] = await dividers(harness, root.id, 'backup.return')
   expect(divider.data).toEqual({ from: 'faux/faux-2', to: 'faux/faux-1' })
-  expect(await state(harness, root.id)).toEqual({ kind: 'primary' })
+  expect(await state(harness, root.id)).toEqual({ by: 'default' })
   expect(f.recorded.at(-1)).toEqual({ id: root.id, backup: undefined })
 })
 
@@ -313,15 +316,41 @@ it('drops the record when someone picked another model meanwhile', async () => {
   await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context)
   await until(async () => (await cards(harness, root.id)).length === 1)
   await harness.commit(async (tx) => {
-    await configure(tx, root.id, { model: { provider: 'faux', modelId: 'faux-3' } })
-    Object.assign(await tx.doc(State, root.id), { since: Date.now() - 31 * 60_000 })
-    await Promise.resolve()
+    Object.assign(await tx.doc(Owner, root.id), { since: Date.now() - 31 * 60_000 })
+    await f.models().setModel(tx, root.id, {
+      type: 'pick',
+      model: { provider: 'faux', modelId: 'faux-3' },
+      thinkingLevel: 'off',
+    })
   }, context)
   await (await root.submit({ type: 'input', content: 'picked' }, context)).wait(context)
   expect(await dividers(harness, root.id, 'backup.return')).toEqual([])
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-3' })
-  expect(await state(harness, root.id)).toEqual({ kind: 'primary' })
-  expect(f.recorded.at(-1)).toEqual({ id: root.id, backup: undefined })
+  expect(await state(harness, root.id)).toEqual({ by: 'user' })
+})
+
+it('does not return to the primary after the user picks the backup model itself', async () => {
+  const f = await fixture()
+  f.prepared.faux!.setResponses([
+    () => limitedBy('faux-1', rateLimit),
+    () => fauxAssistantMessage([fauxText('backed up')]),
+    () => fauxAssistantMessage([fauxText('picked backup')]),
+  ])
+  const { root, harness } = await f.open()
+  await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context)
+  await until(async () => (await cards(harness, root.id)).length === 1)
+  await harness.commit(async (tx) => {
+    Object.assign(await tx.doc(Owner, root.id), { since: Date.now() - 31 * 60_000 })
+    await f.models().setModel(tx, root.id, {
+      type: 'pick',
+      model: { provider: 'faux', modelId: 'faux-2' },
+      thinkingLevel: 'off',
+    })
+  }, context)
+  await (await root.submit({ type: 'input', content: 'next' }, context)).wait(context)
+  expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-2' })
+  expect(await dividers(harness, root.id, 'backup.return')).toEqual([])
+  expect(await state(harness, root.id)).toEqual({ by: 'user' })
 })
 
 it('switches once for a failure reported twice', async () => {

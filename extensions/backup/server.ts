@@ -19,11 +19,19 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
-import { BackupOrder, Pin } from '../models/api.ts'
+import { BackupOrder, ModelsApi, Pin } from '../models/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
-import { backupOrder, backupStep, COOLDOWN_MINUTES, fromLegacy, name } from './state.ts'
+import {
+  backupOf,
+  backupOrder,
+  backupStep,
+  COOLDOWN_MINUTES,
+  fromLegacy,
+  legacyHolds,
+  name,
+} from './state.ts'
 import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef } from './refs.ts'
 
 const State = defineDoc<BackupState>({
@@ -39,11 +47,20 @@ const State = defineDoc<BackupState>({
 })
 export const docs = [State]
 
-/** Store `next` as the document's value: the one place the server writes it, with what `backupStep` returned. */
-const store = (doc: BackupState, next: BackupState) => {
-  if (doc === next) return
-  for (const key of Object.keys(doc)) Reflect.deleteProperty(doc, key)
-  Object.assign(doc, next)
+/**
+ * The backup of conversation `id` inside `tx`, after moving a `backup.state` record from before backups were an owner
+ * state into the owner when it still holds (`legacyHolds`), and dropping it either way. Can go once no host has one.
+ */
+async function backupFor(host: Host, tx: Tx, id: ConversationId) {
+  const models = host.need(ModelsApi)
+  const legacy = await tx.doc(State, id)
+  if (legacy.kind === 'backup') {
+    if (legacyHolds(legacy, await models.owner(tx, id), (await tx.doc(AgentDoc, id)).model))
+      await models.setModel(tx, id, { type: 'backup', record: legacy })
+    for (const key of Object.keys(legacy)) Reflect.deleteProperty(legacy, key)
+    Object.assign(legacy, { kind: 'primary' } satisfies BackupState)
+  }
+  return backupOf(await models.backup(tx, id))
 }
 
 type Host = Pick<
@@ -58,11 +75,6 @@ type Host = Pick<
   | 'onClose'
   | 'onRelease'
 >
-
-const model = (ref: { provider: string; modelId: string }): ModelRef => ({
-  provider: ref.provider,
-  modelId: ref.modelId,
-})
 
 /** `level` as far as model `ref` supports it; undefined without a level, or for a model this machine does not know. */
 const clamped = (host: Host, ref: ModelRef, level: ModelThinkingLevel | undefined) => {
@@ -99,9 +111,9 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       // Every conversation runs on a model of its own: Pi answers a run without one `no_model`, never with a limit.
       const current = agent.model
       if (!current) return undefined
-      const doc = await tx.doc(State, id)
+      const backup = await backupFor(host, tx, id)
       const definition = await host.want(Pin)?.definition(tx, id)
-      const { state, outcome: step } = backupStep(doc, {
+      const { state, outcome: step } = backupStep(backup, {
         type: 'limit',
         current,
         currentThinking: agent.thinkingLevel,
@@ -111,13 +123,18 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
         hasLogin: (ref) => hasLogin(available, ref),
         now: Date.now(),
       })
-      store(doc, state)
-      if (step.kind === 'cleared') await host.need(SubagentsApi).recordBackup(tx, id)
+      if (step.kind === 'cleared') {
+        await host.need(ModelsApi).setModel(tx, id, { type: 'backup-left' })
+        await host.need(SubagentsApi).recordBackup(tx, id)
+      }
       if (step.kind === 'earlier') return { earlier: true as const }
-      if (step.kind !== 'switched') return undefined
-      agent.model = model(step.to)
+      if (step.kind !== 'switched' || state.kind !== 'backup') return undefined
       const level = clamped(host, step.to, step.level)
-      if (level) agent.thinkingLevel = level
+      await host.need(ModelsApi).setModel(tx, id, {
+        type: 'backup',
+        record: state,
+        ...(level ? { level } : {}),
+      })
       const switched: Switched = { from: step.from, to: name(step.to), reason: step.reason }
       // A subagent's row and card say it runs on a backup, and why.
       await host.need(SubagentsApi).recordBackup(tx, id, {
@@ -202,19 +219,19 @@ async function returned(
 ): Promise<{ entries: EntryDraft[] } | undefined> {
   const agent = await tx.doc(AgentDoc, id)
   const now = Date.now()
-  const doc = await tx.doc(State, id)
-  const { state, outcome: step } = backupStep(doc, {
+  const models = host.need(ModelsApi)
+  const { outcome: step } = backupStep(await backupFor(host, tx, id), {
     type: 'run',
     current: agent.model,
     now,
     hasPrimaryLogin: (ref) => hasLogin(host.modelRuntime.getAvailableSnapshot(), ref),
   })
-  store(doc, state)
-  if (step.kind === 'cleared') await host.need(SubagentsApi).recordBackup(tx, id)
+  if (step.kind === 'cleared') {
+    await models.setModel(tx, id, { type: 'backup-left' })
+    await host.need(SubagentsApi).recordBackup(tx, id)
+  }
   if (step.kind !== 'returned') return undefined
-  agent.model = model(step.primary)
-  if (step.thinking) agent.thinkingLevel = step.thinking
-  else delete agent.thinkingLevel
+  await models.setModel(tx, id, { type: 'return' })
   await host.need(SubagentsApi).recordBackup(tx, id)
   const data: BackupReturned = { from: step.from, to: step.to }
   return {
@@ -243,13 +260,21 @@ export default function extension(host: Host) {
       const agent = await tx.doc(AgentDoc, id)
       if (previewModel() || !agent.model) return []
       const available = host.modelRuntime.getAvailableSnapshot()
-      const order = backupOrder(await tx.doc(State, id), {
-        current: agent.model,
-        currentThinking: agent.thinkingLevel,
-        candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
-        hasLogin: (ref) => hasLogin(available, ref),
-        now: Date.now(),
-      })
+      // Only a read: a `backup.state` record that still holds counts until a run moves it (`backupFor`).
+      const models = host.need(ModelsApi)
+      const legacy = await tx.doc(State, id)
+      const order = backupOrder(
+        legacyHolds(legacy, await models.owner(tx, id), agent.model)
+          ? legacy
+          : backupOf(await models.backup(tx, id)),
+        {
+          current: agent.model,
+          currentThinking: agent.thinkingLevel,
+          candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
+          hasLogin: (ref) => hasLogin(available, ref),
+          now: Date.now(),
+        },
+      )
       return order.map(({ thinking, ...ref }) => {
         const level = clamped(host, ref, thinking)
         return level ? { ...ref, thinking: level } : ref

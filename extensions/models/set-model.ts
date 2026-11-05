@@ -5,7 +5,7 @@ import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ModelOwnerDoc } from './refs.ts'
 import type { ModelOwner } from './refs.ts'
-import { ownerStep } from './owner.ts'
+import { backupIn, ownerStep } from './owner.ts'
 import type { ModelEvent } from './owner.ts'
 
 /** A conversation without the document, also one from before it, started on the model it runs: `default`. */
@@ -29,19 +29,31 @@ export async function setModel(
 ) {
   const owner = await tx.doc(Owner, id)
   // A plain copy: the new owner may hold parts of the stored one (a wait's `under`), which is emptied below.
+  const found = backupIn(owner)
+  const backup = found && { primary: { ...found.primary }, thinking: found.thinking }
   const next = JSON.stringify(ownerStep(owner, event))
   if (next !== JSON.stringify(owner)) {
     for (const key of Object.keys(owner)) Reflect.deleteProperty(owner, key)
     Object.assign(owner, JSON.parse(next))
   }
-  if (event.type === 'login-wait') return
+  if (event.type === 'login-wait' || event.type === 'backup-left') return
   if (event.type === 'pick') {
     await configure(tx, id, { model: event.model, thinkingLevel: event.thinkingLevel })
     return
   }
   const agent = await tx.doc(AgentDoc, id)
-  agent.model = { provider: event.to.provider, modelId: event.to.modelId }
-  const model = host.modelRuntime.getModel(event.to.provider, event.to.modelId)
-  if (model && agent.thinkingLevel)
+  if (event.type === 'return') {
+    if (!backup) return
+    agent.model = backup.primary
+    if (backup.thinking) agent.thinkingLevel = backup.thinking
+    else delete agent.thinkingLevel
+    return
+  }
+  const ref = event.type === 'backup' ? event.record.to : event.to
+  agent.model = ref
+  const model = host.modelRuntime.getModel(ref.provider, ref.modelId)
+  const level = event.type === 'backup' ? event.level : undefined
+  if (level && model) agent.thinkingLevel = clampThinkingLevel(model, level)
+  else if (model && agent.thinkingLevel)
     agent.thinkingLevel = clampThinkingLevel(model, agent.thinkingLevel)
 }

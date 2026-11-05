@@ -17,6 +17,13 @@ const switched = (reason: 'same' | 'pin' | 'default'): ModelEvent => ({
   reason,
 })
 const waiting: ModelOwner = { by: 'login-wait', from: sol, under: { by: 'user' } }
+const record = {
+  primary: { provider: 'faux', modelId: 'faux-1' },
+  to: { provider: 'faux', modelId: 'faux-2' },
+  since: 10,
+  tried: ['faux/faux-1'],
+}
+const backup: ModelOwner = { by: 'backup', ...record, under: { by: 'default' } }
 
 it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; asked?: string }>([
   { row: 'a pick is the user’s', from: { by: 'default' }, event: pick, after: { by: 'user' } },
@@ -53,6 +60,77 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
     event: wait('claude-code/opus'),
     after: { by: 'login-wait', from: 'claude-code/opus', under: { by: 'user' } },
     asked: 'claude-code/opus',
+  },
+  ...(
+    [
+      [{ by: 'default' }, { by: 'default' }],
+      [{ by: 'user' }, { by: 'user' }],
+      [
+        { by: 'login-fallback', from: 'gone', reason: 'same' },
+        { by: 'login-fallback', from: 'gone', reason: 'same' },
+      ],
+    ] as const
+  ).map(([from, under]) => ({
+    row: `backup keeps ${from.by} underneath`,
+    from: from as ModelOwner,
+    event: { type: 'backup', record } as ModelEvent,
+    after: { by: 'backup', ...record, under } as ModelOwner,
+  })),
+  {
+    row: 'a chained backup keeps the first owner',
+    from: backup,
+    event: {
+      type: 'backup',
+      record: { ...record, to: { provider: 'faux', modelId: 'faux-3' } },
+    },
+    after: { ...backup, ...record, to: { provider: 'faux', modelId: 'faux-3' } },
+  },
+  {
+    row: 'return restores owner under backup',
+    from: backup,
+    event: { type: 'return' },
+    after: backup.under,
+  },
+  {
+    row: 'backup-left restores owner under backup',
+    from: backup,
+    event: { type: 'backup-left' },
+    after: backup.under,
+  },
+  {
+    row: 'a pick on backup makes the user owner',
+    from: backup,
+    event: pick,
+    after: { by: 'user' },
+  },
+  {
+    row: 'login fallback replaces backup',
+    from: backup,
+    event: switched('same'),
+    after: { by: 'login-fallback', from: 'openrouter/gone', reason: 'same' },
+  },
+  {
+    row: 'login wait can retain backup underneath',
+    from: backup,
+    event: wait(sol),
+    after: { by: 'login-wait', from: sol, under: backup },
+    asked: sol,
+  },
+  // #147838 review: a wait for a backup's login hid the backup, so the cooldown never returned to the primary.
+  {
+    row: 'return during a wait for a backup’s login restores the owner under the backup',
+    from: { by: 'login-wait', from: sol, under: backup },
+    event: { type: 'return' },
+    after: backup.under,
+  },
+  {
+    row: 'a backup during a wait for a backup’s login chains without nesting',
+    from: { by: 'login-wait', from: sol, under: backup },
+    event: {
+      type: 'backup',
+      record: { ...record, to: { provider: 'faux', modelId: 'faux-3' } },
+    },
+    after: { ...backup, to: { provider: 'faux', modelId: 'faux-3' } },
   },
   {
     row: 'a switch ends the wait',

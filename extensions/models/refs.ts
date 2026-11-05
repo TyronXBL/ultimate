@@ -49,16 +49,32 @@ export type SwitchReason = 'same' | 'pin' | 'default'
 /**
  * `models.owner`, on that conversation: who set its model. `default` it started on (also every conversation from
  * before this record), `user` picked it, `login-fallback` switched off `from` (`provider/modelId`), which had no login
- * here, for `reason`, and `login-wait` kept `from` without a login and asked the user once, over the owner it found
- * (`under`), so the way back to it survives the wait. Only `ownerStep` (owner.ts) decides it.
+ * here, for `reason`; `login-wait` kept `from` without a login and asked the user once, over the owner it found
+ * (`under`), so the way back to it survives the wait; `backup` temporarily runs on a backup model and keeps the
+ * original owner underneath. Only `ownerStep` (owner.ts) decides it.
  */
 export type ModelOwner =
   | OwnerBeforeWait
   | { by: 'login-wait'; from: string; under: OwnerBeforeWait }
 type OwnerBeforeWait =
+  | OwnerBeforeBackup
+  | ({ by: 'backup' } & BackupRecord & { under: OwnerBeforeBackup })
+type OwnerBeforeBackup =
   | { by: 'default' }
   | { by: 'user' }
   | { by: 'login-fallback'; from: string; reason: SwitchReason }
+/**
+ * One switch away from the primary after a limit, so the next limit can switch again from there: the model and thinking
+ * level the conversation runs on otherwise, the backup it runs on now and since when (ms), and the models it already
+ * left (`provider/modelId`), so a chain of limits tries each backup once.
+ */
+export type BackupRecord = {
+  primary: { provider: string; modelId: string }
+  thinking?: ModelThinkingLevel
+  to: { provider: string; modelId: string }
+  since: number
+  tried: string[]
+}
 /** Who set the conversation's model, on that conversation; a conversation without it reads `default`. */
 export const ModelOwnerDoc = docRef<ModelOwner>('models.owner')
 
