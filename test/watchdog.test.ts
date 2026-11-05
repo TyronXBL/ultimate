@@ -113,11 +113,9 @@ async function fixture(
     need: (api: { name: string }) =>
       api.name === 'conversations'
         ? { concludedIn }
-        : api.name === 'subagents'
-          ? { recordBackup: async () => {} }
-          : api.name === 'models'
-            ? services.get(api.name)
-            : { doc: Workspaces },
+        : api.name === 'models'
+          ? services.get(api.name)
+          : { doc: Workspaces },
     want: (api: { name: string }) =>
       api.name === Pin.name ? { definition: async () => ({ fallback }) } : services.get(api.name),
     resource: <T>(key: string, create: () => T) => {

@@ -106,8 +106,6 @@ export type Run = {
    * the definition runs on.
    */
   override?: { by: 'call' | 'setup'; caller?: string; asked?: string; family?: string; own: string }
-  /** Runs on a backup model since its own (`from`) hit a limit (`reason`); extensions/backup keeps it. */
-  backup?: { from: string; model: string; reason: string }
 }
 /** `{ [conversationId]: Run }` of the children `subagent start` made, on conversation 1. */
 export const RunsDoc = docRef<Record<string, Run>>('subagents.runs')

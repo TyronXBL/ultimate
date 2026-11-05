@@ -1,6 +1,6 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 // Harness tests use the faux provider without token pacing.
-import { eventHost, idleNeed, temp, removeTemp } from './helpers.ts'
+import { eventHost, ownerNeed, temp, removeTemp } from './helpers.ts'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -21,6 +21,7 @@ import subagents from '../extensions/subagents/server.ts'
 import { Profile, Standing, Started } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { Metadata } from '../server/metadata.ts'
+import { ModelsApi } from '../extensions/models/api.ts'
 import { Marks } from '../extensions/conversations/api.ts'
 import { parseDefinition, saveDefinition } from '../lib/agents.ts'
 
@@ -67,7 +68,7 @@ async function fixture() {
     implement: (_api, value) => {
       service = value as SubagentsService
     },
-    need: idleNeed,
+    need: ownerNeed(prepared.modelRuntime),
     resource: (_key, create) => create(),
     extensions: () => [],
     notice: () => {},
@@ -292,20 +293,41 @@ it('keeps a model chosen in the standing conversation across refreshes unless th
 })
 
 it('keeps a standing conversation on a backup model of its pinned definition across refreshes', async () => {
-  const { service, host, file } = await fixture()
+  const { service, host, file, prepared } = await fixture()
   await writeFile(
     file,
     definition('Pinned', 'model: faux/faux-pinned\nthinking: minimal\nfallback: [faux/faux-1]\n'),
   )
   const id = await service.standing('x', ctx)
   const conversation = (await host.harness.conversation(id, ctx))!
+  const models = ownerNeed(prepared.modelRuntime)(ModelsApi)
   // As extensions/backup switches it after a limit; a refresh (a delivery, an automation) used to undo that.
   const backup = { provider: 'faux', modelId: 'faux-1' }
   await host.harness.commit(async (tx) => {
-    await configure(tx, id, { model: backup, thinkingLevel: 'low' })
+    await models.setModel(tx, id, {
+      type: 'backup',
+      record: {
+        primary: { provider: 'faux', modelId: 'faux-pinned' },
+        to: backup,
+        since: Date.now(),
+        tried: ['faux/faux-pinned'],
+        reason: 'rate limit',
+      },
+      level: 'low',
+    })
   }, ctx)
   await service.standing('x', ctx)
   expect(await conversation.agent(ctx)).toMatchObject({ model: backup, thinkingLevel: 'low' })
+  // A pick of that same backup model is the user's: the next refresh puts the pin back, which standing used to take
+  // for a backup because the model is in the definition's fallback list.
+  await host.harness.commit(async (tx) => {
+    await models.setModel(tx, id, { type: 'pick', model: backup, thinkingLevel: 'low' })
+  }, ctx)
+  await service.standing('x', ctx)
+  expect(await conversation.agent(ctx)).toMatchObject({
+    model: { provider: 'faux', modelId: 'faux-pinned' },
+    thinkingLevel: 'minimal',
+  })
 })
 
 it('offers deferred tools only when named by the definition, and removes them on refresh', async () => {

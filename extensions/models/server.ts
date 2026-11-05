@@ -33,7 +33,7 @@ import type { LoginEvent } from './login-state.ts'
 import { familiesView, saveFamilies } from './families.ts'
 import { fallback } from './fallback.ts'
 import { backupIn } from './owner.ts'
-import { Owner, setModel } from './set-model.ts'
+import { Backups, Owner, setModel } from './set-model.ts'
 
 /** A Pi type as a document holds it: plain JSON, arrays mutable. */
 type Json<T> = T extends readonly (infer U)[]
@@ -84,7 +84,7 @@ export const Logins = defineDoc<{ flows: Record<string, LoginFlow> }>({
     return doc as unknown as { flows: Record<string, LoginFlow> }
   },
 })
-export const docs = [Logins, Owner]
+export const docs = [Logins, Owner, Backups]
 
 /** A running flow: process-local, so a flow the document shows running without one here died with its process. */
 interface Flow {

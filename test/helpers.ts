@@ -8,9 +8,14 @@ import type { Op } from '@earendil-works/chord/delta'
 import type { ConversationId, ConversationView, Harness } from '@earendil-works/pi-durable'
 import { afterAll, vi } from 'vitest'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { Tally } from '../extensions/lineage/server.ts'
+import { ModelsApi } from '../extensions/models/api.ts'
+import type { ModelsService } from '../extensions/models/api.ts'
+import { backupIn } from '../extensions/models/owner.ts'
+import { Owner, setModel } from '../extensions/models/set-model.ts'
 import { context } from '../server/harness.ts'
 import { createServer, prepareServer } from '../server/main.ts'
 import type { ServerOptions } from '../server/main.ts'
@@ -39,6 +44,21 @@ vi.mock('@earendil-works/pi-ai/providers/faux', async (importOriginal) => {
  */
 export const idleNeed = <S>(_api: Api<string, S>) =>
   new Proxy({}, { get: (_, key) => (key === 'then' ? undefined : async () => undefined) }) as S
+
+/**
+ * `idleNeed`, except that `ModelsApi` is the real owner (extensions/models/set-model.ts): for hand-built hosts whose
+ * code sets a conversation's model, which only `ModelsApi.setModel` does.
+ */
+export const ownerNeed =
+  (modelRuntime: ModelRuntime) =>
+  <S>(api: Api<string, S>): S =>
+    api.name === ModelsApi.name
+      ? ({
+          owner: (tx, id) => tx.doc(Owner, id),
+          backup: async (tx, id) => backupIn(await tx.doc(Owner, id)),
+          setModel: (tx, id, event) => setModel({ modelRuntime }, tx, id, event),
+        } satisfies ModelsService as S)
+      : idleNeed(api)
 
 export function apis(provided = new Map<string, unknown>()) {
   return {

@@ -66,7 +66,7 @@ import { hasLogin, hostDefaultModel } from '../../lib/agents.ts'
 import { admitCompaction } from '../../lib/compaction.ts'
 import { limitOf } from '../../lib/rate-limit.ts'
 import type { Limit } from '../../lib/rate-limit.ts'
-import { BackupOrder, Resets } from '../models/api.ts'
+import { BackupOrder, ModelsApi, Resets } from '../models/api.ts'
 import { githubRepo } from '../../lib/project-identity.ts'
 
 export type BranchImage = { data: string; mimeType: string }
@@ -876,9 +876,10 @@ async function forkBranch(
       : await hostDefaultModel(host))
   await configure(tx, fork.id, {
     cwd: host.projectRoot,
-    ...(model ? { model } : {}),
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
   })
+  // A model given replaces the owner the fork inherited, a backup too; without one the fork keeps both.
+  if (model) await host.need(ModelsApi).setModel(tx, fork.id, { type: 'start', model })
   // A branch gets ordinary tools whatever its source ran with.
   const agent = await tx.doc(AgentDoc, fork.id)
   delete agent.tools

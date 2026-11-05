@@ -22,6 +22,7 @@ const record = {
   to: { provider: 'faux', modelId: 'faux-2' },
   since: 10,
   tried: ['faux/faux-1'],
+  reason: 'rate limit',
 }
 const backup: ModelOwner = { by: 'backup', ...record, under: { by: 'default' } }
 
@@ -92,10 +93,10 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
     after: backup.under,
   },
   {
-    row: 'backup-left restores owner under backup',
-    from: backup,
-    event: { type: 'backup-left' },
-    after: backup.under,
+    row: 'a creator’s model replaces a backup a fork inherited',
+    from: { ...backup, under: { by: 'user' } },
+    event: { type: 'start', model: { provider: 'faux', modelId: 'faux-3' } },
+    after: { by: 'default' },
   },
   {
     row: 'a pick on backup makes the user owner',

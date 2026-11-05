@@ -44,6 +44,8 @@ export function fromLegacy(value: Partial<BackupRecord>): BackupState {
     to,
     since,
     tried: tried ?? [],
+    // Legacy records kept no limit.
+    reason: value.reason ?? 'limit',
     ...(thinking ? { thinking } : {}),
   }
 }
@@ -61,10 +63,9 @@ type Limit = {
   hasLogin: (ref: ModelRef) => boolean
   now: number
 }
-/** A run starting at `now` on `current`. */
+/** A run starting at `now`. */
 type Run = {
   type: 'run'
-  current: ModelRef | undefined
   now: number
   hasPrimaryLogin: (ref: ModelRef) => boolean
 }
@@ -72,11 +73,10 @@ type Run = {
 /**
  * What an event did, beside the new state: `none` changed nothing (a failure that is not this model's, no backup left,
  * no record, or a backup kept for the cooldown or until the primary has a login); `earlier` is a limit of a model
- * already switched away from; `cleared` dropped the record after another writer moved the model or no backup was left;
- * `switched` runs on `to` at `level`; `returned` puts `primary` back.
+ * already switched away from; `switched` runs on `to` at `level`; `returned` puts `primary` back.
  */
 export type BackupOutcome =
-  | { kind: 'none' | 'earlier' | 'cleared' }
+  | { kind: 'none' | 'earlier' }
   | { kind: 'switched'; from: string; to: Candidate; level?: ModelThinkingLevel; reason: string }
   | {
       kind: 'returned'
@@ -114,7 +114,6 @@ export function backupOrder(
   }
   const { outcome } = backupStep(state, {
     type: 'run',
-    current: event.current,
     now: event.now,
     hasPrimaryLogin: event.hasLogin,
   })
@@ -126,17 +125,16 @@ export function backupOrder(
   return order
 }
 
-/** The state after `event` and what happened. */
+/**
+ * The state after `event` and what happened. Every other model writer goes through the owner, which drops the backup,
+ * so a conversation on a backup runs on its `to`.
+ */
 export function backupStep(
   state: BackupState,
   event: Limit | Run,
 ): { state: BackupState; outcome: BackupOutcome } {
   if (event.type === 'run') {
     if (state.kind === 'primary') return { state, outcome: { kind: 'none' } }
-    const { current } = event
-    // A model set outside the owner (for example, by a subagent or `models.fallback`) is not ours to return from.
-    if (!current || name(current) !== name(state.to))
-      return { state: { kind: 'primary' }, outcome: { kind: 'cleared' } }
     if (event.now < state.since + COOLDOWN || !event.hasPrimaryLogin(state.primary))
       return { state, outcome: { kind: 'none' } }
     return {
@@ -155,27 +153,22 @@ export function backupStep(
   // A switch made after this response was asked for: the conversation already left the model that failed here.
   if (failed !== name(current))
     return { state, outcome: { kind: tried.includes(failed) ? 'earlier' : 'none' } }
-  // A model changed by another writer since the switch starts afresh; nothing was tried from it.
-  const moved = state.kind === 'backup' && name(state.to) !== failed
-  const from: BackupState = moved ? { kind: 'primary' } : state
-  const used = new Set([...(from.kind === 'backup' ? from.tried : []), failed])
+  const used = new Set([...tried, failed])
   const to = event.candidates.find(
     (candidate) => !used.has(name(candidate)) && event.hasLogin(candidate),
   )
-  if (!to)
-    return moved
-      ? { state: from, outcome: { kind: 'cleared' } }
-      : { state, outcome: { kind: 'none' } }
+  if (!to) return { state, outcome: { kind: 'none' } }
   // The first switch keeps the primary; the next one keeps the primary the conversation came from.
-  const thinking = from.kind === 'backup' ? from.thinking : event.currentThinking
+  const thinking = state.kind === 'backup' ? state.thinking : event.currentThinking
   const level = to.thinking ?? thinking
   return {
     state: {
       kind: 'backup',
-      primary: plain(from.kind === 'backup' ? from.primary : current),
+      primary: plain(state.kind === 'backup' ? state.primary : current),
       to: plain(to),
       since: event.now,
-      tried: [...(from.kind === 'backup' ? from.tried : []), failed],
+      tried: [...tried, failed],
+      reason: event.reason,
       ...(thinking ? { thinking } : {}),
     },
     outcome: {

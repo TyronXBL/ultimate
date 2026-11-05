@@ -1,7 +1,8 @@
 /**
  * A conversation whose model answers with a rate limit, a capacity or a quota error switches to the next backup model of
- * its agent definition, and a run that starts `COOLDOWN_MINUTES` later puts the primary back. A model picked meanwhile
- * drops the record: the return is no longer this extension's to make.
+ * its agent definition, and a run that starts `COOLDOWN_MINUTES` later puts the primary back. A model set meanwhile
+ * (a pick, a login fallback, a creator's start) replaces the owner's record: the return is no longer this extension's to
+ * make.
  */
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { clampThinkingLevel } from '@earendil-works/pi-ai'
@@ -20,7 +21,7 @@ import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
 import { BackupOrder, ModelsApi, Pin } from '../models/api.ts'
-import { Standing, SubagentsApi } from '../subagents/api.ts'
+import { Standing } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
 import {
@@ -37,12 +38,12 @@ import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef 
 const State = defineDoc<BackupState>({
   kind: BackupDoc.kind,
   checkpointWhen: () => false,
-  version: 2,
+  version: 3,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({ kind: 'primary' }),
-  // Version 1 held the record's fields, all optional, and `{}` while on the primary.
+  // Version 1 held the record's fields, all optional, and `{}` while on the primary; version 2 recorded no limit.
   migrate: (value) => fromLegacy(value),
 })
 export const docs = [State]
@@ -123,10 +124,6 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
         hasLogin: (ref) => hasLogin(available, ref),
         now: Date.now(),
       })
-      if (step.kind === 'cleared') {
-        await host.need(ModelsApi).setModel(tx, id, { type: 'backup-left' })
-        await host.need(SubagentsApi).recordBackup(tx, id)
-      }
       if (step.kind === 'earlier') return { earlier: true as const }
       if (step.kind !== 'switched' || state.kind !== 'backup') return undefined
       const level = clamped(host, step.to, step.level)
@@ -135,14 +132,7 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
         record: state,
         ...(level ? { level } : {}),
       })
-      const switched: Switched = { from: step.from, to: name(step.to), reason: step.reason }
-      // A subagent's row and card say it runs on a backup, and why.
-      await host.need(SubagentsApi).recordBackup(tx, id, {
-        from: switched.from,
-        model: step.to.modelId,
-        reason: switched.reason,
-      })
-      return switched
+      return { from: step.from, to: name(step.to), reason: step.reason } satisfies Switched
     }, context),
   )
 }
@@ -209,30 +199,21 @@ export async function fallBack(
 
 /**
  * The input hook: a conversation `COOLDOWN` into a switch, at the start of a run, goes back to its primary with one
- * `backup.return` divider. A model set by someone else (a pick, `models.fallback`) drops the record instead. A primary
- * that has no login here yet keeps the backup, and the next run looks again.
+ * `backup.return` divider. A primary that has no login here yet keeps the backup, and the next run looks again.
  */
 async function returned(
   host: Host,
   tx: Tx,
   id: ConversationId,
 ): Promise<{ entries: EntryDraft[] } | undefined> {
-  const agent = await tx.doc(AgentDoc, id)
   const now = Date.now()
-  const models = host.need(ModelsApi)
   const { outcome: step } = backupStep(await backupFor(host, tx, id), {
     type: 'run',
-    current: agent.model,
     now,
     hasPrimaryLogin: (ref) => hasLogin(host.modelRuntime.getAvailableSnapshot(), ref),
   })
-  if (step.kind === 'cleared') {
-    await models.setModel(tx, id, { type: 'backup-left' })
-    await host.need(SubagentsApi).recordBackup(tx, id)
-  }
   if (step.kind !== 'returned') return undefined
-  await models.setModel(tx, id, { type: 'return' })
-  await host.need(SubagentsApi).recordBackup(tx, id)
+  await host.need(ModelsApi).setModel(tx, id, { type: 'return' })
   const data: BackupReturned = { from: step.from, to: step.to }
   return {
     entries: [

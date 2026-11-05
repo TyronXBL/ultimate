@@ -51,7 +51,8 @@ export type SwitchReason = 'same' | 'pin' | 'default'
  * before this record), `user` picked it, `login-fallback` switched off `from` (`provider/modelId`), which had no login
  * here, for `reason`; `login-wait` kept `from` without a login and asked the user once, over the owner it found
  * (`under`), so the way back to it survives the wait; `backup` temporarily runs on a backup model and keeps the
- * original owner underneath. Only `ownerStep` (owner.ts) decides it.
+ * original owner underneath. Only `ownerStep` (owner.ts) decides it. `default` also covers a model its creator set:
+ * a subagent's definition or caller, a standing agent's pin, a branch's given model.
  */
 export type ModelOwner =
   | OwnerBeforeWait
@@ -65,8 +66,9 @@ type OwnerBeforeBackup =
   | { by: 'login-fallback'; from: string; reason: SwitchReason }
 /**
  * One switch away from the primary after a limit, so the next limit can switch again from there: the model and thinking
- * level the conversation runs on otherwise, the backup it runs on now and since when (ms), and the models it already
- * left (`provider/modelId`), so a chain of limits tries each backup once.
+ * level the conversation runs on otherwise, the backup it runs on now and since when (ms), the models it already left
+ * (`provider/modelId`, the last the one whose limit moved it), so a chain of limits tries each backup once, and the
+ * limit that moved it (`rate limit`, `quota`).
  */
 export type BackupRecord = {
   primary: { provider: string; modelId: string }
@@ -74,9 +76,18 @@ export type BackupRecord = {
   to: { provider: string; modelId: string }
   since: number
   tried: string[]
+  reason: string
 }
 /** Who set the conversation's model, on that conversation; a conversation without it reads `default`. */
 export const ModelOwnerDoc = docRef<ModelOwner>('models.owner')
+
+/** A conversation on a backup as its row shows it: the model that hit the limit, the backup's id and the limit. */
+export type BackupShown = { from: string; model: string; reason: string }
+/**
+ * `{ [conversationId]: BackupShown }` of the conversations that run on a backup, on conversation 1, so rows read one
+ * document; `ModelsApi.setModel` keeps it with the owner. A fork that inherits a backup has none until its next switch.
+ */
+export const BackupsDoc = docRef<Record<string, BackupShown>>('models.backups')
 
 /**
  * `{ provider, modelId, thinkingLevel? }` → null: the user picks the calling conversation's model; the level must suit

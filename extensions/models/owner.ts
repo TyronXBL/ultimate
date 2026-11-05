@@ -8,18 +8,19 @@ import type { BackupRecord, ModelOwner, SwitchReason } from './refs.ts'
 type ModelRef = { provider: string; modelId: string }
 
 /**
- * What sets a conversation's model: the user's pick in the picker (`thinkingLevel` the level it runs at), a switch off a
- * model with no login here (`from`, `provider/modelId`) to `to`, or, with no login to switch to, the question to the user
- * about `from`, which leaves the model as it is.
+ * What sets a conversation's model: its creator, the model it starts on (a subagent's definition or caller, a standing
+ * agent's pin, a branch's given model; a level left out stays as it is); the user's pick in the picker (`thinkingLevel`
+ * the level it runs at); a switch off a model with no login here (`from`, `provider/modelId`) to `to`, or, with no
+ * login to switch to, the question to the user about `from`, which leaves the model as it is; a switch to a backup
+ * after a limit, and the return to its primary.
  */
 export type ModelEvent =
+  | { type: 'start'; model: ModelRef | null; thinkingLevel?: ModelThinkingLevel | null }
   | { type: 'pick'; model: ModelRef; thinkingLevel: ModelThinkingLevel }
   | { type: 'login-fallback'; from: string; to: ModelRef; reason: SwitchReason }
   | { type: 'login-wait'; from: string }
   | { type: 'backup'; record: BackupRecord; level?: ModelThinkingLevel }
   | { type: 'return' }
-  /** Reconcile writers outside the owner; remove when batch 3 routes subagents, lineage and core `/configure` through `setModel`. */
-  | { type: 'backup-left' }
 
 /** The backup the conversation runs on, also while it waits for that backup's login, if it runs on one. */
 export function backupIn(owner: ModelOwner) {
@@ -32,12 +33,13 @@ export function backupIn(owner: ModelOwner) {
  * backup keeps the owner it replaced, also through a chain of backups and a wait for a backup's login.
  */
 export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
+  if (event.type === 'start') return { by: 'default' }
   if (event.type === 'pick') return { by: 'user' }
   if (event.type === 'login-fallback')
     return { by: 'login-fallback', from: event.from, reason: event.reason }
   if (event.type === 'backup') {
     const found = state.by === 'login-wait' ? state.under : state
-    const { primary, thinking, to, since, tried } = event.record
+    const { primary, thinking, to, since, tried, reason } = event.record
     return {
       by: 'backup',
       primary: { provider: primary.provider, modelId: primary.modelId },
@@ -45,11 +47,11 @@ export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
       to: { provider: to.provider, modelId: to.modelId },
       since,
       tried: [...tried],
+      reason,
       under: found.by === 'backup' ? found.under : found,
     }
   }
-  if (event.type === 'return' || event.type === 'backup-left')
-    return backupIn(state)?.under ?? state
+  if (event.type === 'return') return backupIn(state)?.under ?? state
   return {
     by: 'login-wait',
     from: event.from,

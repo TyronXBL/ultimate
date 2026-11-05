@@ -15,13 +15,11 @@ import pauseExtension from '../extensions/pause/server.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
 import { ModelsApi, Pin } from '../extensions/models/api.ts'
 import modelsExtension from '../extensions/models/server.ts'
-import { Owner } from '../extensions/models/set-model.ts'
+import { Backups, Owner } from '../extensions/models/set-model.ts'
 import { backupOrder, backupStep } from '../extensions/backup/state.ts'
 import type { BackupRecord } from '../extensions/models/refs.ts'
 import type { BackupState } from '../extensions/backup/refs.ts'
-import type { Run } from '../extensions/subagents/refs.ts'
-import { Standing, SubagentsApi } from '../extensions/subagents/api.ts'
-import type { SubagentsService } from '../extensions/subagents/api.ts'
+import { Standing } from '../extensions/subagents/api.ts'
 import { apis, removeTemps, temp, until } from './helpers.ts'
 
 const hosts: OpenHost[] = []
@@ -83,11 +81,6 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
       }),
     }),
   })
-  // What backup tells the subagents owner to show on a conversation's row; the owner's own write is tested with it.
-  const recorded: { id: ConversationId; backup: Run['backup'] }[] = []
-  services.implement(SubagentsApi, {
-    recordBackup: async (_tx, id, backup) => void recorded.push({ id, backup }),
-  } as SubagentsService)
   prepared.registry.install(modelsExtension(host))
   prepared.registry.install(backupExtension(host))
   prepared.registry.install(pauseExtension(host))
@@ -106,7 +99,6 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
     get opened() {
       return opened!
     },
-    recorded,
     backup: () => services.want(BackupApi)!,
     models: () => services.want(ModelsApi)!,
     paused: () => services.want(PauseApi)!.paused(),
@@ -272,9 +264,10 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   await submission.wait(context)
   await until(async () => (await cards(harness, root.id)).length === 1)
   // A subagent's row and card say it runs on a backup while it does.
-  expect(f.recorded).toEqual([
-    { id: root.id, backup: { from: 'faux/faux-1', model: 'faux-2', reason: 'rate limit' } },
-  ])
+  const shown = () => harness.snapshot(Backups, ROOT_CONVERSATION_ID, context)
+  expect(await shown()).toEqual({
+    [root.id]: { from: 'faux/faux-1', model: 'faux-2', reason: 'rate limit' },
+  })
   // The cooldown passed while the conversation was idle on the backup.
   await harness.commit(async (tx) => {
     Object.assign(await tx.doc(Owner, root.id), { since: Date.now() - 31 * 60_000 })
@@ -287,7 +280,7 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
   const [divider] = await dividers(harness, root.id, 'backup.return')
   expect(divider.data).toEqual({ from: 'faux/faux-2', to: 'faux/faux-1' })
   expect(await state(harness, root.id)).toEqual({ by: 'default' })
-  expect(f.recorded.at(-1)).toEqual({ id: root.id, backup: undefined })
+  expect(await shown()).toEqual({})
 })
 
 it('returns only once the cooldown passed', async () => {
@@ -327,6 +320,8 @@ it('drops the record when someone picked another model meanwhile', async () => {
   expect(await dividers(harness, root.id, 'backup.return')).toEqual([])
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-3' })
   expect(await state(harness, root.id)).toEqual({ by: 'user' })
+  // #147838: a row kept showing the backup after a pick.
+  expect(await harness.snapshot(Backups, ROOT_CONVERSATION_ID, context)).toEqual({})
 })
 
 it('does not return to the primary after the user picks the backup model itself', async () => {
@@ -381,6 +376,7 @@ const onBackup: BackupState = {
   to: ref('b'),
   since: SINCE,
   tried: ['faux/a'],
+  reason: 'rate limit',
 }
 const limit = (current: string, failed: string, from: BackupState) =>
   backupStep(from, {
@@ -393,8 +389,8 @@ const limit = (current: string, failed: string, from: BackupState) =>
     hasLogin: () => true,
     now: SINCE,
   })
-const run = (current: string, now: number, login: boolean, from: BackupState) =>
-  backupStep(from, { type: 'run', current: ref(current), now, hasPrimaryLogin: () => login })
+const run = (now: number, login: boolean, from: BackupState) =>
+  backupStep(from, { type: 'run', now, hasPrimaryLogin: () => login })
 
 // The integration tests above cover the first switch, the chain, the cooldown and a pick at the next run; these rows
 // are the outcomes they do not reach.
@@ -414,14 +410,6 @@ it.each([
     failed: 'z',
     kind: 'none',
     after: onBackup,
-  },
-  {
-    row: 'a model picked since the switch restarts from the pick: new primary and thinking, nothing tried',
-    from: onBackup,
-    current: 'c',
-    failed: 'c',
-    kind: 'switched',
-    after: { ...onBackup, primary: ref('c'), thinking: 'medium', tried: ['faux/c'] },
   },
   {
     row: 'with no backup left the record stays and nothing switches',
@@ -466,7 +454,7 @@ it.each([
     after: primary,
   },
 ])('return: $row', ({ from, login, outcome, after }) => {
-  const next = run('b', SINCE + COOLDOWN_MS, login, structuredClone(from))
+  const next = run(SINCE + COOLDOWN_MS, login, structuredClone(from))
   expect(next).toEqual({ state: after, outcome })
 })
 

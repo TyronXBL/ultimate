@@ -13,6 +13,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { definitionAgent } from '../../lib/agents.ts'
 import type { AgentDefinition } from '../../lib/agents.ts'
 import { ConversationsApi } from '../conversations/api.ts'
+import { ModelsApi } from '../models/api.ts'
 import { Started } from './refs.ts'
 import { BranchSetup, Profile } from './api.ts'
 
@@ -85,7 +86,12 @@ export async function createChild(
   },
 ) {
   const { parentAgent: parent, definition, modelRuntime } = options
-  const change = definitionAgent(definition, parent, modelRuntime, options)
+  const { model, thinkingLevel, ...change } = definitionAgent(
+    definition,
+    parent,
+    modelRuntime,
+    options,
+  )
   const child = options.fork
     ? await tx.forkConversation(options.fork.conversationId, options.fork.at, {
         ownership: options.owner,
@@ -94,6 +100,12 @@ export async function createChild(
   await configure(tx, child.id, {
     ...change,
     cwd: options.cwd ?? parent.cwd ?? null,
+  })
+  // A fork inherits its source's owner, a backup too: the model its creator gives it replaces it.
+  await host.need(ModelsApi).setModel(tx, child.id, {
+    type: 'start',
+    model: model ?? null,
+    thinkingLevel,
   })
   Object.assign(await tx.doc(options.metadata, child.id), {
     label: options.label,

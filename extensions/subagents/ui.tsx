@@ -8,6 +8,8 @@ import { api, events, useDocOf } from '@/sdk'
 import type { UltimateActions } from '@/sdk'
 import { RunsDoc, StandingAction } from './refs.ts'
 import type { Run } from './refs.ts'
+import { BackupsDoc } from '../models/ui.tsx'
+import type { BackupShown } from '../models/ui.tsx'
 import { familyTitle } from '../../lib/families.ts'
 
 export {
@@ -28,8 +30,8 @@ export function useRun(id: number | undefined): Run | undefined {
  * Why a child runs on another model than its definition gives it: a few words for its row (`coordinator's choice`,
  * `branch setup`, `backup (rate limit)`) and the whole story for the tooltip. Undefined when it runs on its own.
  */
-function runReason(run: Run | undefined, name: string) {
-  const { override, backup } = run ?? {}
+function runReason(run: Run | undefined, backup: BackupShown | undefined, name: string) {
+  const override = run?.override
   if (!override && !backup) return undefined
   const own =
     override &&
@@ -37,8 +39,8 @@ function runReason(run: Run | undefined, name: string) {
   const chosen =
     override &&
     (override.by === 'setup'
-      ? `This branch's agent setup runs it on ${run!.model} instead.`
-      : `${override.caller ?? 'Its caller'} started it with ${override.asked}, so it ran on ${run!.model}.`)
+      ? `This branch's agent setup runs it on ${run.model} instead.`
+      : `${override.caller ?? 'Its caller'} started it with ${override.asked}, so it ran on ${run.model}.`)
   return {
     word: backup
       ? `backup (${backup.reason})`
@@ -71,8 +73,11 @@ export function RunName({
   compact?: boolean
 }) {
   const run = useRun(id)
-  const reason = runReason(run, typeof label === 'string' ? label : 'This agent')
-  const model = run?.backup?.model ?? run?.model
+  const backups = useDocOf(1, BackupsDoc)
+  // Only a child `subagent start` made has a row that says what it runs on.
+  const backup = run && id !== undefined ? backups?.[String(id)] : undefined
+  const reason = runReason(run, backup, typeof label === 'string' ? label : 'This agent')
+  const model = backup?.model ?? run?.model
   const name = (
     <>
       {run?.adhoc && (

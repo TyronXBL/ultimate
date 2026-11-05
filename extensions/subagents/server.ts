@@ -57,7 +57,7 @@ import { shortTitle } from '../../lib/title.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
 import type { AgentMarkStyle } from '../conversations/refs.ts'
-import { Pin } from '../models/api.ts'
+import { ModelsApi, Pin } from '../models/api.ts'
 import { BranchSetup, Profile, Standing, Subagents, SubagentsApi } from './api.ts'
 import { definitionRuns, refName, refOf } from '../../lib/families.ts'
 import { readFamilies } from '../../lib/families-settings.ts'
@@ -75,11 +75,17 @@ import type { Run } from './refs.ts'
 const Runs = defineDoc<Record<string, Run>>({
   kind: RunsDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({}),
+  // Version 1 also kept a child's backup, which `models.backups` keeps now.
+  migrate: (value) => {
+    const runs = value as Record<string, Run & { backup?: unknown }>
+    for (const run of Object.values(runs)) delete run.backup
+    return runs
+  },
 })
 
 export const docs = [Subagents, Standing, Profile, BranchSetup, Runs] as const
@@ -658,6 +664,7 @@ export default function subagents(
   // Core services, always on; each handle resolves the current provider at every call.
   const conversations = host.need(ConversationsApi)
   const workspaces = host.need(WorkspacesApi)
+  const models = host.need(ModelsApi)
   const residentDefinitions = async () =>
     (
       await discoverAgents(host.ultimateRoot, host.projectRoot, host.userHome, host.modelRuntime)
@@ -734,12 +741,6 @@ export default function subagents(
       if (input?.status === 'unanswered' && providerFailure(input.reason))
         action.status = 'given-up'
     },
-    async recordBackup(tx, id, backup) {
-      const run = (await tx.doc(Runs, ROOT_CONVERSATION_ID))[String(id)]
-      if (!run) return
-      if (backup) run.backup = backup
-      else delete run.backup
-    },
     async createChild(tx, options) {
       const child = await createChild(host, tx, options)
       await started(host, tx, child, options.definition?.name ?? options.label, 'child')
@@ -766,7 +767,7 @@ export default function subagents(
         // A new conversation starts on the default model; an existing one keeps the model and thinking level chosen
         // in it, so a refresh changes them only where the definition pins them.
         let base = { ...main, model: await hostDefaultModel(host) }
-        // One running on a backup model of its definition (extensions/backup) stays on it: backup returns it later.
+        // One running on a backup (extensions/backup) stays on it: backup returns it later.
         let backup: Parameters<typeof definitionAgent>[3]
         if (id !== undefined && (await tx.conversation(id))) {
           const own = await tx.doc(AgentDoc, id)
@@ -775,21 +776,31 @@ export default function subagents(
             model: own.model ?? base.model,
             thinkingLevel: own.thinkingLevel ?? main.thinkingLevel,
           }
-          const model = own.model
-          if (
-            model &&
-            definition.fallback?.some(
-              (entry) => entry.provider === model.provider && entry.modelId === model.modelId,
-            )
-          )
-            backup = { model, ...(own.thinkingLevel ? { thinking: own.thinkingLevel } : {}) }
+          const on = await models.backup(tx, id)
+          if (on)
+            backup = {
+              model: on.to,
+              ...(own.thinkingLevel ? { thinking: own.thinkingLevel } : {}),
+            }
         } else {
           created = await tx.createConversation({ ownership: { kind: 'ownerless' } })
           id = created.id
           index[name] = id
         }
-        const change = definitionAgent(definition, base, host.modelRuntime, backup)
+        const { model, thinkingLevel, ...change } = definitionAgent(
+          definition,
+          base,
+          host.modelRuntime,
+          backup,
+        )
         await configure(tx, id, { ...change, cwd: host.projectRoot })
+        // A refresh that keeps the model and level keeps who set them: a pick stays the user's.
+        if (
+          created ||
+          JSON.stringify([model, thinkingLevel]) !==
+            JSON.stringify([base.model ?? null, base.thinkingLevel ?? null])
+        )
+          await models.setModel(tx, id, { type: 'start', model: model ?? null, thinkingLevel })
         Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
         // A standing agent keeps its `@name`: no automatic title, summary or reply activity.
         await conversations.setAutomaticSummaries(tx, id, false)

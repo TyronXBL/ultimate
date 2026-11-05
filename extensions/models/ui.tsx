@@ -1,6 +1,6 @@
 /**
  * Models for other extensions' browser code: one model as the picker lists it, the families with their labels and
- * in-place editors, and the login-changed event.
+ * in-place editors, the login-changed event, and the conversations on a backup.
  */
 export { ModelRow } from './picker.tsx'
 export { AddFamily, FamilyPopover, moveFeature } from './family-editor.tsx'
@@ -12,5 +12,5 @@ export {
   runsOn,
   useFamilies,
 } from './families.tsx'
-export type { FamiliesView, FamilyView } from './refs.ts'
-export { LoginChanged } from './refs.ts'
+export type { BackupShown, FamiliesView, FamilyView } from './refs.ts'
+export { BackupsDoc, LoginChanged } from './refs.ts'

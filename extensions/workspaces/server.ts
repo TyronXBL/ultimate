@@ -4,7 +4,6 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { obj, opt, str } from '@earendil-works/pi-schema'
 import { strEnum } from '../../lib/schema.ts'
 import {
-  configure,
   defineExtension,
   defineTool,
   GenerationTask,
@@ -20,6 +19,7 @@ import { empty, git, isolatable, noCommit, noRepository } from '../../lib/git.ts
 import type { ActionContext } from '../../server/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi, Release } from '../conversations/api.ts'
+import { ModelsApi } from '../models/api.ts'
 import { Branches, WorkspacesApi } from './api.ts'
 import {
   DiskAction,
@@ -109,8 +109,9 @@ export const actions = {
     const agent = await root.agent(context)
     const id = await host.harness().commit(async (tx) => {
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } })
-      await configure(tx, conversation.id, {
-        model: agent.model,
+      await host.need(ModelsApi).setModel(tx, conversation.id, {
+        type: 'start',
+        model: agent.model ?? null,
         thinkingLevel: agent.thinkingLevel,
       })
       if (input.title) (await tx.doc(host.metadata, conversation.id)).title = input.title

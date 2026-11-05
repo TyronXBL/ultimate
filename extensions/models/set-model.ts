@@ -1,10 +1,10 @@
 /** The one writer of a conversation's model and of `models.owner`, who set it: `ModelsApi.setModel`. */
 import { clampThinkingLevel } from '@earendil-works/pi-ai'
-import { AgentDoc, configure, defineDoc } from '@earendil-works/pi-durable'
-import type { ConversationId, Tx } from '@earendil-works/pi-durable'
+import { AgentDoc, configure, defineDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
+import type { ConversationId, JsonObject, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { ModelOwnerDoc } from './refs.ts'
-import type { ModelOwner } from './refs.ts'
+import { BackupsDoc, ModelOwnerDoc } from './refs.ts'
+import type { BackupShown, ModelOwner } from './refs.ts'
 import { backupIn, ownerStep } from './owner.ts'
 import type { ModelEvent } from './owner.ts'
 
@@ -12,12 +12,29 @@ import type { ModelEvent } from './owner.ts'
 export const Owner = defineDoc<ModelOwner>({
   kind: ModelOwnerDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   // As `pi.agent`: a fork at an older entry inherits the owner of the model it inherits.
   history: 'rewindable',
   fork: 'asOf',
   initial: () => ({ by: 'default' }),
+  // Version 1 backups recorded no limit; they ran for a few hours of 2026-11-05 only. Can go once none is left.
+  migrate: (value) => {
+    const found = (value.by === 'login-wait' ? value.under : value) as JsonObject
+    if (found.by === 'backup' && found.reason === undefined) found.reason = 'limit'
+    return value as ModelOwner
+  },
+})
+
+/** The conversations on a backup, as their rows show them; only `setModel` writes it, beside the owner. */
+export const Backups = defineDoc<Record<string, BackupShown>>({
+  kind: BackupsDoc.kind,
+  checkpointWhen: () => false,
+  version: 1,
+  scope: 'conversation',
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({}),
 })
 
 /** Set conversation `id`'s model as `event` says, inside `tx`, and record the owner `ownerStep` returns. */
@@ -31,12 +48,31 @@ export async function setModel(
   // A plain copy: the new owner may hold parts of the stored one (a wait's `under`), which is emptied below.
   const found = backupIn(owner)
   const backup = found && { primary: { ...found.primary }, thinking: found.thinking }
-  const next = JSON.stringify(ownerStep(owner, event))
+  const step = ownerStep(owner, event)
+  const next = JSON.stringify(step)
   if (next !== JSON.stringify(owner)) {
     for (const key of Object.keys(owner)) Reflect.deleteProperty(owner, key)
     Object.assign(owner, JSON.parse(next))
   }
-  if (event.type === 'login-wait' || event.type === 'backup-left') return
+  const shown = backupIn(step)
+  if (found || shown) {
+    const backups = await tx.doc(Backups, ROOT_CONVERSATION_ID)
+    if (shown)
+      backups[String(id)] = {
+        from: shown.tried.at(-1) ?? `${shown.primary.provider}/${shown.primary.modelId}`,
+        model: shown.to.modelId,
+        reason: shown.reason,
+      }
+    else delete backups[String(id)]
+  }
+  if (event.type === 'login-wait') return
+  if (event.type === 'start') {
+    await configure(tx, id, {
+      model: event.model,
+      ...(event.thinkingLevel === undefined ? {} : { thinkingLevel: event.thinkingLevel }),
+    })
+    return
+  }
   if (event.type === 'pick') {
     await configure(tx, id, { model: event.model, thinkingLevel: event.thinkingLevel })
     return
