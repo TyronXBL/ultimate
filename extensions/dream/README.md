@@ -25,12 +25,22 @@ A dream is ordinary work; code keeps only which branch is the dream, so its end 
 ### The journey
 
 `dream.next` on conversation 1 is `{ journey }`, one state each with exactly its fields (`Journey` in `refs.ts`):
-`idle`, `woke {dream}`, `preparing {dream, asked}`, `dismissed {dream}`, `prepared {prepared}`,
-`sleeping {prepared, chapter, phase: seeding | backing up | switching, backup?}`, `failed {prepared, chapter, error}`,
-`asleep {prepared, chapter}`. `dreamStep(journey, event)` (`state.ts`) is its only writer; an event the state cannot
+`idle`, `woke {dream}`, `preparing {dream, asked}`, `dismissed {dream}`, `prepared {prepared, dream?}`,
+`sleeping {prepared, chapter, phase: seeding | backing up | switching, backup?, dream?}`,
+`failed {prepared, chapter, backup?, error, dream?}`, `asleep {prepared, chapter, dream?}` (the backup is not kept once
+asleep). A prepared chapter keeps the `dream` it followed, so a replayed or second branch event of that dream's request
+does not start the journey over. `dreamStep(journey, event)` (`state.ts`) is its only writer; an event the state cannot
 take throws. Readers use `waiting`, `sleepOf`, `preparedOf` and `awakeOf` from the same file, never the raw fields.
-A new dream supersedes an unslept preparation (and a finished sleep's record); progress runs in order, and a sleep
-cannot be restarted from `asleep`.
+
+A newer dream supersedes an unslept preparation (and a finished sleep's record). A dream recorded while a sleep runs is
+ignored: the user chose to sleep, and can dream again if it fails. Sleep progress runs in order (`backing up`, its
+backup result, `switching`, then `asleep` or `failed`): `switching` needs the backup result (the cloud backup id or the
+reason it was skipped), and a finished sleep cannot be restarted.
+
+Version 2 of the document migrates the old `{ prepared?, sleep?, dream? }` on read: a preparation older than the dream
+is dropped with its sleep record (that dream superseded it); otherwise the sleep's phase picks `sleeping`, `failed` or
+`asleep`, a preparation without a sleep is `prepared`, and a dream alone is `dismissed` over `preparing` (it had
+`asked`) over `woke`.
 
 ### Built-in triggers
 

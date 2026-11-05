@@ -64,9 +64,13 @@ function fromLegacy(value: unknown): { journey: Journey } {
   }
   const { sleep, dream: last } = old
   const prepared = old.prepared && (!last || old.prepared.at > last.at) ? old.prepared : undefined
+  // The dream without its `asked` and `dismissed`.
+  const recorded = last && { branch: last.branch, requested: last.requested, at: last.at }
+  const followed = recorded ? { dream: recorded } : {}
   if (prepared && sleep) {
     const { chapter, phase, backup, at } = sleep
-    if (phase === 'asleep') return { journey: { state: 'asleep', prepared, chapter, at } }
+    if (phase === 'asleep')
+      return { journey: { state: 'asleep', prepared, chapter, at, ...followed } }
     if (phase === 'failed')
       return {
         journey: {
@@ -76,16 +80,23 @@ function fromLegacy(value: unknown): { journey: Journey } {
           ...(backup && { backup }),
           error: sleep.error ?? 'Falling asleep failed',
           at,
+          ...followed,
         },
       }
     return {
-      journey: { state: 'sleeping', prepared, chapter, phase, ...(backup && { backup }), at },
+      journey: {
+        state: 'sleeping',
+        prepared,
+        chapter,
+        phase,
+        ...(backup && { backup }),
+        at,
+        ...followed,
+      },
     }
   }
-  if (prepared) return { journey: { state: 'prepared', prepared } }
-  if (!last) return { journey: { state: 'idle' } }
-  const { branch, requested, at } = last
-  const recorded = { branch, requested, at }
+  if (prepared) return { journey: { state: 'prepared', prepared, ...followed } }
+  if (!last || !recorded) return { journey: { state: 'idle' } }
   if (last.dismissed) return { journey: { state: 'dismissed', dream: recorded } }
   if (last.asked) return { journey: { state: 'preparing', dream: recorded, asked: last.asked } }
   return { journey: { state: 'woke', dream: recorded } }
@@ -151,11 +162,25 @@ export const HANDOFF_CHARS = 12_000
 
 /** A document value copied out of its transaction's overlay. */
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-/** The journey's one writer: `event` applied to the document, and the journey it left. */
-const step = (doc: { journey: Journey }, event: DreamEvent) => {
+/** The journey's one writer: `event` applied to the document, and the journey it left (typed as `dreamStep` types it). */
+function step(
+  doc: { journey: Journey },
+  event: Extract<DreamEvent, { type: 'asked' }>,
+): Of<'preparing'>
+function step(
+  doc: { journey: Journey },
+  event: Extract<DreamEvent, { type: 'sleep started' }>,
+): Of<'sleeping'>
+function step(
+  doc: { journey: Journey },
+  event: Extract<DreamEvent, { type: 'failed' }>,
+): Of<'failed'>
+function step(doc: { journey: Journey }, event: DreamEvent): Journey
+function step(doc: { journey: Journey }, event: DreamEvent) {
   doc.journey = dreamStep(plain(doc.journey), event)
   return plain(doc.journey)
 }
+type Of<S extends Journey['state']> = Extract<Journey, { state: S }>
 const fields = (args: unknown) =>
   args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
 const text = (value: unknown, name: string, max: number) => {
@@ -354,8 +379,8 @@ async function settleSleep(host: ExtensionHost) {
   const { chapters } = await readChapters(host.home)
   await harness.commit(async (tx) => {
     const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-    const sleep = doc.journey.state === 'sleeping' ? sleepOf(plain(doc.journey)) : undefined
-    if (!sleep) return
+    const sleep = sleepOf(plain(doc.journey))
+    if (!sleep || sleep.phase === 'asleep' || sleep.phase === 'failed') return
     const switched = sleep.phase === 'switching' && chapters.some((c) => c.name === sleep.chapter)
     const at = Date.now()
     step(
@@ -381,7 +406,6 @@ async function fallAsleep(host: ExtensionHost, input: { name?: unknown }) {
     const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
     const named = input.name === undefined ? {} : { chapter: chapterName(input.name) }
     const started = step(doc, { type: 'sleep started', ...named, at: Date.now() })
-    if (started.state !== 'sleeping') throw new Error('Falling asleep did not start')
     idle(host)
     if (chapters.chapters.some((item) => item.name === started.chapter))
       throw new Error(`Chapter ${started.chapter} already exists; use switch instead`)
@@ -389,8 +413,7 @@ async function fallAsleep(host: ExtensionHost, input: { name?: unknown }) {
   }, context)
   const progress = (event: DreamEvent) =>
     host.harness().commit(async (tx) => {
-      const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-      return sleepOf(step(doc, event))!
+      step(await tx.doc(Next, ROOT_CONVERSATION_ID), event)
     }, context)
   try {
     const seed = await buildSeed(host, prepared)
@@ -402,7 +425,11 @@ async function fallAsleep(host: ExtensionHost, input: { name?: unknown }) {
     await writeSeed(chapterFiles(host.home, name).dir, seed)
     return await restartChapter(host, name)
   } catch (error) {
-    return { sleep: await progress({ type: 'failed', error: String(error), at: Date.now() }) }
+    const failed = await host.harness().commit(async (tx) => {
+      const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
+      return step(doc, { type: 'failed', error: String(error), at: Date.now() })
+    }, context)
+    return { sleep: sleepOf(failed) }
   }
 }
 
@@ -458,7 +485,6 @@ export const actions = {
       const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
       const at = Date.now()
       const preparing = step(doc, { type: 'asked', at })
-      if (preparing.state !== 'preparing') throw new Error('Fall asleep did not start preparing')
       await deliver(host, tx, await ultimateOf(tx), {
         type: 'input',
         requestId: `dream.ready:${at}`,

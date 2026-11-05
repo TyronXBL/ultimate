@@ -17,15 +17,38 @@ export type DreamEvent =
   | { type: 'asleep'; at: number }
   | { type: 'failed'; error: string; at: number }
 
+type Of<S extends Journey['state']> = Extract<Journey, { state: S }>
+const dreamOf = (journey: Journey) => ('dream' in journey ? journey.dream : undefined)
+/** The dream a prepared chapter followed, for the state that keeps it. */
+const kept = (journey: Journey) => {
+  const dream = dreamOf(journey)
+  return dream ? { dream } : {}
+}
+
 /**
  * The journey after `event`. An event the state cannot take throws, naming why. A dream recorded while a sleep runs
- * changes nothing: it would take the Fall asleep card from the sleep still under way (and work it starts already
- * cancels the switch). A dream whose request is not newer than the recorded one's is that turn's second branch.
+ * changes nothing: the user chose to sleep, and can dream again if it fails (a dream would take the Fall asleep card
+ * from the sleep, and work it starts cancels the switch anyway). A dream whose request is not newer than the last
+ * recorded one's is a replayed or second branch of that request.
  */
+export function dreamStep(
+  journey: Journey,
+  event: Extract<DreamEvent, { type: 'asked' }>,
+): Of<'preparing'>
+export function dreamStep(
+  journey: Journey,
+  event: Extract<DreamEvent, { type: 'sleep started' }>,
+): Of<'sleeping'>
+export function dreamStep(
+  journey: Journey,
+  event: Extract<DreamEvent, { type: 'failed' }>,
+): Of<'failed'>
+export function dreamStep(journey: Journey, event: DreamEvent): Journey
 export function dreamStep(journey: Journey, event: DreamEvent): Journey {
   if (event.type === 'dreamed') {
     if (journey.state === 'sleeping') return journey
-    if ('dream' in journey && event.dream.requested <= journey.dream.requested) return journey
+    const last = dreamOf(journey)
+    if (last && event.dream.requested <= last.requested) return journey
     return { state: 'woke', dream: event.dream }
   }
   if (event.type === 'asked') {
@@ -35,11 +58,13 @@ export function dreamStep(journey: Journey, event: DreamEvent): Journey {
     return { state: 'preparing', dream: journey.dream, asked: event.at }
   }
   if (event.type === 'dismissed')
-    return 'dream' in journey ? { state: 'dismissed', dream: journey.dream } : journey
+    return journey.state === 'woke' || journey.state === 'preparing'
+      ? { state: 'dismissed', dream: journey.dream }
+      : journey
   if (event.type === 'prepared') {
     if (journey.state === 'sleeping')
       throw new Error(`Falling asleep is under way (${journey.phase})`)
-    return { state: 'prepared', prepared: event.prepared }
+    return { state: 'prepared', prepared: event.prepared, ...kept(journey) }
   }
   if (event.type === 'sleep started') {
     if (journey.state === 'sleeping')
@@ -52,9 +77,11 @@ export function dreamStep(journey: Journey, event: DreamEvent): Journey {
       chapter: event.chapter ?? journey.prepared.chapter,
       phase: 'seeding',
       at: event.at,
+      ...kept(journey),
     }
   }
-  // Sleep progress: in order seeding, backing up, switching, then asleep or failed; the chapter never changes.
+  // Sleep progress: in order seeding, backing up (with its backup recorded), switching, then asleep or failed; the
+  // chapter never changes.
   if (journey.state !== 'sleeping') throw new Error(`No sleep is running to ${event.type}`)
   const { prepared, chapter, backup } = journey
   if (event.type === 'failed')
@@ -65,6 +92,7 @@ export function dreamStep(journey: Journey, event: DreamEvent): Journey {
       ...(backup && { backup }),
       error: event.error,
       at: event.at,
+      ...kept(journey),
     }
   const from = {
     'backing up': 'seeding',
@@ -74,7 +102,10 @@ export function dreamStep(journey: Journey, event: DreamEvent): Journey {
   }[event.type]
   if (journey.phase !== from)
     throw new Error(`Falling asleep cannot ${event.type} from ${journey.phase}`)
-  if (event.type === 'asleep') return { state: 'asleep', prepared, chapter, at: event.at }
+  if (event.type === 'switching' && !backup)
+    throw new Error('Falling asleep cannot switching before the backup is recorded')
+  if (event.type === 'asleep')
+    return { state: 'asleep', prepared, chapter, at: event.at, ...kept(journey) }
   if (event.type === 'backed up') return { ...journey, backup: event.backup, at: event.at }
   return { ...journey, phase: event.type, at: event.at }
 }
@@ -84,6 +115,8 @@ export const preparedOf = (journey: Journey): Prepared | undefined =>
   'prepared' in journey ? journey.prepared : undefined
 
 /** The sleep into the prepared chapter: running, failed or done. */
+export function sleepOf(journey: Of<'sleeping' | 'failed' | 'asleep'>): Sleep
+export function sleepOf(journey: Journey): Sleep | undefined
 export function sleepOf(journey: Journey): Sleep | undefined {
   if (journey.state === 'sleeping') {
     const { phase, chapter, backup, at } = journey

@@ -23,13 +23,15 @@ export type Dream = { branch: number; requested: number; at: number }
  * writer. `woke`: the dream is recorded, and once its branch is concluded the user is shown Fall asleep. `preparing`:
  * they pressed it at `asked`, @ultimate prepares. `dismissed`: they chose to stay in this chapter. `prepared`: the
  * Fall asleep card waits. `sleeping`/`failed`/`asleep`: the sleep into `chapter`, which keeps the `prepared` it is for.
+ * A prepared chapter keeps the `dream` it followed (none if @ultimate prepared unasked): a replayed or second branch
+ * event of that dream's request must not start the journey over.
  */
 export type Journey =
   | { state: 'idle' }
   | { state: 'woke'; dream: Dream }
   | { state: 'preparing'; dream: Dream; asked: number }
   | { state: 'dismissed'; dream: Dream }
-  | { state: 'prepared'; prepared: Prepared }
+  | { state: 'prepared'; prepared: Prepared; dream?: Dream }
   | {
       state: 'sleeping'
       prepared: Prepared
@@ -37,6 +39,7 @@ export type Journey =
       phase: 'seeding' | 'backing up' | 'switching'
       backup?: Backup
       at: number
+      dream?: Dream
     }
   | {
       state: 'failed'
@@ -45,8 +48,9 @@ export type Journey =
       backup?: Backup
       error: string
       at: number
+      dream?: Dream
     }
-  | { state: 'asleep'; prepared: Prepared; chapter: string; at: number }
+  | { state: 'asleep'; prepared: Prepared; chapter: string; at: number; dream?: Dream }
 
 /** `{ journey }` on conversation 1: where the way into the next chapter stands. */
 export const DreamDoc = docRef<{ journey: Journey }>('dream.next')

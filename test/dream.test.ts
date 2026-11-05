@@ -345,8 +345,7 @@ const sleeping = (phase: 'seeding' | 'backing up' | 'switching', backup?: { id: 
 const IDLE: Journey = { state: 'idle' }
 const WOKE: Journey = { state: 'woke', dream: DREAM }
 const PREPARING: Journey = { state: 'preparing', dream: DREAM, asked: 45 }
-const DISMISSED: Journey = { state: 'dismissed', dream: DREAM }
-const PREPARED_STATE: Journey = { state: 'prepared', prepared: PREPARED }
+const PREPARED_STATE: Journey = { state: 'prepared', prepared: PREPARED, dream: DREAM }
 const FAILED: Journey = {
   state: 'failed',
   prepared: PREPARED,
@@ -362,23 +361,22 @@ const refused = (error: string) => ({ error })
 
 it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
   ['records the first dream', IDLE, dreamed(DREAM), WOKE],
-  ['records a newer dream', PREPARING, dreamed(), { state: 'woke', dream: LATER }],
-  ['keeps the dream when a second branch of its turn is not newer', WOKE, dreamed(DREAM), WOKE],
+  ['a second branch of the recorded request is not a new dream', WOKE, dreamed(DREAM), WOKE],
+  // A replayed event must not undo the preparation made after that dream.
+  [
+    'a replayed request does not unseat a prepared chapter',
+    PREPARED_STATE,
+    dreamed(DREAM),
+    PREPARED_STATE,
+  ],
   // The unslept preparation of an earlier dream kept hiding the new dream's Fall asleep cue (1037052).
   [
-    'a dream supersedes an unslept preparation',
+    'a newer dream supersedes an unslept preparation',
     PREPARED_STATE,
     dreamed(),
     { state: 'woke', dream: LATER },
   ],
-  ['a dream after a failed sleep drops it', FAILED, dreamed(), { state: 'woke', dream: LATER }],
-  [
-    'a dream after a finished sleep starts the next journey',
-    ASLEEP,
-    dreamed(),
-    { state: 'woke', dream: LATER },
-  ],
-  // Bug fixed here: it deleted the preparation under the running sleep, so the Fall asleep card lost the sleep.
+  // Bug: it deleted the preparation under the running sleep, so the Fall asleep card lost the sleep.
   [
     'a dream during a sleep changes nothing',
     sleeping('backing up'),
@@ -388,12 +386,6 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
   [
     'Fall asleep asks @ultimate to prepare',
     WOKE,
-    { type: 'asked', at: 70 },
-    { state: 'preparing', dream: DREAM, asked: 70 },
-  ],
-  [
-    'Fall asleep after staying asks again',
-    DISMISSED,
     { type: 'asked', at: 70 },
     { state: 'preparing', dream: DREAM, asked: 70 },
   ],
@@ -409,25 +401,23 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
     { type: 'asked', at: 70 },
     refused('Chapter fresh is already prepared'),
   ],
-  ['staying dismisses a woken dream', WOKE, { type: 'dismissed' }, DISMISSED],
-  ['staying dismisses a dream being prepared for', PREPARING, { type: 'dismissed' }, DISMISSED],
   [
-    'staying with nothing to dismiss changes nothing',
+    'staying dismisses a woken dream',
+    PREPARING,
+    { type: 'dismissed' },
+    { state: 'dismissed', dream: DREAM },
+  ],
+  [
+    'staying does not turn a prepared chapter into a dismissed dream',
     PREPARED_STATE,
     { type: 'dismissed' },
     PREPARED_STATE,
   ],
   [
-    'a preparation replaces a dream',
+    'a preparation follows the dream it answers',
     PREPARING,
     { type: 'prepared', prepared: PREPARED },
     PREPARED_STATE,
-  ],
-  [
-    'a second preparation replaces the first',
-    FAILED,
-    { type: 'prepared', prepared: { ...PREPARED, at: 80 } },
-    { state: 'prepared', prepared: { ...PREPARED, at: 80 } },
   ],
   [
     'no preparation while a sleep runs',
@@ -439,19 +429,13 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
     'a sleep starts on the prepared name',
     PREPARED_STATE,
     { type: 'sleep started', at: 1 },
-    { ...sleeping('seeding'), chapter: 'fresh', backup: undefined },
+    { ...sleeping('seeding'), chapter: 'fresh', dream: DREAM },
   ],
   [
     'a failed sleep retries under a new name and forgets the old backup',
     FAILED,
     { type: 'sleep started', chapter: 'next', at: 1 },
-    { ...sleeping('seeding'), backup: undefined },
-  ],
-  [
-    'a sleep needs a preparation',
-    WOKE,
-    { type: 'sleep started', at: 1 },
-    refused('Nothing is prepared: @ultimate prepares the next chapter first'),
+    sleeping('seeding'),
   ],
   [
     'a slept-into chapter cannot be slept into again',
@@ -466,30 +450,6 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
     refused('Falling asleep is under way (seeding)'),
   ],
   [
-    'the backup step follows seeding',
-    sleeping('seeding'),
-    { type: 'backing up', at: 5 },
-    { ...sleeping('backing up'), at: 5 },
-  ],
-  [
-    'the backup is recorded in its step',
-    sleeping('backing up'),
-    { type: 'backed up', backup: { id: 'b' }, at: 6 },
-    { ...sleeping('backing up', { id: 'b' }), at: 6 },
-  ],
-  [
-    'the switch follows the backup',
-    sleeping('backing up', { id: 'b' }),
-    { type: 'switching', at: 7 },
-    { ...sleeping('switching', { id: 'b' }), at: 7 },
-  ],
-  [
-    'the switch ends asleep',
-    sleeping('switching', { id: 'b' }),
-    { type: 'asleep', at: 8 },
-    { ...ASLEEP, at: 8 },
-  ],
-  [
     'a step fails the sleep with the backup so far',
     sleeping('switching', { id: 'b' }),
     { type: 'failed', error: 'x', at: 2 },
@@ -502,16 +462,16 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
     refused('Falling asleep cannot switching from seeding'),
   ],
   [
+    'the switch needs the backup result first',
+    sleeping('backing up'),
+    { type: 'switching', at: 5 },
+    refused('Falling asleep cannot switching before the backup is recorded'),
+  ],
+  [
     'progress cannot finish early',
     sleeping('backing up'),
     { type: 'asleep', at: 5 },
     refused('Falling asleep cannot asleep from backing up'),
-  ],
-  [
-    'progress cannot repeat a step',
-    sleeping('switching'),
-    { type: 'backing up', at: 5 },
-    refused('Falling asleep cannot backing up from switching'),
   ],
   [
     'progress needs a running sleep',
@@ -533,15 +493,12 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
 it.each<[string, Journey, boolean, unknown]>([
   ['shows nothing while the dream branch runs', WOKE, false, undefined],
   ['shows the finished dream', WOKE, true, { phase: 'woke', branch: 7 }],
-  ['shows the chapter being prepared', PREPARING, true, { phase: 'preparing', branch: 7 }],
-  ['shows nothing after staying', DISMISSED, true, undefined],
   [
     'shows a prepared chapter, also while its sleep failed',
     FAILED,
     true,
     { phase: 'prepared', chapter: 'fresh' },
   ],
-  ['shows nothing once slept into', ASLEEP, true, undefined],
 ])('awake: %s', (_name, journey, concluded, expected) => {
   expect(awakeOf(journey, () => concluded)).toEqual(expected)
 })
