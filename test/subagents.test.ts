@@ -3,6 +3,7 @@ import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import { eventHost, idleNeed, until, temp, removeTemp } from './helpers.ts'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import { projectSettings } from '../server/project-setup.ts'
+import { concludedTreeIn, resultIn } from '../extensions/conversations/server.ts'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -152,7 +153,8 @@ async function fixture(
         harness: () => opened!.harness,
         metadata: Metadata,
         implement: () => {},
-        need: idleNeed,
+        need: (api: Parameters<typeof idleNeed>[0]) =>
+          api.name === 'conversations' ? { concludedTreeIn, resultIn } : idleNeed(api),
         want: (api: { name: string }) => provided.get(api.name),
         notice: (message: string) => errors.push(message),
         onOpen: (callback: () => Promise<void>) => {
