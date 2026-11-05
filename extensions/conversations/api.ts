@@ -4,7 +4,13 @@
  */
 import type { Context } from '@earendil-works/chord'
 import { defineDoc } from '@earendil-works/pi-durable'
-import type { ConversationId, Tx } from '@earendil-works/pi-durable'
+import type {
+  ConversationId,
+  InputEntry,
+  InputSubmissionDraft,
+  SubmissionDraft,
+  Tx,
+} from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
 import { ContextDoc, MarksDoc } from './refs.ts'
 import type { AgentMarkStyle, ContextUsage } from './refs.ts'
@@ -29,6 +35,15 @@ export type ConversationsService = {
    * for `id` goes in as a note instead.
    */
   concludedTreeIn(tx: Tx, id: ConversationId): Promise<boolean>
+  /**
+   * Inside `tx`, result `input` for `id` (a background command, CI run, notify or automation) as `id` takes it: the input,
+   * or while `concludedTreeIn`, its entry as a note that starts no run. Submit what it returns in the same `tx`.
+   */
+  resultIn(
+    tx: Tx,
+    id: ConversationId,
+    input: InputSubmissionDraft & { entry: InputEntry },
+  ): Promise<SubmissionDraft>
   /**
    * Conclude top-level conversations `ids` inside `tx`, as the Conclude action does before it frees their resources
    * through `Release`; throws for unknown and owned conversations, roots and standing agents.

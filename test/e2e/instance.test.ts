@@ -126,6 +126,7 @@ async function fixture({ foreign = false } = {}) {
   services.set('conversations', {
     concluded: async () => new Set(),
     concludedTreeIn: async () => false,
+    resultIn: async (_tx, _id, input) => input,
     summaryModel: async () => undefined,
     requestSummary: async () => {},
     setAutomaticSummaries,

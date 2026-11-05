@@ -24,6 +24,7 @@ import type {
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { concurrencyCapped, limited, rateLimited } from '../../lib/rate-limit.ts'
 import { Messages } from '../messages/api.ts'
+import { ConversationsApi } from '../conversations/api.ts'
 import { Pin } from '../models/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { idleNote } from './idle.ts'
@@ -219,32 +220,28 @@ export default function watchdog(host: ExtensionHost) {
       retry: async (task, runtime, ctx) => {
         const { conversation, failedTask, error, backup } = task.input
         const child = (await runtime.conversation(conversation as ConversationId, ctx))!
-        // A replay after submit must finish, not mistake its own retry for someone else's recovery.
-        let submitted = false
-        let busy = false
-        // A backup model takes the failed model's place only if the definition has one for this limit; without that
-        // switch the conversation still runs on the model that refused, so there is nothing to continue on.
-        let switched = true
+        // Decided and submitted in one commit, so a conclusion cannot slip in between.
         await runtime.commit(async (tx) => {
-          submitted = !!(await tx.submissionByRequest(child.id, `watchdog-retry:${failedTask}`))
-          busy = (await tx.doc(LiveDoc, child.id)).run !== undefined
-          if (!backup) return
-          const model = (await tx.doc(AgentDoc, child.id)).model
-          switched = model !== undefined && `${model.provider}/${model.modelId}` !== backup.model
+          // A replay after submit must finish, not mistake its own retry for someone else's recovery.
+          if (await tx.submissionByRequest(child.id, `watchdog-retry:${failedTask}`))
+            return terminal
+          if ((await tx.doc(LiveDoc, child.id)).run !== undefined) return terminal
+          // A backup model takes the failed model's place only if the definition has one for this limit; without that
+          // switch the conversation still runs on the model that refused, so there is nothing to continue on.
+          const model = backup && (await tx.doc(AgentDoc, child.id)).model
+          const switched =
+            !backup || (!!model && `${model.provider}/${model.modelId}` !== backup.model)
+          // Concluded since it failed: a retry would resume its tree, so the failure is reported (as a note) instead.
+          if (!switched || (await host.need(ConversationsApi).concludedTreeIn(tx, child.id)))
+            return { status: 'running', checkpoint: { phase: 'report' } } as const
+          await child.submit(tx, {
+            type: 'input',
+            content: `Your previous run stopped with a provider error (${error}). Continue from where you left off; check what you already did and do not redo it.`,
+            requestId: `watchdog-retry:${failedTask}`,
+            whenBusy: 'followUp',
+          })
+          return terminal
         }, ctx)
-        if (!switched && !submitted && !busy)
-          return runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'report' } }), ctx)
-        if (!submitted && !busy)
-          await child.submit(
-            {
-              type: 'input',
-              content: `Your previous run stopped with a provider error (${error}). Continue from where you left off; check what you already did and do not redo it.`,
-              requestId: `watchdog-retry:${failedTask}`,
-              whenBusy: 'followUp',
-            },
-            ctx,
-          )
-        await runtime.commit(() => terminal, ctx)
       },
       report: async (task, runtime, ctx) => {
         const { conversation, title, error, step, hint, retried, failedTask, recipient } =
@@ -263,14 +260,18 @@ export default function watchdog(host: ExtensionHost) {
           host.notice(content)
         } else {
           const target = (await runtime.conversation(recipient, ctx))!
-          await target.submit(
-            {
-              type: 'input',
-              content: `${content}\nCheck the conversation; resume it with a message, or tell the user if it needs them.`,
-              entry: { kind: 'watchdog.failure', data },
-              requestId: `watchdog-report:${failedTask}`,
-              whenBusy: 'steer',
-            },
+          await host.harness().commit(
+            async (tx) =>
+              target.submit(
+                tx,
+                await host.need(ConversationsApi).resultIn(tx, recipient, {
+                  type: 'input',
+                  content: `${content}\nCheck the conversation; resume it with a message, or tell the user if it needs them.`,
+                  entry: { kind: 'watchdog.failure', data },
+                  requestId: `watchdog-report:${failedTask}`,
+                  whenBusy: 'steer',
+                }),
+              ),
             ctx,
           )
         }

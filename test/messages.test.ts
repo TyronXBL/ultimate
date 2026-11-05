@@ -41,7 +41,7 @@ import type { BranchInput } from '../extensions/lineage/server.ts'
 import { Branch, Roots } from '../extensions/lineage/api.ts'
 import { BranchSetup, Standing, Subagents } from '../extensions/subagents/api.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
-import { concludedIn } from '../extensions/conversations/server.ts'
+import { concludedIn, resultIn } from '../extensions/conversations/server.ts'
 import { UiState } from '../server/ui-state.ts'
 
 const homes: string[] = []
@@ -167,7 +167,7 @@ async function fixture(
         : name === 'workspaces'
           ? { doc: Workspaces, git: async () => '' }
           : name === 'conversations'
-            ? { concludedIn }
+            ? { concludedIn, resultIn }
             : name === 'lineage'
               ? {
                   rootOf: (id: number, ctx: Context) => rootOf(host, id, ctx),

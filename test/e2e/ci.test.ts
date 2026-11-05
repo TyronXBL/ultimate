@@ -15,6 +15,7 @@ import { context, prepareHarness } from '../../server/harness.ts'
 import type { OpenHost } from '../../server/harness.ts'
 import ciExtension from '../../.ultimate/extensions/ci/server.ts'
 import type { CiResult } from '../../.ultimate/extensions/ci/refs.ts'
+import { resultIn } from '../../extensions/conversations/server.ts'
 import { temp, until as waitFor } from '../helpers.ts'
 
 const run = promisify(execFile)
@@ -129,6 +130,7 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
       harness: () => opened.harness,
       need: (() => ({
         get: async () => undefined,
+        resultIn,
         // The lander's record: the failing test also failed at two landings of another branch.
         failing: async ({ tests, except }: { tests: string[]; except: number }) =>
           tests.includes('test/a.test.ts > adds') && except === caller.id
@@ -250,7 +252,7 @@ it('runs CI on the PC runner first and delivers its failing tests without GitHub
     ciExtension({
       projectRoot: checkout,
       harness: () => opened.harness,
-      need: (() => ({ get: async () => undefined, failing: async () => [] })) as never,
+      need: (() => ({ get: async () => undefined, failing: async () => [], resultIn })) as never,
     }),
   )
   prepared.faux!.setResponses([

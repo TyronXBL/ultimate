@@ -20,6 +20,7 @@ import type { Run, RunEvent } from '../extensions/automations/state.ts'
 import type { ActionContext } from '../server/actions.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
+import { resultIn } from '../extensions/conversations/server.ts'
 import { apis, eventHost, temp, until as waitFor } from './helpers.ts'
 import { ModelsApi } from '../extensions/models/api.ts'
 import { modelsService } from '../extensions/models/set-model.ts'
@@ -42,7 +43,7 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 async function fixture() {
-  const provided = new Map<string, unknown>()
+  const provided = new Map<string, unknown>([['conversations', { resultIn }]])
   const root = await temp('ultimate-automations-')
   const userHome = await temp()
   await mkdir(join(root, 'agents'))

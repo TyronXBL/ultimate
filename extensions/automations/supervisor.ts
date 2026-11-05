@@ -19,6 +19,7 @@ import type { Group, GroupProcess } from '../../lib/process-group.ts'
 import { readSecret, validateName } from '../../lib/secrets.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { MessagesApi } from '../messages/api.ts'
+import { ConversationsApi } from '../conversations/api.ts'
 import { Done, Escalated, Exited, Started } from './refs.ts'
 import type { Automations as Ledger } from './server.ts'
 import { doneText, fireText, isId, isSlug, STANDING, trimLog, WatcherLabel } from './types.ts'
@@ -374,20 +375,27 @@ export function supervisor(
           const requestId = `automations:${sub.id}:${event}:${target}`
           const conversation = await runtime.conversation(id, ctx)
           if (!conversation) throw new Error(`Automation ${sub.id}: conversation #${id} is missing`)
-          // Pi admits requestId in the submission transaction, including queued follow-ups.
-          await conversation.submit(
-            {
-              type: 'input',
-              content,
-              whenBusy: 'followUp',
-              requestId,
-              entry: {
-                kind: `automations.${kind}`,
-                data: { id: sub.id, name: sub.name, text },
-              },
-            },
-            ctx,
-          )
+          const input = {
+            type: 'input',
+            content,
+            whenBusy: 'followUp',
+            requestId,
+            entry: { kind: `automations.${kind}`, data: { id: sub.id, name: sub.name, text } },
+          } as const
+          // Pi admits requestId in the submission transaction, including queued follow-ups. The watcher's own work
+          // always wakes it; a subscriber in a concluded tree gets a note.
+          await host
+            .harness()
+            .commit(
+              async (tx) =>
+                conversation.submit(
+                  tx,
+                  kind === 'writing' || kind === 'failed'
+                    ? input
+                    : await host.need(ConversationsApi).resultIn(tx, id, input),
+                ),
+              ctx,
+            )
         }
         await runtime.commit(() => terminal, ctx)
       },
