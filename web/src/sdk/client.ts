@@ -1,6 +1,8 @@
 import { ActionError, actionMessage, createApi } from './api.ts'
 import { createRegistry } from './registry.ts'
-import { createStore } from './store.ts'
+import { createStore, showingRequested } from './store.ts'
+import { step } from './selection.ts'
+import type { Selection } from './selection.ts'
 import { touchKeyboard, viewport } from './viewport.ts'
 import { createTestHook } from './test-hook.ts'
 import type { TestHook } from './test-hook.ts'
@@ -13,9 +15,15 @@ declare global {
 import { createUiState } from './ui-state.ts'
 
 const initialUrl = new URL(location.href)
-let initialized = false
-let replaceSelection = true
-let selected: number | undefined
+let selection: Selection = { phase: 'starting' }
+function dispatchSelection(event: Parameters<typeof step>[1]) {
+  const result = step(selection, event)
+  selection = result.state
+  for (const effect of result.effects) {
+    if (effect.type === 'url') writeConversation(effect.id, effect.replace)
+    else store.show(effect.id)
+  }
+}
 
 function urlConversation() {
   const value = new URL(location.href).searchParams.get('conversation')
@@ -46,7 +54,7 @@ export const store = createStore({
     codeWrap: codeWrap === null ? viewport() === 'phone' && touchKeyboard() : codeWrap === '1',
   },
   onFallback: () => {
-    replaceSelection = true
+    dispatchSelection({ type: 'redirect' })
     uiState.delete('shell.conversation')
   },
 })
@@ -114,7 +122,7 @@ store.subscribe(() => {
     server = process
   }
   if (shared && shared !== stale) {
-    if (!initialized) {
+    if (selection.phase === 'starting') {
       // Receive the saved shell first, but do not follow it until the explicit URL has won.
       uiState.receive(shared)
       if (initialUrl.searchParams.has('conversation')) {
@@ -122,17 +130,15 @@ store.subscribe(() => {
         if (id === undefined) uiState.delete('shell.conversation')
         else uiState.set('shell.conversation', id)
       }
-      initialized = true
-      followSelection()
+      const value = uiState.get('shell.conversation')
+      dispatchSelection({ type: 'started', id: typeof value === 'number' ? value : undefined })
     } else if (!detached) uiState.receive(shared)
   }
   // Only a chosen conversation goes into the URL: the stream's fallback to the root is not a choice, and a reload of
   // `?conversation=1` would make it one (a fresh preview's Vite reloads once), keeping the page off @ultimate.
-  const { view, requested } = store.getState()
-  if (initialized && view && requested === view.conversation.id) {
-    writeConversation(view.conversation.id, true)
-    replaceSelection = false
-  }
+  const state = store.getState()
+  if (selection.phase === 'following' && showingRequested(state))
+    dispatchSelection({ type: 'shown', id: state.view!.conversation.id })
   // The theme extension paints the palette and the browser bar for this polarity.
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
   document.documentElement.toggleAttribute('data-code-wrap', ui.codeWrap)
@@ -153,33 +159,23 @@ export function setCodeWrap(on: boolean) {
 }
 /** The next selection replaces the current history entry rather than pushing one, as a redirect does. */
 export function replaceNextSelection() {
-  replaceSelection = true
+  dispatchSelection({ type: 'redirect' })
 }
 // The stream follows `shell.conversation`, whichever tab or action set it.
 function followSelection() {
-  if (!initialized) return
   const value = uiState.get('shell.conversation')
-  const id = typeof value === 'number' ? value : undefined
-  if (id !== selected) {
-    selected = id
-    if (id !== undefined) writeConversation(id, replaceSelection)
-  }
-  store.show(id)
-  replaceSelection = false
+  dispatchSelection({ type: 'selected', id: typeof value === 'number' ? value : undefined })
 }
 uiState.subscribe(followSelection)
 addEventListener('popstate', () => {
-  replaceSelection = true
+  dispatchSelection({ type: 'redirect' })
   const id = urlConversation()
   if (id === undefined) uiState.delete('shell.conversation')
   else uiState.set('shell.conversation', id)
   // An unchanged selection emits no notification, but may still need URL canonicalization.
   followSelection()
-  const { view, requested } = store.getState()
-  if (view && requested === view.conversation.id) {
-    writeConversation(view.conversation.id, true)
-    replaceSelection = false
-  }
+  const state = store.getState()
+  if (showingRequested(state)) dispatchSelection({ type: 'shown', id: state.view!.conversation.id })
 })
 addEventListener('pagehide', () => uiState.flush())
 // An action failure no caller handled: show it rather than lose it in the console.

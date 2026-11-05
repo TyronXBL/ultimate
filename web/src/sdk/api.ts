@@ -14,6 +14,7 @@ import type {
 } from '../../../shared/protocol.ts'
 import type { ActionRef } from '../../../shared/extension-api.ts'
 import { errorMessage } from './format.ts'
+import { shownConversation } from './store.ts'
 import type { Store } from './store.ts'
 
 /** Per-call options of `api.action`. */
@@ -82,7 +83,7 @@ export function createApi(store: Store, options: { fetch?: typeof fetch } = {}) 
   }
   const shown = () => {
     const state = store.getState()
-    return state.view?.conversation.id ?? state.requested ?? ROOT
+    return shownConversation(state) ?? ROOT
   }
   const conversation = (id: number | undefined, action: string) =>
     `/api/conversations/${id ?? shown()}/${action}`

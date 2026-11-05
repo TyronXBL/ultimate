@@ -65,6 +65,11 @@ export interface EventSourceLike {
   addEventListener(name: string, listener: (event: Event) => void): void
   close(): void
 }
+export const shownConversation = (state: Pick<State, 'view' | 'requested'>) =>
+  state.view?.conversation.id ?? state.requested
+export const showingRequested = (state: Pick<State, 'view' | 'requested'>) =>
+  Boolean(state.view && state.requested === state.view.conversation.id)
+
 export interface StoreOptions {
   eventSource?: (url: string) => EventSourceLike
   fetch?: typeof fetch

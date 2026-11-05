@@ -28,6 +28,7 @@ import type { ActionArgs, ActionError, ActionOptions } from './api.ts'
 import { actionRef, docRef } from '../../../shared/extension-api.ts'
 import type { ActionRef, DocRef } from '../../../shared/extension-api.ts'
 import { api, registry, store, uiState } from './client.ts'
+import { shownConversation } from './store.ts'
 import {
   HOME,
   compactDocs,
@@ -496,7 +497,7 @@ const inFlight = new Map<
 /** The conversation an unscoped action acts on, as `api.action` resolves it. */
 function shownId() {
   const { view, requested } = store.getState()
-  return view?.conversation.id ?? requested ?? ROOT
+  return shownConversation({ view, requested }) ?? ROOT
 }
 function joinCall<T>(
   key: string,

@@ -15,6 +15,7 @@ import {
   useRegionOpen,
 } from '../sdk/hooks.ts'
 import { panelItems, slotItems } from '../sdk/registry.ts'
+import { shownConversation } from '../sdk/store.ts'
 import { ConversationKind } from '../sdk/types.ts'
 import { Provided, Slot } from './boundary.tsx'
 import { Shortcut } from './palette.tsx'
@@ -78,7 +79,7 @@ const nameOf = (conversation: ConversationSummary) =>
 function Trail() {
   const { busy } = useConversation()
   // The requested conversation while its snapshot loads, so a switch keeps naming where it goes.
-  const id = useStore((state) => state.view?.conversation.id ?? state.requested)
+  const id = useStore((state) => shownConversation(state))
   const conversations = useConversations()
   const summary = conversations.find((conversation) => conversation.id === id)
   const trail = ancestors(id, conversations)

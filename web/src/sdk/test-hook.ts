@@ -4,6 +4,7 @@ import type { EventRecord } from '../../../shared/events.ts'
 import { EVENT_FEED } from '../../../shared/events.ts'
 import type { Api } from './api.ts'
 import { ROOT } from './api.ts'
+import { shownConversation } from './store.ts'
 import type { State, Store } from './store.ts'
 
 /** What `until` waits for: the conversation's turn done, nothing busy anywhere, a new entry kind, or a durable event. */
@@ -44,7 +45,7 @@ export function createTestHook(store: Store, api: Api) {
   store.watchDocOf(ROOT, EVENT_FEED)
   const feed = (state: State) =>
     (state.docsOf[ROOT]?.[EVENT_FEED] as { events?: EventRecord[] } | null)?.events ?? []
-  const shown = (state: State) => state.view?.conversation.id ?? state.requested ?? ROOT
+  const shown = (state: State) => shownConversation(state) ?? ROOT
   const summary = (state: State, id: number) => state.conversations.find((item) => item.id === id)
   const lastEntry = (state: State, id: number) =>
     (id === state.view?.conversation.id ? state.view : state.viewsOf[id])?.entries.at(-1)?.id ?? 0
