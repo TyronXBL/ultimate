@@ -91,7 +91,9 @@ interface Flow {
 const kept = 10
 
 function liveFlows(host: ExtensionHost) {
-  return host.resource('models.login', () => {
+  // Keyed with the document's version: a reload onto a new version never adopts flows the old code still writes in the
+  // old shape; `onOpen` cancels them instead.
+  return host.resource('models.login.v2', () => {
     const live = new Map<string, Flow>()
     host.onClose(async () => {
       for (const flow of live.values()) flow.controller.abort()

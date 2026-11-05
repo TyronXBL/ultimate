@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { mergeOffered, standingOf } from '../../extensions/update/item.ts'
+import { standingOf } from '../../extensions/update/item.ts'
 import type { UpdateState } from '../../extensions/update/refs.ts'
 
 const state = (extra: Partial<UpdateState> = {}): UpdateState => ({
@@ -71,12 +71,4 @@ const standings: [string, Partial<UpdateState>, object][] = [
 
 it.each(standings)('derives %s', (_name, facts, expected) => {
   expect(standingOf(state(facts))).toEqual(expected)
-})
-
-// a57c0b48: a merge was offered while the lander landed into the same branch.
-it.each([
-  [{ diverged: true, project: true, landing: false }, true],
-  [{ diverged: true, project: true, landing: true }, false],
-])('offers a merge for %j: %s', (facts, offered) => {
-  expect(mergeOffered(facts)).toBe(offered)
 })

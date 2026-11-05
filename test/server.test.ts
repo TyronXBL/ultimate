@@ -955,6 +955,52 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
   it.each(loginMoves)('moves a login flow on %s', (_name, from, event, expected) => {
     expect(transition(from, event)).toEqual(expected)
   })
+  it('keeps a login completing while its facet reloads complete', async () => {
+    const { server, options } = await fixture(false, {
+      models: `export { default, actions, docs, userActions } from ${JSON.stringify(resolvePath('extensions/models/server.ts'))}`,
+    })
+    vi.spyOn(server.host.modelRuntime, 'getProvider').mockReturnValue({
+      id: 'stub',
+      auth: {
+        apiKey: { name: 'Stub', login: async () => ({ key: '' }), resolve: async () => undefined },
+      },
+    } as unknown as ReturnType<typeof server.host.modelRuntime.getProvider>)
+    let succeed = () => {}
+    vi.spyOn(server.host.modelRuntime, 'login').mockImplementation(async () => {
+      await new Promise<void>((resolve) => (succeed = resolve))
+      return { type: 'api_key', key: 'not-a-real-credential' }
+    })
+    // Hold the first commit after the provider succeeds: the finalizer's, before the flow's phase is written.
+    let hold: (() => void) | undefined
+    let holding = false
+    const commit = server.harness.commit.bind(server.harness)
+    vi.spyOn(server.harness, 'commit').mockImplementation(async (...args) => {
+      if (hold && !holding) {
+        holding = true
+        await new Promise<void>((resolve) => (hold = resolve))
+      }
+      return commit(...args)
+    })
+    const response = await post(server, '/api/extensions/models/actions/login', {
+      args: { provider: 'stub', type: 'api_key' },
+      conversationId: 1,
+    })
+    const flowId = String(response.data.result.flowId)
+    const phase = async () =>
+      (await server.harness.snapshot(Logins, 1 as ConversationId, context))?.flows[flowId]?.phase
+    await until(async () => (await phase())?.state === 'running')
+    hold = () => {}
+    succeed()
+    await until(() => holding)
+    const info = () => server.extensions.info().find((entry) => entry.name === 'models')!.server!
+    const loaded = info().loadedAt
+    const path = join(options.ultimateRoot, 'extensions/models/server.ts')
+    await writeFile(path, (await readFile(path, 'utf8')) + '\n')
+    await until(() => info().loadedAt !== loaded)
+    hold()
+    await until(async () => (await phase())?.state !== 'running')
+    expect(await phase()).toEqual({ state: 'complete' })
+  })
   it('runs logins in the models extension: prompt, answer, cancel, no credential leak, dead flows cancelled', async () => {
     const { server, options } = await fixture(false, {
       models: `export { default, actions, docs, userActions } from ${JSON.stringify(resolvePath('extensions/models/server.ts'))}`,

@@ -29,7 +29,7 @@ import {
 import { Applied, CheckAction, MergeAction, Refused, StateAction, UpdateAction } from './refs.ts'
 import type { UpdateResult, UpdateState } from './refs.ts'
 import { UpdateApi } from './api.ts'
-import { mergeOffered, standingOf } from './item.ts'
+import { standingOf } from './item.ts'
 
 /** How often the clone is compared with origin locally; origin itself is fetched at most hourly (`FETCH_EVERY`). */
 export const TICK = 5 * 60_000
@@ -259,13 +259,7 @@ async function refresh(host: ExtensionHost, check: boolean, force = false) {
     ...rest,
     ...(summary ? { summary } : {}),
     refused: rest.refused ?? landingNow,
-    ...(mergeOffered({
-      diverged: Boolean(diverged),
-      project: Boolean(diverged) && (await isProject(host)),
-      landing: Boolean(landingNow),
-    })
-      ? { merge: true as const }
-      : {}),
+    ...(diverged && !landingNow && (await isProject(host)) ? { merge: true as const } : {}),
     ...(error ? { error } : {}),
     ...(repo && remoteHead ? { compare: compareUrl(repo, head, remoteHead) } : {}),
     install: await installOwed(root),

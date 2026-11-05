@@ -4,7 +4,7 @@ import type { UpdateResult, UpdateState } from './refs.ts'
 type Hold = { hold: 'none' } | { hold: 'refused'; reason: string } | { hold: 'merge' }
 
 /** What the popover shows besides the kind: the update this server made, and what holds the next one back. */
-type Shown = Hold & { updated?: UpdateResult & { ok: true } }
+type Owed = Hold & { updated?: UpdateResult & { ok: true } }
 
 /**
  * What the clone's update state shows, derived once for the status-line item, the popover and the server's merge
@@ -13,8 +13,8 @@ type Shown = Hold & { updated?: UpdateResult & { ok: true } }
  */
 export type Standing =
   | { kind: 'preview' }
-  | (Shown & { kind: 'current' | 'behind' | 'install' })
-  | (Shown & { kind: 'restart'; reload: boolean })
+  | (Owed & { kind: 'current' | 'behind' | 'install' })
+  | (Owed & { kind: 'restart'; reload: boolean })
 
 export function standingOf(state: UpdateState): Standing {
   if (state.preview) return { kind: 'preview' }
@@ -33,7 +33,3 @@ export function standingOf(state: UpdateState): Standing {
   if (reload || updated?.layers.bin) return { kind: 'restart', reload, ...shown }
   return { kind: 'current', ...shown }
 }
-
-/** Whether the popover offers @ultimate's merge: a diverged clone that is the project, while the lander does not land. */
-export const mergeOffered = (facts: { diverged: boolean; project: boolean; landing: boolean }) =>
-  facts.diverged && facts.project && !facts.landing
