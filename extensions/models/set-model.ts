@@ -5,7 +5,7 @@ import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ModelOwnerDoc } from './refs.ts'
 import type { ModelOwner } from './refs.ts'
-import { ownerStep } from './owner.ts'
+import { backupIn, ownerStep } from './owner.ts'
 import type { ModelEvent } from './owner.ts'
 
 /** A conversation without the document, also one from before it, started on the model it runs: `default`. */
@@ -29,8 +29,8 @@ export async function setModel(
 ) {
   const owner = await tx.doc(Owner, id)
   // A plain copy: the new owner may hold parts of the stored one (a wait's `under`), which is emptied below.
-  const backup =
-    owner.by === 'backup' ? { primary: { ...owner.primary }, thinking: owner.thinking } : undefined
+  const found = backupIn(owner)
+  const backup = found && { primary: { ...found.primary }, thinking: found.thinking }
   const next = JSON.stringify(ownerStep(owner, event))
   if (next !== JSON.stringify(owner)) {
     for (const key of Object.keys(owner)) Reflect.deleteProperty(owner, key)

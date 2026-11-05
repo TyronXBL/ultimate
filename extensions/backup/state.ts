@@ -3,13 +3,26 @@
  * pure decision contract; the owner stores the record. Pure: time and logins come in as arguments.
  */
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai'
-import type { BackupRecord } from '../models/refs.ts'
-import type { ModelOwner } from '../models/refs.ts'
-import type { ModelRef } from './refs.ts'
+import type { BackupRecord, ModelOwner } from '../models/refs.ts'
+import type { BackupState, ModelRef } from './refs.ts'
 
-export type BackupState = { kind: 'primary' } | ({ kind: 'backup' } & BackupRecord)
-export const backupOf = (owner: ModelOwner): BackupState =>
-  owner.by === 'backup' ? { kind: 'backup', ...owner } : { kind: 'primary' }
+/** The backup state of a conversation whose owner keeps `record` (`ModelsApi.backup`), or none. */
+export const backupOf = (record: BackupRecord | undefined): BackupState =>
+  record ? { kind: 'backup', ...record } : { kind: 'primary' }
+
+/**
+ * Whether `legacy`, a `backup.state` record from before backups were an owner state, still holds: the conversation still
+ * runs on that backup and nobody decided its model since (a pick, a wait for a login). Can go once no host has one.
+ */
+export const legacyHolds = (
+  legacy: BackupState,
+  owner: ModelOwner,
+  current: ModelRef | undefined,
+): legacy is BackupState & { kind: 'backup' } =>
+  legacy.kind === 'backup' &&
+  (owner.by === 'default' || owner.by === 'login-fallback') &&
+  current !== undefined &&
+  name(current) === name(legacy.to)
 
 export const name = (ref: ModelRef) => `${ref.provider}/${ref.modelId}`
 /** A copy of the model alone, so a stored value never shares objects with the document it replaces. */

@@ -32,6 +32,7 @@ import { transition } from './login-state.ts'
 import type { LoginEvent } from './login-state.ts'
 import { familiesView, saveFamilies } from './families.ts'
 import { fallback } from './fallback.ts'
+import { backupIn } from './owner.ts'
 import { Owner, setModel } from './set-model.ts'
 
 /** A Pi type as a document holds it: plain JSON, arrays mutable. */
@@ -298,6 +299,7 @@ export default function models(host: ExtensionHost) {
   host.implement(ModelsApi, {
     setModel: (tx, id, event) => setModel(host, tx, id, event),
     owner: (tx, id) => tx.doc(Owner, id),
+    backup: async (tx, id) => backupIn(await tx.doc(Owner, id)),
   })
   const live = liveFlows(host)
   // Each facet registers its own, so it reads Logins with this load's token: flows no live login drives (those of a

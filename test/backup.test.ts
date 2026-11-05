@@ -18,7 +18,7 @@ import modelsExtension from '../extensions/models/server.ts'
 import { Owner } from '../extensions/models/set-model.ts'
 import { backupOrder, backupStep } from '../extensions/backup/state.ts'
 import type { BackupRecord } from '../extensions/models/refs.ts'
-import type { BackupState } from '../extensions/backup/state.ts'
+import type { BackupState } from '../extensions/backup/refs.ts'
 import type { Run } from '../extensions/subagents/refs.ts'
 import { Standing, SubagentsApi } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
@@ -280,10 +280,10 @@ it('returns to the primary at a run that starts after the cooldown', async () =>
     Object.assign(await tx.doc(Owner, root.id), { since: Date.now() - 31 * 60_000 })
   }, context)
 
-  const resumed = await root.submit({ type: 'input', content: 'next' }, context)
-  const resumedResult = await resumed.wait(context)
+  expect(
+    (await (await root.submit({ type: 'input', content: 'next' }, context)).wait(context)).status,
+  ).toBe('done')
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-1' })
-  expect(resumedResult.status).toBe('done')
   const [divider] = await dividers(harness, root.id, 'backup.return')
   expect(divider.data).toEqual({ from: 'faux/faux-2', to: 'faux/faux-1' })
   expect(await state(harness, root.id)).toEqual({ by: 'default' })

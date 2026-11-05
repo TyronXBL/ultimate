@@ -23,16 +23,18 @@ import { BackupOrder, ModelsApi, Pin } from '../models/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
-import { backupOf, backupOrder, backupStep, COOLDOWN_MINUTES, fromLegacy, name } from './state.ts'
-import type {
-  BackupNotice,
-  BackupReturned,
-  BackupSwitch,
-  LegacyBackupState,
-  ModelRef,
-} from './refs.ts'
+import {
+  backupOf,
+  backupOrder,
+  backupStep,
+  COOLDOWN_MINUTES,
+  fromLegacy,
+  legacyHolds,
+  name,
+} from './state.ts'
+import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef } from './refs.ts'
 
-const State = defineDoc<LegacyBackupState>({
+const State = defineDoc<BackupState>({
   kind: BackupDoc.kind,
   checkpointWhen: () => false,
   version: 2,
@@ -46,21 +48,19 @@ const State = defineDoc<LegacyBackupState>({
 export const docs = [State]
 
 /**
- * The model owner of conversation `id` inside `tx`, after moving a `backup.state` record from before backups were an
- * owner state into it: kept when the conversation still runs on that backup, dropped otherwise, as the old code dropped a
- * record whose backup someone else had replaced. Can go once no host has such a record.
+ * The backup of conversation `id` inside `tx`, after moving a `backup.state` record from before backups were an owner
+ * state into the owner when it still holds (`legacyHolds`), and dropping it either way. Can go once no host has one.
  */
-async function ownerOf(host: Host, tx: Tx, id: ConversationId) {
+async function backupFor(host: Host, tx: Tx, id: ConversationId) {
   const models = host.need(ModelsApi)
   const legacy = await tx.doc(State, id)
   if (legacy.kind === 'backup') {
-    const current = (await tx.doc(AgentDoc, id)).model
-    if (current && name(current) === name(legacy.to))
+    if (legacyHolds(legacy, await models.owner(tx, id), (await tx.doc(AgentDoc, id)).model))
       await models.setModel(tx, id, { type: 'backup', record: legacy })
     for (const key of Object.keys(legacy)) Reflect.deleteProperty(legacy, key)
-    Object.assign(legacy, { kind: 'primary' } satisfies LegacyBackupState)
+    Object.assign(legacy, { kind: 'primary' } satisfies BackupState)
   }
-  return models.owner(tx, id)
+  return backupOf(await models.backup(tx, id))
 }
 
 type Host = Pick<
@@ -111,9 +111,9 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       // Every conversation runs on a model of its own: Pi answers a run without one `no_model`, never with a limit.
       const current = agent.model
       if (!current) return undefined
-      const owner = await ownerOf(host, tx, id)
+      const backup = await backupFor(host, tx, id)
       const definition = await host.want(Pin)?.definition(tx, id)
-      const { state, outcome: step } = backupStep(backupOf(owner), {
+      const { state, outcome: step } = backupStep(backup, {
         type: 'limit',
         current,
         currentThinking: agent.thinkingLevel,
@@ -220,7 +220,7 @@ async function returned(
   const agent = await tx.doc(AgentDoc, id)
   const now = Date.now()
   const models = host.need(ModelsApi)
-  const { outcome: step } = backupStep(backupOf(await ownerOf(host, tx, id)), {
+  const { outcome: step } = backupStep(await backupFor(host, tx, id), {
     type: 'run',
     current: agent.model,
     now,
@@ -260,11 +260,13 @@ export default function extension(host: Host) {
       const agent = await tx.doc(AgentDoc, id)
       if (previewModel() || !agent.model) return []
       const available = host.modelRuntime.getAvailableSnapshot()
-      // A read: a `backup.state` record from before backups were an owner state counts until a run moves it (`ownerOf`).
+      // Only a read: a `backup.state` record that still holds counts until a run moves it (`backupFor`).
+      const models = host.need(ModelsApi)
       const legacy = await tx.doc(State, id)
-      const owner = await host.need(ModelsApi).owner(tx, id)
       const order = backupOrder(
-        owner.by !== 'backup' && legacy.kind === 'backup' ? legacy : backupOf(owner),
+        legacyHolds(legacy, await models.owner(tx, id), agent.model)
+          ? legacy
+          : backupOf(await models.backup(tx, id)),
         {
           current: agent.model,
           currentThinking: agent.thinkingLevel,

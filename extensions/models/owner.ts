@@ -21,13 +21,21 @@ export type ModelEvent =
   /** Reconcile writers outside the owner; remove when batch 3 routes subagents, lineage and core `/configure` through `setModel`. */
   | { type: 'backup-left' }
 
-/** The owner after `event`. A wait keeps the owner it found (`under`), and a wait over a wait keeps the first one's. */
+/** The backup the conversation runs on, also while it waits for that backup's login, if it runs on one. */
+export function backupIn(owner: ModelOwner) {
+  const found = owner.by === 'login-wait' ? owner.under : owner
+  return found.by === 'backup' ? found : undefined
+}
+
+/**
+ * The owner after `event`. A wait keeps the owner it found (`under`), and a wait over a wait keeps the first one's; a
+ * backup keeps the owner it replaced, also through a chain of backups and a wait for a backup's login.
+ */
 export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
   if (event.type === 'pick') return { by: 'user' }
   if (event.type === 'login-fallback')
     return { by: 'login-fallback', from: event.from, reason: event.reason }
   if (event.type === 'backup') {
-    // A chain of backups keeps the owner the first one found.
     const found = state.by === 'login-wait' ? state.under : state
     const { primary, thinking, to, since, tried } = event.record
     return {
@@ -41,7 +49,7 @@ export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
     }
   }
   if (event.type === 'return' || event.type === 'backup-left')
-    return state.by === 'backup' ? state.under : state
+    return backupIn(state)?.under ?? state
   return {
     by: 'login-wait',
     from: event.from,

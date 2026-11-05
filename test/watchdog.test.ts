@@ -31,6 +31,7 @@ import { afterEach, expect, it } from 'vitest'
 import watchdog, { diagnose } from '../extensions/watchdog/server.ts'
 import { WatchdogApi } from '../extensions/watchdog/api.ts'
 import backupExtension from '../extensions/backup/server.ts'
+import modelsExtension from '../extensions/models/server.ts'
 import { Pin } from '../extensions/models/api.ts'
 import { idleNote } from '../extensions/watchdog/idle.ts'
 import type { WatchdogService } from '../extensions/watchdog/api.ts'
@@ -114,7 +115,9 @@ async function fixture(
         ? { concludedIn }
         : api.name === 'subagents'
           ? { recordBackup: async () => {} }
-          : { doc: Workspaces },
+          : api.name === 'models'
+            ? services.get(api.name)
+            : { doc: Workspaces },
     want: (api: { name: string }) =>
       api.name === Pin.name ? { definition: async () => ({ fallback }) } : services.get(api.name),
     resource: <T>(key: string, create: () => T) => {
@@ -285,6 +288,7 @@ async function fixture(
         const [provider, modelId] = ref.split('/')
         return { provider, modelId }
       })
+      registry.install(modelsExtension(host))
       registry.install(backupExtension(host))
     },
     stop: async (id: ConversationId, parent: ConversationId) => {

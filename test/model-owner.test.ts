@@ -116,6 +116,22 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
     after: { by: 'login-wait', from: sol, under: backup },
     asked: sol,
   },
+  // #147838 review: a wait for a backup's login hid the backup, so the cooldown never returned to the primary.
+  {
+    row: 'return during a wait for a backup’s login restores the owner under the backup',
+    from: { by: 'login-wait', from: sol, under: backup },
+    event: { type: 'return' },
+    after: backup.under,
+  },
+  {
+    row: 'a backup during a wait for a backup’s login chains without nesting',
+    from: { by: 'login-wait', from: sol, under: backup },
+    event: {
+      type: 'backup',
+      record: { ...record, to: { provider: 'faux', modelId: 'faux-3' } },
+    },
+    after: { ...backup, to: { provider: 'faux', modelId: 'faux-3' } },
+  },
   {
     row: 'a switch ends the wait',
     from: waiting,
