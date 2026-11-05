@@ -7,6 +7,7 @@ import { BackupsDoc, ModelOwnerDoc } from './refs.ts'
 import type { BackupShown, ModelOwner } from './refs.ts'
 import { backupIn, ownerStep } from './owner.ts'
 import type { ModelEvent } from './owner.ts'
+import type { ModelsService } from './api.ts'
 
 /** A conversation without the document, also one from before it, started on the model it runs: `default`. */
 export const Owner = defineDoc<ModelOwner>({
@@ -35,6 +36,13 @@ export const Backups = defineDoc<Record<string, BackupShown>>({
   history: 'latest',
   fork: 'initial',
   initial: () => ({}),
+})
+
+/** The `ModelsApi` service over this owner. */
+export const modelsService = (host: Pick<ExtensionHost, 'modelRuntime'>): ModelsService => ({
+  setModel: (tx, id, event) => setModel(host, tx, id, event),
+  owner: (tx, id) => tx.doc(Owner, id),
+  backup: async (tx, id) => backupIn(await tx.doc(Owner, id)),
 })
 
 /** Set conversation `id`'s model as `event` says, inside `tx`, and record the owner `ownerStep` returns. */

@@ -22,6 +22,8 @@ import { conditionLook, editCondition, step } from '../extensions/automations/co
 import type { Condition } from '../extensions/automations/types.ts'
 import { IDLE_TICK } from '../extensions/automations/triggers.ts'
 import { temp, eventHost, until, apis } from './helpers.ts'
+import { ModelsApi } from '../extensions/models/api.ts'
+import { modelsService } from '../extensions/models/set-model.ts'
 
 const closes: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -70,7 +72,12 @@ async function fixture() {
     onClose: (fn: () => Promise<void>) => {
       closer = fn
     },
-    ...apis(new Map<string, unknown>([['messages', { send }]])),
+    ...apis(
+      new Map<string, unknown>([
+        ['messages', { send }],
+        [ModelsApi.name, modelsService(prepared)],
+      ]),
+    ),
     extensions: () => [{ name: 'subagents', enabled: true }],
     projectSetup: async () => ({ decision: false }),
     notice: (message: string) => {

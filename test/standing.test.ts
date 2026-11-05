@@ -21,7 +21,7 @@ import subagents from '../extensions/subagents/server.ts'
 import { Profile, Standing, Started } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { Metadata } from '../server/metadata.ts'
-import { ModelsApi } from '../extensions/models/api.ts'
+import { modelsService } from '../extensions/models/set-model.ts'
 import { Marks } from '../extensions/conversations/api.ts'
 import { parseDefinition, saveDefinition } from '../lib/agents.ts'
 
@@ -300,7 +300,7 @@ it('keeps a standing conversation on a backup model of its pinned definition acr
   )
   const id = await service.standing('x', ctx)
   const conversation = (await host.harness.conversation(id, ctx))!
-  const models = ownerNeed(prepared.modelRuntime)(ModelsApi)
+  const models = modelsService(prepared)
   // As extensions/backup switches it after a limit; a refresh (a delivery, an automation) used to undo that.
   const backup = { provider: 'faux', modelId: 'faux-1' }
   await host.harness.commit(async (tx) => {

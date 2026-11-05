@@ -20,8 +20,9 @@ import type { Run, RunEvent } from '../extensions/automations/state.ts'
 import type { ActionContext } from '../server/actions.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
-import { apis, eventHost, ownerNeed, temp, until as waitFor } from './helpers.ts'
+import { apis, eventHost, temp, until as waitFor } from './helpers.ts'
 import { ModelsApi } from '../extensions/models/api.ts'
+import { modelsService } from '../extensions/models/set-model.ts'
 
 // Advance scheduler time while the shared helper measures IO against a real deadline: 50 ms per 5 ms of real time
 // at most. A fixed step per poll let fake time race hours ahead while a loaded machine stalled real IO, so schedules
@@ -101,7 +102,7 @@ async function fixture() {
   provided.set('subagents', {
     createChild: (tx, options) => createChild(host, tx, options),
   } satisfies Partial<SubagentsService>)
-  provided.set(ModelsApi.name, ownerNeed(prepared.modelRuntime)(ModelsApi))
+  provided.set(ModelsApi.name, modelsService(prepared))
   const extension = automations(host as unknown as Parameters<typeof automations>[0])
   prepared.registry.install(extension)
   const route: FauxResponseFactory = (transcript) => {

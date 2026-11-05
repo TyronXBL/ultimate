@@ -24,6 +24,8 @@ import self from '../../extensions/self/server.ts'
 import messagesExtension from '../../extensions/messages/server.ts'
 import { Messages } from '../../extensions/messages/api.ts'
 import subagents from '../../extensions/subagents/server.ts'
+import { ModelsApi } from '../../extensions/models/api.ts'
+import { modelsService } from '../../extensions/models/set-model.ts'
 import { temp, until } from '../helpers.ts'
 
 /**
@@ -128,6 +130,7 @@ export async function fixture(
     build: () => ({ id: 'test-build' }),
     system: () => ({ process: {} }),
   } as unknown as ExtensionHost
+  services.set(ModelsApi.name, modelsService(prepared))
   // The core's conversations, until a test implements its own: nothing concluded, no titles or summaries.
   services.set(
     'conversations',

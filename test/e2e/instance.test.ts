@@ -25,6 +25,8 @@ import type { ConversationsService } from '../../extensions/conversations/api.ts
 import { setAutomaticSummaries } from '../../extensions/conversations/summary.ts'
 import { setStanding } from '../../extensions/conversations/server.ts'
 import { apis, attach, post, temp, removeTemp, until } from '../helpers.ts'
+import { ModelsApi } from '../../extensions/models/api.ts'
+import { modelsService } from '../../extensions/models/set-model.ts'
 import { scriptedModel } from './scripted-model.ts'
 
 type Preview = { id: string; url: string; home: string; pid: number }
@@ -119,6 +121,7 @@ async function fixture({ foreign = false } = {}) {
       cleanups.push(cleanup)
     },
   } as unknown as ExtensionHost
+  services.set(ModelsApi.name, modelsService(prepared))
   // The core's conversations: nothing concluded, no summaries.
   services.set('conversations', {
     concluded: async () => new Set(),

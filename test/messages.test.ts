@@ -1,14 +1,7 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
-import {
-  eventHost,
-  temp,
-  removeTemp,
-  until,
-  fauxServer,
-  linkDependencies,
-  ownerNeed,
-} from './helpers.ts'
+import { eventHost, temp, removeTemp, until, fauxServer, linkDependencies } from './helpers.ts'
 import { ModelsApi } from '../extensions/models/api.ts'
+import { modelsService } from '../extensions/models/set-model.ts'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -181,7 +174,7 @@ async function fixture(
                   branch: (input: BranchInput, ctx: Context) => startBranch(host, input, ctx),
                 }
               : name === ModelsApi.name
-                ? ownerNeed(prepared.modelRuntime)(ModelsApi)
+                ? modelsService(prepared)
                 : undefined
   const host = {
     ...prepared,

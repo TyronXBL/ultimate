@@ -797,8 +797,9 @@ export default function subagents(
         // A refresh that keeps the model and level keeps who set them: a pick stays the user's.
         if (
           created ||
-          JSON.stringify([model, thinkingLevel]) !==
-            JSON.stringify([base.model ?? null, base.thinkingLevel ?? null])
+          model?.provider !== base.model?.provider ||
+          model?.modelId !== base.model?.modelId ||
+          (thinkingLevel ?? undefined) !== base.thinkingLevel
         )
           await models.setModel(tx, id, { type: 'start', model: model ?? null, thinkingLevel })
         Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
