@@ -9,7 +9,6 @@ import {
 } from 'lucide-react'
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ImagePreviews, useImagePaste } from '@/components/image-paste'
-import type { DraftFile } from '@/components/image-paste'
 import type { KeyboardEvent, ReactNode } from 'react'
 import {
   PromptInput,
@@ -39,7 +38,8 @@ import { composerRenderers, inboxRenderer } from '../sdk/registry.ts'
 import { FileUpload } from '../sdk/types.ts'
 import { column } from './layout.ts'
 import { splitAttachments, withAttachments } from './attachments.ts'
-import { storeFiles, storedFiles, storeImages, storedImages } from './draft-images.ts'
+import { createDraft, view } from './draft.ts'
+import type { Draft } from './draft.ts'
 import {
   atFirstLine,
   mergedSteer,
@@ -198,46 +198,8 @@ export function Composer({ dock }: { dock?: boolean }) {
   )
 }
 
-type Draft = {
-  text: string
-  images: { data: string; mimeType: string }[]
-  files: DraftFile[]
-  error?: string
-  sending: boolean
-  revision: number
-}
-
 // In-flight submissions and retryable failures belong to the conversation, not its mounted editor.
 const drafts = new Map<number | undefined, ReturnType<typeof createDraft>>()
-function createDraft(id: number | undefined) {
-  const key = id === undefined ? undefined : `ultimate.draft.${id}`
-  let value: Draft = {
-    text: key ? (localStorage.getItem(key) ?? '') : '',
-    images: key ? storedImages(key) : [],
-    files: key ? storedFiles(key) : [],
-    sending: false,
-    revision: 0,
-  }
-  const listeners = new Set<() => void>()
-  return {
-    key,
-    get: () => value,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener)
-      return () => {
-        listeners.delete(listener)
-      }
-    },
-    set: (change: Partial<Draft>) => {
-      const { images, files } = value
-      value = { ...value, ...change }
-      if (key && value.images !== images) storeImages(key, value.images)
-      if (key && value.files !== files) storeFiles(key, value.files)
-      for (const listener of listeners) listener()
-    },
-  }
-}
-
 function getDraft(id: number | undefined) {
   if (!drafts.has(id)) drafts.set(id, createDraft(id))
   return drafts.get(id)!
@@ -245,9 +207,7 @@ function getDraft(id: number | undefined) {
 
 /** Replace conversation `id`'s draft with `text`, as typing it would; the caller focuses the composer. */
 export function fillComposer(id: number, text: string) {
-  const draft = getDraft(id)
-  draft.set({ text, revision: draft.get().revision + 1 })
-  if (draft.key) localStorage.setItem(draft.key, text)
+  getDraft(id).dispatch({ type: 'edit', text })
 }
 
 /**
@@ -261,20 +221,9 @@ export function insertIntoComposer(id: number, text: string) {
   const start = editor?.selectionStart ?? current.length
   const end = editor?.selectionEnd ?? current.length
   const { text: next, cursor } = spliced(current, start, end, text)
-  draft.set({ text: next, revision: draft.get().revision + 1 })
-  if (draft.key) localStorage.setItem(draft.key, next)
+  draft.dispatch({ type: 'edit', text: next })
   // The cursor follows the inserted text once React has rendered the new value.
   requestAnimationFrame(() => editor?.setSelectionRange(cursor, cursor))
-}
-
-function clearDraft(
-  draft: ReturnType<typeof createDraft>,
-  snapshot: { text: string; revision: number },
-) {
-  const stored = draft.key ? (localStorage.getItem(draft.key) ?? '') : ''
-  if (draft.get().revision !== snapshot.revision) return
-  if (draft.key && stored === snapshot.text) localStorage.removeItem(draft.key)
-  draft.set({ text: stored === snapshot.text ? '' : stored })
 }
 
 type Upload = typeof FileUpload.value
@@ -304,21 +253,22 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
   const scoped = useContext(ConversationIdContext)
   const target = useContext(ComposerTargetContext)
   const draft = getDraft(id)
-  const { text, images, files, error, sending } = useSyncExternalStore(draft.subscribe, draft.get)
-  const setError = (message: string | undefined) => draft.set({ error: message })
+  const held = useSyncExternalStore(draft.subscribe, draft.get)
+  const { text, images, files } = held
+  const { sending, error, empty, uploading } = view(held)
+  const setError = (message: string | undefined) => draft.dispatch({ type: 'fail', error: message })
   const setImages = (change: (images: Draft['images']) => Draft['images']) =>
-    draft.set({ images: change(draft.get().images), revision: draft.get().revision + 1 })
+    draft.dispatch({ type: 'images', change })
   const setFiles = (change: (files: Draft['files']) => Draft['files']) =>
-    draft.set({ files: change(draft.get().files), revision: draft.get().revision + 1 })
+    draft.dispatch({ type: 'files', change })
   const { paste, drop, attach, reading, pending } = useImagePaste({
     images,
     setImages,
     setFiles,
     setError,
-    disabled: () => loading || draft.get().sending,
+    disabled: () => loading || view(draft.get()).sending,
     upload,
   })
-  const uploading = files.some((file) => !file.path)
   // The shown conversation's composer also takes images dropped anywhere else on the page, and lights up while a file is
   // dragged over it.
   const [dragging, setDragging] = useState(false)
@@ -356,14 +306,9 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
   const key = draft.key
   useEffect(() => {
     const stored = (key ? localStorage.getItem(key) : null) ?? ''
-    if (stored !== draft.get().text) draft.set({ text: stored, revision: draft.get().revision + 1 })
+    if (stored !== draft.get().text) draft.dispatch({ type: 'edit', text: stored })
   }, [draft, key])
-  const update = (value: string) => {
-    draft.set({ text: value, revision: draft.get().revision + 1 })
-    if (!key) return
-    if (value) localStorage.setItem(key, value)
-    else localStorage.removeItem(key)
-  }
+  const update = (value: string) => draft.dispatch({ type: 'edit', text: value })
   /** Put sent text back into the draft, such as a recalled steer: its attachment lines become file chips again. */
   const restore = (value: string) => {
     const { text: rest, files: back } = splitAttachments(value)
@@ -375,7 +320,6 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
       ])
   }
   const blocked = loading ? undefined : blockedBy(agent, models)
-  const empty = !text.trim() && images.length === 0 && files.length === 0
 
   async function send(whenBusy?: 'steer' | 'followUp') {
     if (
@@ -383,7 +327,7 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
       empty ||
       blocked ||
       uploading ||
-      draft.get().sending ||
+      view(draft.get()).sending ||
       pending.current ||
       id === undefined
     )
@@ -393,7 +337,7 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
       setError('Images stay here: remove them to send elsewhere')
       return
     }
-    draft.set({ sending: true, error: undefined })
+    draft.dispatch({ type: 'send' })
     const mode = busy ? (whenBusy ?? 'steer') : undefined
     let input = { text: withAttachments(text.trim(), files), images }
     let previous: typeof input | undefined
@@ -412,34 +356,32 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
           input.images.map(({ data, mimeType }) => ({ data, mimeType })),
         )
       }
-      clearDraft(draft, submitted)
-      if (draft.get().images === submitted.images) draft.set({ images: [] })
-      if (draft.get().files === submitted.files) draft.set({ files: [] })
+      draft.dispatch({ type: 'sent', submitted, stored: draft.stored() })
     } catch (failure) {
-      if (key && draft.get().revision === submitted.revision)
-        draft.set({ text: localStorage.getItem(key) ?? '' })
+      draft.dispatch({
+        type: 'unsent',
+        submitted,
+        stored: draft.stored(),
+        error: errorMessage(failure),
+      })
       // A steer withdrawn for a merge that then failed to send would be lost: it comes back into the draft.
       if (previous) {
         restore(mergedSteer(previous, { text: draft.get().text, images: [] }).text)
         setImages((current) => [...previous!.images, ...current])
       }
-      setError(errorMessage(failure))
-    } finally {
-      draft.set({ sending: false })
     }
   }
   /** ↑ on the first line brings every queued input back into the editor to edit and send again. */
   async function recall() {
-    if (loading || draft.get().sending || id === undefined || queued.length === 0) return
-    draft.set({ sending: true, error: undefined })
+    if (loading || view(draft.get()).sending || id === undefined || queued.length === 0) return
+    draft.dispatch({ type: 'send' })
     try {
       const recalled = await recallQueued(api, id, queued)
       restore(recalledText(draft.get().text, recalled))
       setImages((current) => [...current, ...recalled.flatMap((input) => input.images)])
+      draft.dispatch({ type: 'settled' })
     } catch (failure) {
-      setError(errorMessage(failure))
-    } finally {
-      draft.set({ sending: false })
+      draft.dispatch({ type: 'settled', error: errorMessage(failure) })
     }
   }
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
