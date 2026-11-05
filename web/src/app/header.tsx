@@ -79,7 +79,7 @@ const nameOf = (conversation: ConversationSummary) =>
 function Trail() {
   const { busy } = useConversation()
   // The requested conversation while its snapshot loads, so a switch keeps naming where it goes.
-  const id = useStore((state) => shownConversation(state))
+  const id = useStore(shownConversation)
   const conversations = useConversations()
   const summary = conversations.find((conversation) => conversation.id === id)
   const trail = ancestors(id, conversations)

@@ -496,8 +496,7 @@ const inFlight = new Map<
 >()
 /** The conversation an unscoped action acts on, as `api.action` resolves it. */
 function shownId() {
-  const { view, requested } = store.getState()
-  return shownConversation({ view, requested }) ?? ROOT
+  return shownConversation(store.getState()) ?? ROOT
 }
 function joinCall<T>(
   key: string,

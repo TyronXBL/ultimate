@@ -1,6 +1,15 @@
 import type { ReactNode } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn, ParkedRuns, Provided, useDocOf, useStore, useUltimate, Wordmark } from '@/sdk'
+import {
+  cn,
+  ParkedRuns,
+  Provided,
+  shownConversation,
+  useDocOf,
+  useStore,
+  useUltimate,
+  Wordmark,
+} from '@/sdk'
 import { MessagesDoc, emptyMessages, waitingOnUser } from '../messages/ui.tsx'
 import { AgentMark, ConversationPhase, useActivity } from '../conversations/ui.tsx'
 import { StandingDoc, talkToUltimate } from '../subagents/ui.tsx'
@@ -50,7 +59,7 @@ function Primary({ parked }: { parked?: ReadonlySet<number> }) {
   const actions = useUltimate()
   const id = useDocOf(1, StandingDoc)?.[name]
   const activity = useActivity(parked)(id ?? -1)
-  const shown = useStore((state) => state.view?.conversation.id ?? state.requested)
+  const shown = useStore(shownConversation)
   const paused = activity === 'paused'
   const working = activity === 'working'
   const active = id !== undefined && shown === id && actions.surface === 'agent'

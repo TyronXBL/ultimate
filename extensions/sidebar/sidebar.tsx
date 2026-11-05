@@ -19,6 +19,7 @@ import {
   useDocOf,
   useNow,
   useStore,
+  shownConversation,
   useSystem,
 } from '@/sdk'
 import {
@@ -151,7 +152,7 @@ function MemoryHint({ root }: { root: number }) {
 }
 
 /** The shown conversation, also while its snapshot is still on the way. */
-const useShownId = () => useStore((state) => state.view?.conversation.id ?? state.requested)
+const useShownId = () => useStore(shownConversation)
 
 /** The top-level conversation above `id` by parent links, or `id`'s own summary when it is top-level. */
 function topOf(id: number | undefined, conversations: readonly ConversationSummary[]) {
