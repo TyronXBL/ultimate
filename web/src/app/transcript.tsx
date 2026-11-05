@@ -206,7 +206,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   // A windowed stream pages on from its oldest entry; a whole one is the whole history.
   // A fork's history before its own first entry is its source's and stays hidden: paging stops at the fork point.
   const forked = reachedFork([...active, ...history], id)
-  const { cursor, pending, canLoad, error, filling } = pagingView(paging, older, forked)
+  const { cursor, pending, canLoad, failed, filling } = pagingView(paging, older, forked)
   // The page read in flight, aborted when the transcript goes. Set at once, it also keeps a second read from starting
   // in the same tick, before the loading phase renders.
   const request = useRef<AbortController | null>(null)
@@ -290,13 +290,10 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           return [...merged.values()]
         })
         dispatch({ type: 'filled', range })
-      } catch (failure) {
+      } catch {
+        // The sentinel offers Retry, which reads the range again.
         filled.current.delete(key)
-        dispatch({
-          type: 'fillFailed',
-          range,
-          error: failure instanceof Error ? failure.message : String(failure),
-        })
+        dispatch({ type: 'fillFailed', range })
       }
     })()
   })
@@ -437,13 +434,9 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         return [...rows.values()]
       })
       dispatch({ type: 'loaded', before: page.before })
-    } catch (failure) {
-      // Aborted: the transcript is gone, nothing reads its state.
-      if (controller.signal.aborted) return
-      dispatch({
-        type: 'failed',
-        error: failure instanceof Error ? failure.message : String(failure),
-      })
+    } catch {
+      // Aborted: the transcript is gone, nothing reads its state. Otherwise the sentinel offers Retry.
+      if (!controller.signal.aborted) dispatch({ type: 'failed' })
     } finally {
       request.current = null
     }
@@ -452,8 +445,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   // whether the top is still that close.
   useEffect(() => {
     const root = scrollRef.current
-    if (!root || !sentinel.current || loading || pending || error || cursor === undefined)
-      return undefined
+    if (!root || !sentinel.current || loading || !canLoad) return undefined
     const observer = new IntersectionObserver(
       ([entry]) => {
         // oxlint-disable-next-line typescript/no-floating-promises -- loadEarlier catches history failures and reports them as failed.
@@ -463,7 +455,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     )
     observer.observe(sentinel.current)
     return () => observer.disconnect()
-  }, [scrollRef, loading, pending, error, cursor, history])
+  }, [scrollRef, loading, canLoad, history])
   /** Read stored history down to entry `target`, in large pages bounded by it, so a reveal can scroll there. */
   const loadDown = async (target: number) => {
     if (id === undefined || request.current || !canLoad) return
@@ -485,13 +477,9 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         return [...merged.values()]
       })
       dispatch({ type: 'loadedDown', target })
-    } catch (failure) {
-      // Aborted: the transcript is gone, nothing reads its state.
-      if (controller.signal.aborted) return
-      dispatch({
-        type: 'failed',
-        error: failure instanceof Error ? failure.message : String(failure),
-      })
+    } catch {
+      // Aborted: the transcript is gone, nothing reads its state. Otherwise the sentinel offers Retry.
+      if (!controller.signal.aborted) dispatch({ type: 'failed' })
     } finally {
       request.current = null
     }
@@ -585,7 +573,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   })
   const revealStep = useEffectEvent(() => {
     if (reveal === undefined || loading || pending) return
-    if (error) {
+    if (failed) {
       setReveal(undefined)
       return
     }
@@ -643,7 +631,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   })
   useLayoutEffect(
     () => revealStep(),
-    [reveal, loading, pending, error, history, opened, filling, shownAside, shownBetween],
+    [reveal, loading, pending, failed, history, opened, filling, shownAside, shownBetween],
   )
   const render = (row: CompactPart | WorkRun, last: boolean, faded = ''): ReactNode =>
     'work' in row ? (
@@ -691,7 +679,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           {pending ? (
             <Shimmer>loading earlier messages…</Shimmer>
           ) : (
-            error && (
+            failed && (
               <span className="flex items-center gap-2" role="alert">
                 <span className="text-error">Could not load earlier messages</span>
                 <Button
