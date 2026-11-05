@@ -1176,6 +1176,37 @@ describe('turns without an answer', () => {
     await resumed.harness.waitForIdle(context)
     expect(await reports(resumed)).toHaveLength(1)
   })
+  it('delivers the answer of a run woken by the child’s own background result once, across reopen', async () => {
+    const f = await fixture()
+    await call(f.opened, { action: 'start', agent: 'scout', task: 'Waiting', background: true })
+    await until(async () => (await reports(f.opened)).length === 1)
+    await f.opened.harness.waitForIdle(context)
+    const [child] = await children(f.opened)
+    const handle = (await f.opened.harness.conversation(child.conversationId, context))!
+    // What the background extension submits when the child's own job finishes after its turn ended.
+    await (
+      await handle.submit(
+        {
+          type: 'input',
+          content: 'Job finished',
+          requestId: 'background.result:1',
+          whenBusy: 'steer',
+          entry: { kind: 'background.result', data: { command: 'pnpm test', exitCode: 0 } },
+        },
+        context,
+      )
+    ).wait(context)
+    await until(async () => (await reports(f.opened)).length === 2)
+    expect((await reports(f.opened))[1].model?.[0]).toMatchObject({
+      content: `[subagent ${child.conversationId} (scout) answered] Returned model: faux/faux-1\nChild: Job finished`,
+    })
+    await f.opened.harness.waitForIdle(context)
+    await f.opened.close()
+    hosts.splice(hosts.indexOf(f.opened), 1)
+    const resumed = await f.reopen()
+    await resumed.harness.waitForIdle(context)
+    expect(await reports(resumed)).toHaveLength(2)
+  })
 })
 
 function stopCaptureGate(f: Awaited<ReturnType<typeof gatedFixture>>) {

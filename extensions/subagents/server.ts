@@ -137,6 +137,8 @@ const replyText = (id: ConversationId, message: AssistantMessage | undefined) =>
   answered(message)
     ? answerText(message)
     : `Subagent ${id} ${unanswered(message)}. Message it to continue.`
+/** Entry kinds of the results a conversation asked for itself, which wake it when they arrive. */
+const selfRequested = new Set(['background.result', 'ci.result', 'lineage.finished'])
 /** A provider error the watchdog holds: it retries or reports it, and its continuation answers the action. */
 const providerFailure = (reason: string) => reason === 'model_error' || reason === 'no_model'
 function createReporter() {
@@ -816,16 +818,18 @@ export default function subagents(
       const childActions = Object.values(state.actions).filter(
         (candidate) => candidate.conversationId === submission.conversationId,
       )
-      // A one-way message from the parent, or its reply to the child's own question, has no
-      // reporter and no reply: without this, the answer it starts never reaches the parent,
+      // A one-way message from the parent, its reply to the child's own question, or a result the
+      // child requested itself (a background job, CI, a notify) that wakes it after it answered has
+      // no reporter and no reply: without this, the answer it starts never reaches the parent,
       // which stays idle. A pending reporter whose input was answered in the same run delivers
       // that answer itself.
       const input = await tx.entry(submission.entry)
       const message = input?.data as { from?: unknown; reply?: unknown } | undefined
       let messaged =
-        message?.from === parent &&
-        ((input?.kind === 'board.message' && message.reply === false) ||
-          input?.kind === 'board.reply')
+        selfRequested.has(input?.kind ?? '') ||
+        (message?.from === parent &&
+          ((input?.kind === 'board.message' && message.reply === false) ||
+            input?.kind === 'board.reply'))
       for (const action of childActions) {
         if (!messaged || action.status !== 'pending') continue
         const sibling = await tx.submissionByRequest(
