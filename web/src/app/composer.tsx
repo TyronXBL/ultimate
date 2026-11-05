@@ -256,7 +256,8 @@ function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
   const held = useSyncExternalStore(draft.subscribe, draft.get)
   const { text, images, files } = held
   const { sending, error, empty, uploading } = view(held)
-  const setError = (message: string | undefined) => draft.dispatch({ type: 'fail', error: message })
+  const setError = (message: string | undefined) =>
+    draft.dispatch({ type: 'problem', error: message })
   const setImages = (change: (images: Draft['images']) => Draft['images']) =>
     draft.dispatch({ type: 'images', change })
   const setFiles = (change: (files: Draft['files']) => Draft['files']) =>

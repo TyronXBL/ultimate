@@ -25,7 +25,7 @@ type Submitted = Pick<Draft, 'text' | 'images' | 'files' | 'revision'>
 
 /**
  * `edit`: typing, a fill, an insert, or a re-read of the stored text. `images`, `files`: attachments change.
- * `fail`: a problem to show, such as a paste that cannot attach (`error` undefined clears it). `send`: a submission or
+ * `problem`: a problem to show, such as a paste that cannot attach, or none (`error` undefined clears it). `send`: a submission or
  * a recall starts. `sent`: the submission was accepted; `stored` is the text storage holds now (another tab may have
  * written it). `unsent`: it failed. `settled`: a recall ended, with its error if it failed.
  */
@@ -33,7 +33,7 @@ export type DraftEvent =
   | { type: 'edit'; text: string }
   | { type: 'images'; change: (images: PastedImage[]) => PastedImage[] }
   | { type: 'files'; change: (files: DraftFile[]) => DraftFile[] }
-  | { type: 'fail'; error: string | undefined }
+  | { type: 'problem'; error: string | undefined }
   | { type: 'send' }
   | { type: 'sent'; submitted: Submitted; stored: string }
   | { type: 'unsent'; submitted: Submitted; stored: string; error: string }
@@ -52,7 +52,7 @@ export function step(draft: Draft, event: DraftEvent): Draft {
       return { ...draft, images: event.change(draft.images), revision: draft.revision + 1 }
     case 'files':
       return { ...draft, files: event.change(draft.files), revision: draft.revision + 1 }
-    case 'fail':
+    case 'problem':
       // A problem reported mid-send has nowhere to show: the send ends with its own result.
       return draft.phase.phase === 'sending' ? draft : { ...draft, phase: settledAs(event.error) }
     case 'send':
@@ -123,7 +123,8 @@ export function createDraft(id: number | undefined) {
       const before = value
       value = step(before, event)
       if (key) {
-        if (value.text !== before.text) {
+        // Every edit writes, also to the text it already holds: another tab may have stored something else since.
+        if (event.type === 'edit' || value.text !== before.text) {
           if (value.text) localStorage.setItem(key, value.text)
           else localStorage.removeItem(key)
         }

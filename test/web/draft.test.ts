@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { step, view } from '../../web/src/app/draft.ts'
+import { describe, expect, it, vi } from 'vitest'
+import { createDraft, step, view } from '../../web/src/app/draft.ts'
 import type { Draft, DraftEvent, Phase } from '../../web/src/app/draft.ts'
 
 const image = { data: 'aGk=', mimeType: 'image/png' }
@@ -99,23 +99,35 @@ describe('step', () => {
       { type: 'settled', error: 'gone' },
       { phase: failed('gone') },
     ],
+    [
+      'sent outside a send is ignored',
+      draft(),
+      { type: 'sent', submitted: submitted(draft()), stored: 'hello' },
+      {},
+    ],
+    [
+      'unsent outside a send is ignored',
+      draft(),
+      { type: 'unsent', submitted: submitted(draft()), stored: 'x', error: 'late' },
+      {},
+    ],
     ['settled outside a send is ignored', draft(), { type: 'settled', error: 'late' }, {}],
     [
       'an attach error shows',
       draft(),
-      { type: 'fail', error: 'Images stay here: remove them to send elsewhere' },
+      { type: 'problem', error: 'Images stay here: remove them to send elsewhere' },
       { phase: failed('Images stay here: remove them to send elsewhere') },
     ],
     [
       'a new attach clears the error',
       draft({ phase: failed('x') }),
-      { type: 'fail', error: undefined },
+      { type: 'problem', error: undefined },
       { phase: ready },
     ],
     [
       'an error mid-send has nowhere to show',
       draft({ phase: sending }),
-      { type: 'fail', error: 'x' },
+      { type: 'problem', error: 'x' },
       {},
     ],
     [
@@ -165,5 +177,36 @@ describe('view', () => {
       empty: false,
       uploading: true,
     })
+  })
+})
+
+describe('storage mirror', () => {
+  it('writes the text as it is edited and sent, also over another tab’s', () => {
+    const stored = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      removeItem: (key: string) => stored.delete(key),
+    })
+    try {
+      const held = createDraft(7)
+      held.dispatch({ type: 'edit', text: 'hello' })
+      expect(stored.get('ultimate.draft.7')).toBe('hello')
+      held.dispatch({ type: 'edit', text: '' })
+      expect(stored.has('ultimate.draft.7')).toBe(false)
+
+      // Another tab stores its own text; filling this tab's current text again must win over it.
+      held.dispatch({ type: 'edit', text: 'hello' })
+      stored.set('ultimate.draft.7', 'other')
+      held.dispatch({ type: 'edit', text: 'hello' })
+      expect(stored.get('ultimate.draft.7')).toBe('hello')
+
+      held.dispatch({ type: 'send' })
+      held.dispatch({ type: 'sent', submitted: held.get(), stored: held.stored() })
+      expect(held.get().text).toBe('')
+      expect(stored.has('ultimate.draft.7')).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
