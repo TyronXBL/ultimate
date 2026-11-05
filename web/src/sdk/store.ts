@@ -65,10 +65,14 @@ export interface EventSourceLike {
   addEventListener(name: string, listener: (event: Event) => void): void
   close(): void
 }
+/** The conversation on screen, else the one loading; the server's root when neither. */
 export const shownConversation = (state: Pick<State, 'view' | 'requested'>) =>
   state.view?.conversation.id ?? state.requested
-export const showingRequested = (state: Pick<State, 'view' | 'requested'>) =>
-  Boolean(state.view && state.requested === state.view.conversation.id)
+/** The shown conversation when it is the chosen one, not the stream's fallback to the root. */
+export const shownChoice = (state: Pick<State, 'view' | 'requested'>) =>
+  state.requested !== undefined && state.view?.conversation.id === state.requested
+    ? state.requested
+    : undefined
 
 export interface StoreOptions {
   eventSource?: (url: string) => EventSourceLike

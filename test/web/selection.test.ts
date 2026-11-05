@@ -10,14 +10,15 @@ const rows = [
     'start without URL id',
     start,
     { type: 'started', id: undefined },
-    { phase: 'following', selected: undefined, entry: 'replace' },
+    { phase: 'following', selected: undefined, entry: 'push' },
     [{ type: 'show', id: undefined }],
   ],
   [
-    'start with URL id',
+    // The first URL write replaces the entry the page loaded on; the next selection is the user going somewhere.
+    'start with URL id replaces, then pushes',
     start,
     { type: 'started', id: 1 },
-    { phase: 'following', selected: 1, entry: 'replace' },
+    { phase: 'following', selected: 1, entry: 'push' },
     [
       { type: 'url', id: 1, replace: true },
       { type: 'show', id: 1 },
@@ -51,7 +52,7 @@ const rows = [
     ],
   ],
   [
-    'popstate then follow unchanged canonicalizes',
+    'back to the same id writes no URL',
     redirected,
     { type: 'selected', id: 1 },
     { phase: 'following', selected: 1, entry: 'push' },

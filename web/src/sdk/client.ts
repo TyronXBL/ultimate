@@ -1,6 +1,6 @@
 import { ActionError, actionMessage, createApi } from './api.ts'
 import { createRegistry } from './registry.ts'
-import { createStore, showingRequested } from './store.ts'
+import { createStore, shownChoice } from './store.ts'
 import { step } from './selection.ts'
 import type { Selection } from './selection.ts'
 import { touchKeyboard, viewport } from './viewport.ts'
@@ -16,6 +16,7 @@ import { createUiState } from './ui-state.ts'
 
 const initialUrl = new URL(location.href)
 let selection: Selection = { phase: 'starting' }
+/** Apply a selection event, then write the URL and show the conversation it calls for. */
 function dispatchSelection(event: Parameters<typeof step>[1]) {
   const result = step(selection, event)
   selection = result.state
@@ -136,9 +137,8 @@ store.subscribe(() => {
   }
   // Only a chosen conversation goes into the URL: the stream's fallback to the root is not a choice, and a reload of
   // `?conversation=1` would make it one (a fresh preview's Vite reloads once), keeping the page off @ultimate.
-  const state = store.getState()
-  if (selection.phase === 'following' && showingRequested(state))
-    dispatchSelection({ type: 'shown', id: state.view!.conversation.id })
+  const chosen = shownChoice(store.getState())
+  if (chosen !== undefined) dispatchSelection({ type: 'shown', id: chosen })
   // The theme extension paints the palette and the browser bar for this polarity.
   document.documentElement.classList.toggle('dark', ui.theme === 'dark')
   document.documentElement.toggleAttribute('data-code-wrap', ui.codeWrap)
@@ -174,8 +174,8 @@ addEventListener('popstate', () => {
   else uiState.set('shell.conversation', id)
   // An unchanged selection emits no notification, but may still need URL canonicalization.
   followSelection()
-  const state = store.getState()
-  if (showingRequested(state)) dispatchSelection({ type: 'shown', id: state.view!.conversation.id })
+  const chosen = shownChoice(store.getState())
+  if (chosen !== undefined) dispatchSelection({ type: 'shown', id: chosen })
 })
 addEventListener('pagehide', () => uiState.flush())
 // An action failure no caller handled: show it rather than lose it in the console.
