@@ -14,7 +14,6 @@ import {
 import { ConversationRef } from '../conversations/ui.tsx'
 import { stateLabel, useLanderQueue, useWorkspaces } from './data.tsx'
 import type { WorkspaceConversation } from './data.tsx'
-import { isLanding } from './queue.ts'
 import { DiskAction, InfoAction, StatsAction } from './refs.ts'
 
 const heading = 'mb-1 font-mono text-[10.5px] text-muted-foreground/70'
@@ -81,7 +80,7 @@ function Checkout({ conversation }: { conversation: WorkspaceConversation }) {
             queued && 'text-brand',
           )}
         >
-          · {queued ? (isLanding(queued) ? 'landing…' : 'queued') : stateLabel(recorded)}
+          · {queued ? (queued.state === 'landing' ? 'landing…' : 'queued') : stateLabel(recorded)}
         </span>
         <button
           aria-label={`Refresh #${conversation.id}`}
@@ -159,10 +158,10 @@ function LanderQueue() {
             <span
               className={cn(
                 'min-w-0 flex-1 truncate',
-                isLanding(item) ? 'text-brand' : 'text-muted-foreground',
+                item.state === 'landing' ? 'text-brand' : 'text-muted-foreground',
               )}
             >
-              {isLanding(item) ? (item.step ?? 'landing') : `queued for ${item.target}`}
+              {item.state === 'landing' ? (item.step ?? 'landing') : `queued for ${item.target}`}
             </span>
           </li>
         ))}

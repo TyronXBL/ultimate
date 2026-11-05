@@ -23,7 +23,7 @@ import {
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionLanded } from './api.ts'
-import { advance } from './queue.ts'
+import { advance, type QueueEvent } from './queue.ts'
 import { setup, setupCommands } from './setup.ts'
 import { failedTests, failingTests } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
@@ -111,6 +111,23 @@ export const log = (
       ...data,
     },
   })
+
+/**
+ * Advance the entry `id` of a draft queue and append the line describing it, stamped with the step's own `at`, so an
+ * entry's state fields and its log cannot drift apart.
+ */
+async function advanceAndLog(
+  tx: Tx,
+  conversationId: ConversationId,
+  queue: QueueEntry[],
+  id: string,
+  event: Extract<QueueEvent, { type: 'start' } | { type: 'step' }>,
+  data: Omit<LanderEntry, 'submission' | 'conversationId' | 'tip' | 'target' | 'at'>,
+) {
+  const entry = advance(queue, id, event)
+  await log(tx, conversationId, entry, data, event.type === 'start' ? event.at : event.row.at)
+  return entry
+}
 type Host = Pick<
   ExtensionHost,
   | 'home'
@@ -372,13 +389,16 @@ export function createLander(
             delete index.landers[task.input.source]
             return { status: 'terminal', outcome: { status: 'completed', result: null } }
           }
-          const at = Date.now()
-          await log(
+          await advanceAndLog(
             tx,
             runtime.conversationId,
-            advance(index.queue, entry.id, { type: 'start', at }),
+            index.queue,
+            entry.id,
+            {
+              type: 'start',
+              at: Date.now(),
+            },
             { step: 'started' },
-            at,
           )
           return { status: 'running', checkpoint: { phase: 'land', id: entry.id, attempt: 1 } }
         }, context),
@@ -403,21 +423,20 @@ export function createLander(
           ran?: { ms: number; timedOut?: boolean },
         ) =>
           runtime.commit(async (tx) => {
-            const at = Date.now()
-            const saved = advance((await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue, id, {
-              type: 'step',
-              row: { step: text, at, ...(result ? { check: result } : {}) },
-            })
-            await log(
+            await advanceAndLog(
               tx,
               runtime.conversationId,
-              saved,
+              (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue,
+              id,
+              {
+                type: 'step',
+                row: { step: text, at: Date.now(), ...(result ? { check: result } : {}) },
+              },
               {
                 step: text,
                 ...(result ? { check: result } : {}),
                 ...(output ? { output } : {}),
               },
-              at,
             )
             if (result && ran)
               await host.emit(tx, CheckRan, {
@@ -872,7 +891,7 @@ export function createLander(
             const draft = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
             const saved = advance(draft.queue, id, { type: 'landed', landed: candidate })
             // A copy: the draft is gone once the commit settles.
-            landed = copyJson(saved.landed ?? candidate) as Landed
+            landed = copyJson(saved.landed) as Landed
             draft.items[String(entry.conversationId)].landed = integrated
           }, context)
           return await landedReport(settings, landed, integrated)

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { newQueueEntry, queueEntryStep } from '../extensions/workspaces/queue.ts'
+import { advance, newQueueEntry, queueEntryStep } from '../extensions/workspaces/queue.ts'
 import type { QueueEvent } from '../extensions/workspaces/queue.ts'
 import type { Landed, QueueEntry } from '../extensions/workspaces/types.ts'
 
@@ -42,12 +42,6 @@ const rows: [string, QueueEntry, QueueEvent, QueueEntry][] = [
     },
   ],
   [
-    'a step of a queued entry is logged but not shown',
-    queued,
-    { type: 'step', row: { step: 'x', at: 3 } },
-    { ...queued, steps: [...queued.steps, { step: 'x', at: 3 }] },
-  ],
-  [
     'the fast-forward is recorded',
     working,
     { type: 'landed', landed: landed('one') },
@@ -61,6 +55,7 @@ const rows: [string, QueueEntry, QueueEvent, QueueEntry][] = [
     fastForwarded,
   ],
   ['reset drops the current step', working, { type: 'reset' }, { ...queued, steps: working.steps }],
+  ['reset of a queued entry changes nothing', queued, { type: 'reset' }, queued],
   // 1901c1b7: the task that takes the entry over must still find what the earlier task landed.
   [
     'reset keeps the landing',
@@ -84,4 +79,16 @@ const rows: [string, QueueEntry, QueueEvent, QueueEntry][] = [
 
 it.each(rows)('queue entry: %s', (_name, entry, event, expected) => {
   expect(queueEntryStep(entry, event)).toStrictEqual(expected)
+})
+
+it('advance writes a changed entry, leaves an unchanged one and names a missing id', () => {
+  const queue = [queued]
+  advance(queue, 's', { type: 'start', at: 2 })
+  expect(queue[0]).toMatchObject({ state: 'landing' })
+  // The reset finds its entry landing, so it replaces it; a second reset returns the same entry, so nothing is written.
+  advance(queue, 's', { type: 'reset' })
+  const settled = queue[0]
+  advance(queue, 's', { type: 'reset' })
+  expect(queue[0]).toBe(settled)
+  expect(() => advance(queue, 'gone', { type: 'reset' })).toThrow('No queue entry gone')
 })
