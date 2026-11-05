@@ -23,6 +23,7 @@ import {
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionLanded } from './api.ts'
+import { advance } from './queue.ts'
 import { setup, setupCommands } from './setup.ts'
 import { failedTests, failingTests } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
@@ -82,22 +83,20 @@ export async function landerCheckout(
   }
 }
 /**
- * Append a log line about `entry`, a draft of its queue entry, to the lander conversation `id`; a step also joins the
- * entry's `steps`, which the submitter's cards show.
+ * Append a log line about `entry` to the lander conversation `id`, at `at`. A step's row also belongs on the entry's
+ * `steps` (see `queueEntryStep`), which the submitter's cards show.
  */
 export const log = (
   tx: Tx,
   id: ConversationId,
   entry: Pick<
     QueueEntry,
-    'id' | 'conversationId' | 'tip' | 'target' | 'at' | 'divergence' | 'subject' | 'steps'
+    'id' | 'conversationId' | 'tip' | 'target' | 'at' | 'divergence' | 'subject'
   >,
   data: Omit<LanderEntry, 'submission' | 'conversationId' | 'tip' | 'target' | 'at'>,
-) => {
-  const at = Date.now()
-  if (data.step)
-    entry.steps.push({ step: data.step, at, ...(data.check ? { check: data.check } : {}) })
-  return tx.appendEntry(LanderLog, id, {
+  at = Date.now(),
+) =>
+  tx.appendEntry(LanderLog, id, {
     data: {
       submission: entry.id,
       conversationId: entry.conversationId,
@@ -112,7 +111,6 @@ export const log = (
       ...data,
     },
   })
-}
 type Host = Pick<
   ExtensionHost,
   | 'home'
@@ -374,8 +372,14 @@ export function createLander(
             delete index.landers[task.input.source]
             return { status: 'terminal', outcome: { status: 'completed', result: null } }
           }
-          entry.state = 'landing'
-          await log(tx, runtime.conversationId, entry, { step: 'started' })
+          const at = Date.now()
+          await log(
+            tx,
+            runtime.conversationId,
+            advance(index.queue, entry.id, { type: 'start', at }),
+            { step: 'started' },
+            at,
+          )
           return { status: 'running', checkpoint: { phase: 'land', id: entry.id, attempt: 1 } }
         }, context),
       land: async (task, runtime, context) => {
@@ -399,15 +403,22 @@ export function createLander(
           ran?: { ms: number; timedOut?: boolean },
         ) =>
           runtime.commit(async (tx) => {
-            const saved = (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue.find(
-              (item) => item.id === id,
-            )!
-            saved.step = text
-            await log(tx, runtime.conversationId, saved, {
-              step: text,
-              ...(result ? { check: result } : {}),
-              ...(output ? { output } : {}),
+            const at = Date.now()
+            const saved = advance((await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue, id, {
+              type: 'step',
+              row: { step: text, at, ...(result ? { check: result } : {}) },
             })
+            await log(
+              tx,
+              runtime.conversationId,
+              saved,
+              {
+                step: text,
+                ...(result ? { check: result } : {}),
+                ...(output ? { output } : {}),
+              },
+              at,
+            )
             if (result && ran)
               await host.emit(tx, CheckRan, {
                 submission: id,
@@ -859,10 +870,9 @@ export function createLander(
           let landed = candidate
           await runtime.commit(async (tx) => {
             const draft = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
-            const saved = draft.queue.find((item) => item.id === id)!
-            saved.landed ??= candidate
+            const saved = advance(draft.queue, id, { type: 'landed', landed: candidate })
             // A copy: the draft is gone once the commit settles.
-            landed = copyJson(saved.landed) as Landed
+            landed = copyJson(saved.landed ?? candidate) as Landed
             draft.items[String(entry.conversationId)].landed = integrated
           }, context)
           return await landedReport(settings, landed, integrated)
@@ -984,10 +994,7 @@ export function createLander(
         const index = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
         if (index.landers[task.input.source] === task.id) delete index.landers[task.input.source]
         for (const item of index.queue)
-          if (item.source === task.input.source) {
-            item.state = 'queued'
-            delete item.step
-          }
+          if (item.source === task.input.source) advance(index.queue, item.id, { type: 'reset' })
         return { status: 'terminal', outcome: { status: 'aborted' } }
       }, context),
   })

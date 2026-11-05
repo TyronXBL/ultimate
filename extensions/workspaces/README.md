@@ -113,6 +113,11 @@ the main keeps working. The submission saves `divergence` and `at`, the submitte
 time, as a breadcrumb. One `workspaces.lander` task per source checkout (`landers`) processes that source's entries
 in order.
 
+A queue entry is a union on `state` (`queue.ts`): `queued`, or `landing` with its current `step`. `landed`, what
+its fast-forward landed (the first one wins), is recorded while landing and kept when the task ends and the entry
+returns to `queued`, so the next lander task reports that landing. `queueEntryStep` is the only writer of these fields
+(start, step, landed, reset) and `isLanding` the one reading every reader uses.
+
 The task runs in that source's lander conversation (`landerConversations`): ownerless, titled "@lander",
 labelled `lander`, its cwd the lander checkout. The project's checkout has one from the moment the extension opens
 (idempotently, the same record submit uses); another source gets its own on its first submit. It has no workspace and

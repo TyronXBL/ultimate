@@ -45,6 +45,7 @@
     "extensions/status-line/turns.ts",
     "extensions/sounds/cues.ts",
     "extensions/keep-warm/due.ts",
+    "extensions/workspaces/queue.ts",
     "extensions/quota/chip.ts",
     "extensions/goal/state.ts",
     "extensions/automations/condition.ts",

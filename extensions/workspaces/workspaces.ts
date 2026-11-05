@@ -28,6 +28,7 @@ import {
   treePath,
 } from './tree.ts'
 import { contains, createLander, landerCheckout, landerPath, log } from './lander.ts'
+import { advance, newQueueEntry } from './queue.ts'
 import type {
   LandResult,
   SubmitResult,
@@ -305,10 +306,7 @@ export function workspaces(host: Host) {
       for (const source of sources) if (await landerIdle(tx, index, source)) stopped.push(source)
       for (const source of stopped) {
         for (const item of index.queue)
-          if (item.source === source) {
-            item.state = 'queued'
-            delete item.step
-          }
+          if (item.source === source) advance(index.queue, item.id, { type: 'reset' })
         await startLander(tx, index, source)
       }
       return stopped.length
@@ -834,20 +832,24 @@ export function workspaces(host: Host) {
       const queued = index.queue.find(
         (item) => item.conversationId === id && item.tip === tip && item.state === 'queued',
       )
-      const entry = queued ?? {
-        id: `${id}-${tip.slice(0, 7)}-${Date.now().toString(36)}`,
-        conversationId: id,
-        source,
-        target,
-        tip,
-        at,
-        divergence,
-        state: 'queued' as const,
-        ...(subject ? { subject } : {}),
-        steps: [],
-      }
+      const now = Date.now()
+      const entry =
+        queued ??
+        newQueueEntry(
+          {
+            id: `${id}-${tip.slice(0, 7)}-${now.toString(36)}`,
+            conversationId: id,
+            source,
+            target,
+            tip,
+            at,
+            divergence,
+            ...(subject ? { subject } : {}),
+          },
+          now,
+        )
       if (!queued) {
-        await log(tx, lander, entry, { step: 'queued' })
+        await log(tx, lander, entry, { step: 'queued' }, now)
         index.queue.push(entry)
       }
       if (stopped) await startLander(tx, index, source)

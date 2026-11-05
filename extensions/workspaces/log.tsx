@@ -23,6 +23,7 @@ import {
 } from '@/sdk'
 import type { EntryRecord, ToolCallView } from '@/sdk'
 import { useWorkspaceIndex } from './data.tsx'
+import { isLanding } from './queue.ts'
 import { LandingCard, Open, Subject } from './landing.tsx'
 import type { LandingTone } from './landing.tsx'
 import { inProgress, superseded, tookFor } from './steps.tsx'
@@ -310,7 +311,7 @@ export function LanderLogEntry({ entry }: { entry: EntryRecord }) {
   const entries = useTranscript()
   // The lander is a task, not a model run, so the conversation is never busy: its queue says whether it lands.
   const running = useWorkspaceIndex().queue.some(
-    (item) => item.id === data.submission && item.state === 'landing',
+    (item) => item.id === data.submission && isLanding(item),
   )
   const own = (other: EntryRecord) =>
     other.kind === 'ultimate.lander' && (other.data as LanderEntry).submission === data.submission
@@ -435,7 +436,7 @@ function useSubmission(id: string | undefined): Submission | undefined {
   if (queued)
     return {
       ...queued,
-      landing: queued.state === 'landing',
+      landing: isLanding(queued),
       position: index.queue.filter((item) => item.source === queued.source).indexOf(queued) + 1,
     }
   const outcome = index.results[id]

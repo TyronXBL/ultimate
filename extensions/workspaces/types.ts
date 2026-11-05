@@ -11,7 +11,7 @@ export type Workspace = {
   landed?: string
 }
 /** One `workspace submit`, waiting for or being processed by its source's lander. */
-export type QueueEntry = {
+type Submitted = {
   id: string
   conversationId: number
   source: string
@@ -20,14 +20,18 @@ export type QueueEntry = {
   /** Latest submitting conversation entry when submit was called. */
   at: number
   divergence: string
-  state: 'queued' | 'landing'
   subject?: ConversationSubject
-  step?: string
   /** What the lander did so far, as its conversation logs it. */
   steps: LanderStep[]
-  /** What its fast-forward landed: recorded with it, so any later lander task pushes and reports that. */
-  landed?: Landed
 }
+/**
+ * Queued, or landing with its current `step`. `landed` is what the submission's fast-forward landed, recorded with it
+ * while landing and kept when its task ends and the entry returns to queued, so any later lander task pushes and
+ * reports that. Only `queueEntryStep` (queue.ts) changes the state fields.
+ */
+export type QueueEntry =
+  | (Submitted & { state: 'queued'; landed?: Landed })
+  | (Submitted & { state: 'landing'; step?: string; landed?: Landed })
 /** A submission's landing: the target moved from `base` to `sha`, which brought `commits` and `paths`. */
 export type Landed = {
   sha: string
