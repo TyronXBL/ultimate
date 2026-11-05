@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JsonValue } from '@earendil-works/chord'
-import { createUiState } from '../../web/src/sdk/ui-state.ts'
+import { createUiState, step } from '../../web/src/sdk/ui-state.ts'
+import type { SyncEvent, SyncState, Write } from '../../web/src/sdk/ui-state.ts'
 import { UI_REVISION } from '../../shared/protocol.ts'
 import type { UiUpdateRequest, UiUpdateResponse } from '../../shared/protocol.ts'
 
@@ -303,5 +304,280 @@ describe('durable UI state', () => {
     state.receive({ 'shell.conversation': 43, 'shell.panel': 'info', [UI_REVISION]: 8 })
     expect(state.get('shell.conversation')).toBe(1)
     expect(state.get('shell.panel')).toBeUndefined()
+  })
+})
+
+/** A sync state; `writes` is given as an object. */
+const sync = (
+  over: Partial<Omit<SyncState, 'writes'>> & { writes?: Record<string, Write> } = {},
+): SyncState => ({
+  remote: {},
+  batch: 0,
+  stream: { phase: 'live', shown: 0 },
+  send: { phase: 'idle' },
+  ...over,
+  writes: new Map(Object.entries(over.writes ?? {})),
+})
+const pending = (value?: JsonValue): Write => ({ phase: 'pending', value })
+const sentIn = (batch: number, value?: JsonValue): Write => ({ phase: 'sent', value, batch })
+const acked = (rev: number, value?: JsonValue): Write => ({ phase: 'acknowledged', value, rev })
+const sending = (batch: number) => ({ phase: 'sending', batch }) as const
+const debouncing = (delayMs: number) => ({ phase: 'debouncing', delayMs }) as const
+const set = (key: string, value: JsonValue | undefined, delayMs = 150): SyncEvent => ({
+  type: 'set',
+  key,
+  value,
+  delayMs,
+})
+const snapshot = (rev: number, values: Record<string, JsonValue> = {}): SyncEvent => ({
+  type: 'snapshot',
+  rev,
+  values: { ...values, [UI_REVISION]: rev },
+})
+const values = (rev: number, v: Record<string, JsonValue> = {}) => ({ ...v, [UI_REVISION]: rev })
+
+describe('durable UI state transitions', () => {
+  const live = (shown: number) => ({ phase: 'live', shown }) as const
+  const remote = values(5)
+  const rows: [string, SyncState, SyncEvent, SyncState][] = [
+    // set
+    [
+      'a write is pending and arms the debounce',
+      sync(),
+      set('panel', 'info'),
+      sync({ writes: { panel: pending('info') }, send: debouncing(150) }),
+    ],
+    [
+      'a delete is a pending write without a value',
+      sync({ remote: { panel: 'info' } }),
+      set('panel', undefined),
+      sync({ remote: { panel: 'info' }, writes: { panel: pending() }, send: debouncing(150) }),
+    ],
+    [
+      'a write equal to what is shown changes nothing',
+      sync({ remote: { panel: 'info' }, writes: { view: pending('a') } }),
+      set('view', 'a'),
+      sync({ remote: { panel: 'info' }, writes: { view: pending('a') } }),
+    ],
+    [
+      'a write while the timer runs keeps the earlier deadline',
+      sync({ writes: { a: pending(1) }, send: debouncing(150) }),
+      set('b', 2, 0),
+      sync({ writes: { a: pending(1), b: pending(2) }, send: debouncing(150) }),
+    ],
+    [
+      // 54c001bd: batch 1's answer must not confirm the newer value
+      'a key written again while its batch is in flight is pending, so the old answer cannot confirm it',
+      sync({ batch: 1, writes: { panel: sentIn(1, 'first') }, send: sending(1) }),
+      set('panel', 'second'),
+      sync({ batch: 1, writes: { panel: pending('second') }, send: sending(1) }),
+    ],
+    // flush
+    [
+      'the timer sends every pending write as the next batch',
+      sync({
+        batch: 4,
+        writes: { a: pending(1), b: acked(9, 2) },
+        send: debouncing(150),
+      }),
+      { type: 'flush', force: false },
+      sync({
+        batch: 5,
+        writes: { a: sentIn(5, 1), b: acked(9, 2) },
+        send: sending(5),
+      }),
+    ],
+    [
+      // 9c7def1b: one batch in flight keeps the server's commits in write order
+      'the timer sends nothing while a batch is in flight',
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+      { type: 'flush', force: false },
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+    ],
+    [
+      'a page going away sends even with a batch in flight',
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+      { type: 'flush', force: true },
+      sync({ batch: 2, writes: { a: sentIn(1, 1), b: sentIn(2, 2) }, send: sending(2) }),
+    ],
+    [
+      'flushing with nothing pending stops the debounce',
+      sync({ send: debouncing(150) }),
+      { type: 'flush', force: true },
+      sync(),
+    ],
+    // acknowledged
+    [
+      'an answer ahead of the stream keeps the write shown',
+      sync({ batch: 1, stream: live(5), writes: { panel: sentIn(1, 'a') }, send: sending(1) }),
+      { type: 'acknowledged', batch: 1, rev: 7 },
+      sync({ batch: 1, stream: live(5), writes: { panel: acked(7, 'a') } }),
+    ],
+    [
+      // 62cb5f32: the stream already showed the commit, so the answer settles it
+      'an answer the stream already reached releases the write',
+      sync({ batch: 1, stream: live(7), writes: { panel: sentIn(1, 'a') }, send: sending(1) }),
+      { type: 'acknowledged', batch: 1, rev: 7 },
+      sync({ batch: 1, stream: live(7) }),
+    ],
+    [
+      'an answer sends the writes that waited for it next',
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+      { type: 'acknowledged', batch: 1, rev: 3 },
+      sync({ batch: 1, writes: { a: acked(3, 1), b: pending(2) }, send: debouncing(0) }),
+    ],
+    [
+      // 54c001bd: the rewritten key is not this batch's write
+      'an answer leaves a key written again alone',
+      sync({
+        batch: 1,
+        stream: live(9),
+        writes: { panel: pending('second'), view: sentIn(1, 'v') },
+        send: sending(1),
+      }),
+      { type: 'acknowledged', batch: 1, rev: 3 },
+      sync({
+        batch: 1,
+        stream: live(9),
+        writes: { panel: pending('second') },
+        send: debouncing(0),
+      }),
+    ],
+    [
+      // 355dd0c0: a restarted stream releases nothing until its first snapshot
+      'an answer from the new process keeps the write until its first snapshot',
+      sync({
+        batch: 2,
+        stream: { phase: 'restarting' },
+        writes: { a: sentIn(2, 1) },
+        send: sending(2),
+      }),
+      { type: 'acknowledged', batch: 2, rev: 1 },
+      sync({ batch: 2, stream: { phase: 'restarting' }, writes: { a: acked(1, 1) } }),
+    ],
+    [
+      // 3b3ba88e: batch 1 went to the old process
+      'a late answer from the old process changes nothing',
+      sync({
+        batch: 2,
+        stream: { phase: 'restarting' },
+        writes: { a: acked(0, 1), b: sentIn(2, 2) },
+        send: sending(2),
+      }),
+      { type: 'acknowledged', batch: 1, rev: 40 },
+      sync({
+        batch: 2,
+        stream: { phase: 'restarting' },
+        writes: { a: acked(0, 1), b: sentIn(2, 2) },
+        send: sending(2),
+      }),
+    ],
+    // rejected
+    [
+      'a refused batch drops its writes and keeps a key written again',
+      sync({
+        batch: 1,
+        writes: { a: sentIn(1, 1), b: sentIn(1, 2), a2: pending(3) },
+        send: sending(1),
+      }),
+      { type: 'rejected', batch: 1 },
+      sync({ batch: 1, writes: { a2: pending(3) }, send: debouncing(0) }),
+    ],
+    [
+      'a refused batch with nothing waiting returns to idle',
+      sync({ batch: 1, writes: { a: sentIn(1, 1) }, send: sending(1) }),
+      { type: 'rejected', batch: 1 },
+      sync({ batch: 1 }),
+    ],
+    [
+      // 3b3ba88e
+      'a failure from the old process drops nothing',
+      sync({ batch: 2, stream: { phase: 'restarting' }, writes: { a: acked(0, 1) } }),
+      { type: 'rejected', batch: 1 },
+      sync({ batch: 2, stream: { phase: 'restarting' }, writes: { a: acked(0, 1) } }),
+    ],
+    // snapshot
+    [
+      'a snapshot becomes the document and releases the writes it reached',
+      sync({ stream: live(2), writes: { a: acked(3, 1), b: acked(4, 2), c: pending(3) } }),
+      snapshot(3, { a: 1 }),
+      sync({
+        remote: values(3, { a: 1 }),
+        stream: live(3),
+        writes: { b: acked(4, 2), c: pending(3) },
+      }),
+    ],
+    [
+      // 54c001bd: A → B → A
+      'a snapshot of an earlier commit with an equal value releases nothing newer',
+      sync({ stream: live(1), writes: { panel: acked(5, 'info') } }),
+      snapshot(2, { panel: 'info' }),
+      sync({
+        remote: values(2, { panel: 'info' }),
+        stream: live(2),
+        writes: { panel: acked(5, 'info') },
+      }),
+    ],
+    [
+      // 62cb5f32
+      'a snapshot older than one already shown is dropped',
+      sync({ remote: values(5, { panel: 'new' }), stream: live(5) }),
+      snapshot(4, { panel: 'old' }),
+      sync({ remote: values(5, { panel: 'new' }), stream: live(5) }),
+    ],
+    [
+      'the same document again changes nothing',
+      sync({ remote, stream: live(5), writes: { a: acked(6, 1) } }),
+      { type: 'snapshot', rev: 5, values: remote },
+      sync({ remote, stream: live(5), writes: { a: acked(6, 1) } }),
+    ],
+    [
+      // 3b3ba88e: the new storage counts from scratch; 355dd0c0: and then settles the kept writes
+      'a restarted process’s first snapshot is taken whatever its revision and releases the kept writes',
+      sync({
+        remote: values(40, { panel: 'old' }),
+        stream: { phase: 'restarting' },
+        writes: { panel: acked(0, 'mine'), view: acked(9, 'v') },
+      }),
+      snapshot(1, { panel: 'mine' }),
+      sync({
+        remote: values(1, { panel: 'mine' }),
+        stream: live(1),
+        writes: { view: acked(9, 'v') },
+      }),
+    ],
+    // restarted
+    [
+      // 355dd0c0: nothing is rolled back meanwhile; 3b3ba88e: unsent edits go to the new server
+      'a restart keeps sent writes shown, awaiting the new snapshot, and sends unsent ones',
+      sync({
+        batch: 3,
+        stream: live(40),
+        writes: { a: sentIn(3, 1), b: acked(41, 2), c: pending(3) },
+        send: sending(3),
+      }),
+      { type: 'restarted' },
+      sync({
+        batch: 3,
+        stream: { phase: 'restarting' },
+        writes: { a: acked(0, 1), b: acked(0, 2), c: pending(3) },
+        send: debouncing(0),
+      }),
+    ],
+    [
+      'a restart with nothing unsent goes idle',
+      sync({ batch: 3, writes: { a: sentIn(3, 1) }, send: sending(3) }),
+      { type: 'restarted' },
+      sync({ batch: 3, stream: { phase: 'restarting' }, writes: { a: acked(0, 1) } }),
+    ],
+    [
+      'a restart keeps a debounce already running',
+      sync({ writes: { c: pending(3) }, send: debouncing(150) }),
+      { type: 'restarted' },
+      sync({ stream: { phase: 'restarting' }, writes: { c: pending(3) }, send: debouncing(150) }),
+    ],
+  ]
+  it.each(rows)('%s', (_name, from, event, expected) => {
+    expect(step(from, event)).toEqual(expected)
   })
 })
