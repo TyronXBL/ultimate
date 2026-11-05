@@ -122,6 +122,7 @@ async function fixture({ foreign = false } = {}) {
   // The core's conversations: nothing concluded, no summaries.
   services.set('conversations', {
     concluded: async () => new Set(),
+    concludedTreeIn: async () => false,
     summaryModel: async () => undefined,
     requestSummary: async () => {},
     setAutomaticSummaries,

@@ -289,7 +289,7 @@ async function resumeIn(tx: Tx, ids: ConversationId[]) {
 }
 
 /** Whether `id` or a conversation above it is concluded, which a run in `id` would resume. */
-async function concludedTreeIn(tx: Tx, id: ConversationId) {
+export async function concludedTreeIn(tx: Tx, id: ConversationId) {
   const concluded = await concludedIn(tx)
   return [...(await ancestry(tx, id))].some((at) => concluded.has(at))
 }

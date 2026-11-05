@@ -41,9 +41,24 @@ export async function awaitsJob(tx: Tx, id: ConversationId): Promise<boolean> {
   return false
 }
 
+/** Live waking `notify` tasks of `id`, which wake it when another conversation finishes. */
+const wakingNotifies = async (tx: Tx, id: ConversationId) =>
+  (await liveTasks(tx, 'lineage.notify', id)).filter(
+    (task) => (task.input as { wake?: unknown }).wake !== false,
+  )
+
 /** Whether `id` waits on a `notify` that will wake it when another conversation finishes. */
 export async function awaitsNotify(tx: Tx, id: ConversationId): Promise<boolean> {
-  return (await liveTasks(tx, 'lineage.notify', id)).some(
-    (task) => (task.input as { wake?: unknown }).wake !== false,
+  return (await wakingNotifies(tx, id)).length > 0
+}
+
+/**
+ * Whether `id` still waits for a result of its own to be submitted: a job, or a waking `notify` before its `deliver`
+ * phase. Once a result is submitted, the run it wakes may already be answering, and that answer is no longer interim.
+ */
+export async function awaitsResult(tx: Tx, id: ConversationId): Promise<boolean> {
+  if (await awaitsJob(tx, id)) return true
+  return (await wakingNotifies(tx, id)).some(
+    (task) => (task.state as { checkpoint?: { phase?: string } }).checkpoint?.phase !== 'deliver',
   )
 }

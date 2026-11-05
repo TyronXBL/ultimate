@@ -22,6 +22,7 @@ import { Metadata } from '../server/metadata.ts'
 import {
   actions as conversationActions,
   concludedIn,
+  concludedTreeIn,
   setStanding,
 } from '../extensions/conversations/server.ts'
 import { UiState } from '../server/ui-state.ts'
@@ -789,4 +790,23 @@ it('resume removes concluded ancestors and leaves unrelated ids alone', async ()
     data: { result: { resumed: [parent, child.id] } },
   })
   expect((await server.host.uiState(context))['ext.conversations.concluded']).toEqual([unrelated])
+})
+it('finds a conversation concluded through a concluded ancestor', async () => {
+  const { server, create, action } = await launch()
+  const parent = await create()
+  const unrelated = await create()
+  const at = await server.harness.commit(
+    async (tx) => (await tx.appendEntry(parent, { kind: 'test.branch', data: {} })).id,
+    context,
+  )
+  const child = await (await server.harness.conversation(parent, context))!.fork(
+    at,
+    { ownership: { kind: 'ownerless' } },
+    context,
+  )
+  await action('conclude', { ids: [parent] })
+  await server.harness.commit(async (tx) => {
+    expect(await concludedTreeIn(tx, child.id)).toBe(true)
+    expect(await concludedTreeIn(tx, unrelated)).toBe(false)
+  }, context)
 })

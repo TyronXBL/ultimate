@@ -52,7 +52,7 @@ import type { AgentDefinition, DefinitionFields } from '../../lib/agents.ts'
 import { createChild, setupFor, started } from './children.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { exec } from '../../lib/exec.ts'
-import { awaitsJob, awaitsNotify } from '../../lib/jobs.ts'
+import { awaitsResult } from '../../lib/jobs.ts'
 import { shortTitle } from '../../lib/title.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
@@ -167,7 +167,10 @@ type DeliveryOf = (
 ) => Promise<Delivery>
 const noteText = (id: ConversationId, delivery: Delivery, report: string) =>
   `Note from subagent ${id} (${delivery === 'waiting' ? 'a status update while it waits on its own job; its final answer reaches you as a report' : 'recorded while this conversation was concluded, so it did not wake it'}):\n${report}`
-function createReporter(deliveryOf: DeliveryOf) {
+function createReporter(
+  deliveryOf: DeliveryOf,
+  concludedTree: (tx: Tx, id: ConversationId) => Promise<boolean>,
+) {
   return defineTask<
     {
       conversationId: ConversationId
@@ -293,16 +296,21 @@ function createReporter(deliveryOf: DeliveryOf) {
         }
       },
       report: async (task, runtime, context) => {
-        const { report, answer, delivery = 'report' } = task.state.checkpoint
+        const { report, answer } = task.state.checkpoint
+        let delivery = task.state.checkpoint.delivery ?? 'report'
         if (report !== undefined) {
           const parent = (await runtime.conversation(runtime.conversationId, context))!
           const agent = (await runtime.snapshot(Subagents, runtime.conversationId, context))!
             .agents[String(task.input.conversationId)].agent
           let message: AssistantMessage | undefined
-          if (answer !== undefined)
-            await runtime.commit(async (tx) => {
+          await runtime.commit(async (tx) => {
+            if (answer !== undefined)
               message = (await tx.entry(answer))?.model?.[0] as AssistantMessage | undefined
-            }, context)
+            // Concluded since the answer was recorded (this phase also runs after a restart): input would resume it.
+            // Pi Durable has no submit inside a transaction, so this is as close to placement as it gets.
+            if (delivery === 'report' && (await concludedTree(tx, runtime.conversationId)))
+              delivery = 'concluded'
+          }, context)
           const failed = !answered(message)
           const body =
             answer === undefined
@@ -878,13 +886,13 @@ export default function subagents(
     }
     return { ...definition, runs }
   }
+  const concludedTree = (tx: Tx, id: ConversationId) =>
+    host.need(ConversationsApi).concludedTreeIn(tx, id)
   const deliveryOf: DeliveryOf = async (tx, parent, child, answer) => {
-    if (await host.need(ConversationsApi).concludedTreeIn(tx, parent)) return 'concluded'
-    return answer && ((await awaitsJob(tx, child)) || (await awaitsNotify(tx, child)))
-      ? 'waiting'
-      : 'report'
+    if (await concludedTree(tx, parent)) return 'concluded'
+    return answer && (await awaitsResult(tx, child)) ? 'waiting' : 'report'
   }
-  const Reporter = createReporter(deliveryOf)
+  const Reporter = createReporter(deliveryOf, concludedTree)
   let unsubscribe: (() => void) | undefined
   let recovery = Promise.resolve()
   /** `live` as each submission settles; not on open, which scans every submission ever settled. */
@@ -909,12 +917,13 @@ export default function subagents(
       // child requested itself (a background job, CI, a notify) that wakes it after it answered has
       // no reporter and no reply: without this, the answer it starts never reaches the parent,
       // which stays idle. A pending reporter whose input was answered in the same run delivers
-      // that answer itself. Self-requested results count only live: the scan on open would
-      // otherwise deliver every such answer ever given (hours or weeks old) at once.
+      // that answer itself. Self-requested results count only live, on every path below: the scan
+      // on open would otherwise deliver every such answer ever given (hours or weeks old) at once.
       const input = await tx.entry(submission.entry)
+      if (!live && selfRequested.has(input?.kind ?? '')) return
       const message = input?.data as { from?: unknown; reply?: unknown } | undefined
       let messaged =
-        (live && selfRequested.has(input?.kind ?? '')) ||
+        selfRequested.has(input?.kind ?? '') ||
         (message?.from === parent &&
           ((input?.kind === 'board.message' && message.reply === false) ||
             input?.kind === 'board.reply'))

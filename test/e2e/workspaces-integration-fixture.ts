@@ -26,9 +26,17 @@ import { Messages } from '../../extensions/messages/api.ts'
 import subagents from '../../extensions/subagents/server.ts'
 import { temp, until } from '../helpers.ts'
 
-/** The part of the conversations service a test stands in for; standing a lander turns its summaries off and marks it standing. */
+/**
+ * The part of the conversations service a test stands in for; standing a lander turns its summaries off and marks it
+ * standing, and no conversation tree is concluded unless a test says so.
+ */
 export const conversations = (service: Partial<ConversationsService>) =>
-  ({ setAutomaticSummaries, setStanding, ...service }) as ConversationsService
+  ({
+    setAutomaticSummaries,
+    setStanding,
+    concludedTreeIn: async () => false,
+    ...service,
+  }) as ConversationsService
 
 // Every test has its own repository and harness, so they all run concurrently; fixtures close when the file ends.
 vi.setConfig({ maxConcurrency: 16 })
