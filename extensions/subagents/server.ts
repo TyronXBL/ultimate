@@ -297,20 +297,31 @@ function createReporter(
       },
       report: async (task, runtime, context) => {
         const { report, answer } = task.state.checkpoint
-        let delivery = task.state.checkpoint.delivery ?? 'report'
-        if (report !== undefined) {
-          const parent = (await runtime.conversation(runtime.conversationId, context))!
-          const agent = (await runtime.snapshot(Subagents, runtime.conversationId, context))!
-            .agents[String(task.input.conversationId)].agent
-          let message: AssistantMessage | undefined
-          await runtime.commit(async (tx) => {
-            if (answer !== undefined)
-              message = (await tx.entry(answer))?.model?.[0] as AssistantMessage | undefined
-            // Concluded since the answer was recorded (this phase also runs after a restart): input would resume it.
-            // Pi Durable has no submit inside a transaction, so this is as close to placement as it gets.
-            if (delivery === 'report' && (await concludedTree(tx, runtime.conversationId)))
-              delivery = 'concluded'
-          }, context)
+        const done = { status: 'terminal', outcome: { status: 'completed', result: null } } as const
+        if (report === undefined) {
+          await runtime.commit(() => done, context)
+          return
+        }
+        const parent = (await runtime.conversation(runtime.conversationId, context))!
+        const agent = (await runtime.snapshot(Subagents, runtime.conversationId, context))!.agents[
+          String(task.input.conversationId)
+        ].agent
+        const requestId =
+          answer === undefined ? `subagent-report:${task.id}` : answerRequest(answer)
+        // One commit decides and admits, so a conclusion can no longer slip in between.
+        await runtime.commit(async (tx) => {
+          // A tool that returned this answer already recorded its request: nothing left to deliver.
+          if (await tx.submissionByRequest(parent.id, requestId)) return done
+          const message =
+            answer === undefined
+              ? undefined
+              : ((await tx.entry(answer))?.model?.[0] as AssistantMessage | undefined)
+          // Concluded since the answer was recorded (this phase also runs after a restart): input would resume it.
+          const recorded = task.state.checkpoint.delivery ?? 'report'
+          const delivery =
+            recorded === 'report' && (await concludedTree(tx, runtime.conversationId))
+              ? 'concluded'
+              : recorded
           const failed = !answered(message)
           const body =
             answer === undefined
@@ -334,51 +345,27 @@ function createReporter(
               ...(delivery === 'report' ? {} : { note: delivery }),
             },
           }
-          const requestId =
-            answer === undefined ? `subagent-report:${task.id}` : answerRequest(answer)
-          if (delivery === 'report')
-            await parent.submit(
-              { type: 'input', content, entry, whenBusy: 'steer', requestId },
-              context,
-            )
-          else {
-            // A tool that returned this answer already recorded its request as an input: nothing left to note.
-            const delivered = async () => {
-              let found = false
-              await runtime.commit(async (tx) => {
-                found = (await tx.submissionByRequest(parent.id, requestId)) !== undefined
-              }, context)
-              return found
-            }
-            if (!(await delivered()))
-              await parent
-                .submit(
-                  {
-                    type: 'write',
-                    requestId,
-                    entry: {
-                      ...entry,
-                      model: [
-                        {
-                          role: 'user',
-                          content: noteText(task.input.conversationId, delivery, content),
-                          timestamp: Date.now(),
-                        },
-                      ],
-                    },
+          await parent.submit(
+            tx,
+            delivery === 'report'
+              ? { type: 'input', content, entry, whenBusy: 'steer', requestId }
+              : {
+                  type: 'write',
+                  requestId,
+                  entry: {
+                    ...entry,
+                    model: [
+                      {
+                        role: 'user',
+                        content: noteText(task.input.conversationId, delivery, content),
+                        timestamp: Date.now(),
+                      },
+                    ],
                   },
-                  context,
-                )
-                .catch(async (error: unknown) => {
-                  // The tool recorded it between the check and this write, as an input of the same request.
-                  if (!(await delivered())) throw error
-                })
-          }
-        }
-        await runtime.commit(
-          () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
-          context,
-        )
+                },
+          )
+          return done
+        }, context)
       },
     },
     abort: (task, runtime, context) =>

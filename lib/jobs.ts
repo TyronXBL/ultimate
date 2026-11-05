@@ -55,6 +55,8 @@ export async function awaitsNotify(tx: Tx, id: ConversationId): Promise<boolean>
 /**
  * Whether `id` still waits for a result of its own to be submitted: a job, or a waking `notify` before its `deliver`
  * phase. Once a result is submitted, the run it wakes may already be answering, and that answer is no longer interim.
+ * A task commits `deliver` just before it submits; an answer in that gap counts as final, the safe side: it wakes the
+ * caller once more rather than never.
  */
 export async function awaitsResult(tx: Tx, id: ConversationId): Promise<boolean> {
   if (await awaitsJob(tx, id)) return true
