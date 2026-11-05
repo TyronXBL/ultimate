@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync } from 'node:fs'
-import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 import { copyJson } from '@earendil-works/chord'
@@ -28,7 +28,14 @@ import { setup, setupCommands } from './setup.ts'
 import { advanceWorkspace } from './state.ts'
 import { failedTests, failingTests } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
-import type { Landed, LanderEntry, LanderOutcome, QueueEntry, WorkspaceIndex } from './types.ts'
+import type {
+  Landed,
+  LanderEntry,
+  LanderOutcome,
+  QueueEntry,
+  Unchecked,
+  WorkspaceIndex,
+} from './types.ts'
 
 /** One line of the lander conversation's log; it carries no model message, so no model ever sees it. */
 const LanderLog = defineEntry<LanderEntry>('ultimate.lander')
@@ -134,7 +141,9 @@ type Host = Pick<
   | 'home'
   | 'userHome'
   | 'ultimateRoot'
+  | 'projectRoot'
   | 'harness'
+  | 'projectSetup'
   | 'projectSettings'
   | 'doc'
   | 'metadata'
@@ -301,6 +310,56 @@ export const landerSettings = async (host: Pick<Host, 'projectSettings'>): Promi
     ...(lander?.push && !process.env.ULTIMATE_PREVIEW_BRANCH ? { push: lander.push } : {}),
   }
 }
+/**
+ * The checks the project's own `.ultimate/settings.json` declares, counted from its text: an untrusted file is parsed,
+ * never run. `error` when it exists but does not parse.
+ */
+async function declaredChecks(projectRoot: string): Promise<{ count: number } | { error: string }> {
+  let settings: { lander?: { checks?: unknown } } | null
+  try {
+    settings = JSON.parse(await readFile(join(projectRoot, '.ultimate/settings.json'), 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { count: 0 }
+    return { error: String(error) }
+  }
+  const checks = settings?.lander?.checks
+  return { count: Array.isArray(checks) ? checks.flat().length : 0 }
+}
+/**
+ * Why `settings` run no checks, or undefined when they run some. Trust gates running a project's checks: an untrusted
+ * project's declared checks are counted for the warning, never run. A trusted project whose settings do not parse
+ * throws instead of landing unchecked.
+ */
+async function uncheckedReason(
+  host: Pick<Host, 'projectRoot' | 'projectSetup'>,
+  settings: Settings,
+): Promise<Unchecked | undefined> {
+  if (settings.checks.length) return undefined
+  const [{ decision }, declared] = await Promise.all([
+    host.projectSetup(),
+    declaredChecks(host.projectRoot),
+  ])
+  if (decision === true && 'error' in declared)
+    throw new Error(
+      `.ultimate/settings.json does not parse, so its lander checks cannot run: ${declared.error}`,
+    )
+  if (decision === true || 'error' in declared || !declared.count) return { reason: 'none' }
+  return {
+    reason: 'untrusted',
+    declared: declared.count,
+    decision: decision === false ? 'declined' : 'undecided',
+  }
+}
+/** The report's line about a landing no check ran on, for the submitter and whoever started it. */
+const uncheckedLine = (unchecked: Unchecked) =>
+  unchecked.reason === 'none'
+    ? 'Unchecked: no lander checks are configured, so none ran.'
+    : `Unchecked: .ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but none ran: this project's own setup is ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
+/** The lander step that says no checks run, in place of the checks. */
+const uncheckedStep = (unchecked: Unchecked) =>
+  unchecked.reason === 'none'
+    ? 'no checks configured'
+    : `skipped ${plural(unchecked.declared, 'declared check')}: project setup ${unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`
 export const contains = (cwd: string, ancestor: string, descendant: string) =>
   git(cwd, 'merge-base', '--is-ancestor', ancestor, descendant).then(
     () => true,
@@ -321,6 +380,7 @@ type Prepared = {
   base: string
   integrated: string
   flaky: string[]
+  unchecked?: Unchecked
 }
 const landedOutcome = (landed: Landed): LanderOutcome => ({
   outcome: 'landed',
@@ -329,6 +389,7 @@ const landedOutcome = (landed: Landed): LanderOutcome => ({
   commits: landed.commits,
   paths: landed.paths,
   flaky: landed.flaky,
+  ...(landed.unchecked ? { unchecked: landed.unchecked } : {}),
 })
 type State =
   | { phase: 'next' }
@@ -447,6 +508,18 @@ export function createLander(
                 ms: Math.round(ran.ms),
               })
           }, context)
+        /** Log a step the user must not miss, marked as a warning. */
+        const warn = (text: string) =>
+          runtime.commit(async (tx) => {
+            await advanceAndLog(
+              tx,
+              runtime.conversationId,
+              (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue,
+              id,
+              { type: 'step', row: { step: text, at: Date.now(), warning: true } },
+              { step: text, warning: true },
+            )
+          }, context)
         /** Record the outcome, log it and report it to the submitter, in one commit. */
         const finish = (text: string, outcome: LanderOutcome) =>
           runtime.commit(async (tx) => {
@@ -496,6 +569,7 @@ export function createLander(
                 commitCount: commits.length,
                 paths: (outcome.paths ?? []).slice(0, 8),
                 ...(outcome.pushed ? { pushed: outcome.pushed } : {}),
+                ...(outcome.unchecked ? { unchecked: outcome.unchecked } : {}),
               })
             }
             return {
@@ -516,6 +590,7 @@ export function createLander(
               : `had nothing new to land on ${entry.target}.`,
             ...(landed.commits.length ? [`Commits:\n${landed.commits.join('\n')}`] : []),
             ...landed.flaky.map((command) => `Flaky: ${command}`),
+            ...(landed.unchecked ? [uncheckedLine(landed.unchecked)] : []),
           ].join('\n')
         /**
          * Report `reason`, with `output` (conflicting paths, a check's output tail) and what to do next.
@@ -744,6 +819,9 @@ export function createLander(
             // Setup prepares the merged revision, for example installs its lockfile.
             await step('setting up')
             await setup(source, path, projectSettings, signal)
+            const unchecked = await uncheckedReason(host, settings)
+            if (unchecked?.reason === 'untrusted') await warn(uncheckedStep(unchecked))
+            else if (unchecked) await step(uncheckedStep(unchecked))
             const flaky: string[] = []
             for (const [position, group] of settings.checks.entries()) {
               const members = Array.isArray(group) ? group : [group]
@@ -843,11 +921,11 @@ export function createLander(
               )
             prepared = await runtime.memo<Prepared>(
               `prepared:${id}:${attempt}`,
-              { base, integrated: merged.sha, flaky },
+              { base, integrated: merged.sha, flaky, ...(unchecked ? { unchecked } : {}) },
               context,
             )
           }
-          const { base, integrated, flaky } = prepared
+          const { base, integrated, flaky, unchecked } = prepared
           await step('fast-forwarding')
           let refused: string | undefined
           const moved = await serial(source, async () => {
@@ -890,6 +968,7 @@ export function createLander(
             commits: lines(commitLog),
             paths: lines(changedPaths),
             flaky,
+            ...(unchecked ? { unchecked } : {}),
           }
           let landed = candidate
           await runtime.commit(async (tx) => {

@@ -23,7 +23,7 @@ import {
 } from '@/sdk'
 import type { EntryRecord, ToolCallView } from '@/sdk'
 import { useWorkspaceIndex } from './data.tsx'
-import { LandingCard, Open, Subject } from './landing.tsx'
+import { LandingCard, landedTone, Open, Subject, UncheckedNote } from './landing.tsx'
 import type { LandingTone } from './landing.tsx'
 import { inProgress, superseded, tookFor } from './steps.tsx'
 import type {
@@ -49,7 +49,7 @@ function headline(outcome: LanderOutcome, target?: string) {
   return outcome.reason ? `${landed} · ${outcome.reason}` : `${landed} · not pushed`
 }
 
-/** What the outcome holds beyond its headline: commits, flaky checks, the output tail. */
+/** What the outcome holds beyond its headline: commits, flaky or skipped checks, the output tail. */
 function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
   const { switchConversation } = useUltimate()
   return (
@@ -69,6 +69,7 @@ function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
           flaky: {command}
         </p>
       ))}
+      {outcome.unchecked && <UncheckedNote unchecked={outcome.unchecked} />}
       {outcome.repeats?.map((repeat) => (
         <p className="break-words" key={repeat.test}>
           <span className="text-warning">
@@ -112,7 +113,11 @@ function OutputTail({ output }: { output: string }) {
 }
 
 const toneOf = (outcome: LanderOutcome): LandingTone =>
-  outcome.outcome === 'failed' ? 'failed' : outcome.reason ? 'pushFailed' : 'landed'
+  outcome.outcome === 'failed'
+    ? 'failed'
+    : outcome.reason
+      ? 'pushFailed'
+      : landedTone(outcome.unchecked)
 
 /** The lander's stored report in the submitter's transcript. */
 export function LanderReport({ entry }: { entry: EntryRecord }) {
@@ -238,6 +243,8 @@ function StepLine({
       icon={
         failed ? (
           <XIcon className="size-3 shrink-0 text-error" />
+        ) : row.warning ? (
+          <TriangleAlertIcon className="size-3 shrink-0 text-warning" />
         ) : done ? (
           <CheckIcon className="size-3 shrink-0 text-success/70" />
         ) : (
@@ -246,7 +253,7 @@ function StepLine({
       }
       took={duration}
     >
-      {row.step}
+      <span className={cn(row.warning && 'text-warning')}>{row.step}</span>
     </Line>
   )
 }
@@ -474,6 +481,8 @@ function StatusChip({ state }: { state: Submission }) {
   const landed = outcome.commits?.length ? `Landed ${short(outcome.sha!)}` : 'Nothing new'
   if (outcome.reason)
     return <span className={cn(chip, 'text-warning')}>{landed} · push failed</span>
+  if (landedTone(outcome.unchecked) === 'unchecked')
+    return <span className={cn(chip, 'text-warning')}>{landed} · unchecked</span>
   return (
     <span className={cn(chip, 'text-success')}>
       {landed}

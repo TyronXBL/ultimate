@@ -171,10 +171,17 @@ function Landing({ event, now }: Props<typeof SubmissionLanded>) {
   return (
     <Row
       event={event}
-      icon={<GitMergeIcon className={cn(iconClass, 'text-success')} />}
+      icon={
+        <GitMergeIcon
+          className={cn(
+            iconClass,
+            landing.unchecked?.reason === 'untrusted' ? 'text-warning' : 'text-success',
+          )}
+        />
+      }
       now={now}
       target={{ conversation: landing.conversationId, entry: landing.at }}
-      title={`Landed ${landing.sha.slice(0, 7)} on ${landing.target}${landing.title ? ` · ${landing.title}` : ''}`}
+      title={`Landed ${landing.sha.slice(0, 7)} on ${landing.target}${landing.unchecked?.reason === 'untrusted' ? ' unchecked' : ''}${landing.title ? ` · ${landing.title}` : ''}`}
       trailing={
         <CommitCount
           className="text-muted-foreground/80"

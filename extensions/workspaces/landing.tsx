@@ -2,6 +2,7 @@ import { cn } from 'cn'
 import {
   ArrowUpRightIcon,
   CheckIcon,
+  ShieldAlertIcon,
   SquareArrowOutUpRightIcon,
   TriangleAlertIcon,
   XIcon,
@@ -13,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { api, definePoint, Fold, Provided, useConversationSummary, useUltimate } from '@/sdk'
 import { ConversationSpend, FeatureTag, useStandingName } from '../conversations/ui.tsx'
 import { GithubAction } from './refs.ts'
+import type { Unchecked } from './types.ts'
 import type { ConversationSubject } from '../conversations/types.ts'
 
 /** "open #id", with a dot while that conversation works. */
@@ -171,12 +173,51 @@ export function Subject({
   )
 }
 
-export type LandingTone = 'landed' | 'pushFailed' | 'failed'
+export type LandingTone = 'landed' | 'unchecked' | 'pushFailed' | 'failed'
 const tones = {
   landed: ['border-l-success/70', 'text-success', CheckIcon, 'landed'],
+  unchecked: ['border-l-warning/70', 'text-warning', ShieldAlertIcon, 'landed unchecked'],
   pushFailed: ['border-l-warning/70', 'text-warning', TriangleAlertIcon, 'push failed'],
   failed: ['border-l-error/70', 'text-error', XIcon, 'not landed'],
 } as const
+
+/** A landed outcome's tone: a warning while the project's declared checks were skipped. */
+export const landedTone = (unchecked?: Unchecked): LandingTone =>
+  unchecked?.reason === 'untrusted' ? 'unchecked' : 'landed'
+
+/**
+ * That no check ran on a landing: a warning naming why when the project's declared checks were skipped, with the way to
+ * turn them on; a quiet line when it configures none.
+ */
+export function UncheckedNote({ unchecked }: { unchecked: Unchecked }) {
+  const { openPanel } = useUltimate()
+  if (unchecked.reason === 'none')
+    return (
+      <p className="text-muted-foreground" data-unchecked="none">
+        No checks configured: none ran.
+      </p>
+    )
+  const count =
+    unchecked.declared === 1 ? '1 declared check' : `${unchecked.declared} declared checks`
+  return (
+    <div className="space-y-0.5" data-unchecked="untrusted">
+      <p className="text-warning">Checks skipped: {count} did not run.</p>
+      <p className="font-sans text-[12.5px] leading-relaxed text-muted-foreground">
+        This project's own setup is{' '}
+        {unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted
+        setup runs its commands. To run them, choose This project's setup in{' '}
+        <button
+          className="cursor-pointer text-brand outline-none hover:underline focus-visible:underline"
+          onClick={() => openPanel('extensions')}
+          type="button"
+        >
+          Extensions
+        </button>
+        .
+      </p>
+    </div>
+  )
+}
 
 /**
  * A landing as one card: the feature it lands (tag, title, summary) from its conversation's summary at submit time,

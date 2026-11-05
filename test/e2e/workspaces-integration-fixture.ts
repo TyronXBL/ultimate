@@ -116,6 +116,7 @@ export async function fixture(
     need: (api: { name: string }) =>
       new Proxy({}, { get: (_, key) => (lookup(api) as Record<string | symbol, unknown>)?.[key] }),
     projectSettings: async () => ({ isolates: { worktree: { setup: commands } } }),
+    projectSetup: async () => ({ config: false, decision: true }),
     extensions: () => [{ name: 'workspaces', enabled: true }],
     resource<T>(key: string, create: () => T): T {
       if (!resources.has(key)) resources.set(key, create())

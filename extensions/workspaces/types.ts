@@ -42,13 +42,24 @@ type Submitted = {
 export type QueueEntry =
   | (Submitted & { state: 'queued'; landed?: Landed })
   | (Submitted & { state: 'landing'; step?: string; landed?: Landed })
-/** A submission's landing: the target moved from `base` to `sha`, which brought `commits` and `paths`. */
+/**
+ * Why a landing ran no checks: the project configures none, or its `.ultimate/settings.json` declares `declared` lander
+ * checks that stay off because the user declined its setup or has not chosen yet (trust gates running them).
+ */
+export type Unchecked =
+  | { reason: 'none' }
+  | { reason: 'untrusted'; declared: number; decision: 'declined' | 'undecided' }
+/**
+ * A submission's landing: the target moved from `base` to `sha`, which brought `commits` and `paths`; `unchecked` when no
+ * check ran on it.
+ */
 export type Landed = {
   sha: string
   base: string
   commits: string[]
   paths: string[]
   flaky: string[]
+  unchecked?: Unchecked
 }
 /** A check's result; a passed or flaky one carries its last output line as `summary`. */
 type LanderCheck = {
@@ -61,6 +72,8 @@ export type LanderStep = {
   step: string
   at: number
   check?: LanderCheck
+  /** A step the user must not miss, such as checks skipped. */
+  warning?: true
 }
 /** How a submission ended. A push that failed after landing locally is `landed` with a `reason`. */
 export type LanderOutcome = {
@@ -72,6 +85,7 @@ export type LanderOutcome = {
   commits?: string[]
   paths?: string[]
   flaky?: string[]
+  unchecked?: Unchecked
   /** `<remote>/<target>` it was pushed to. */
   pushed?: string
   needsRestart?: boolean
@@ -111,6 +125,7 @@ export type LanderEntry = {
   sourceEntry?: number
   step?: string
   check?: LanderCheck
+  warning?: true
   /** On the submission's first line and its outcome. */
   subject?: ConversationSubject
 } & Partial<LanderOutcome>

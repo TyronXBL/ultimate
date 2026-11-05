@@ -696,6 +696,13 @@ function landingNote(landing: LandedData) {
     ...landing.commits.map((commit) => commit.subject),
     ...(more ? [`and ${more} more`] : []),
     `Changed: ${landing.paths.join(', ')}`,
+    ...(landing.unchecked?.reason === 'untrusted'
+      ? [
+          `Unchecked: skipped ${landing.unchecked.declared} declared lander checks, project setup ${landing.unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`,
+        ]
+      : landing.unchecked
+        ? ['Unchecked: no lander checks configured']
+        : []),
   ].join('\n')
   const data = {
     at: landing.at,
@@ -711,6 +718,7 @@ function landingNote(landing: LandedData) {
     ...(landing.summary ? { summary: landing.summary } : {}),
     ...(landing.feature ? { feature: landing.feature } : {}),
     ...(landing.pushed ? { pushed: landing.pushed } : {}),
+    ...(landing.unchecked ? { unchecked: landing.unchecked } : {}),
   }
   return { text, data }
 }

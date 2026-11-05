@@ -4,7 +4,8 @@ import { MentionText } from '@/components/ai/message'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { defineWebExtension, useConversation, useTranscript } from '@/sdk'
 import { useWorkspaceIndex } from './data.tsx'
-import { CommitCount, LandingCard, useGithubRepo } from './landing.tsx'
+import { CommitCount, LandingCard, landedTone, UncheckedNote, useGithubRepo } from './landing.tsx'
+import type { Unchecked } from './types.ts'
 import { LanderLogEntry, LanderReport, WorkspaceCall } from './log.tsx'
 import { compareUrl } from '../../lib/compare.ts'
 import type { EntryRecord } from '@earendil-works/pi-durable'
@@ -25,6 +26,7 @@ function LandingNote({ entry }: { entry: EntryRecord }) {
     paths,
     more,
     pushed,
+    unchecked,
     abstract,
   } = entry.data as {
     from: number
@@ -40,6 +42,7 @@ function LandingNote({ entry }: { entry: EntryRecord }) {
     paths: string[]
     more: number
     pushed?: string
+    unchecked?: Unchecked
     abstract?: { at: number; text: string }
   }
   const github = useGithubRepo()
@@ -84,11 +87,12 @@ function LandingNote({ entry }: { entry: EntryRecord }) {
           ...(summary ? { summary } : {}),
           ...(feature ? { feature } : {}),
         }}
-        tone="landed"
+        tone={landedTone(unchecked)}
       >
         {paths.length > 0 && (
           <p className="break-words text-muted-foreground">Changed: {paths.join(', ')}</p>
         )}
+        {unchecked && <UncheckedNote unchecked={unchecked} />}
         {abstract && (
           <Collapsible className="group/state">
             <CollapsibleTrigger className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">

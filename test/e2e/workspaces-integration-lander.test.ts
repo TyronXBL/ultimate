@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, access } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile, access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { TaskId } from '@earendil-works/pi-durable'
@@ -135,6 +135,9 @@ it.concurrent('lands two submissions in order onto a moved target and reports bo
   ])
   expect(landedOne.paths).toContain('one.txt')
   expect(landedOne.pushed).toBeUndefined()
+  // Its checks ran: nothing warns that it is unchecked.
+  expect(landedOne.unchecked).toBeUndefined()
+  expect(reportOne).not.toContain('Unchecked')
   expect(log.filter((line) => line.submission === submissionTwo).at(-1)).toMatchObject({
     conversationId: second,
     outcome: 'landed',
@@ -144,6 +147,44 @@ it.concurrent('lands two submissions in order onto a moved target and reports bo
   expect(index.results[submissionTwo]).toMatchObject({ outcome: 'landed' })
   // Lineage is disabled in this fixture: landings leave no root note.
   expect(await rootNotes(f)).toHaveLength(0)
+})
+it.concurrent('never runs the checks of a declined project setup and says the landing is unchecked', async () => {
+  const f = await fixture()
+  const ran = join(f.directory, 'ran')
+  await mkdir(join(f.projectRoot, '.ultimate'))
+  await writeFile(
+    join(f.projectRoot, '.ultimate/settings.json'),
+    JSON.stringify({ lander: { checks: [`touch '${ran}'`, [`touch '${ran}'`, 'true']] } }),
+  )
+  // As the core with the folder's setup declined: its settings read as none.
+  f.host.projectSetup = async () => ({ config: true, decision: false })
+  f.host.projectSettings = async () => ({})
+  const id = await f.create()
+  await f.service.ready(id, context)
+  await commit((await f.service.get(id, context))!.path)
+  await f.service.submit(id, 'None', context)
+  const [report] = await submitted(f, id)
+  expect(report).toContain('landed as')
+  expect(report).toContain('declares 3 lander checks, but none ran')
+  await expect(access(ran)).rejects.toThrow('ENOENT')
+  const { log } = await landerLog(f)
+  expect(log.filter((line) => line.warning).map((line) => line.step)).toEqual([
+    'skipped 3 declared checks: project setup declined',
+  ])
+  expect(log.at(-1)).toMatchObject({
+    outcome: 'landed',
+    unchecked: { reason: 'untrusted', declared: 3, decision: 'declined' },
+  })
+  // A project that declares no checks lands with a quiet note that none ran.
+  await rm(join(f.projectRoot, '.ultimate'), { recursive: true })
+  await commit((await f.service.get(id, context))!.path, 'again.txt')
+  await f.service.submit(id, 'None', context)
+  const reports = await submitted(f, id)
+  expect(reports.at(-1)).toContain('Unchecked: no lander checks are configured')
+  expect((await landerLog(f)).log.at(-1)).toMatchObject({
+    outcome: 'landed',
+    unchecked: { reason: 'none' },
+  })
 })
 it.concurrent('runs a check group concurrently and records each summary', async () => {
   const f = await fixture()

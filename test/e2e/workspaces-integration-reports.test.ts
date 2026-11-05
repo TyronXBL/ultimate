@@ -178,6 +178,7 @@ it.concurrent('emits one landed event and notes the root once, across a replayed
       commits: [{ sha: sha.slice(0, 7), subject: 'landed.txt' }],
       commitCount: 1,
       paths: ['landed.txt'],
+      unchecked: { reason: 'none' },
     },
   ])
   // Lineage's reactor notes the root; it is no tally, so a delivery task writes the note.
@@ -203,6 +204,7 @@ it.concurrent('emits one landed event and notes the root once, across a replayed
     feature: 'Landing',
     commits: [{ sha: sha.slice(0, 7), subject: 'landed.txt' }],
     paths: ['landed.txt'],
+    unchecked: { reason: 'none' },
   })
   expect((notes[0].data as { text: string }).text).toContain(
     `Landed ${sha.slice(0, 7)} on main from #${id}/${submittedAt} Write the feature (Landing):\nDiverged: Added a landing file instead of changing the UI.`,

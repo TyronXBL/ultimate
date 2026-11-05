@@ -179,6 +179,14 @@ lander's sidebar row shows the feature it lands or landed last.
    output line (ANSI stripped, at most 200 characters) as `summary`, shown muted after the command on its step row.
    A failed run's log entry keeps its output tail as `output` (not in `steps`), under a collapsed "Output" in the
    lander's log, so a check that then passed as flaky can still be diagnosed.
+   With no checks to run, the landing records why as `unchecked` (on `landed`, the outcome, `workspaces.landed` and
+   the root note), so nobody takes it for checked. `untrusted`: the folder's `.ultimate/settings.json` declares
+   checks, but its setup is declined or not chosen, so the core reads its settings as empty (trust gates running its
+   commands). The lander only counts the declared checks in the file's text, never runs them, logs a warning step and
+   shows the card as "landed unchecked" with the way to choose the project's setup; the report says the same to the
+   submitter. `none`: nothing declares checks, shown as a quiet line. A trusted folder whose settings do not parse
+   fails the submission instead of landing unchecked. Every host runs this from the same clone, so it applies to
+   every project whose setup is declined or undecided.
 4. Fast-forwards the target branch in the source checkout (`merge --ff-only` when it is checked out). If the target
    moved meanwhile it starts again, at most three attempts.
 5. With `lander.push`, pushes the target branch (never forced); a rejection integrates again once, then is reported.

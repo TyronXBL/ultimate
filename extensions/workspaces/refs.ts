@@ -6,6 +6,7 @@ import { actionRef, docRef } from '../../shared/extension-api.ts'
 import { defineEvent } from '../../shared/events.ts'
 import type {
   FailingTest,
+  Unchecked,
   WorkspaceDisk,
   WorkspaceIndex,
   WorkspaceInfo,
@@ -81,6 +82,8 @@ export type LandedData = {
   paths: string[]
   /** `<remote>/<target>` it was pushed to; absent when not pushed or the push failed. */
   pushed?: string
+  /** Why no check ran on it; absent when its checks ran. */
+  unchecked?: Unchecked
 }
 /**
  * The lander landed a submission: the target moved to `sha`. Emitted in the commit that records the outcome, also when
