@@ -459,25 +459,25 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
     'progress cannot skip a step',
     sleeping('seeding'),
     { type: 'switching', at: 5 },
-    refused('Falling asleep cannot switching from seeding'),
+    refused('Falling asleep cannot switch from seeding'),
   ],
   [
     'the switch needs the backup result first',
     sleeping('backing up'),
     { type: 'switching', at: 5 },
-    refused('Falling asleep cannot switching before the backup is recorded'),
+    refused('Falling asleep cannot switch before the backup is recorded'),
   ],
   [
     'progress cannot finish early',
     sleeping('backing up'),
     { type: 'asleep', at: 5 },
-    refused('Falling asleep cannot asleep from backing up'),
+    refused('Falling asleep cannot finish from backing up'),
   ],
   [
     'progress needs a running sleep',
     FAILED,
     { type: 'switching', at: 5 },
-    refused('No sleep is running to switching'),
+    refused('No sleep is running to switch'),
   ],
 ])('journey: %s', (_name, from, event, expected) => {
   const outcome = (() => {
