@@ -5,7 +5,7 @@
 import { defineExtension, GenerationTask, hook } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
-import { LoginChanged } from '../models/api.ts'
+import { LoginChanged, Resets } from '../models/api.ts'
 import { limited } from '../../lib/rate-limit.ts'
 import { QuotaApi } from './api.ts'
 import type { QuotaSource } from './api.ts'
@@ -112,6 +112,20 @@ export default function quotaExtension(host: ExtensionHost) {
         if (current.registered.get(source.provider) === source)
           current.registered.delete(source.provider)
       }
+    },
+  })
+  host.implement(Resets, {
+    // Asked after a limit error that went around `afterResponse`: read again, a reading from before it may show room.
+    // The limit is lifted once every exhausted window has reset.
+    async resetsAt(provider) {
+      cacheStep(cached(current, provider), { type: 'answer', at: Date.now(), limited: true })
+      const reading = (await state(host, false)).providers.find(
+        (item) => item.provider === provider,
+      )
+      const resets = (reading?.windows ?? []).flatMap((window) =>
+        window.used >= 100 && window.resetsAt !== undefined ? [window.resetsAt] : [],
+      )
+      return resets.length ? Math.max(...resets) : undefined
     },
   })
   // Another account's numbers must not show under the new login: drop them, the next look reads again.

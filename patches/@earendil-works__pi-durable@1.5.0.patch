@@ -61,10 +61,19 @@ index 120ff2015d81eb795a090eae897910a58768373f..379ed6defc0eb0a840cae7e84f68324c
                      child.stdin?.on("error", () => { });
                      child.stdin?.end(stdinCommand);
 diff --git a/dist/harness/compaction.js b/dist/harness/compaction.js
-index e8eded74921ab86f7641bffb0a96e7371021fb55..51cd3239204c27755ca4c45ff7e8617cc329cc5a 100644
+index e8eded74921ab86f7641bffb0a96e7371021fb55..7ea67d3d46b3512ba010fc9ca480360974f47b29 100644
 --- a/dist/harness/compaction.js
 +++ b/dist/harness/compaction.js
-@@ -94,7 +94,8 @@ export const CompactionTask = defineTask({
+@@ -87,6 +87,8 @@ export const CompactionTask = defineTask({
+             });
+             if (decision !== undefined && "decline" in decision)
+                 return complete(runtime, context);
++            if (decision !== undefined && "fail" in decision)
++                return failHook(runtime, decision.fail, context);
+             if (decision !== undefined)
+                 return place(runtime, firstKept, decision.summary, context);
+             const request = {
+@@ -94,7 +96,8 @@ export const CompactionTask = defineTask({
                  model: ref,
                  thinkingLevel: agent.thinkingLevel,
                  streamOptions: settings.stream,
@@ -74,6 +83,20 @@ index e8eded74921ab86f7641bffb0a96e7371021fb55..51cd3239204c27755ca4c45ff7e8617c
                  tail: view.entries.reduce((tail, entry) => (entry.id > tail ? entry.id : tail), firstKept),
                  firstKept,
              };
+@@ -409,6 +412,13 @@ async function failCutOff(runtime, task, context) {
+         };
+     }, context);
+ }
++/** Fail with the reason a hook gave: it tried to summarize and could not. */
++async function failHook(runtime, message, context) {
++    await runtime.commit(async (tx) => {
++        failCompactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId, message);
++        return { status: "terminal", outcome: { status: "failed", error: { message, detail: { reason: "model_error" } } } };
++    }, context);
++}
+ async function failNoModel(runtime, ref, context) {
+     const message = ref === undefined ? "No model is configured" : `Model ${ref.provider}/${ref.modelId} is not available`;
+     await runtime.commit(async (tx) => {
 diff --git a/dist/harness/generation.js b/dist/harness/generation.js
 index ac42dfe741b20726ab8eb3d8139b1296d664210d..1e7f1ac26d17b83cb15bf00408fa70b0aee4e747 100644
 --- a/dist/harness/generation.js
@@ -342,7 +365,7 @@ index 6e882a8c252dda942b8b45e5b1837cf2fee28341..89a85e8a52bf67044ff15c3c856a650d
      const input = { ...fields, type: "input", status: "placed", entry: entry.id };
      const { id } = await tx.createSubmission(input);
 diff --git a/dist/harness/types.d.ts b/dist/harness/types.d.ts
-index eb64e474162b158a43563e6c68d8ffea8c18b74a..cce695c6d87c79dadea54560bafcca62cf073ca1 100644
+index eb64e474162b158a43563e6c68d8ffea8c18b74a..8eb61e68a40e7916949b5029b733fc627d8d2779 100644
 --- a/dist/harness/types.d.ts
 +++ b/dist/harness/types.d.ts
 @@ -816,6 +816,9 @@ export interface Harness extends Session {
@@ -364,6 +387,24 @@ index eb64e474162b158a43563e6c68d8ffea8c18b74a..cce695c6d87c79dadea54560bafcca62
      /** Before every request attempt, including recovery; the result is used for that request only. */
      beforeRequest(request: {
          readonly messages: readonly Message[];
+@@ -976,7 +981,7 @@ export interface CompactionHooks {
+     /**
+      * After range selection, before summarizing; the first decision wins. `entries` are the active entries the summary
+      * replaces, the head marker first, and `messages` their model context, the summarizer's source; `firstKept` is the
+-     * first entry kept verbatim.
++     * first entry kept verbatim. `fail` ends the compaction failed with that message, placing nothing.
+      */
+     beforeCompact(compaction: {
+         readonly reason: CompactionReason;
+@@ -988,6 +993,8 @@ export interface CompactionHooks {
+         readonly decline: true;
+     } | {
+         readonly summary: string;
++    } | {
++        readonly fail: string;
+     }>;
+ }
+ export {};
 diff --git a/dist/session/session.d.ts b/dist/session/session.d.ts
 index 8201d7cfefb710516a3d4d89ba208adc2cbebd19..37c9f362401b5bc81f2f24233aa3dd7f57e29204 100644
 --- a/dist/session/session.d.ts

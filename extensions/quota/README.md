@@ -35,6 +35,10 @@ registered source's included, so nothing that could quote a response or a token 
 
 `state { fresh? }` → `{ providers: [{ provider, name, plan?, windows: [{ label, group?, used, resetsAt? }], at?, error? }] }`.
 
+It fills the `models.resets` extension point (`Resets` in `extensions/models/api.ts`): `resetsAt(provider)` reads like
+`state { fresh: true }` and returns when the last of the provider's exhausted windows (100% used) resets, so a failed
+compaction summary can say when to resume.
+
 ## UI
 
 A status-line chip (`web.tsx`), also on a phone's line. While every limit is under 70 % it is a quiet gauge with

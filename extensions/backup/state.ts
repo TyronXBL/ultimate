@@ -69,6 +69,46 @@ export type BackupOutcome =
       to: string
     }
 
+/**
+ * The models a conversation on `current` would move to, in order, were it and each model after it to answer with a
+ * limit: the backups `backupStep` takes one by one, then the primary it switched away from once a run would return to
+ * it. Switches nothing: for work that has to get around a limit without moving the conversation, such as a summary.
+ */
+export function backupOrder(
+  state: BackupState,
+  event: Pick<Limit, 'current' | 'currentThinking' | 'candidates' | 'hasLogin' | 'now'>,
+): Candidate[] {
+  const order: Candidate[] = []
+  let at = state
+  let current: ModelRef = event.current
+  for (;;) {
+    const step = backupStep(at, {
+      ...event,
+      type: 'limit',
+      current,
+      failed: name(current),
+      reason: '',
+    })
+    if (step.outcome.kind !== 'switched') break
+    const { to, level } = step.outcome
+    order.push({ ...plain(to), ...(level ? { thinking: level } : {}) })
+    at = step.state
+    current = to
+  }
+  const { outcome } = backupStep(state, {
+    type: 'run',
+    current: event.current,
+    now: event.now,
+    hasPrimaryLogin: event.hasLogin,
+  })
+  if (outcome.kind === 'returned' && !order.some((ref) => name(ref) === outcome.to))
+    order.push({
+      ...plain(outcome.primary),
+      ...(outcome.thinking ? { thinking: outcome.thinking } : {}),
+    })
+  return order
+}
+
 /** The state after `event` and what happened. */
 export function backupStep(
   state: BackupState,

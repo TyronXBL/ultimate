@@ -14,7 +14,7 @@ import { BackupApi } from '../extensions/backup/api.ts'
 import pauseExtension from '../extensions/pause/server.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
 import { Pin } from '../extensions/models/api.ts'
-import { backupStep } from '../extensions/backup/state.ts'
+import { backupOrder, backupStep } from '../extensions/backup/state.ts'
 import type { BackupRecord, BackupState } from '../extensions/backup/refs.ts'
 import type { Run } from '../extensions/subagents/refs.ts'
 import { Standing, SubagentsApi } from '../extensions/subagents/api.ts'
@@ -439,4 +439,37 @@ it.each([
 ])('return: $row', ({ from, login, outcome, after }) => {
   const next = run('b', SINCE + COOLDOWN_MS, login, structuredClone(from))
   expect(next).toEqual({ state: after, outcome })
+})
+
+// A compaction's summary follows this order when the conversation's model is limited, without switching it.
+it.each([
+  {
+    row: 'on the primary: the backups, in order',
+    from: primary,
+    current: 'a',
+    now: SINCE,
+    order: ['b', 'c'],
+  },
+  {
+    row: 'on a backup within the cooldown: the untried backups only',
+    from: onBackup,
+    current: 'b',
+    now: SINCE,
+    order: ['c'],
+  },
+  {
+    row: 'on a backup after the cooldown: the untried backups, then the primary',
+    from: onBackup,
+    current: 'b',
+    now: SINCE + COOLDOWN_MS,
+    order: ['c', 'a'],
+  },
+])('order: $row', ({ from, current, now, order }) => {
+  const models = backupOrder(from, {
+    current: ref(current),
+    candidates: [ref('b'), ref('c')],
+    hasLogin: () => true,
+    now,
+  })
+  expect(models.map((model) => model.modelId)).toEqual(order)
 })
