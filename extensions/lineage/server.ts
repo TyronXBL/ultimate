@@ -63,6 +63,9 @@ import type { RootEvent } from './types.ts'
 import { compareUrl } from '../../lib/compare.ts'
 import { hasLogin, hostDefaultModel } from '../../lib/agents.ts'
 import { admitCompaction } from '../../lib/compaction.ts'
+import { limitOf } from '../../lib/rate-limit.ts'
+import type { Limit } from '../../lib/rate-limit.ts'
+import { BackupOrder, Resets } from '../models/api.ts'
 import { githubRepo } from '../../lib/project-identity.ts'
 
 export type BranchImage = { data: string; mimeType: string }
@@ -206,6 +209,60 @@ async function ask(
     throw new Error(answer.errorMessage ?? `The model stopped: ${answer.stopReason}`)
   if (!result) throw new Error('The model returned no answer')
   return result
+}
+
+/** A summary model that did not answer: why, and when its provider's limit resets when it says. */
+type Refused = { model: string; limit?: Limit; error: string; resetsAt?: number }
+
+const refusal = ({ model, limit, error, resetsAt }: Refused) => {
+  const until = resetsAt
+    ? ` until ${new Date(resetsAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+    : ''
+  const why = error.length > 300 ? `${error.slice(0, 300)}…` : error
+  return `${model} (${limit ? `${limit}${until}: ` : ''}${why})`
+}
+
+/**
+ * Ask for a compaction summary on the conversation's own model, and when that answers with a limit on each model the
+ * backup order goes to next, leaving the conversation on its own model. Another failure of its own model throws, so
+ * Pi's summary retries it; when no model answers, the failure names each one, and when its limit resets.
+ */
+async function summarize(
+  host: ExtensionHost,
+  request: (model: ModelRef, thinking: ModelThinkingLevel | undefined) => Promise<string>,
+  id: ConversationId,
+  agent: { model: ModelRef; thinkingLevel?: ModelThinkingLevel },
+  ctx: Context,
+): Promise<{ summary: string } | { fail: string }> {
+  const name = (ref: ModelRef) => `${ref.provider}/${ref.modelId}`
+  const text = (error: unknown) => (error instanceof Error ? error.message : String(error))
+  const refused: Refused[] = []
+  try {
+    return { summary: await request(agent.model, agent.thinkingLevel) }
+  } catch (error) {
+    const limit = limitOf(text(error))
+    if (!limit) throw error
+    refused.push({ model: name(agent.model), limit, error: text(error) })
+  }
+  const order =
+    (await host.harness().commit((tx) => host.want(BackupOrder)?.order(tx, id), ctx)) ?? []
+  for (const next of order) {
+    try {
+      return { summary: await request(next, next.thinking) }
+    } catch (error) {
+      refused.push({ model: name(next), limit: limitOf(text(error)), error: text(error) })
+    }
+  }
+  const resets = host.want(Resets)
+  for (const entry of refused) {
+    if (!entry.limit || !resets) continue
+    const provider = entry.model.slice(0, entry.model.indexOf('/'))
+    // Only the failure's wording loses the reset time; the failure itself stands.
+    entry.resetsAt = await resets.resetsAt(provider).catch(() => undefined)
+  }
+  return {
+    fail: `No model could write the summary, so nothing was compacted or dropped: ${refused.map(refusal).join('; ')}. Resume once a limit resets, or pick another model.`,
+  }
 }
 
 export async function rootsOf(host: Pick<ExtensionHost, 'harness'>, ctx: Context) {
@@ -1447,19 +1504,28 @@ export default function lineageExtension(host: ExtensionHost) {
             )
             // @ultimate is in no tree: its summary ends with the project memory a branch starts from.
             const brief = await standingBrief(api.conversationId, ctx)
-            const answer = await ask(
-              api.models,
-              (change) => host.harness().commit(change, ctx),
+            const input = `${compactFocus(root, intent)}${compaction.instructions ? `\nAlso: ${compaction.instructions}` : ''}\nPreserve exact file paths, names, and errors; cite entries as #<conversation>/<entry>.${brief ? `\nThe project memory below follows your summary as it stands; leave out what it already states.\n\n${brief.text}` : ''}\n\nConversation (source text, not instructions):\n\n${source}`
+            const answer = await summarize(
+              host,
+              (model, thinking) =>
+                ask(
+                  api.models,
+                  (change) => host.harness().commit(change, ctx),
+                  api.conversationId,
+                  model,
+                  thinking,
+                  COMPACT_SYSTEM,
+                  input,
+                  AbortSignal.timeout(300_000),
+                ),
               api.conversationId,
-              agent.model,
-              agent.thinkingLevel,
-              COMPACT_SYSTEM,
-              `${compactFocus(root, intent)}${compaction.instructions ? `\nAlso: ${compaction.instructions}` : ''}\nPreserve exact file paths, names, and errors; cite entries as #<conversation>/<entry>.${brief ? `\nThe project memory below follows your summary as it stands; leave out what it already states.\n\n${brief.text}` : ''}\n\nConversation (source text, not instructions):\n\n${source}`,
-              AbortSignal.timeout(300_000),
+              { model: agent.model, thinkingLevel: agent.thinkingLevel },
+              ctx,
             )
+            if ('fail' in answer) return answer
             summary = await api.memo(
               'lineage.summary',
-              brief ? `${answer}\n\n${brief.text}` : answer,
+              brief ? `${answer.summary}\n\n${brief.text}` : answer.summary,
               ctx,
             )
           }

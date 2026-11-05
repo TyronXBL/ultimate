@@ -19,11 +19,11 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
-import { Pin } from '../models/api.ts'
+import { BackupOrder, Pin } from '../models/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
-import { backupStep, COOLDOWN_MINUTES, fromLegacy, name } from './state.ts'
+import { backupOrder, backupStep, COOLDOWN_MINUTES, fromLegacy, name } from './state.ts'
 import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef } from './refs.ts'
 
 const State = defineDoc<BackupState>({
@@ -231,6 +231,26 @@ async function returned(
 export default function extension(host: Host) {
   host.implement(BackupApi, {
     fallBack: (id, message, entry) => fallBack(host, id, message, entry),
+  })
+  host.implement(BackupOrder, {
+    async order(tx, id) {
+      const agent = await tx.doc(AgentDoc, id)
+      if (previewModel() || !agent.model) return []
+      const available = host.modelRuntime.getAvailableSnapshot()
+      const order = backupOrder(await tx.doc(State, id), {
+        current: agent.model,
+        currentThinking: agent.thinkingLevel,
+        candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
+        hasLogin: (ref) => hasLogin(available, ref),
+        now: Date.now(),
+      })
+      return order.map(({ thinking, ...ref }) => {
+        const runtime = host.modelRuntime.getModel(ref.provider, ref.modelId)
+        return thinking && runtime
+          ? { ...ref, thinking: clampThinkingLevel(runtime, thinking) }
+          : ref
+      })
+    },
   })
   let unsubscribe: (() => void) | undefined
   const close = async () => {

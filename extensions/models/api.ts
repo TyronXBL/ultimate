@@ -24,4 +24,24 @@ export type PinService = {
  * which definition a conversation runs as).
  */
 export const Pin = defineApi<PinService>()('models.pin')
+
+export type BackupOrderService = {
+  /**
+   * The models conversation `id` would move to, in order, were its model and each one after it to answer with a limit,
+   * read inside `tx`. Switches nothing.
+   */
+  order(tx: Tx, id: ConversationId): Promise<FallbackModel[]>
+}
+/**
+ * The extension point work that runs on a conversation's model asks where to go when that model is limited, without
+ * moving the conversation: a compaction's summary. Backup provides it.
+ */
+export const BackupOrder = defineApi<BackupOrderService>()('models.backup-order')
+
+export type ResetsService = {
+  /** When `provider`'s exhausted usage limits reset (ms), as it reports; undefined when none is known exhausted. */
+  resetsAt(provider: string): Promise<number | undefined>
+}
+/** The extension point that says when a provider's usage limit resets. Quota provides it. */
+export const Resets = defineApi<ResetsService>()('models.resets')
 export const tier = 'core'

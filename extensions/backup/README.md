@@ -13,3 +13,5 @@ Run a conversation on the next backup model of its agent definition when its mod
 ## API
 
 `BackupApi.fallBack(conversationId, message, entryId)` (`api.ts`) makes the same switch for a failure another extension sees first: `pause` asks it before pausing for a rate limit, and returns whether the conversation runs on a backup because of it. It is one at a time across reloads and once per failed entry, so the failure reaching it twice leaves one card.
+
+It also fills the `models.backup-order` extension point (`BackupOrder` in `extensions/models/api.ts`): the models a conversation would move to, in order, were its model and each after it limited (`backupOrder` in `state.ts`, built from `backupStep`): the definition's untried backups with a login, then the primary once its cooldown has passed. It switches nothing; lineage's compaction summary goes through it when the conversation's model is limited.

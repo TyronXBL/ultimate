@@ -175,6 +175,11 @@ document, tools and model-facing text, where agents and stored entries already u
   principles, standing decisions and each conversation's id, prompt, outcome, divergence, commits and breadcrumbs,
   merging superseded detail. Every top-level conversation's summary source is its model view with edits applied, so
   abstracts read as last updated and frozen ones stay out. Branch compaction focuses on intent and progress; subagents keep Pi's default.
+  The summary runs on the conversation's own model; when that answers with a rate limit, capacity or quota error
+  (`limitOf` in `lib/rate-limit.ts`), it goes on to each model of `models.backup-order` (backup: the definition's
+  untried `fallback` models, then the primary once its cooldown has passed), without changing the conversation's
+  model. When none answers, the compaction fails (the patched `fail` decision) naming each model, its limit and, from
+  `models.resets` (quota), when it resets; nothing is placed or dropped, so the conversation resumes as it was.
 
 ## Memory review
 
