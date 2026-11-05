@@ -654,17 +654,23 @@ function lineage(host: ExtensionHost) {
         // Keyed by the compaction, so a rerun after a crash finds the input it already submitted.
         const ultimate =
           (await host.harness().snapshot(Standing, ROOT_CONVERSATION_ID, ctx))?.ultimate === id
-        if (placed)
-          await (await host.harness().conversation(id, ctx))!.submit(
-            {
-              type: 'input',
-              content: ultimate ? WOKEN_TEXT : WOKEN_OTHER_TEXT,
-              whenBusy: 'followUp',
-              requestId: `lineage:woken:${compaction}`,
-              entry: { kind: 'lineage.woken', data: {} },
-            },
+        if (placed) {
+          const conversation = (await host.harness().conversation(id, ctx))!
+          await host.harness().commit(
+            async (tx) =>
+              conversation.submit(
+                tx,
+                await host.need(ConversationsApi).resultIn(tx, id, {
+                  type: 'input',
+                  content: ultimate ? WOKEN_TEXT : WOKEN_OTHER_TEXT,
+                  whenBusy: 'followUp',
+                  requestId: `lineage:woken:${compaction}`,
+                  entry: { kind: 'lineage.woken', data: {} },
+                }),
+              ),
             ctx,
           )
+        }
         await runtime.commit(() => done, ctx)
       },
     },

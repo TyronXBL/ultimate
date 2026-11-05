@@ -10,6 +10,7 @@ import {
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
+import { ConversationsApi } from '../conversations/api.ts'
 import { locate, postAction } from '../../lib/remote.ts'
 import { Messages } from './api.ts'
 import type { Message } from './api.ts'
@@ -282,16 +283,22 @@ export function delivery(host: ExtensionHost) {
           }
           const body = `Reply from ${task.input.toLabel} to your message ${m.re}${stopped ? ' (stopped)' : failed ? ' (failed)' : ''}:\n${m.text}`
           const content = images.length ? [{ type: 'text' as const, text: body }, ...images] : body
-          await sender?.submit(
-            {
-              type: 'input',
-              requestId: `board-reply:${m.id}`,
-              whenBusy: 'steer',
-              entry,
-              content,
-            },
-            ctx,
-          )
+          // A reply answers the sender's own question: a sender concluded meanwhile gets it as a note.
+          if (sender)
+            await host.harness().commit(
+              async (tx) =>
+                sender.submit(
+                  tx,
+                  await host.need(ConversationsApi).resultIn(tx, sender.id, {
+                    type: 'input',
+                    requestId: `board-reply:${m.id}`,
+                    whenBusy: 'steer',
+                    entry,
+                    content,
+                  }),
+                ),
+              ctx,
+            )
         }
         await runtime.commit(async (tx) => {
           const stored = (await tx.doc(Messages, ROOT_CONVERSATION_ID)).messages.find(
