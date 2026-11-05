@@ -203,7 +203,7 @@ export function UncheckedNote({ unchecked }: { unchecked: Unchecked }) {
     <div className="space-y-0.5" data-unchecked="untrusted">
       <p className="text-warning">Checks skipped: {count} did not run.</p>
       <p className="font-sans text-[12.5px] leading-relaxed text-muted-foreground">
-        This project's own setup is{' '}
+        This project's own setup was{' '}
         {unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted
         setup runs its commands. To run them, choose This project's setup in{' '}
         <button

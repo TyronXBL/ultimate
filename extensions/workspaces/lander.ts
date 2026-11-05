@@ -354,7 +354,7 @@ async function uncheckedReason(
 const uncheckedLine = (unchecked: Unchecked) =>
   unchecked.reason === 'none'
     ? 'Unchecked: no lander checks are configured, so none ran.'
-    : `Unchecked: .ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but none ran: this project's own setup is ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
+    : `Unchecked: .ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but none ran: this project's own setup was ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
 /** The lander step that says no checks run, in place of the checks. */
 const uncheckedStep = (unchecked: Unchecked) =>
   unchecked.reason === 'none'

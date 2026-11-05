@@ -9,6 +9,7 @@ import {
   InboxIcon,
   MailIcon,
   SendIcon,
+  ShieldAlertIcon,
   SquareArrowOutUpRightIcon,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -50,6 +51,7 @@ import {
   emptyMessages,
   landed,
   landedSha,
+  landedUnchecked,
   messageStatus,
   outgoingState,
   remoteLabel,
@@ -366,9 +368,12 @@ export function StretchSummary({ rows, steps, working, entries }: CompactSummary
   const counted = rows.filter(
     (row) => backgroundRow(row, log) !== 'hidden' && row.entry.kind !== 'pi.system',
   )
-  const shas = [
-    ...new Set(counted.flatMap((row) => (landed(row.entry) ? [landedSha(row.entry)] : []))),
-  ]
+  const landings = counted.filter((row) => landed(row.entry))
+  const shas = [...new Set(landings.map((row) => landedSha(row.entry)))]
+  // A landing whose declared checks were skipped must not read as checked.
+  const unchecked = new Set(
+    landings.filter((row) => landedUnchecked(row.entry)).map((row) => landedSha(row.entry)),
+  )
   const reloaded = counted.some((row) => row.entry.kind === 'prompt.build')
   const who = [
     ...new Set(
@@ -389,12 +394,19 @@ export function StretchSummary({ rows, steps, working, entries }: CompactSummary
       ))}
       {who.length > 2 && <span className="shrink-0">+{who.length - 2}</span>}
       {count > 0 && stepped && <span className="shrink-0 max-sm:hidden">· {stepped}</span>}
-      {shas.map((sha) => (
-        <span className="flex shrink-0 items-center gap-1" key={sha}>
-          · <CheckIcon className="size-3 text-success" />
-          landed {sha}
-        </span>
-      ))}
+      {shas.map((sha) =>
+        unchecked.has(sha) ? (
+          <span className="flex shrink-0 items-center gap-1 text-warning" key={sha}>
+            · <ShieldAlertIcon className="size-3" />
+            landed unchecked {sha}
+          </span>
+        ) : (
+          <span className="flex shrink-0 items-center gap-1" key={sha}>
+            · <CheckIcon className="size-3 text-success" />
+            landed {sha}
+          </span>
+        ),
+      )}
       {reloaded && <span className="shrink-0 max-sm:hidden">· reloaded</span>}
       {written > 0 && (
         <span className="shrink-0 text-warning/80" data-cache-rebuilt={written}>

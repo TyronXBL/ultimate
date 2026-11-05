@@ -236,6 +236,15 @@ export function landedSha(entry: EntryRecord): string | undefined {
   return typeof sha === 'string' ? sha.slice(0, 7) : undefined
 }
 
+/** Whether a landing row says the project's declared checks were skipped (workspaces' `Unchecked`). */
+export function landedUnchecked(entry: EntryRecord) {
+  const data = entry.data as
+    | { unchecked?: { reason?: unknown }; outcome?: { unchecked?: { reason?: unknown } } }
+    | undefined
+  const unchecked = entry.kind === 'lineage.note' ? data?.unchecked : data?.outcome?.unchecked
+  return unchecked?.reason === 'untrusted'
+}
+
 const idOf = (value: unknown): (number | 'remote')[] =>
   typeof value === 'number' || value === 'remote' ? [value] : []
 
