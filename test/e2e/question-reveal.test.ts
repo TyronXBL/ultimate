@@ -99,37 +99,58 @@ async function setup() {
 }
 
 /**
- * How far a card's top sits below the pinned strips' bottom, once the card and the prompt strip show. This fork's
- * `transcript.top` also holds the pinned user turn (`extensions/pinned-turn`), which shows below the prompt strip while
- * the view reads up through an answer; the card belongs below whichever strip is lowest.
+ * The card's top, the prompt strip's bottom and the lowest strip's bottom, once the card and the prompt strip show.
+ * This fork's `transcript.top` also holds the pinned user turn (`extensions/pinned-turn`), which shows below the prompt
+ * strip while the view reads up through an answer and hides at the end of the transcript.
  */
-const gap = (page: Page, id: number) =>
+const measure = (page: Page, id: number) =>
   page.evaluate((message) => {
     const card = document.querySelector(`[data-message-outgoing="${message}"]`)
-    const strips = [
-      ...document.querySelectorAll('[data-ui="pinned-prompt"], [data-pinned-turn]'),
-    ].map((strip) => strip.getBoundingClientRect().bottom)
-    return card && document.querySelector('[data-ui="pinned-prompt"]')
-      ? card.getBoundingClientRect().top - Math.max(...strips)
-      : Number.NaN
+    const prompt = document.querySelector('[data-ui="pinned-prompt"]')
+    const turn = document.querySelector('[data-pinned-turn]')
+    if (!card || !prompt) return undefined
+    const below = prompt.getBoundingClientRect().bottom
+    return {
+      card: card.getBoundingClientRect().top,
+      prompt: below,
+      lowest: Math.max(below, turn?.getBoundingClientRect().bottom ?? 0),
+    }
   }, id)
 
-const top = (page: Page, id: number) =>
-  page.evaluate(
-    (message) =>
-      document.querySelector(`[data-message-outgoing="${message}"]`)!.getBoundingClientRect().top,
-    id,
-  )
+/** The pinned turn's height on these viewports: the most the reveal may keep clear of above the card. */
+const TURN = 52
 
 /**
- * Once a revealed card settles below the strips, with only the bubble's own top margin between them, how far it moves
- * after. The pinned turn hides when the reveal reaches the end of the transcript; the card stays where it settled.
+ * Whether the card sits at the top of the view: uncovered, with only the bubble's own top margin (8) below the strips.
+ * The reveal keeps clear of the most the strips covered while it held, since following a strip that hides can loop; so
+ * when the reveal reaches the end of the transcript, where the pinned turn hides, the card may stay up to one pinned
+ * turn lower than the prompt strip alone needs.
+ */
+const placed = (at: { card: number; prompt: number; lowest: number }) =>
+  at.card - at.lowest >= 4 && at.card - at.prompt - 8 <= TURN + 4
+
+/**
+ * Waits for a revealed card to be placed and still for half a second (the pinned turn grows in after the jump, and the
+ * reveal follows it), then returns how far it moved since.
  */
 async function drift(page: Page, id: number) {
-  await until(async () => Math.abs((await gap(page, id)) - 8) < 4, 10_000)
-  const settled = await top(page, id)
-  await page.waitForTimeout(500)
-  return Math.abs((await top(page, id)) - settled)
+  let settled = Number.NaN
+  let since = 0
+  await until(async () => {
+    const now = await measure(page, id)
+    if (!now || !placed(now)) {
+      settled = Number.NaN
+      return false
+    }
+    if (!(Math.abs(now.card - settled) <= 1)) {
+      settled = now.card
+      since = performance.now()
+    }
+    return performance.now() - since >= 500
+  }, 10_000)
+  const end = (await measure(page, id))!
+  expect(placed(end)).toBe(true)
+  return Math.abs(end.card - settled)
 }
 
 it('brings the question card to the top of the view below the pinned strip', async () => {
