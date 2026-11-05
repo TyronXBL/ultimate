@@ -54,12 +54,12 @@ type Run = {
 
 /**
  * What an event did, beside the new state: `none` changed nothing (a failure that is not this model's, no backup left,
- * or no record); `earlier` is a limit of a model already switched away from; `cleared` dropped the record (a model
- * picked meanwhile, and for a limit no backup was left); `wait` keeps the backup (cooldown, or no login for the primary
- * yet); `switched` runs on `to` at `level`; `returned` puts `primary` back.
+ * no record, or a backup kept for the cooldown or until the primary has a login); `earlier` is a limit of a model
+ * already switched away from; `cleared` dropped the record (a model picked meanwhile, and for a limit no backup was
+ * left); `switched` runs on `to` at `level`; `returned` puts `primary` back.
  */
 export type BackupOutcome =
-  | { kind: 'none' | 'earlier' | 'cleared' | 'wait' }
+  | { kind: 'none' | 'earlier' | 'cleared' }
   | { kind: 'switched'; from: string; to: Candidate; level?: ModelThinkingLevel; reason: string }
   | {
       kind: 'returned'
@@ -81,7 +81,7 @@ export function backupStep(
     if (!current || name(current) !== name(state.to))
       return { state: { kind: 'primary' }, outcome: { kind: 'cleared' } }
     if (event.now < state.since + COOLDOWN || !event.hasPrimaryLogin(state.primary))
-      return { state, outcome: { kind: 'wait' } }
+      return { state, outcome: { kind: 'none' } }
     return {
       state: { kind: 'primary' },
       outcome: {

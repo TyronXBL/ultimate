@@ -69,7 +69,7 @@ import {
 import type { Run } from './refs.ts'
 
 /** `{ [conversationId]: Run }` of the children `subagent start` made, on the root, for the sidebar and call cards. */
-export const Runs = defineDoc<Record<string, Run>>({
+const Runs = defineDoc<Record<string, Run>>({
   kind: RunsDoc.kind,
   checkpointWhen: () => false,
   version: 1,
@@ -79,7 +79,7 @@ export const Runs = defineDoc<Record<string, Run>>({
   initial: () => ({}),
 })
 
-export const docs = [Subagents, Standing, Profile, BranchSetup, Runs]
+export const docs = [Subagents, Standing, Profile, BranchSetup, Runs] as const
 
 /** The instructions of an agent `subagent start` makes on the fly, before the caller's own. */
 const ADHOC = `You were made for one task: do what your brief asks, and only that. Read the code and the repository instructions it touches first. Never delegate or push. Report problems instead of working around them. Answer with conclusions and their evidence (\`path:line\`, commands with their output), not dumps; say what you could not confirm.`

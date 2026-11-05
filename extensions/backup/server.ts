@@ -51,6 +51,7 @@ type Host = Pick<
   | 'harness'
   | 'resource'
   | 'want'
+  | 'need'
   | 'modelRuntime'
   | 'implement'
   | 'onOpen'
@@ -105,7 +106,7 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
         now: Date.now(),
       })
       store(doc, state)
-      if (step.kind === 'cleared') await host.want(SubagentsApi)?.recordBackup(tx, id)
+      if (step.kind === 'cleared') await host.need(SubagentsApi).recordBackup(tx, id)
       if (step.kind === 'earlier') return { earlier: true as const }
       if (step.kind !== 'switched') return undefined
       agent.model = model(step.to)
@@ -113,7 +114,7 @@ function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
       if (step.level && runtime) agent.thinkingLevel = clampThinkingLevel(runtime, step.level)
       const switched: Switched = { from: step.from, to: name(step.to), reason: step.reason }
       // A subagent's row and card say it runs on a backup, and why.
-      await host.want(SubagentsApi)?.recordBackup(tx, id, {
+      await host.need(SubagentsApi).recordBackup(tx, id, {
         from: switched.from,
         model: step.to.modelId,
         reason: switched.reason,
@@ -203,12 +204,12 @@ async function returned(
     hasPrimaryLogin: (ref) => hasLogin(host.modelRuntime.getAvailableSnapshot(), ref),
   })
   store(doc, state)
-  if (step.kind === 'cleared') await host.want(SubagentsApi)?.recordBackup(tx, id)
+  if (step.kind === 'cleared') await host.need(SubagentsApi).recordBackup(tx, id)
   if (step.kind !== 'returned') return undefined
   agent.model = model(step.primary)
   if (step.thinking) agent.thinkingLevel = step.thinking
   else delete agent.thinkingLevel
-  await host.want(SubagentsApi)?.recordBackup(tx, id)
+  await host.need(SubagentsApi).recordBackup(tx, id)
   const data: BackupReturned = { from: step.from, to: step.to }
   return {
     entries: [

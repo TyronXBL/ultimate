@@ -29,10 +29,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { context, prepareHarness } from '../server/harness.ts'
 import { emit } from '../server/events.ts'
 import type { OpenHost } from '../server/harness.ts'
-import subagents, { actions, Runs } from '../extensions/subagents/server.ts'
+import subagents, { actions, docs } from '../extensions/subagents/server.ts'
 import watchdog from '../extensions/watchdog/server.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
-import { BranchSetup, Started, Subagents } from '../extensions/subagents/api.ts'
+import { BranchSetup, Started, Subagents, SubagentsApi } from '../extensions/subagents/api.ts'
+import type { SubagentsService } from '../extensions/subagents/api.ts'
 import type { ActionContext } from '../server/actions.ts'
 import codemode from '../extensions/codemode/server.ts'
 import { Metadata } from '../server/metadata.ts'
@@ -53,6 +54,9 @@ async function directory() {
   directories.push(path)
   return path
 }
+// The runs document is the subagents extension's own; the tests read it as the sidebar does.
+const Runs = docs[4]
+
 async function fixture(
   extension?: Extension,
   observe?: (transcript: Parameters<FauxResponseFactory>[0]) => void,
@@ -249,6 +253,7 @@ async function fixture(
     ultimateRoot,
     userHome,
     errors,
+    provided,
     reopen: open,
   }
 }
@@ -477,6 +482,25 @@ it('makes an agent on the fly from the call, read-only without a worktree, and r
   expect(await f.opened.harness.snapshot(Metadata, child.conversationId, context)).toMatchObject({
     label: 'dead-code scan',
   })
+})
+
+it('shows the backup a child runs on on its row, and drops it again', async () => {
+  const f = await fixture()
+  await call(f.opened, { action: 'start', agent: 'scout', task: 'Plain' })
+  const [child] = (await children(f.opened)).map((entry) => entry.conversationId)
+  const { harness, root } = f.opened
+  const subagentsApi = f.provided.get(SubagentsApi.name) as SubagentsService
+  const backup = { from: 'faux/faux-1', model: 'faux-think', reason: 'rate limit' }
+  await harness.commit((tx) => subagentsApi.recordBackup(tx, child, backup), context)
+  expect((await harness.snapshot(Runs, root.id, context))?.[child]).toEqual({
+    model: 'faux-1',
+    backup,
+  })
+  await harness.commit((tx) => subagentsApi.recordBackup(tx, child), context)
+  expect((await harness.snapshot(Runs, root.id, context))?.[child]).toEqual({ model: 'faux-1' })
+  // A conversation `subagent start` did not make has no row to change.
+  await harness.commit((tx) => subagentsApi.recordBackup(tx, root.id, backup), context)
+  expect((await harness.snapshot(Runs, root.id, context))?.[root.id]).toBeUndefined()
 })
 
 it("records why a child runs on another model than its definition's: the call's choice or the branch setup", async () => {
