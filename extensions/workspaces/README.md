@@ -182,7 +182,8 @@ lander's sidebar row shows the feature it lands or landed last.
    With no checks to run, the landing records why as `unchecked` (on `landed`, the outcome, `workspaces.landed` and
    the root note), so nobody takes it for checked. `untrusted`: the folder's `.ultimate/settings.json` declares
    checks, but its setup is declined or not chosen, so the core reads its settings as empty (trust gates running its
-   commands). The lander only counts the declared checks in the file's text, never runs them, logs a warning step and
+   commands). The lander only counts the declared checks in the file's text (unknown when it does not parse, never
+   taken for none), never runs them, logs a warning step and
    shows the card as "landed unchecked" with the way to choose the project's setup; the report says the same to the
    submitter. `none`: nothing declares checks, shown as a quiet line. A trusted folder whose settings do not parse
    fails the submission instead of landing unchecked. Every host runs this from the same clone, so it applies to

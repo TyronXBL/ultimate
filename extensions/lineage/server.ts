@@ -698,7 +698,7 @@ function landingNote(landing: LandedData) {
     `Changed: ${landing.paths.join(', ')}`,
     ...(landing.unchecked?.reason === 'untrusted'
       ? [
-          `Unchecked: skipped ${landing.unchecked.declared} declared lander checks, project setup ${landing.unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`,
+          `Unchecked: skipped ${landing.unchecked.declared ?? 'its'} declared lander checks, project setup ${landing.unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`,
         ]
       : landing.unchecked
         ? ['Unchecked: no lander checks configured']

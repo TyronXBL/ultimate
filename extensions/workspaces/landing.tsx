@@ -198,7 +198,11 @@ export function UncheckedNote({ unchecked }: { unchecked: Unchecked }) {
       </p>
     )
   const count =
-    unchecked.declared === 1 ? '1 declared check' : `${unchecked.declared} declared checks`
+    unchecked.declared === undefined
+      ? 'the declared checks'
+      : unchecked.declared === 1
+        ? '1 declared check'
+        : `${unchecked.declared} declared checks`
   return (
     <div className="space-y-0.5" data-unchecked="untrusted">
       <p className="text-warning">Checks skipped: {count} did not run.</p>

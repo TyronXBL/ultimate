@@ -315,14 +315,16 @@ export const landerSettings = async (host: Pick<Host, 'projectSettings'>): Promi
  * never run. `error` when it exists but does not parse.
  */
 async function declaredChecks(projectRoot: string): Promise<{ count: number } | { error: string }> {
-  let settings: { lander?: { checks?: unknown } } | null
+  let settings: unknown
   try {
     settings = JSON.parse(await readFile(join(projectRoot, '.ultimate/settings.json'), 'utf8'))
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { count: 0 }
     return { error: String(error) }
   }
-  const checks = settings?.lander?.checks
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings))
+    return { error: 'Project settings must be a JSON object' }
+  const checks = (settings as { lander?: { checks?: unknown } }).lander?.checks
   return { count: Array.isArray(checks) ? checks.flat().length : 0 }
 }
 /**
@@ -343,10 +345,11 @@ async function uncheckedReason(
     throw new Error(
       `.ultimate/settings.json does not parse, so its lander checks cannot run: ${declared.error}`,
     )
-  if (decision === true || 'error' in declared || !declared.count) return { reason: 'none' }
+  if (decision === true || ('count' in declared && !declared.count)) return { reason: 'none' }
+  // Settings that do not parse may still declare checks: what they declare is unknown, never "none".
   return {
     reason: 'untrusted',
-    declared: declared.count,
+    ...('count' in declared ? { declared: declared.count } : {}),
     decision: decision === false ? 'declined' : 'undecided',
   }
 }
@@ -354,12 +357,12 @@ async function uncheckedReason(
 const uncheckedLine = (unchecked: Unchecked) =>
   unchecked.reason === 'none'
     ? 'Unchecked: no lander checks are configured, so none ran.'
-    : `Unchecked: .ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but none ran: this project's own setup was ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
+    : `Unchecked: ${unchecked.declared === undefined ? '.ultimate/settings.json does not parse, so its lander checks are unknown, and' : `.ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but`} none ran: this project's own setup was ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
 /** The lander step that says no checks run, in place of the checks. */
 const uncheckedStep = (unchecked: Unchecked) =>
   unchecked.reason === 'none'
     ? 'no checks configured'
-    : `skipped ${plural(unchecked.declared, 'declared check')}: project setup ${unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`
+    : `skipped ${unchecked.declared === undefined ? 'declared checks' : plural(unchecked.declared, 'declared check')}: project setup ${unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`
 export const contains = (cwd: string, ancestor: string, descendant: string) =>
   git(cwd, 'merge-base', '--is-ancestor', ancestor, descendant).then(
     () => true,

@@ -44,11 +44,12 @@ export type QueueEntry =
   | (Submitted & { state: 'landing'; step?: string; landed?: Landed })
 /**
  * Why a landing ran no checks: the project configures none, or its `.ultimate/settings.json` declares `declared` lander
- * checks that stay off because the user declined its setup or has not chosen yet (trust gates running them).
+ * checks that stay off because the user declined its setup or has not chosen yet (trust gates running them). Without
+ * `declared` the file did not parse, so what it declares is unknown.
  */
 export type Unchecked =
   | { reason: 'none' }
-  | { reason: 'untrusted'; declared: number; decision: 'declined' | 'undecided' }
+  | { reason: 'untrusted'; declared?: number; decision: 'declined' | 'undecided' }
 /**
  * A submission's landing: the target moved from `base` to `sha`, which brought `commits` and `paths`; `unchecked` when no
  * check ran on it.
