@@ -5,6 +5,7 @@ import { expect, it } from 'vitest'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { launchHandshake, Automations } from '../../extensions/automations/server.ts'
 import { Exited } from '../../extensions/automations/refs.ts'
+import { exitOf, pidOf } from '../../extensions/automations/state.ts'
 import type { Automation } from '../../extensions/automations/types.ts'
 import { context } from '../../server/harness.ts'
 import { eventHost, temp, until } from '../helpers.ts'
@@ -18,9 +19,9 @@ it('waits for a SIGTERM-ignoring script to die before stop returns and removes i
   await until(async () =>
     ((await call(app, 'log', sub.id)) as { text: string }).text.includes('ready'),
   )
-  expect(Number(await readFile(join(folder(sub.id), 'pid'), 'utf8'))).toBe(running.script!.pid)
+  expect(Number(await readFile(join(folder(sub.id), 'pid'), 'utf8'))).toBe(pidOf(running.script))
   await call(app, 'pause', sub.id)
-  expect(() => process.kill(-running.script!.pid!, 0)).toThrow(
+  expect(() => process.kill(-pidOf(running.script)!, 0)).toThrow(
     expect.objectContaining({ code: 'ESRCH' }),
   )
   await expect(readFile(join(folder(sub.id), 'pid'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -41,7 +42,7 @@ it.each(['pause', 'delete'])(
     const pid = Number(await readFile(join(folder(sub.id), 'pid'), 'utf8'))
     expect((await app.harness.snapshot(Automations, context))!.automations[sub.id]).toMatchObject({
       enabled: false,
-      script: { state: 'done', pid },
+      script: { state: 'done', process: { pid } },
     })
     expect(process.kill(-pid, 0)).toBe(true)
     await call(app, action, sub.id)
@@ -51,10 +52,13 @@ it.each(['pause', 'delete'])(
     // A fired one-shot stays done: pausing its lingering process is not a stop.
     const stopped = expect.objectContaining({
       enabled: false,
-      script: expect.objectContaining({ state: 'done', exitedAt: expect.any(Number) }),
+      script: expect.objectContaining({
+        state: 'done',
+        exit: expect.objectContaining({ exitedAt: expect.any(Number) }),
+      }),
     })
     expect(saved).toEqual(action === 'delete' ? undefined : stopped)
-    expect(saved?.script?.pid).toBeUndefined()
+    expect(pidOf(saved?.script)).toBeUndefined()
   },
 )
 
@@ -95,11 +99,15 @@ it('records the exit metadata and event for a successful done one-shot without a
   await call(app, 'resume', sub.id)
   await until(
     async () =>
-      !!(await app.harness.snapshot(Automations, context))!.automations[sub.id].script!.exitedAt,
+      !!exitOf((await app.harness.snapshot(Automations, context))!.automations[sub.id].script!),
   )
   const saved = (await app.harness.snapshot(Automations, context))!.automations[sub.id]
-  expect(saved).toMatchObject({ enabled: false, fires: 1, script: { state: 'done', exitCode: 0 } })
-  expect(saved.script?.pid).toBeUndefined()
+  expect(saved).toMatchObject({
+    enabled: false,
+    fires: 1,
+    script: { state: 'done', exit: { exitCode: 0 } },
+  })
+  expect(pidOf(saved.script)).toBeUndefined()
   const events = await eventHost(() => app.harness, 'test').eventLog.recent({ events: [Exited] })
   expect(events.filter((event) => event.data.id === sub.id).map((event) => event.data)).toEqual([
     { id: sub.id, code: 0 },

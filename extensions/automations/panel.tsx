@@ -76,7 +76,7 @@ import {
 } from './refs.ts'
 import { RunLabel, WatcherLabel } from './types.ts'
 import type { Automation, AutomationListItem, Run, Schedule } from './refs.ts'
-import { hasRunningRun, isRunning, runConversation } from './state.ts'
+import { exitOf, hasRunningRun, isRunning, processOf, runConversation } from './state.ts'
 
 /**
  * Refetches when automation work changes: a scheduler, run or delivery task in the live task graph, or a run or watcher
@@ -876,12 +876,16 @@ function Script({
     })
   }
   const look = scriptLooks[script.state]
+  const proc = processOf(script)
+  const pid = proc?.pid
+  const exit = exitOf(script)
+  const error = 'error' in script ? script.error : undefined
   const facts = [
-    script.pid !== undefined && `pid ${script.pid}`,
-    running && script.startedAt && `up ${since(script.startedAt, now)}`,
-    !running && script.exitCode !== undefined && `exit ${script.exitCode}`,
+    pid !== undefined && `pid ${pid}`,
+    running && proc && `up ${since(proc.startedAt, now)}`,
+    exit?.exitCode !== undefined && `exit ${exit.exitCode}`,
     `fired ${automation.fires}`,
-    running && script.lastOutputAt && `output ${since(script.lastOutputAt, now)} ago`,
+    running && proc?.lastOutputAt && `output ${since(proc.lastOutputAt, now)} ago`,
   ].filter(Boolean)
   return (
     <section
@@ -935,9 +939,9 @@ function Script({
             {path ? (home ? shortenPath(path, { home }) : path) : '…'}
           </span>
         </span>
-        {script.error && !running && (
-          <span className={cn('line-clamp-3 break-words', looks[look].text)} title={script.error}>
-            {script.error}
+        {error && !running && (
+          <span className={cn('line-clamp-3 break-words', looks[look].text)} title={error}>
+            {error}
           </span>
         )}
       </div>

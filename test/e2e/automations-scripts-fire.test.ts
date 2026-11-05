@@ -7,7 +7,7 @@ import type { JsonValue } from '@earendil-works/chord'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { Messages } from '../../extensions/messages/api.ts'
 import { Automations } from '../../extensions/automations/server.ts'
-import { runConversation } from '../../extensions/automations/state.ts'
+import { exitOf, pidOf, runConversation } from '../../extensions/automations/state.ts'
 import type { Automation } from '../../extensions/automations/types.ts'
 import { context } from '../../server/harness.ts'
 import { fauxServer, until } from '../helpers.ts'
@@ -112,7 +112,9 @@ it('delivers FIRE once, investigates exits only in the owning agent, recovers, a
   await until(
     async () => (await entries(second.script!.conversationId, 'automations.failed')).length === 1,
   )
-  expect(await get(second.id)).toMatchObject({ script: { state: 'investigating', exitCode: 3 } })
+  expect(await get(second.id)).toMatchObject({
+    script: { state: 'investigating', exit: { exitCode: 3 } },
+  })
   expect(await entries(caller.id, 'automations.failed')).toHaveLength(0)
   expect(
     JSON.stringify(await entries(second.script!.conversationId, 'automations.failed')),
@@ -159,7 +161,7 @@ it('delivers FIRE once, investigates exits only in the owning agent, recovers, a
   )
   expect(await get(recurring.id)).toMatchObject({
     fires: 1,
-    script: { state: 'investigating', exitCode: 0 },
+    script: { state: 'investigating', exit: { exitCode: 0 } },
   })
 
   const restart = (await invoke('create', {
@@ -169,14 +171,14 @@ it('delivers FIRE once, investigates exits only in the owning agent, recovers, a
   await script(restart.id, 'echo stopping; sleep 60')
   const beforeRestart = (await invoke('resume', { id: restart.id })) as Automation
   const afterRestart = (await invoke('run', { id: restart.id })) as Automation
-  expect(afterRestart.script!.pid).not.toBe(beforeRestart.script!.pid)
+  expect(pidOf(afterRestart.script)).not.toBe(pidOf(beforeRestart.script))
   await invoke('pause', { id: restart.id })
-  await until(async () => !!(await get(restart.id)).script!.exitedAt)
+  await until(async () => !!exitOf((await get(restart.id)).script!))
   expect(await get(restart.id)).toMatchObject({ enabled: false, script: { state: 'stopped' } })
   expect(await entries(restart.script!.conversationId, 'automations.failed')).toHaveLength(0)
   // A changed ask stops the running script and sends the watcher back to writing, as at creation.
   await invoke('resume', { id: restart.id })
-  const watching = (await get(restart.id)).script!.pid!
+  const watching = pidOf((await get(restart.id)).script)!
   const rewritten = (await invoke('update', {
     id: restart.id,
     ask: 'Survive a server reopen, then fire',
@@ -235,7 +237,7 @@ it('delivers FIRE once, investigates exits only in the owning agent, recovers, a
   await until(() => app.extensions.info().some((e) => e.name === 'automations' && !e.enabled))
   await until(() => {
     try {
-      process.kill(running.script!.pid!, 0)
+      process.kill(pidOf(running.script)!, 0)
       return false
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true

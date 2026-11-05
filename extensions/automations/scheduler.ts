@@ -10,7 +10,7 @@ import { SubagentsApi } from '../subagents/api.ts'
 import { discoverAgents, hostDefaultModel } from '../../lib/agents.ts'
 import { nextAt } from './schedule.ts'
 import type { Automation } from './types.ts'
-import { hasRunningRun, runStep } from './state.ts'
+import { hasRunningRun, runStep, setEnabled, setScript } from './state.ts'
 import type { RunEvent } from './state.ts'
 import { RUN_TASK } from './types.ts'
 import type { Automations as Ledger } from './server.ts'
@@ -165,12 +165,9 @@ export function scheduler(
     a.recentFires = (a.recentFires ?? []).filter((at) => at > firedAt - 3600000)
     if (a.recentFires.length >= 6) {
       const reason = 'Fired more than 6 times in an hour; paused'
-      a.enabled = false
+      if (a.script) setScript(a, { type: 'pause', reason })
+      else setEnabled(a, false)
       delete a.nextAt
-      if (a.script) {
-        a.script.state = 'stopped'
-        a.script.error = reason
-      }
       const event = await host.emit(tx, Escalated, { id: a.id, reason })
       await deliver(tx, a, event.id, 'escalated', reason)
       return { id: a.id }
@@ -261,7 +258,7 @@ export function scheduler(
           await fire(tx, a, runtime.now())
           delete a.nextAt
           if (!a.enabled || a.schedule!.kind === 'at') {
-            a.enabled = false
+            setEnabled(a, false)
             delete a.scheduler
             return terminal
           }

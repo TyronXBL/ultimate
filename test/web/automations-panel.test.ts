@@ -113,25 +113,26 @@ const base = (id: string, createdAt: number, extra: Partial<AutomationListItem>)
     alive: true,
     ...extra,
   }) satisfies AutomationListItem
-const script = (
-  state: NonNullable<AutomationListItem['script']>['state'],
-  conversationId: number,
-) => ({
+const script = (conversationId: number) => ({
   ask: 'watch it',
   once: false,
   conversationId,
-  state,
+  failures: 0,
 })
 const schedule = base('A1', 300, {
   schedule: { kind: 'every', ms: 900_000 },
   prompt: 'say hi',
   nextAt: 1_300_000,
 })
-const watching = base('A2', 200, { script: script('running', 41), subscribers: [7], fires: 1 })
+const watching = base('A2', 200, {
+  script: { ...script(41), state: 'running' },
+  subscribers: [7],
+  fires: 1,
+})
 const failed = base('ci-watch', 100, {
   scope: 'project',
   enabled: false,
-  script: { ...script('failed', 42), error: 'exit 2' },
+  script: { ...script(42), state: 'failed', error: 'exit 2' },
   subscribers: [7],
 })
 

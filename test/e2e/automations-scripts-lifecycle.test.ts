@@ -4,6 +4,7 @@ import { expect, it } from 'vitest'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { Automations } from '../../extensions/automations/server.ts'
 import { Done } from '../../extensions/automations/refs.ts'
+import { exitOf, pidOf } from '../../extensions/automations/state.ts'
 import type { Automation, AutomationListItem } from '../../extensions/automations/types.ts'
 import { context } from '../../server/harness.ts'
 import { eventHost, until } from '../helpers.ts'
@@ -54,13 +55,13 @@ it('stops a recurring script that prints DONE and exits 0 without waking anyone;
     'n=$(($(cat "$AUTOMATION_STATE/n" 2>/dev/null || echo 0) + 1)); echo $n > "$AUTOMATION_STATE/n"; echo FIRE $n; echo DONE all merged',
   )
   await call(app, 'resume', sub.id)
-  await until(async () => !!(await get()).script!.exitedAt)
+  await until(async () => !!exitOf((await get()).script!))
   expect(await get()).toMatchObject({
     enabled: false,
     fires: 1,
-    script: { state: 'stopped', exitCode: 0 },
+    script: { state: 'stopped', exit: { exitCode: 0 } },
   })
-  expect((await get()).script!.error).toBeUndefined()
+  expect(await get()).not.toHaveProperty('script.error')
   expect((await done()).map((e) => e.data)).toEqual([{ id: sub.id, text: 'all merged' }])
   await call(app, 'resume', sub.id)
   await until(async () => (await get()).fires === 2 && (await get()).script!.state === 'stopped')
@@ -75,7 +76,7 @@ it('stops a recurring script that prints DONE and exits 0 without waking anyone;
   await writeRun(folder(sub.id), 'echo DONE; exit 2')
   await call(app, 'resume', sub.id)
   await until(async () => (await get()).script!.state === 'investigating')
-  expect(await get()).toMatchObject({ enabled: true, script: { exitCode: 2 } })
+  expect(await get()).toMatchObject({ enabled: true, script: { exit: { exitCode: 2 } } })
   await until(async () => (await inputs(sub.script!.conversationId)).includes('automations.failed'))
   expect(await done()).toHaveLength(2)
 
@@ -125,11 +126,11 @@ it('keeps listing and supervising scripts after a reload bumps the ledger versio
   // A reload restarts running scripts on the new code, as a core swap does.
   await until(async () => {
     const now = await get()
-    return now.alive && now.script!.pid !== before.script!.pid
+    return now.alive && pidOf(now.script) !== pidOf(before.script)
   })
   // The new token migrates the ledger to the next version on its next write; the supervisor must use it too.
   await call(app, 'pause', sub.id)
-  await until(async () => !!(await get()).script!.exitedAt)
+  await until(async () => !!exitOf((await get()).script!))
   expect(await get()).toMatchObject({ enabled: false, script: { state: 'stopped' } })
   await writeRun(folder(sub.id), 'echo FIRE after')
   await call(app, 'resume', sub.id)
@@ -163,7 +164,7 @@ it('discovers a committed project automation by slug only in a chosen project, a
     script: { once: false, state: 'stopped', to: '@ultimate' },
   })
   // Discovery never starts it; its agent conversation exists, idle.
-  expect(found.script?.pid).toBeUndefined()
+  expect(pidOf(found.script)).toBeUndefined()
   expect(
     await app.harness.conversation(found.script?.conversationId as ConversationId, context),
   ).toBeDefined()
@@ -181,7 +182,7 @@ it('discovers a committed project automation by slug only in a chosen project, a
     code: 'ENOENT',
   })
   await call(app, 'pause', 'prs')
-  await until(async () => !!(await get()).script!.exitedAt)
+  await until(async () => !!exitOf((await get()).script!))
   expect(await get()).toMatchObject({ enabled: false, script: { state: 'stopped' } })
   await expect(readFile(join(folder('prs'), 'pid'))).rejects.toMatchObject({ code: 'ENOENT' })
 
@@ -193,8 +194,8 @@ it('discovers a committed project automation by slug only in a chosen project, a
   )
   await call(app, 'resume', 'prs')
   await until(async () => (await get()).fires === 2 && (await get()).script!.state === 'stopped')
-  expect(await get()).toMatchObject({ enabled: false, script: { exitCode: 0 } })
-  expect((await get()).script!.error).toBeUndefined()
+  expect(await get()).toMatchObject({ enabled: false, script: { exit: { exitCode: 0 } } })
+  expect(await get()).not.toHaveProperty('script.error')
   const done = await eventHost(() => app.harness, 'test').eventLog.recent({ events: [Done] })
   expect(done.map((e) => e.data)).toEqual([{ id: 'prs', text: 'nothing left' }])
 

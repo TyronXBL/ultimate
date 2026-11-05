@@ -7,6 +7,7 @@ import { context } from '../server/harness.ts'
 import { Messages } from '../extensions/messages/api.ts'
 import { Started } from '../extensions/messages/addresses.ts'
 import { Automations } from '../extensions/automations/server.ts'
+import { pidOf } from '../extensions/automations/state.ts'
 import { fauxServer, until } from './helpers.ts'
 import { ultimateRoot, servers, fixture, entries } from './side-chat-fixture.ts'
 
@@ -142,7 +143,14 @@ describe('side chats', () => {
       state.automations.A1 = {
         id: 'A1',
         name: 'test',
-        script: { ask: 'test', once: true, secrets: [], conversationId: f.main, state: 'stopped' },
+        script: {
+          ask: 'test',
+          once: true,
+          secrets: [],
+          conversationId: f.main,
+          failures: 0,
+          state: 'stopped',
+        },
         subscribers: [],
         runs: [],
         fires: 0,
@@ -163,8 +171,10 @@ describe('side chats', () => {
     )
     const created = (await f.server.harness.snapshot(Automations, context))!.automations.A2
     expect(created.subscribers).toEqual([f.main])
-    expect(created.script!.error).toContain('The watcher stopped while the script was writing')
-    expect(created.script!.pid).toBeUndefined()
+    expect(created.script).toMatchObject({
+      error: expect.stringContaining('The watcher stopped while the script was writing'),
+    })
+    expect(pidOf(created.script)).toBeUndefined()
     expect(
       (await entries(f.server, f.main)).filter(
         (entry) =>

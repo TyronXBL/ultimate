@@ -2,6 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { doneText, fireText, trimLog } from '../extensions/automations/types.ts'
+import { scriptStep } from '../extensions/automations/state.ts'
+import type { Script, ScriptEvent } from '../extensions/automations/state.ts'
 import type { Automation } from '../extensions/automations/types.ts'
 import { context } from '../server/harness.ts'
 import { fauxServer, removeTemp, temp, until } from './helpers.ts'
@@ -114,4 +116,239 @@ it('lets a project extension read, pause and resume an automation through the se
     needs: [],
     wants: ['goal', 'prs'],
   })
+})
+
+it('steps a script through its lifecycle, with `enabled` following its state', () => {
+  const HOUR = 3600_000
+  const base = { ask: 'watch', once: false, conversationId: 7, failures: 0 }
+  const up = { pid: 41, startedAt: 1000 }
+  const ended = { exitedAt: 1500, exitCode: 1 }
+  const fail = {
+    type: 'exit',
+    at: 2000,
+    code: 1,
+    stopped: false,
+    said: false,
+    reason: 'boom',
+  } as const
+  const at = (state: Script['state'], rest: object = {}) => ({ ...base, state, ...rest }) as Script
+  const rows: [string, Script, ScriptEvent, Script, boolean][] = [
+    // Resume starts it from any state, keeps the old pid for the launch to sweep and forgets the old exit and error.
+    [
+      'resume after a failure',
+      at('failed', { error: 'x', exit: ended }),
+      { type: 'resume' },
+      at('running'),
+      true,
+    ],
+    [
+      'resume keeps the pid to sweep',
+      at('stopped', { process: up }),
+      { type: 'resume' },
+      at('running', { process: up }),
+      true,
+    ],
+    [
+      'resume a fired one-shot',
+      at('done', { exit: ended }),
+      { type: 'resume' },
+      at('running'),
+      true,
+    ],
+    // Pause keeps the pid until the exit is recorded, and a fired one-shot stays done.
+    [
+      'pause',
+      at('running', { process: up }),
+      { type: 'pause' },
+      at('stopped', { process: up }),
+      false,
+    ],
+    [
+      'pause keeps a fired one-shot done',
+      at('done', { process: up }),
+      { type: 'pause' },
+      at('done', { process: up }),
+      false,
+    ],
+    [
+      'pause keeps what failed',
+      at('failed', { error: 'x' }),
+      { type: 'pause' },
+      at('stopped', { error: 'x' }),
+      false,
+    ],
+    [
+      'the fire cap pauses with its reason',
+      at('running', { process: up }),
+      { type: 'pause', reason: 'cap' },
+      at('stopped', { error: 'cap', process: up }),
+      false,
+    ],
+    // A changed ask sends the watcher back to writing; an edit while paused is written too, so it is enabled.
+    [
+      'rewrite while running',
+      at('running', { process: up }),
+      { type: 'write' },
+      at('writing', { process: up }),
+      true,
+    ],
+    [
+      'rewrite after a failure',
+      at('failed', { error: 'x', exit: ended }),
+      { type: 'write' },
+      at('writing', { exit: ended }),
+      true,
+    ],
+    [
+      'escalate',
+      at('investigating', { error: 'x', exit: ended }),
+      { type: 'escalate', reason: 'no' },
+      at('failed', { error: 'no', exit: ended }),
+      false,
+    ],
+    // The process starts, prints, and a FIRE counts as it doing its job.
+    [
+      'start records the process',
+      at('running'),
+      { type: 'start', at: 1000, pid: 41 },
+      at('running', { process: up }),
+      true,
+    ],
+    [
+      'a start after a pause changes nothing',
+      at('stopped'),
+      { type: 'start', at: 1000, pid: 41 },
+      at('stopped'),
+      false,
+    ],
+    [
+      'output',
+      at('running', { failures: 2, process: up }),
+      { type: 'output', at: 1200, fire: false },
+      at('running', { failures: 2, process: { ...up, lastOutputAt: 1200 } }),
+      true,
+    ],
+    [
+      'a FIRE resets the failures',
+      at('running', { failures: 2, process: up }),
+      { type: 'output', at: 1200, fire: true },
+      at('running', { process: { ...up, lastOutputAt: 1200 } }),
+      true,
+    ],
+    [
+      'a one-shot is done once fired',
+      at('running', { once: true, process: up }),
+      { type: 'fired' },
+      at('done', { once: true, process: up }),
+      false,
+    ],
+    [
+      'a recurring script keeps running when fired',
+      at('running', { process: up }),
+      { type: 'fired' },
+      at('running', { process: up }),
+      true,
+    ],
+    // Exits: an unplanned one is investigated, the third in a row escalates, an hour of running starts the count again.
+    [
+      'an unplanned exit',
+      at('running', { process: up }),
+      fail,
+      at('investigating', { failures: 1, error: 'boom', exit: { exitedAt: 2000, exitCode: 1 } }),
+      true,
+    ],
+    [
+      'an exit by signal has no code',
+      at('running', { process: up }),
+      { ...fail, code: null },
+      at('investigating', { failures: 1, error: 'boom', exit: { exitedAt: 2000 } }),
+      true,
+    ],
+    [
+      'the third failure in a row fails the script',
+      at('running', { failures: 2, process: up }),
+      fail,
+      at('failed', {
+        failures: 3,
+        error: 'Failed 3 times in a row: boom',
+        exit: { exitedAt: 2000, exitCode: 1 },
+      }),
+      false,
+    ],
+    [
+      'an hour of running starts a new count',
+      at('running', { failures: 2, process: up }),
+      { ...fail, at: 1000 + HOUR },
+      at('investigating', {
+        failures: 1,
+        error: 'boom',
+        exit: { exitedAt: 1000 + HOUR, exitCode: 1 },
+      }),
+      true,
+    ],
+    [
+      'a recurring DONE with exit 0 stops it',
+      at('running', { process: up }),
+      { ...fail, code: 0, said: true },
+      at('stopped', { exit: { exitedAt: 2000, exitCode: 0 } }),
+      false,
+    ],
+    [
+      'a one-shot that printed DONE still failed',
+      at('running', { once: true, process: up }),
+      { ...fail, code: 0, said: true },
+      at('investigating', {
+        once: true,
+        failures: 1,
+        error: 'boom',
+        exit: { exitedAt: 2000, exitCode: 0 },
+      }),
+      true,
+    ],
+    [
+      'a stop while running is not a failure',
+      at('running', { process: up }),
+      { ...fail, stopped: true },
+      at('running'),
+      true,
+    ],
+    [
+      'the exit of a paused process is recorded',
+      at('stopped', { process: up }),
+      { ...fail, stopped: true },
+      at('stopped', { exit: { exitedAt: 2000, exitCode: 1 } }),
+      false,
+    ],
+    [
+      'the exit of a fired one-shot is not a failure',
+      at('done', { once: true, process: up }),
+      { ...fail, code: 0 },
+      at('done', { once: true, exit: { exitedAt: 2000, exitCode: 0 } }),
+      false,
+    ],
+    [
+      'an exit nothing expects changes nothing',
+      at('writing', { process: up }),
+      fail,
+      at('writing', { process: up }),
+      true,
+    ],
+    // The manifest and edits change what the script is told, never its state.
+    [
+      'a manifest replaces what the script is told',
+      at('failed', { error: 'x', secrets: ['A'] }),
+      { type: 'manifest', ask: 'new', once: true, to: '@ultimate' },
+      at('failed', { error: 'x', ask: 'new', once: true, to: '@ultimate' }),
+      false,
+    ],
+    [
+      'an edit changes only what it names',
+      at('running'),
+      { type: 'edit', once: true },
+      at('running', { once: true }),
+      true,
+    ],
+  ]
+  for (const [name, from, event, script, enabled] of rows)
+    expect({ name, ...scriptStep(from, event) }).toStrictEqual({ name, script, enabled })
 })

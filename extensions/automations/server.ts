@@ -62,7 +62,8 @@ import {
 import { editCondition } from './condition.ts'
 import { describeSchedule, nextAt, parseSchedule } from './schedule.ts'
 import { scheduler } from './scheduler.ts'
-import { isRunning } from './state.ts'
+import { exitOf, isRunning, newScript, pidOf, processOf, setEnabled, setScript } from './state.ts'
+import type { Script } from './state.ts'
 import { triggers, TRIGGER_EVENTS, describeTrigger } from './triggers.ts'
 import { supervisor } from './supervisor.ts'
 import type { Prepared } from './supervisor.ts'
@@ -78,20 +79,76 @@ import type {
 import { isSlug, STANDING } from './types.ts'
 export type { Automation, Run } from './types.ts'
 export { launchHandshake } from './supervisor.ts'
+/** A script as stored before version 5: one bag of fields for every state. */
+type V4Script = {
+  ask: string
+  once: boolean
+  secrets?: string[]
+  to?: string
+  conversationId: number
+  state: Script['state']
+  failures?: number
+  pid?: number
+  startedAt?: number
+  lastOutputAt?: number
+  exitedAt?: number
+  exitCode?: number
+  error?: string
+}
+/** Each state keeps the fields it has: a pid only with its process, an exit once it ended, an error where it is shown. */
+function scriptFromV4(old: V4Script, updatedAt: number): Script {
+  const { state, failures, pid, startedAt, lastOutputAt, exitedAt, exitCode, error, ...spec } = old
+  const base = { ...spec, failures: failures ?? 0 }
+  const process = pid !== undefined && {
+    process: {
+      pid,
+      startedAt: startedAt ?? updatedAt,
+      ...(lastOutputAt !== undefined && { lastOutputAt }),
+    },
+  }
+  const exit = exitedAt !== undefined && {
+    exit: { exitedAt, ...(exitCode !== undefined && { exitCode }) },
+  }
+  switch (state) {
+    case 'running':
+      return { ...base, state, ...process }
+    case 'investigating':
+      return {
+        ...base,
+        state,
+        exit: { exitedAt: exitedAt ?? updatedAt, ...(exitCode !== undefined && { exitCode }) },
+        error: error ?? 'The script exited',
+      }
+    case 'failed':
+      return { ...base, state, error: error ?? 'The script failed', ...process, ...exit }
+    case 'stopped':
+      return { ...base, state, ...(error !== undefined && { error }), ...process, ...exit }
+    case 'writing':
+    case 'done':
+      return { ...base, state, ...process, ...exit }
+    default:
+      return state satisfies never
+  }
+}
 type Ledger = { next: number; automations: Record<string, Automation> }
 export const Automations = defineDoc<Ledger>({
   kind: 'ultimate.automations',
   checkpointWhen: () => false,
-  version: 4,
+  version: 5,
   scope: 'session',
   initial: () => ({ next: 1, automations: {} }),
   // Version 1 also holds schedule records from before scripts and subscribers. Version 3: a project script discovery
   // made with nobody to wake wakes @ultimate, as its manifest now says by default. Pi Durable stores the migrated
   // value as a version 4 base on the ledger's next write. Version 4: a skipped run no longer stores `finishedAt`.
+  // Version 5: a script is a union by state (see state.ts) and its `enabled` follows it.
   migrate: (value) => {
     const ledger = value as unknown as Ledger
     for (const a of Object.values(ledger.automations)) {
       a.subscribers ??= []
+      if (a.script) {
+        a.script = scriptFromV4(a.script, a.updatedAt)
+        setScript(a, { type: 'edit' })
+      }
       for (const run of a.runs)
         if (run.status === 'skipped') delete (run as { finishedAt?: number }).finishedAt
       if (a.fires === undefined) {
@@ -321,7 +378,7 @@ function backend(host: ExtensionHost) {
       return {
         result: Object.values(state.automations).map((s) => ({
           ...s,
-          alive: groupAlive(s.script?.pid),
+          alive: groupAlive(pidOf(s.script)),
         })),
       }
     if (args.action === 'create') {
@@ -343,10 +400,17 @@ function backend(host: ExtensionHost) {
           sub.script!.ask === m.ask &&
           sub.script!.once === m.once &&
           sub.script!.to === m.to
-        if (!same || sub.script!.state !== 'stopped' || sub.script!.startedAt || sub.fires)
+        // A stopped script that never ran: its process or exit would show it did.
+        if (
+          !same ||
+          sub.script!.state !== 'stopped' ||
+          processOf(sub.script!) ||
+          exitOf(sub.script!) ||
+          sub.fires
+        )
           throw new Error(`Automation ${prepared.slug} already exists; pass another slug`)
+        setScript(sub, { type: 'write' })
         Object.assign(sub, runProfile, {
-          enabled: true,
           updatedAt: Date.now(),
           subscribers: [
             ...new Set([
@@ -356,7 +420,6 @@ function backend(host: ExtensionHost) {
           ],
           ...(args.key ? { key: args.key } : {}),
         })
-        sub.script!.state = 'writing'
         await deliver(tx, sub, 'create', 'writing', sub.script!.ask)
         return { result: sub }
       }
@@ -373,14 +436,15 @@ function backend(host: ExtensionHost) {
         id,
         ...(args.key ? { key: args.key } : {}),
         name,
-        enabled: true,
-        script: {
-          ask: required(args.ask, 'ask'),
-          once: args.once ?? true,
-          conversationId,
-          state: 'writing',
-          ...(args.secrets ? { secrets: args.secrets } : {}),
-        },
+        ...newScript(
+          {
+            ask: required(args.ask, 'ask'),
+            once: args.once ?? true,
+            conversationId,
+            ...(args.secrets ? { secrets: args.secrets } : {}),
+          },
+          'writing',
+        ),
         subscribers: prepared.subscribers?.length
           ? prepared.subscribers
           : args.prompt
@@ -407,26 +471,21 @@ function backend(host: ExtensionHost) {
       sub.subscribers = sub.subscribers.filter((s) => s !== prepared.subscriber)
       reachesSomeone(sub)
     } else if (args.action === 'resume' || args.action === 'run') {
-      sub.enabled = true
-      sub.script!.state = 'running'
-      // Retain the old pid until launch so onOpen can sweep it if the process dies before the effect.
-      delete sub.script!.error
+      // The step retains the old pid until launch so onOpen can sweep it if the process dies before the effect.
+      setScript(sub, { type: 'resume' })
       return {
         result: sub,
         effect: {
           id,
           action: 'resume',
-          ...(sub.script!.pid ? { previousPid: sub.script!.pid } : {}),
+          ...(pidOf(sub.script) ? { previousPid: pidOf(sub.script) } : {}),
         },
       }
     } else if (args.action === 'pause' || args.action === 'delete' || args.action === 'escalate') {
-      const pid = sub.script!.pid
+      const pid = pidOf(sub.script)
       if (args.action === 'escalate')
         await scripts.escalate(tx, sub, required(args.reason, 'reason'))
-      else {
-        sub.enabled = false
-        if (sub.script!.state !== 'done') sub.script!.state = 'stopped'
-      }
+      else setScript(sub, { type: 'pause' })
       if (args.action === 'delete') delete state.automations[id]
       return {
         result: args.action === 'delete' ? { id } : sub,
@@ -648,11 +707,13 @@ function backend(host: ExtensionHost) {
         delete a.event
         a.condition = editCondition(a.condition, args.condition, Date.now())
       }
-      if (a.script) {
-        if (args.ask !== undefined) a.script.ask = required(args.ask, 'ask')
-        if (args.once !== undefined) a.script.once = args.once
-        if (args.secrets !== undefined) a.script.secrets = args.secrets
-      }
+      if (a.script)
+        setScript(a, {
+          type: 'edit',
+          ...(args.ask !== undefined && { ask: required(args.ask, 'ask') }),
+          ...(args.once !== undefined && { once: args.once }),
+          ...(args.secrets !== undefined && { secrets: args.secrets }),
+        })
       if (args.agent !== undefined) {
         if (args.agent) a.agent = args.agent
         else delete a.agent
@@ -661,16 +722,15 @@ function backend(host: ExtensionHost) {
       if (args.thinking !== undefined) a.thinking = args.thinking
       if (a.script && a.script.ask !== oldAsk) {
         // The running script watches the old condition: stop it and have the watcher write run again, as at creation.
-        a.script.state = 'writing'
-        delete a.script.error
+        setScript(a, { type: 'write' })
         effect = {
           id,
           action: 'pause',
-          ...(a.script.pid ? { previousPid: a.script.pid } : {}),
+          ...(pidOf(a.script) ? { previousPid: pidOf(a.script) } : {}),
         }
       }
-    } else if (args.action === 'pause') a.enabled = false
-    else if (args.action === 'resume') a.enabled = true
+    } else if (args.action === 'pause') setEnabled(a, false)
+    else if (args.action === 'resume') setEnabled(a, true)
     else throw new Error(`Unknown action: ${args.action}`)
     if (args.action === 'resume' && a.event) a.event.sinceEvent = await newestEvent(tx)
     if (args.action === 'create' || args.action === 'resume')

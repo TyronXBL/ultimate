@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai'
 import type { TaskId } from '@earendil-works/pi-durable'
-import type { Run } from './state.ts'
+import type { Run, Script } from './state.ts'
 
 export type TriggerEvent = { name: string; description: string; fields: Record<string, string> }
 /** The labels automations gives the conversations it creates: a prompt run's, and a script's watcher. */
@@ -39,6 +39,7 @@ export type Automation = {
   /** The caller's idempotency key: a create with a key that exists returns that automation instead. */
   key?: string
   name: string
+  /** A script's follows its state (`scriptStep`); any other trigger's is its own switch (`setEnabled`). */
   enabled: boolean
   createdAt: number
   updatedAt: number
@@ -46,23 +47,8 @@ export type Automation = {
   event?: { name: string; where?: Record<string, string | number | boolean>; sinceEvent: number }
   condition?: Condition
   recentFires?: number[]
-  script?: {
-    ask: string
-    once: boolean
-    secrets?: string[]
-    /** A project script's committed `to`: the subscriber its manifest names. */
-    to?: string
-    conversationId: number
-    state: 'writing' | 'running' | 'investigating' | 'failed' | 'stopped' | 'done'
-    /** Unplanned exits in a row; the third escalates. A FIRE or an hour of running resets it. */
-    failures?: number
-    pid?: number
-    startedAt?: number
-    exitedAt?: number
-    exitCode?: number
-    lastOutputAt?: number
-    error?: string
-  }
+  /** Only `scriptStep` (state.ts) writes it, and with it `enabled`. */
+  script?: Script
   prompt?: string
   agent?: string
   model?: { provider: string; modelId: string }
@@ -112,8 +98,6 @@ export type Args = Partial<CreateArgs> & {
 export type Manifest = { name: string; ask: string; once: boolean; secrets?: string[]; to: string }
 /** A standing agent's name as a subscriber or target: `@ultimate`. */
 export const STANDING = /^@[a-zA-Z0-9_-]+$/
-/** How many unplanned script exits in a row escalate instead of waking the watcher again. */
-export const FAILURE_LIMIT = 3
 export type Effect = { id: string; action: string; previousPid?: number }
 export const isSlug = (id: string) => /^[a-z][a-z0-9-]{0,62}$/.test(id) && !(id in Object.prototype)
 export const isId = (id: string) => /^A[1-9]\d*$/.test(id) || isSlug(id)

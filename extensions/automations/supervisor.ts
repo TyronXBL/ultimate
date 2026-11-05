@@ -21,16 +21,8 @@ import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { MessagesApi } from '../messages/api.ts'
 import { Done, Escalated, Exited, Started } from './refs.ts'
 import type { Automations as Ledger } from './server.ts'
-import {
-  doneText,
-  FAILURE_LIMIT,
-  fireText,
-  isId,
-  isSlug,
-  STANDING,
-  trimLog,
-  WatcherLabel,
-} from './types.ts'
+import { doneText, fireText, isId, isSlug, STANDING, trimLog, WatcherLabel } from './types.ts'
+import { exitKind, FAILURE_LIMIT, newScript, pidOf, setScript } from './state.ts'
 import type { Manifest, Automation, AutomationListItem, Effect, Subscriber } from './types.ts'
 
 const owner = {
@@ -54,8 +46,6 @@ function validId(value: unknown): string {
   return id
 }
 const MANIFEST = 'automation.json'
-/** An hour of running before an exit means the script worked: its failure count starts again. */
-const HEALTHY_MS = 3600_000
 const exists = (path: string) =>
   access(path).then(
     () => true,
@@ -228,15 +218,16 @@ export function supervisor(
             id,
             scope: 'project',
             name: m.name,
-            enabled: false,
-            script: {
-              ask: m.ask,
-              once: m.once,
-              ...(m.secrets ? { secrets: m.secrets } : {}),
-              to: m.to,
-              conversationId: await agentConversation(tx, prepared, id, m.name, host.projectRoot),
-              state: 'stopped',
-            },
+            ...newScript(
+              {
+                ask: m.ask,
+                once: m.once,
+                ...(m.secrets ? { secrets: m.secrets } : {}),
+                to: m.to,
+                conversationId: await agentConversation(tx, prepared, id, m.name, host.projectRoot),
+              },
+              'stopped',
+            ),
             subscribers: [m.to],
             runs: [],
             createdAt: now,
@@ -246,9 +237,9 @@ export function supervisor(
         else if (sub?.scope === 'project') {
           const before = sub.script!.to
           sub.subscribers = [...new Set([...sub.subscribers.filter((s) => s !== before), m.to])]
-          delete sub.script!.secrets
           sub.name = m.name
-          Object.assign(sub.script!, {
+          setScript(sub, {
+            type: 'manifest',
             ask: m.ask,
             once: m.once,
             to: m.to,
@@ -265,7 +256,7 @@ export function supervisor(
         stops.push({
           id: sub.id,
           action: 'pause',
-          ...(sub.script!.pid ? { previousPid: sub.script!.pid } : {}),
+          ...(pidOf(sub.script) ? { previousPid: pidOf(sub.script) } : {}),
         })
       }
       return stops
@@ -352,7 +343,7 @@ export function supervisor(
           kind === 'writing'
             ? `${brief(sub)}\nWrite and briefly test run, then use automation resume {id:"${sub.id}"}. Ending your turn before resume or escalate escalates it.`
             : kind === 'failed'
-              ? `Automation ${sub.id} "${sub.name}" failed (${sub.script!.failures ?? 1} of ${FAILURE_LIMIT} in a row; the ${FAILURE_LIMIT}rd escalates by itself): ${text}\nInvestigate, fix run, and use automation resume, or automation escalate with a clear reason when it cannot work. Ending your turn without resuming escalates it.\n${sub.scope === 'project' ? `${brief(sub)}\n` : ''}Last 50 log lines:\n${await tail(sub.id)}`
+              ? `Automation ${sub.id} "${sub.name}" failed (${sub.script!.failures} of ${FAILURE_LIMIT} in a row; the ${FAILURE_LIMIT}rd escalates by itself): ${text}\nInvestigate, fix run, and use automation resume, or automation escalate with a clear reason when it cannot work. Ending your turn without resuming escalates it.\n${sub.scope === 'project' ? `${brief(sub)}\n` : ''}Last 50 log lines:\n${await tail(sub.id)}`
               : `Automation ${sub.id} "${sub.name}" ${kind}: ${text}`
         // Read only for an escalation, which already messages @ultimate.
         const ultimate =
@@ -451,13 +442,15 @@ export function supervisor(
   }
   /**
    * Inside `tx`: fail script `sub` for `reason`: it stops, its subscribers are woken and @ultimate is messaged. The
-   * tool's escalate, the third failure in a row and a watcher that stops mid-repair all end here.
+   * tool's escalate and a watcher that stops mid-repair end here; the third failure in a row fails in `finish` and
+   * announces itself.
    */
   async function escalate(tx: Tx, sub: Automation, reason: string) {
-    sub.enabled = false
-    sub.script!.state = 'failed'
-    sub.script!.error = reason
+    setScript(sub, { type: 'escalate', reason })
     sub.updatedAt = Date.now()
+    await announce(tx, sub, reason)
+  }
+  async function announce(tx: Tx, sub: Automation, reason: string) {
     const event = await host.emit(tx, Escalated, { id: sub.id, reason })
     await deliver(tx, sub, event.id, 'escalated', reason)
   }
@@ -478,44 +471,33 @@ export function supervisor(
     if (shared.closing && !run) return
     await host.harness().commit(async (tx) => {
       const sub = (await tx.doc(Automations)).automations[id]
-      if (!sub || (run && sub.script!.pid !== run.child.pid)) return
-      const done = sub.script!.once && sub.script!.state === 'done'
-      const stopped = !!run?.stopped || shared.closing
-      if (!stopped && sub.script!.state !== 'running' && !done) return
+      if (!sub || (run && pidOf(sub.script) !== run.child.pid)) return
       // A recurring script that printed DONE and exited 0 asked to stop: the same state as pause, with nobody woken.
-      const said = run?.done
-      const finished = !sub.script!.once && !stopped && !done && said !== undefined && code === 0
       // A fired one-shot is already done in its FIRE commit, so any other unplanned exit is a failure.
       // Shutdown keeps running automations enabled for reopen.
-      const now = Date.now()
-      const failed = !finished && !stopped && !done
-      if (finished) {
-        sub.script!.state = 'stopped'
-        sub.enabled = false
-      } else if (failed) {
-        sub.script!.state = 'investigating'
-        // A script that ran for an hour worked: this exit starts a new count.
-        const healthy = !!sub.script!.startedAt && now - sub.script!.startedAt >= HEALTHY_MS
-        sub.script!.failures = healthy ? 1 : (sub.script!.failures ?? 0) + 1
+      const said = run?.done
+      const reason = error ?? `Process exited with code ${code}${signal ? ` (${signal})` : ''}`
+      const exit = {
+        at: Date.now(),
+        code,
+        stopped: !!run?.stopped || shared.closing,
+        said: said !== undefined,
+        reason,
       }
-      sub.updatedAt = sub.script!.exitedAt = now
-      if (code !== null) sub.script!.exitCode = code
-      delete sub.script!.pid
+      const kind = exitKind(sub.script!, exit)
+      if (kind === 'ignored') return
+      setScript(sub, { type: 'exit', ...exit })
+      sub.updatedAt = exit.at
       const event = await host.emit(tx, Exited, {
         id,
         code,
         ...(signal ? { signal } : {}),
       })
-      if (finished) await host.emit(tx, Done, { id, ...(said ? { text: said } : {}) })
-      else if (sub.script!.state === 'done') sub.enabled = false
-      else if (failed) {
-        const reason = error ?? `Process exited with code ${code}${signal ? ` (${signal})` : ''}`
-        if (sub.script!.failures! >= FAILURE_LIMIT)
-          await escalate(tx, sub, `Failed ${sub.script!.failures} times in a row: ${reason}`)
-        else {
-          sub.script!.error = reason
-          await deliver(tx, sub, event.id, 'failed', reason)
-        }
+      if (kind === 'finished') await host.emit(tx, Done, { id, ...(said ? { text: said } : {}) })
+      else if (kind === 'failed') {
+        const script = sub.script!
+        if (script.state === 'failed') await announce(tx, sub, script.error)
+        else await deliver(tx, sub, event.id, 'failed', reason)
       }
     }, BACKGROUND_CONTEXT)
   }
@@ -543,12 +525,12 @@ export function supervisor(
   async function launchRun(id: string, previousPid?: number) {
     if (shared.closing) throw new Error('Automation supervisor is closing')
     const sub = await snapshot(id)
-    if (!sub.enabled || sub.script!.state !== 'running') return
+    if (sub.script!.state !== 'running') return
     const current = runs.get(id)
     // A replay of a start receipt (including after onOpen reconciliation) reuses this process.
     if (
       current?.active &&
-      current.child.pid === sub.script!.pid &&
+      current.child.pid === pidOf(sub.script) &&
       current.child.pid !== previousPid
     )
       return
@@ -600,17 +582,14 @@ export function supervisor(
     // Hold output until the pid and Started event are committed, even for an immediately exiting script.
     run.queue = host.harness().commit(async (tx) => {
       const saved = (await tx.doc(Automations)).automations[id]
-      if (!saved || !saved.enabled || saved.script!.state !== 'running') {
+      if (!saved || saved.script!.state !== 'running') {
         run.active = false
         return
       }
-      delete saved.script!.pid
+      const at = Date.now()
+      setScript(saved, { type: 'start', at, ...(child.pid ? { pid: child.pid } : {}) })
       if (child.pid) {
-        saved.script!.pid = child.pid
-        saved.script!.startedAt = saved.updatedAt = Date.now()
-        delete saved.script!.exitedAt
-        delete saved.script!.exitCode
-        delete saved.script!.error
+        saved.updatedAt = at
         await host.emit(tx, Started, { id, pid: child.pid })
       }
     }, BACKGROUND_CONTEXT)
@@ -638,18 +617,19 @@ export function supervisor(
       if (done !== undefined) run.done = done
       await host.harness().commit(async (tx) => {
         const saved = (await tx.doc(Automations)).automations[id]
-        if (!saved || saved.script!.pid !== child.pid || saved.script!.state !== 'running') return
-        saved.script!.lastOutputAt = saved.updatedAt = Date.now()
-        if (fire === undefined || run.afterFire) return
+        if (!saved || pidOf(saved.script) !== child.pid || saved.script!.state !== 'running') return
+        const at = Date.now()
         // A FIRE is the script doing its job: earlier failures no longer count toward escalation.
-        delete saved.script!.failures
+        const counted = fire !== undefined && !run.afterFire
+        setScript(saved, { type: 'output', at, fire: counted })
+        saved.updatedAt = at
+        if (!counted) return
         await fireAutomation(tx, saved, Date.now(), fire)
         if (!saved.enabled) {
           run.stopped = 'pause'
           run.afterFire = true
         } else if (saved.script!.once) {
-          saved.script!.state = 'done'
-          saved.enabled = false
+          setScript(saved, { type: 'fired' })
           run.afterFire = true
         }
       }, BACKGROUND_CONTEXT)
@@ -720,7 +700,7 @@ export function supervisor(
       const sub = Object.values((await tx.doc(Automations)).automations).find(
         (a) => a.script?.conversationId === conversationId,
       )
-      if (!sub?.enabled || !['writing', 'investigating'].includes(sub.script!.state)) return
+      if (!sub || !['writing', 'investigating'].includes(sub.script!.state)) return
       if ((await tx.doc(InboxDoc, conversationId as ConversationId)).items.length) return
       // A brief or failure committed but not yet delivered is still coming: the watcher will look again.
       for (const live of ['pending', 'running'] as const) {
@@ -751,7 +731,7 @@ export function supervisor(
   async function status(id: string): Promise<AutomationListItem> {
     if (!validId(id).startsWith('A')) await discover()
     const sub = await snapshot(id)
-    return { ...json(sub), alive: groupAlive(sub.script?.pid) }
+    return { ...json(sub), alive: groupAlive(pidOf(sub.script)) }
   }
   const close = async () => {
     shared.closing = true
@@ -780,7 +760,7 @@ export function supervisor(
     await discover()
     const state = await host.harness().snapshot(Automations, BACKGROUND_CONTEXT)
     for (const sub of Object.values(state?.automations ?? {})) {
-      if (sub.script?.state !== 'running' || !sub.enabled) continue
+      if (sub.script?.state !== 'running') continue
       try {
         await launch(sub.id)
       } catch (error) {

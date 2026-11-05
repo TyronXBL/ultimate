@@ -13,7 +13,7 @@ import type { ReactNode } from 'react'
 import { api, cn, formatDuration, formatTime, useUltimate } from '@/sdk'
 import { conditionLook } from './condition.ts'
 import { ListAction } from './refs.ts'
-import { isRunning, runEndedAt } from './state.ts'
+import { isRunning, processOf, runEndedAt } from './state.ts'
 import type { Automation, AutomationListItem, Run, Schedule } from './refs.ts'
 
 /** A one-shot schedule whose time has passed: resuming it would fire at once, so its switch stays off. */
@@ -250,7 +250,7 @@ export function stateLine(automation: Automation, now: number): string {
   if (look === 'failed')
     parts.push(
       script?.state === 'failed'
-        ? (script.error ?? 'the script failed')
+        ? script.error
         : `last run failed ${last ? ago(runEndedAt(last), now) : ''}`,
     )
   else if (look === 'investigating') parts.push('the watcher is repairing the script')
@@ -258,7 +258,8 @@ export function stateLine(automation: Automation, now: number): string {
   else if (look === 'working')
     parts.push(`run working · ${formatDuration(Math.max(0, now - last!.firedAt))}`)
   else if (look === 'watching') {
-    if (script?.startedAt) parts.push(`up ${since(script.startedAt, now)}`)
+    const proc = script && processOf(script)
+    if (proc) parts.push(`up ${since(proc.startedAt, now)}`)
     parts.push(fired(automation, now) ?? 'not fired yet')
   } else if (look === 'scheduled') {
     parts.push(
