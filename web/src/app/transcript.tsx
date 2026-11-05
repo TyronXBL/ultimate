@@ -297,7 +297,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
       }
     })()
   })
-  // Retry clears the error; failed fills then run again, and the sentinel pages on.
+  // Retry clears the failure; failed fills then run again, and the sentinel pages on.
   const retry = () => dispatch({ type: 'retry' })
   useEffect(() => {
     for (const { phase, range } of paging.fills) if (phase === 'retrying') fill(...range)
