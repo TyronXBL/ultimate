@@ -3,7 +3,7 @@
  * `ModelOwner`; `setModel` (set-model.ts) stores what it returns beside the model it sets. Pure.
  */
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai'
-import type { ModelOwner, SwitchReason } from './refs.ts'
+import type { BackupRecord, ModelOwner, SwitchReason } from './refs.ts'
 
 type ModelRef = { provider: string; modelId: string }
 
@@ -16,12 +16,23 @@ export type ModelEvent =
   | { type: 'pick'; model: ModelRef; thinkingLevel: ModelThinkingLevel }
   | { type: 'login-fallback'; from: string; to: ModelRef; reason: SwitchReason }
   | { type: 'login-wait'; from: string }
+  | { type: 'backup'; record: BackupRecord; level?: ModelThinkingLevel }
+  | { type: 'return' }
+  /** Reconcile writers outside the owner; remove when batch 3 routes subagents, lineage and core `/configure` through `setModel`. */
+  | { type: 'backup-left' }
 
 /** The owner after `event`. A wait keeps the owner it found (`under`), and a wait over a wait keeps the first one's. */
 export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
   if (event.type === 'pick') return { by: 'user' }
   if (event.type === 'login-fallback')
     return { by: 'login-fallback', from: event.from, reason: event.reason }
+  if (event.type === 'backup') {
+    const under =
+      state.by === 'backup' ? state.under : state.by === 'login-wait' ? state.under : state
+    return { by: 'backup', ...event.record, under }
+  }
+  if (event.type === 'return' || event.type === 'backup-left')
+    return state.by === 'backup' ? state.under : state
   return {
     by: 'login-wait',
     from: event.from,

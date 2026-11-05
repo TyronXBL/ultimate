@@ -295,7 +295,10 @@ export const actions = {
 }
 
 export default function models(host: ExtensionHost) {
-  host.implement(ModelsApi, { setModel: (tx, id, event) => setModel(host, tx, id, event) })
+  host.implement(ModelsApi, {
+    setModel: (tx, id, event) => setModel(host, tx, id, event),
+    owner: (tx, id) => tx.doc(Owner, id),
+  })
   const live = liveFlows(host)
   // Each facet registers its own, so it reads Logins with this load's token: flows no live login drives (those of a
   // previous process) are marked cancelled.

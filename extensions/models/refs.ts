@@ -49,9 +49,17 @@ export type SwitchReason = 'same' | 'pin' | 'default'
 /**
  * `models.owner`, on that conversation: who set its model. `default` it started on (also every conversation from
  * before this record), `user` picked it, `login-fallback` switched off `from` (`provider/modelId`), which had no login
- * here, for `reason`, and `login-wait` kept `from` without a login and asked the user once, over the owner it found
- * (`under`), so the way back to it survives the wait. Only `ownerStep` (owner.ts) decides it.
+ * here, for `reason`; `login-wait` kept `from` without a login and asked the user once, over the owner it found
+ * (`under`), so the way back to it survives the wait; `backup` temporarily runs on a backup model and keeps the
+ * original owner underneath. Only `ownerStep` (owner.ts) decides it.
  */
+export type BackupRecord = {
+  primary: { provider: string; modelId: string }
+  thinking?: ModelThinkingLevel
+  to: { provider: string; modelId: string }
+  since: number
+  tried: string[]
+}
 export type ModelOwner =
   | OwnerBeforeWait
   | { by: 'login-wait'; from: string; under: OwnerBeforeWait }
@@ -59,6 +67,7 @@ type OwnerBeforeWait =
   | { by: 'default' }
   | { by: 'user' }
   | { by: 'login-fallback'; from: string; reason: SwitchReason }
+  | ({ by: 'backup' } & BackupRecord & { under: OwnerBeforeWait })
 /** Who set the conversation's model, on that conversation; a conversation without it reads `default`. */
 export const ModelOwnerDoc = docRef<ModelOwner>('models.owner')
 

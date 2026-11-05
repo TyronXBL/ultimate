@@ -6,9 +6,12 @@ import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
 import type { FallbackModel } from '../../lib/agents.ts'
 import type { ModelEvent } from './owner.ts'
+import type { ModelOwner } from './refs.ts'
 export { LoginChanged } from './refs.ts'
 
 export type ModelsService = {
+  /** Read the conversation's current model owner inside `tx`, including a backup record when one is active. */
+  owner(tx: Tx, id: ConversationId): Promise<ModelOwner>
   /**
    * Inside `tx`, set conversation `id`'s model as `event` says and record who set it (`models.owner`): the one writer
    * of both, so another extension sends an event instead of assigning `agent.model`.
