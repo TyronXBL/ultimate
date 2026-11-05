@@ -2,7 +2,8 @@
  * Ideas: the project's idea board on the root conversation. The user collects ideas and launches one, which asks
  * @ultimate to start its branch; @ultimate links the branch with its `idea` tool and adds ideas proposed elsewhere.
  */
-import { arr, int, obj, oneOf, opt, str } from '@earendil-works/pi-schema'
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema'
+import { strEnum } from '../../lib/schema.ts'
 import {
   defineDoc,
   defineEntry,
@@ -360,7 +361,7 @@ export default function ideasExtension(host: ExtensionHost) {
         description:
           "The user's idea board: add {title, notes?, tags?, from?} an idea a branch, dream or survey proposed for later (from: its #<conversation>/<entry>); link {id, branch} the branch you started for a launched idea, replacing its link (a branch belongs to one idea, so linking it elsewhere unlinks the other: check both titles in the result); list. Ideas are the user's backlog of work to launch, not open loops: those are to-dos.",
         parameters: obj({
-          action: oneOf(['add', 'link', 'list']),
+          action: strEnum(['add', 'link', 'list']),
           title: opt(str()),
           notes: opt(str()),
           tags: opt(arr(str())),
