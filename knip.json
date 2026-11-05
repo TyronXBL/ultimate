@@ -11,6 +11,7 @@
     ".ultimate/extensions/*/{web,ui}.tsx",
     "web/src/sdk/index.ts",
     "test/**/*.test.ts",
+    "test/e2e/dropping-chrome.ts",
     "test/mutation.config.ts"
   ],
   "project": ["**/*.{ts,tsx,css}"],

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { arr, int, obj, oneOf, opt, str } from '@earendil-works/pi-schema'
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema'
+import { strEnum } from '../../lib/schema.ts'
 import {
   defineDoc,
   defineExtension,
@@ -190,11 +191,11 @@ export default (host: ExtensionHost) => {
         // A memoized receipt id records the result in the same transaction as the ledger change.
         replay: 'safe',
         parameters: obj({
-          action: oneOf(['create', 'add', 'update', 'note', 'show'] as const),
+          action: strEnum(['create', 'add', 'update', 'note', 'show'] as const),
           title: opt(str()),
           body: opt(str()),
           epic: opt(str({ description: 'Epic key returned by create, e.g. E1.' })),
-          role: opt(oneOf(['worker', 'reviewer'] as const)),
+          role: opt(strEnum(['worker', 'reviewer'] as const)),
           description: opt(str()),
           deps: opt(
             arr(str(), {
@@ -206,7 +207,7 @@ export default (host: ExtensionHost) => {
               description: 'A returned key: epic E1 or task E1.1; note takes a task key.',
             }),
           ),
-          status: opt(oneOf([...new Set([...epicStatuses, ...taskStatuses])])),
+          status: opt(strEnum([...new Set([...epicStatuses, ...taskStatuses])])),
           child: opt(int({ minimum: 1 })),
           verdict: opt(str()),
           text: opt(str()),

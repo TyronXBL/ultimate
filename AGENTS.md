@@ -119,8 +119,13 @@ see [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
 Rules about how agents behave live in prompts and agent definitions, not in code. Code checks protect only safety and
 invalid states: data loss, security, impossible states. Lint enforces only rules the user explicitly approved. Where a
 convention can be checked cheaply and with little noise, propose a check for it; once the user approves the rule,
-`pnpm check` enforces it mechanically instead of a prompt asking for it. A swallowed error needs a reason comment
-explaining why ignoring it is correct (`ultimate/no-silent-catch`).
+`pnpm check` enforces it mechanically instead of a prompt asking for it.
+
+A swallowed error needs a reason comment explaining why ignoring it is correct; `ultimate/no-silent-catch` enforces this for empty catch blocks and empty or `undefined`-returning `.catch` handlers.
+Likewise, code that exists only because of something outside it (an upstream bug, a provider quirk, a helper that
+papers over a library, an edge case found in the wild) carries a short comment at the code naming its origin (the
+issue or PR URL, our PR number or the `#conversation`), what breaks without it and, if known, when it can go, so a
+later agent can rethink it.
 
 Reject slop and jargon: keep code and explanations direct, minimal, and grounded in evidence. No backward-compatibility
 shims or speculative fallbacks; move forward and update callers. Commit tests for a feature's core path and one

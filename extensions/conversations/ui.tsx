@@ -64,7 +64,7 @@ export function useActivity(parked?: ReadonlySet<number>): (id: number) => Activ
       parked: parked?.has(id),
     })
 }
-export { AgentMark, agentTitle } from './marks.tsx'
+export { AgentMark, AgentTitle, useAgentTitle } from './marks.tsx'
 export type { Presence } from './marks.tsx'
 export { hiddenConversationIds } from './visible.tsx'
 

@@ -14,11 +14,22 @@ import {
 import type { Activity } from '../../lib/activity.ts'
 import type { Standing } from '../../lib/standing.ts'
 import { tones, useBranchState, useFlightWork } from './branch.tsx'
+import type { BranchTone } from './branch.tsx'
 import { RowMenu, saveTitle } from './rows.tsx'
 import { Section } from './section.tsx'
 import { SummaryHistory } from './summaries.tsx'
 import { useShell } from './state.tsx'
 import type { Work } from './work.ts'
+
+/** The `data-status` hook of a row's dot, for themes. */
+const statusOf: Record<BranchTone, string> = {
+  failed: 'failed',
+  success: 'done',
+  brand: 'working',
+  waiting: 'waiting',
+  paused: 'paused',
+  quiet: 'idle',
+}
 
 type FlightProps = {
   conversation: ConversationSummary
@@ -135,6 +146,7 @@ function PhasedFlightRow({
                           ? 'bg-error'
                           : 'bg-muted-foreground/40',
                 )}
+                data-status={statusOf[state.tone]}
               />
               <span
                 className={cn(

@@ -2,7 +2,8 @@
 import { lookup } from 'node:dns'
 import type { LookupAddress } from 'node:dns'
 import { BlockList, isIP } from 'node:net'
-import { int, obj, oneOf, opt, str } from '@earendil-works/pi-schema'
+import { int, obj, opt, str } from '@earendil-works/pi-schema'
+import { strEnum } from '../../lib/schema.ts'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 import { parse } from 'parse5'
@@ -523,7 +524,7 @@ export default function searxng(host: ExtensionHost) {
             }),
           ),
           time_range: opt(
-            oneOf(['day', 'week', 'month', 'year'], {
+            strEnum(['day', 'week', 'month', 'year'], {
               description: 'Only results from this recent period.',
             }),
           ),
