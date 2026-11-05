@@ -199,7 +199,7 @@ it('points the model and thinking controls inside a scope at the scoped conversa
   renderToStaticMarkup(h(ModelPicker))
   harness.select.get('faux/main-model')!()
   await vi.advanceTimersByTimeAsync(10)
-  expect(picks().at(-1)).toEqual([17, { model: { provider: 'faux', modelId: 'main-model' } }])
+  expect(picks().at(-1)).toEqual([17, { provider: 'faux', modelId: 'main-model' }])
   expect(picks().some(([id]) => id === 1)).toBe(false)
 
   // A login started from the side chat's picker comes back to it: "Pick a model" still configures the side chat.

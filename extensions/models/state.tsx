@@ -43,7 +43,7 @@ export function selectModel(
 ) {
   return api.action(
     PickAction,
-    { model, ...(thinkingLevel ? { thinkingLevel } : {}) },
+    { ...model, ...(thinkingLevel ? { thinkingLevel } : {}) },
     { conversationId: id },
   )
 }

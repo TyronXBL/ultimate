@@ -969,11 +969,11 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
     const pick = (args: Record<string, unknown>) =>
       post(server, '/api/extensions/models/actions/pick', { args, conversationId: 1 })
     const model = { provider: 'faux', modelId: 'faux-1' }
-    expect((await pick({ model, thinkingLevel: 'max' })).status).not.toBe(200)
-    expect((await pick({ model: { provider: 'faux', modelId: 'none' } })).status).not.toBe(200)
+    expect((await pick({ ...model, thinkingLevel: 'max' })).status).not.toBe(200)
+    expect((await pick({ provider: 'faux', modelId: 'none' })).status).not.toBe(200)
     expect(await server.harness.snapshot(Owner, 1 as ConversationId, context)).toBeUndefined()
     // Without a level, the current one is clamped as Pi does: medium becomes high.
-    expect((await pick({ model })).status).toBe(200)
+    expect((await pick(model)).status).toBe(200)
     expect(await server.root.agent(context)).toMatchObject({ model, thinkingLevel: 'high' })
     expect(await server.harness.snapshot(Owner, 1 as ConversationId, context)).toEqual({
       by: 'user',

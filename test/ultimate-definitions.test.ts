@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { configure, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
+import { Owner } from '../extensions/models/set-model.ts'
 import { context } from '../server/harness.ts'
 import { servers, fixture, dead, entries, log, ask } from './ultimate-fixture.ts'
 
@@ -171,4 +172,17 @@ it('keeps a model whose login check is pending or failed, and never trades a sub
   expect((await fallbacks()).map((e) => e.data)).toEqual([
     { from: 'openai-codex/gpt-6.1-sol', reason: 'none' },
   ])
+  // Another model without a login set meanwhile is asked about anew, and the wait keeps the owner the first one found.
+  const other = { provider: 'openai-codex', modelId: 'gpt-6.1-luna' }
+  await f.server.harness.commit((tx) => configure(tx, dice, { model: other }), context)
+  await ask(f.server, dice, 'other')
+  expect((await fallbacks()).map((e) => e.data)).toEqual([
+    { from: 'openai-codex/gpt-6.1-luna', reason: 'none' },
+    { from: 'openai-codex/gpt-6.1-sol', reason: 'none' },
+  ])
+  expect(await f.server.harness.snapshot(Owner, dice, context)).toEqual({
+    by: 'login-wait',
+    from: 'openai-codex/gpt-6.1-luna',
+    under: { by: 'default' },
+  })
 })

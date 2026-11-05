@@ -10,7 +10,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { configuredModel, familyDefault, hasLogin } from '../../lib/agents.ts'
 import { Pin } from './api.ts'
 import { waitsForLogin } from './owner.ts'
-import type { Fallback } from './refs.ts'
+import type { Fallback, SwitchReason } from './refs.ts'
 import { Owner, setModel } from './set-model.ts'
 
 type Ref = { provider: string; modelId: string }
@@ -51,7 +51,7 @@ export async function fallback(
     (model) =>
       model.id === from.modelId && model.provider !== from.provider && allowed(model.provider),
   )
-  const candidates: [Ref | undefined, Exclude<Fallback['reason'], 'none'>][] = [
+  const candidates: [Ref | undefined, SwitchReason][] = [
     [same && { provider: same.provider, modelId: same.id }, 'same'],
     [(await host.want(Pin)?.definition(tx, conversationId))?.model, 'pin'],
     [configuredModel(fresh, host.settings, await familyDefault(host)), 'default'],

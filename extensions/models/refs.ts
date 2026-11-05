@@ -42,7 +42,9 @@ export const LogoutAction = actionRef<{ provider: string }, null>('models', 'log
  * `to`: the same model on another provider, its definition's pin or the default model. Without `to` nothing could
  * replace it (or only a pay-per-token login could replace a subscription), so it kept its model and needs the user.
  */
-export type Fallback = { from: string; to?: string; reason: 'same' | 'pin' | 'default' | 'none' }
+export type Fallback = { from: string; to?: string; reason: SwitchReason | 'none' }
+/** What a switch off a model without a login took: the same model elsewhere, the definition's pin or the default. */
+export type SwitchReason = 'same' | 'pin' | 'default'
 
 /**
  * `models.owner`, on that conversation: who set its model. `default` it started on (also every conversation from
@@ -56,16 +58,16 @@ export type ModelOwner =
 type OwnerBeforeWait =
   | { by: 'default' }
   | { by: 'user' }
-  | { by: 'login-fallback'; from: string; reason: Exclude<Fallback['reason'], 'none'> }
+  | { by: 'login-fallback'; from: string; reason: SwitchReason }
 /** Who set the conversation's model, on that conversation; a conversation without it reads `default`. */
 export const ModelOwnerDoc = docRef<ModelOwner>('models.owner')
 
 /**
- * `{ model, thinkingLevel? }` → null: the user picks the calling conversation's model; the level must suit the model,
- * and without one the current level is clamped to it.
+ * `{ provider, modelId, thinkingLevel? }` → null: the user picks the calling conversation's model; the level must suit
+ * the model, and without one the current level is clamped to it.
  */
 export const PickAction = actionRef<
-  { model: { provider: string; modelId: string }; thinkingLevel?: ModelThinkingLevel },
+  { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel },
   null
 >('models', 'pick')
 

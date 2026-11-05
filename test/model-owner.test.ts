@@ -4,7 +4,11 @@ import type { ModelEvent } from '../extensions/models/owner.ts'
 import type { ModelOwner } from '../extensions/models/refs.ts'
 
 const sol = 'openai-codex/gpt-6.1-sol'
-const pick: ModelEvent = { type: 'pick', model: { provider: 'faux', modelId: 'faux-1' } }
+const pick: ModelEvent = {
+  type: 'pick',
+  model: { provider: 'faux', modelId: 'faux-1' },
+  thinkingLevel: 'off',
+}
 const wait = (from: string): ModelEvent => ({ type: 'login-wait', from })
 const switched = (reason: 'same' | 'pin' | 'default'): ModelEvent => ({
   type: 'login-fallback',

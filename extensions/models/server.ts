@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { AuthEvent, AuthPrompt, AuthType } from '@earendil-works/pi-ai'
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+import { isModelType } from '@earendil-works/pi-ai/models'
 import {
   AgentDoc,
   defineDoc,
@@ -142,13 +143,14 @@ export const actions = {
    * must suit the model, and without one the current level is clamped to it.
    */
   pick: implementAction(PickAction, async (args, { host, conversationId }) => {
-    const ref = field(args, 'model')
-    const provider = text(ref as ActionInput<{ provider: string }>, 'provider')
-    const modelId = text(ref as ActionInput<{ modelId: string }>, 'modelId')
+    const provider = text(args, 'provider')
+    const modelId = text(args, 'modelId')
     const level = field(args, 'thinkingLevel')
     const model = host.modelRuntime.getModel(provider, modelId)
+    // As the picker lists them: chat models with a login here.
     if (
       !model ||
+      !isModelType(model, 'chat') ||
       !(await host.modelRuntime.getAvailable()).some(
         (candidate) => candidate.provider === provider && candidate.id === modelId,
       )

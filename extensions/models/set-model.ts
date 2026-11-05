@@ -14,9 +14,9 @@ export const Owner = defineDoc<ModelOwner>({
   checkpointWhen: () => false,
   version: 1,
   scope: 'conversation',
-  history: 'latest',
-  // A fork keeps its source's model, and with it who set it.
-  fork: 'current',
+  // As `pi.agent`: a fork at an older entry inherits the owner of the model it inherits.
+  history: 'rewindable',
+  fork: 'asOf',
   initial: () => ({ by: 'default' }),
 })
 
@@ -28,10 +28,11 @@ export async function setModel(
   event: ModelEvent,
 ) {
   const owner = await tx.doc(Owner, id)
-  const next = ownerStep(owner, event)
-  if (next !== owner) {
+  // A plain copy: the new owner may hold parts of the stored one (a wait's `under`), which is emptied below.
+  const next = JSON.stringify(ownerStep(owner, event))
+  if (next !== JSON.stringify(owner)) {
     for (const key of Object.keys(owner)) Reflect.deleteProperty(owner, key)
-    Object.assign(owner, next)
+    Object.assign(owner, JSON.parse(next))
   }
   if (event.type === 'login-wait') return
   if (event.type === 'pick') {
