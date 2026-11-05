@@ -120,5 +120,4 @@ export function advanceWorkspace(
   const key = String(id)
   const next = event ? workspaceStep(items[key], event) : items[key]
   if (next !== items[key]) items[key] = next
-  return next
 }

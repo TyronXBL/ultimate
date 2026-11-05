@@ -680,7 +680,8 @@ export function workspaces(host: Host) {
             for (const [child, descendant] of Object.entries(index.items)) {
               if (!sources.has(descendant.source)) continue
               sources.add(descendant.path)
-              if (!released(descendant)) item.descendant = Number(child)
+              // A releasing descendant may still need its source to finish an interrupted removal.
+              if (descendant.state !== 'removed') item.descendant = Number(child)
             }
           } while (size !== sources.size)
           const keeps = Boolean(item.uncommitted || item.unlanded || item.descendant)
