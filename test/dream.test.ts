@@ -441,7 +441,7 @@ it.each<[string, Journey, DreamEvent, Journey | { error: string }]>([
     'a slept-into chapter cannot be slept into again',
     ASLEEP,
     { type: 'sleep started', at: 1 },
-    refused('Nothing is prepared: @ultimate prepares the next chapter first'),
+    refused('Already asleep in next: @ultimate prepares the next chapter first'),
   ],
   [
     'one sleep at a time',

@@ -78,6 +78,10 @@ export function dreamStep(journey: Journey, event: DreamEvent): Journey {
   if (event.type === 'sleep started') {
     if (journey.state === 'sleeping')
       throw new Error(`Falling asleep is under way (${journey.phase})`)
+    if (journey.state === 'asleep')
+      throw new Error(
+        `Already asleep in ${journey.chapter}: @ultimate prepares the next chapter first`,
+      )
     if (journey.state !== 'prepared' && journey.state !== 'failed')
       throw new Error('Nothing is prepared: @ultimate prepares the next chapter first')
     return {

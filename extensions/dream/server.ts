@@ -404,7 +404,7 @@ async function fallAsleep(host: ExtensionHost, input: { name?: unknown }) {
   const chapters = await readChapters(host.home)
   const { prepared, name } = await host.harness().commit(async (tx) => {
     const doc = await tx.doc(Next, ROOT_CONVERSATION_ID)
-    const named = input.name === undefined ? {} : { chapter: chapterName(input.name) }
+    const named = input.name == null ? {} : { chapter: chapterName(input.name) }
     const started = step(doc, { type: 'sleep started', ...named, at: Date.now() })
     idle(host)
     if (chapters.chapters.some((item) => item.name === started.chapter))
