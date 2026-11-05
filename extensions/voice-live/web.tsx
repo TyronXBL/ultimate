@@ -598,8 +598,8 @@ function StepLine({ step, mode }: { step: Step; mode: VoiceMode }) {
                         ? 'Ending…'
                         : 'Listening'
   const detail =
-    step.step === 'hearing' && mode.phase === 'live' && mode.partial
-      ? mode.partial
+    step.step === 'hearing' && mode.phase === 'live' && mode.line?.kind === 'hearing'
+      ? mode.line.partial
       : step.step === 'working'
         ? step.request
         : 'Voice · tap to expand'
@@ -1344,7 +1344,9 @@ function LiveTurn() {
   const transcript = useTranscript()
   const { voice } = useIds()
   const mode = useMode()
-  const { partial, sending } = mode.phase === 'live' ? mode : {}
+  const line = mode.phase === 'live' ? mode.line : undefined
+  const partial = line?.kind === 'hearing' ? line.partial : undefined
+  const sending = line?.kind === 'sending' ? line : undefined
   if (id === undefined || id !== voice) return null
   const last = transcript.findLast((entry) => entry.kind === 'voice.heard')
   const arrived = sending && (last?.data as { text?: string } | undefined)?.text === sending.text

@@ -20,7 +20,6 @@ let mode: VoiceMode = { phase: 'off', muted: false, front: false }
 let session: LiveSession | undefined
 /** Answers to speak once the session starting now is live, with the Voice line each one is. */
 let queued: { text: string; entry?: number }[] = []
-let cancelled = false
 let closing: Promise<void> | undefined
 let ticker: ReturnType<typeof setInterval> | undefined
 const listeners = new Set<() => void>()
@@ -170,7 +169,7 @@ function tick() {
     // startLive already released it and recorded the end; the mode sleeps, as after idling.
     session = undefined
     clearInterval(ticker)
-    dispatch({ type: 'closedUnderUs' })
+    dispatch({ type: 'release', phase: 'paused', problem: 'The session closed' })
     return
   }
   const now = Date.now()
@@ -216,8 +215,6 @@ function onEvent(event: LiveEvent) {
 export async function open(speech?: string, entry?: number): Promise<void> {
   if (speech) queued.push({ text: speech, entry })
   if (mode.phase === 'starting' || mode.phase === 'live' || mode.phase === 'ending') return
-  const from = mode.phase
-  cancelled = false
   dispatch({ type: 'start' })
   // Awaiting nothing would still yield, and Safari wants getUserMedia within the tap.
   if (closing) await closing
@@ -234,10 +231,11 @@ export async function open(speech?: string, entry?: number): Promise<void> {
     const waiting = queued.at(-1)?.text
     queued = []
     // An answer that could not wake the session waits for a tap; a failed first start leaves voice mode.
-    return dispatch({ type: 'startFailed', from, problem: describe(error), waiting, cancelled })
+    return dispatch({ type: 'startFailed', problem: describe(error), waiting })
   }
   session = started
-  if (cancelled) return release('off')
+  // End was pressed while connecting: the session that came back is closed again.
+  if (voiceMode().phase === 'ending') return release('off')
   ticker = setInterval(tick, TICK_MS)
   dispatch({ type: 'started', now: Date.now() })
   try {
@@ -309,12 +307,9 @@ export function setMuted(muted: boolean) {
 
 /** Leave voice mode: close the session, or cancel the one starting. */
 export function end() {
-  if (mode.phase === 'off') return
+  if (mode.phase === 'off' || mode.phase === 'ending') return
   queued = []
-  if (mode.phase === 'starting') {
-    cancelled = true
-    return dispatch({ type: 'end' })
-  }
+  if (mode.phase === 'starting') return dispatch({ type: 'end' })
   release('off')
 }
 

@@ -14,26 +14,26 @@ type Base = {
   problem?: string
 }
 
+/** What `start` left, so a failed or cancelled start knows where to go back to. */
+type Origin = 'off' | 'paused'
+
+/** The user's line: the words heard now, or a finished line on its way to Voice until its `voice.heard` entry arrives. */
+type Line = { kind: 'hearing'; partial: string } | { kind: 'sending'; text: string; at: number }
+
 export type VoiceMode =
   | (Base & { phase: 'off' })
-  | (Base & { phase: 'starting' })
-  | (Base & { phase: 'ending' })
-  // In voice mode without a session, listening paused until an answer or a tap wakes it.
-  | (Base & {
-      phase: 'paused'
-      /** An answer that arrived while paused, when this browser would not restart without a tap. */
-      waiting?: string
-    })
+  | (Base & { phase: 'starting'; from: Origin })
+  // End pressed while connecting: waits for the start to come back.
+  | (Base & { phase: 'ending'; from: Origin })
+  // In voice mode without a session; `waiting` is an answer that needs a tap, as the browser would not restart.
+  | (Base & { phase: 'paused'; waiting?: string })
   | (Base & {
       phase: 'live'
       /** When the session went live: its billed time. */
       since: number
       /** Who has the floor: the user mid-sentence, or GPT-Live talking. */
       floor?: 'user' | 'voice'
-      /** The words of the line the user is saying now, before a pause finishes it. */
-      partial?: string
-      /** A line just finished and on its way to Voice: shown until its `voice.heard` entry arrives. */
-      sending?: { text: string; at: number }
+      line?: Line
       /** The Voice line GPT-Live is reading out now, and how many of its words it has said so far. */
       speaking?: { entry: number; words: number; at: number }
     })
@@ -41,16 +41,8 @@ export type VoiceMode =
 export type VoiceModeEvent =
   | { type: 'start' }
   | { type: 'started'; now: number }
-  // `from` is the phase `start` left: a failed wake leaves a paused mode paused, a failed first start leaves voice mode.
-  | {
-      type: 'startFailed'
-      from: 'off' | 'paused'
-      problem: string
-      waiting?: string
-      cancelled: boolean
-    }
-  | { type: 'release'; phase: 'off' | 'paused' }
-  | { type: 'closedUnderUs' }
+  | { type: 'startFailed'; problem: string; waiting?: string }
+  | { type: 'release'; phase: 'off' | 'paused'; problem?: string }
   | { type: 'floor'; floor?: 'user' | 'voice'; partial?: string; now: number }
   | { type: 'speaking'; entry?: number; at: number }
   | { type: 'speakingProgress'; words: number; talking: boolean; now: number }
@@ -62,7 +54,7 @@ export type VoiceModeEvent =
 
 export type VoiceCue = 'ready' | 'paused' | 'ended' | 'failed'
 
-/** A just-finished line stays on screen this long for its heard entry to arrive. */
+/** A finished line stays on screen this long for its heard entry to arrive. */
 const SENDING_MS = 6000
 /** GPT-Live may never read a line out (interrupted, or paraphrased into silence): then show it whole after this. */
 const SILENT_MS = 8000
@@ -92,6 +84,7 @@ function transition(mode: VoiceMode, event: VoiceModeEvent): VoiceMode {
       if (mode.phase !== 'off' && mode.phase !== 'paused') return mode
       return {
         phase: 'starting',
+        from: mode.phase,
         muted: mode.muted,
         front: mode.phase === 'off' ? true : mode.front,
       }
@@ -105,41 +98,36 @@ function transition(mode: VoiceMode, event: VoiceModeEvent): VoiceMode {
         since: event.now,
       }
     case 'startFailed':
-      if (event.cancelled) return off()
-      return event.from === 'off' ? off(event.problem) : paused(mode, event.problem, event.waiting)
+      if (mode.phase === 'ending') return off()
+      if (mode.phase !== 'starting') return mode
+      return mode.from === 'off' ? off(event.problem) : paused(mode, event.problem, event.waiting)
     case 'release':
+      // A session that closed under us (expiry, a dropped peer) pauses with a reason unless one is already shown.
       if (mode.phase === 'off') return mode
-      return event.phase === 'off' ? off() : paused(mode)
+      return event.phase === 'off' ? off() : paused(mode, mode.problem ?? event.problem)
     case 'end':
-      if (mode.phase === 'off') return mode
-      return mode.phase === 'starting' ? { ...mode, phase: 'ending' } : off()
-    case 'closedUnderUs':
-      // startLive already released the session and recorded the end; the mode sleeps, as after idling.
-      return mode.phase === 'live' ? paused(mode, mode.problem ?? 'The session closed') : mode
+      return mode.phase === 'starting' ? { ...mode, phase: 'ending' } : mode
     case 'floor': {
       if (mode.phase !== 'live') return mode
-      if (event.floor !== mode.floor || event.partial !== mode.partial)
+      const partial = mode.line?.kind === 'hearing' ? mode.line.partial : undefined
+      if (event.floor !== mode.floor || event.partial !== partial)
         return {
           ...mode,
           floor: event.floor,
-          partial: event.partial,
-          sending: event.partial
-            ? undefined
-            : mode.partial
-              ? { text: mode.partial, at: event.now }
-              : mode.sending,
+          line: event.partial
+            ? { kind: 'hearing', partial: event.partial }
+            : partial
+              ? { kind: 'sending', text: partial, at: event.now }
+              : mode.line,
         }
-      return mode.sending && event.now - mode.sending.at > SENDING_MS
-        ? { ...mode, sending: undefined }
+      return mode.line?.kind === 'sending' && event.now - mode.line.at > SENDING_MS
+        ? { ...mode, line: undefined }
         : mode
     }
     case 'speaking':
       if (mode.phase !== 'live') return mode
-      return {
-        ...mode,
-        speaking:
-          event.entry === undefined ? undefined : { entry: event.entry, words: 0, at: event.at },
-      }
+      if (event.entry === undefined) return mode.speaking ? { ...mode, speaking: undefined } : mode
+      return { ...mode, speaking: { entry: event.entry, words: 0, at: event.at } }
     case 'speakingProgress': {
       if (mode.phase !== 'live' || !mode.speaking) return mode
       // Once GPT-Live falls quiet after the line, or never starts it, show it whole.
@@ -150,7 +138,9 @@ function transition(mode: VoiceMode, event: VoiceModeEvent): VoiceMode {
         : { ...mode, speaking: { ...mode.speaking, words: event.words } }
     }
     case 'waiting':
-      return mode.phase === 'paused' ? { ...mode, waiting: event.text } : mode
+      return mode.phase === 'paused' && event.text !== mode.waiting
+        ? { ...mode, waiting: event.text }
+        : mode
     case 'muted':
       return event.muted === mode.muted ? mode : { ...mode, muted: event.muted }
     case 'front':
@@ -177,7 +167,9 @@ export function stepVoiceMode(
   return {
     mode: next,
     cue:
-      event.type === 'startFailed' && !event.cancelled ? 'failed' : cueOf(mode.phase, next.phase),
+      event.type === 'startFailed' && mode.phase === 'starting'
+        ? 'failed'
+        : cueOf(mode.phase, next.phase),
     hum: is && !was ? 'start' : was && !is ? 'stop' : undefined,
   }
 }
