@@ -108,6 +108,8 @@ type Spec = {
  */
 type Process = { pid: number; startedAt: number; lastOutputAt?: number }
 type Exit = { exitedAt: number; exitCode?: number }
+/** A process not yet reaped, or how the last one ended. */
+type Traces = { process?: Process; exit?: Exit }
 
 /**
  * A script's lifecycle; each state holds only the fields it has. `scriptStep` is the only writer. Its record is
@@ -116,12 +118,12 @@ type Exit = { exitedAt: number; exitCode?: number }
  */
 export type Script = Spec &
   (
-    | { state: 'writing'; process?: Process; exit?: Exit }
+    | ({ state: 'writing' } & Traces)
     | { state: 'running'; process?: Process }
     | { state: 'investigating'; exit: Exit; error: string }
-    | { state: 'failed'; error: string; process?: Process; exit?: Exit }
-    | { state: 'stopped'; error?: string; process?: Process; exit?: Exit }
-    | { state: 'done'; process?: Process; exit?: Exit }
+    | ({ state: 'failed'; error: string } & Traces)
+    | ({ state: 'stopped'; error?: string } & Traces)
+    | ({ state: 'done' } & Traces)
   )
 
 /** The process a script has, or has not yet been reaped of; an investigating script has none. */
@@ -138,7 +140,7 @@ export type ScriptEvent =
   /** The committed manifest of a project script, replacing what it holds. */
   | { type: 'manifest'; ask: string; once: boolean; secrets?: string[]; to: string }
   /** An update's changes to what the script is told. */
-  | { type: 'edit'; ask?: string; once?: boolean; secrets?: string[] }
+  | { type: 'edit'; ask?: string; once?: boolean; secrets?: string[]; to?: string }
   /** The watcher writes (or rewrites) the script. */
   | { type: 'write' }
   /** Resume or run: the script is to run. */
@@ -146,8 +148,8 @@ export type ScriptEvent =
   /** Pause or delete, or (with a reason) a fire cap that pauses it. */
   | { type: 'pause'; reason?: string }
   | { type: 'escalate'; reason: string }
-  /** The process started; without a pid it did not. */
-  | { type: 'start'; at: number; pid?: number }
+  /** The process started. */
+  | { type: 'start'; at: number; pid: number }
   /** A line of output; a FIRE one resets the failure count. */
   | { type: 'output'; at: number; fire: boolean }
   /** A FIRE was delivered: a one-shot is done. */
@@ -192,12 +194,8 @@ export function scriptStep(script: Script, event: ScriptEvent): Scripted {
     exit,
     error,
     ...spec
-  }: Spec & {
-    state: Script['state']
-    process?: Process
-    exit?: Exit
-    error?: string
-  } = script
+  }: Spec & Traces & { state: Script['state']; error?: string } = script
+  const kept = { ...(process && { process }), ...(exit && { exit }) }
   const next = (value: Script): Scripted => ({ script: value, enabled: enabledIn(value.state) })
   switch (event.type) {
     case 'manifest': {
@@ -216,13 +214,13 @@ export function scriptStep(script: Script, event: ScriptEvent): Scripted {
         ...(event.ask !== undefined && { ask: event.ask }),
         ...(event.once !== undefined && { once: event.once }),
         ...(event.secrets !== undefined && { secrets: event.secrets }),
+        ...(event.to !== undefined && { to: event.to }),
       })
     case 'write':
-      return next({ ...spec, state: 'writing', ...(process && { process }), ...(exit && { exit }) })
+      return next({ ...spec, state: 'writing', ...kept })
     case 'resume':
       return next({ ...spec, state: 'running', ...(process && { process }) })
     case 'pause': {
-      const kept = { ...(process && { process }), ...(exit && { exit }) }
       if (state === 'done') return next({ ...spec, state, ...kept })
       const reason = event.reason ?? error
       return next({
@@ -233,20 +231,10 @@ export function scriptStep(script: Script, event: ScriptEvent): Scripted {
       })
     }
     case 'escalate':
-      return next({
-        ...spec,
-        state: 'failed',
-        error: event.reason,
-        ...(process && { process }),
-        ...(exit && { exit }),
-      })
+      return next({ ...spec, state: 'failed', error: event.reason, ...kept })
     case 'start':
       if (state !== 'running') return next(script)
-      return next({
-        ...spec,
-        state,
-        ...(event.pid !== undefined && { process: { pid: event.pid, startedAt: event.at } }),
-      })
+      return next({ ...spec, state, process: { pid: event.pid, startedAt: event.at } })
     case 'output':
       if (state !== 'running' || !process) return next(script)
       return next({

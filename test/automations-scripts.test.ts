@@ -110,6 +110,32 @@ it('lets a project extension read, pause and resume an automation through the se
   expect(await call('status', 'Not/A slug')).toBe(
     'Error: id must be A<n> or a project automation slug',
   )
+  // Regression: editing the ask of a paused script left it writing but disabled, so a watcher that ended its turn
+  // without resuming was never escalated. The edit enables it again and sends the watcher back to writing.
+  const rewritten = (await server.extensions.invoke(
+    'automations',
+    'update',
+    { id: sub.id, ask: 'Watch ship/* PRs and tags' },
+    new AbortController().signal,
+    caller.id,
+  )) as Automation
+  expect(rewritten).toMatchObject({
+    enabled: true,
+    script: { state: 'writing', ask: 'Watch ship/* PRs and tags' },
+  })
+  // The create and the edit each ask the watcher to write.
+  const requests = (
+    await server.harness.commit(
+      (tx) => tx.scanTasks({ kind: 'ultimate.automation-delivery' }, 50),
+      context,
+    )
+  ).items
+    .map((task) => task.input as { kind: string; targets: number[] })
+    .filter((input) => input.kind === 'writing')
+  expect(requests.map((input) => input.targets)).toEqual([
+    [sub.script!.conversationId],
+    [sub.script!.conversationId],
+  ])
   expect(server.extensions.catalogue().apis.find((api) => api.name === 'automations')).toEqual({
     name: 'automations',
     provider: 'automations',
@@ -132,8 +158,10 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
     reason: 'boom',
   } as const
   const at = (state: Script['state'], rest: object = {}) => ({ ...base, state, ...rest }) as Script
+  // What the integration tests (test/e2e/automations-scripts-*) already prove is not repeated: the third failure, DONE
+  // with exit 0, a fired one-shot and a pause of one.
   const rows: [string, Script, ScriptEvent, Script, boolean][] = [
-    // Resume starts it from any state, keeps the old pid for the launch to sweep and forgets the old exit and error.
+    // Resume forgets the old exit and error but keeps the old pid for the launch to sweep.
     [
       'resume after a failure',
       at('failed', { error: 'x', exit: ended }),
@@ -142,20 +170,13 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
       true,
     ],
     [
-      'resume keeps the pid to sweep',
+      'resume keeps the pid',
       at('stopped', { process: up }),
       { type: 'resume' },
       at('running', { process: up }),
       true,
     ],
-    [
-      'resume a fired one-shot',
-      at('done', { exit: ended }),
-      { type: 'resume' },
-      at('running'),
-      true,
-    ],
-    // Pause keeps the pid until the exit is recorded, and a fired one-shot stays done.
+    // Pause keeps the pid until the exit is recorded, and what failed.
     [
       'pause',
       at('running', { process: up }),
@@ -164,14 +185,7 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
       false,
     ],
     [
-      'pause keeps a fired one-shot done',
-      at('done', { process: up }),
-      { type: 'pause' },
-      at('done', { process: up }),
-      false,
-    ],
-    [
-      'pause keeps what failed',
+      'pause keeps the error',
       at('failed', { error: 'x' }),
       { type: 'pause' },
       at('stopped', { error: 'x' }),
@@ -184,12 +198,12 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
       at('stopped', { error: 'cap', process: up }),
       false,
     ],
-    // A changed ask sends the watcher back to writing; an edit while paused is written too, so it is enabled.
+    // Regression: an edit of a paused script's ask left it writing but disabled; writing is enabled.
     [
-      'rewrite while running',
-      at('running', { process: up }),
+      'rewrite of a paused script',
+      at('stopped', { exit: ended }),
       { type: 'write' },
-      at('writing', { process: up }),
+      at('writing', { exit: ended }),
       true,
     ],
     [
@@ -206,7 +220,7 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
       at('failed', { error: 'no', exit: ended }),
       false,
     ],
-    // The process starts, prints, and a FIRE counts as it doing its job.
+    // The process starts and prints; a FIRE counts as the script doing its job.
     [
       'start records the process',
       at('running'),
@@ -236,44 +250,19 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
       true,
     ],
     [
-      'a one-shot is done once fired',
-      at('running', { once: true, process: up }),
-      { type: 'fired' },
-      at('done', { once: true, process: up }),
-      false,
-    ],
-    [
       'a recurring script keeps running when fired',
       at('running', { process: up }),
       { type: 'fired' },
       at('running', { process: up }),
       true,
     ],
-    // Exits: an unplanned one is investigated, the third in a row escalates, an hour of running starts the count again.
-    [
-      'an unplanned exit',
-      at('running', { process: up }),
-      fail,
-      at('investigating', { failures: 1, error: 'boom', exit: { exitedAt: 2000, exitCode: 1 } }),
-      true,
-    ],
+    // Exits: an hour of running starts the failure count again; planned ones and one nothing expects are no failure.
     [
       'an exit by signal has no code',
       at('running', { process: up }),
       { ...fail, code: null },
       at('investigating', { failures: 1, error: 'boom', exit: { exitedAt: 2000 } }),
       true,
-    ],
-    [
-      'the third failure in a row fails the script',
-      at('running', { failures: 2, process: up }),
-      fail,
-      at('failed', {
-        failures: 3,
-        error: 'Failed 3 times in a row: boom',
-        exit: { exitedAt: 2000, exitCode: 1 },
-      }),
-      false,
     ],
     [
       'an hour of running starts a new count',
@@ -285,13 +274,6 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
         exit: { exitedAt: 1000 + HOUR, exitCode: 1 },
       }),
       true,
-    ],
-    [
-      'a recurring DONE with exit 0 stops it',
-      at('running', { process: up }),
-      { ...fail, code: 0, said: true },
-      at('stopped', { exit: { exitedAt: 2000, exitCode: 0 } }),
-      false,
     ],
     [
       'a one-shot that printed DONE still failed',
@@ -311,20 +293,6 @@ it('steps a script through its lifecycle, with `enabled` following its state', (
       { ...fail, stopped: true },
       at('running'),
       true,
-    ],
-    [
-      'the exit of a paused process is recorded',
-      at('stopped', { process: up }),
-      { ...fail, stopped: true },
-      at('stopped', { exit: { exitedAt: 2000, exitCode: 1 } }),
-      false,
-    ],
-    [
-      'the exit of a fired one-shot is not a failure',
-      at('done', { once: true, process: up }),
-      { ...fail, code: 0 },
-      at('done', { once: true, exit: { exitedAt: 2000, exitCode: 0 } }),
-      false,
     ],
     [
       'an exit nothing expects changes nothing',

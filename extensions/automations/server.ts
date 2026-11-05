@@ -141,11 +141,12 @@ export const Automations = defineDoc<Ledger>({
   // made with nobody to wake wakes @ultimate, as its manifest now says by default. Pi Durable stores the migrated
   // value as a version 4 base on the ledger's next write. Version 4: a skipped run no longer stores `finishedAt`.
   // Version 5: a script is a union by state (see state.ts) and its `enabled` follows it.
-  migrate: (value) => {
+  migrate: (value, fromVersion) => {
     const ledger = value as unknown as Ledger
     for (const a of Object.values(ledger.automations)) {
       a.subscribers ??= []
-      if (a.script) {
+      // Version 5: the script's per-state fields. A step that changes nothing recomputes `enabled` from the state.
+      if (a.script && fromVersion < 5) {
         a.script = scriptFromV4(a.script, a.updatedAt)
         setScript(a, { type: 'edit' })
       }
@@ -159,7 +160,7 @@ export const Automations = defineDoc<Ledger>({
       }
       if (a.scope === 'project' && !a.prompt && !a.subscribers.length) {
         a.subscribers = ['@ultimate']
-        a.script!.to = '@ultimate'
+        setScript(a, { type: 'edit', to: '@ultimate' })
       }
       // The cooldown now counts from the condition's own fire; until the next one, from the last fire of any kind.
       if (a.condition && a.condition.firedAt === undefined && a.lastFireAt !== undefined)

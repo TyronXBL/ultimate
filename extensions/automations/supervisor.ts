@@ -471,7 +471,8 @@ export function supervisor(
     if (shared.closing && !run) return
     await host.harness().commit(async (tx) => {
       const sub = (await tx.doc(Automations)).automations[id]
-      if (!sub || (run && pidOf(sub.script) !== run.child.pid)) return
+      // A process that never got a pid is the newest launch: nothing recorded can be a newer process's.
+      if (!sub || (run?.child.pid && pidOf(sub.script) !== run.child.pid)) return
       // A recurring script that printed DONE and exited 0 asked to stop: the same state as pause, with nobody woken.
       // A fired one-shot is already done in its FIRE commit, so any other unplanned exit is a failure.
       // Shutdown keeps running automations enabled for reopen.
@@ -586,9 +587,9 @@ export function supervisor(
         run.active = false
         return
       }
-      const at = Date.now()
-      setScript(saved, { type: 'start', at, ...(child.pid ? { pid: child.pid } : {}) })
       if (child.pid) {
+        const at = Date.now()
+        setScript(saved, { type: 'start', at, pid: child.pid })
         saved.updatedAt = at
         await host.emit(tx, Started, { id, pid: child.pid })
       }
