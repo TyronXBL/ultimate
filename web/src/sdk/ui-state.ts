@@ -20,27 +20,30 @@ export type UiValues = Readonly<Record<string, JsonValue>>
  * The newest local write of one key (`undefined` deletes it) and where it is: waiting to be sent, sent as a batch,
  * or answered with the revision it committed as. Each write is confirmed by its own batch, never by an equal value.
  */
-export type Write =
+type Write =
   | { phase: 'pending'; value: JsonValue | undefined }
   | { phase: 'sent'; value: JsonValue | undefined; batch: number }
   | { phase: 'acknowledged'; value: JsonValue | undefined; rev: number }
 
-export interface SyncState {
+interface SyncState {
   /** The document as the stream last delivered it. */
   remote: UiValues
   writes: ReadonlyMap<string, Write>
   /** The last batch number issued; numbers are never reused, so a reply names the batch it answers. */
   batch: number
+  /** The first batch the current server process was sent; a reply to an earlier one is about storage the stream no longer shows. */
+  firstBatch: number
   /** After a restart, until the new process's first snapshot: nothing is released, since its revisions start over. */
   stream: { phase: 'live'; shown: number } | { phase: 'restarting' }
-  /** One batch is in flight at a time, so the server commits them in write order. */
+  /** One batch is in flight at a time, so the server commits them in write order; a `local` page never sends. */
   send:
+    | { phase: 'local' }
     | { phase: 'idle' }
     | { phase: 'debouncing'; delayMs: number }
     | { phase: 'sending'; batch: number }
 }
 
-export type SyncEvent =
+type SyncEvent =
   | { type: 'set'; key: string; value: JsonValue | undefined; delayMs: number }
   /** The debounce timer ran out, or (`force`) the page is going away: send what is pending as one batch. */
   | { type: 'flush'; force: boolean }
@@ -59,7 +62,7 @@ const hasPending = (writes: ReadonlyMap<string, Write>) =>
   [...writes.values()].some((write) => write.phase === 'pending')
 /** Where the sender goes once nothing is in flight: straight to the next batch if writes wait. */
 const settle = (writes: ReadonlyMap<string, Write>, send: SyncState['send']): SyncState['send'] =>
-  send.phase === 'debouncing'
+  send.phase === 'debouncing' || send.phase === 'local'
     ? send
     : hasPending(writes)
       ? { phase: 'debouncing', delayMs: 0 }
@@ -104,7 +107,8 @@ export function step(state: SyncState, event: SyncEvent): SyncState {
       return { ...state, writes, send }
     }
     case 'flush': {
-      if (state.send.phase === 'sending' && !event.force) return state
+      if (state.send.phase === 'local' || (state.send.phase === 'sending' && !event.force))
+        return state
       if (!hasPending(state.writes))
         return state.send.phase === 'debouncing' ? { ...state, send: { phase: 'idle' } } : state
       const batch = state.batch + 1
@@ -139,7 +143,13 @@ export function step(state: SyncState, event: SyncEvent): SyncState {
       for (const [key, write] of writes)
         if (write.phase !== 'pending')
           writes.set(key, { phase: 'acknowledged', value: write.value, rev: 0 })
-      return { ...state, writes, stream: { phase: 'restarting' }, send: settle(writes, state.send) }
+      return {
+        ...state,
+        writes,
+        firstBatch: state.batch + 1,
+        stream: { phase: 'restarting' },
+        send: settle(writes, state.send),
+      }
     }
     default:
       return event satisfies never
@@ -165,8 +175,9 @@ export function createUiState(
     remote: {},
     writes: new Map(),
     batch: 0,
+    firstBatch: 1,
     stream: { phase: 'live', shown: 0 },
-    send: { phase: 'idle' },
+    send: { phase: write ? 'idle' : 'local' },
   }
   let values: UiValues = {}
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -177,7 +188,7 @@ export function createUiState(
     state = step(state, event)
     const { send } = state
     if (send.phase === 'debouncing') {
-      if (write && timer === undefined)
+      if (timer === undefined)
         timer = setTimeout(() => {
           timer = undefined
           dispatch({ type: 'flush', force: false })
@@ -209,11 +220,9 @@ export function createUiState(
       ({ rev }) => dispatch({ type: 'acknowledged', batch, rev }),
       (error: unknown) => {
         // An old process's failed reply is about storage the stream no longer shows: nothing to report.
-        const live = [...state.writes.values()].some(
-          (entry) => entry.phase === 'sent' && entry.batch === batch,
-        )
+        const current = batch >= state.firstBatch
         dispatch({ type: 'rejected', batch })
-        if (live) options.onError?.(error)
+        if (current) options.onError?.(error)
       },
     )
   }
