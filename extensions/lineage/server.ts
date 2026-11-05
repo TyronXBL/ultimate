@@ -575,21 +575,26 @@ function lineage(host: ExtensionHost) {
         const delivered = await host
           .harness()
           .commit((tx) => tx.submissionByRequest(caller, requestId), ctx)
-        if (!delivered && wake)
-          await (await runtime.conversation(caller, ctx))!.submit(
-            {
-              type: 'input',
-              content: finishedText(target, title, text),
-              whenBusy: 'steer',
-              requestId,
-              entry: {
-                kind: 'lineage.finished',
-                data: { from: target, text, ...(title ? { title } : {}) },
-              },
-            },
+        if (!delivered && wake) {
+          const conversation = (await runtime.conversation(caller, ctx))!
+          await host.harness().commit(
+            async (tx) =>
+              conversation.submit(
+                tx,
+                await host.need(ConversationsApi).resultIn(tx, caller, {
+                  type: 'input',
+                  content: finishedText(target, title, text),
+                  whenBusy: 'steer',
+                  requestId,
+                  entry: {
+                    kind: 'lineage.finished',
+                    data: { from: target, text, ...(title ? { title } : {}) },
+                  },
+                }),
+              ),
             ctx,
           )
-        else if (!delivered)
+        } else if (!delivered)
           await leaveNote(host, caller, text, {
             from: target,
             source: 'finished',

@@ -9,7 +9,14 @@ import {
   ROOT_CONVERSATION_ID,
   section,
 } from '@earendil-works/pi-durable'
-import type { ConversationId, Cursor, Tx } from '@earendil-works/pi-durable'
+import type {
+  ConversationId,
+  Cursor,
+  InputEntry,
+  InputSubmissionDraft,
+  SubmissionDraft,
+  Tx,
+} from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { ConversationSubject } from './types.ts'
 import {
@@ -294,6 +301,30 @@ export async function concludedTreeIn(tx: Tx, id: ConversationId) {
   return [...(await ancestry(tx, id))].some((at) => concluded.has(at))
 }
 
+/**
+ * Result `input` (a background command, CI run, notify or automation) as conversation `id` takes it inside `tx`:
+ * unchanged, or while `id` or a conversation above it is concluded, its entry written as a note. A note starts no run and
+ * resumes nothing; the model reads it with the next input. Only a message from the user or @ultimate wakes a concluded
+ * conversation (#151003: dev server exits and late results woke landed branches for hours).
+ */
+export async function resultIn(
+  tx: Tx,
+  id: ConversationId,
+  input: InputSubmissionDraft & { entry: InputEntry },
+): Promise<SubmissionDraft> {
+  if (!(await concludedTreeIn(tx, id))) return input
+  const note = 'Note (recorded while this conversation was concluded, so it did not wake it):'
+  const content =
+    typeof input.content === 'string'
+      ? `${note}\n${input.content}`
+      : [{ type: 'text' as const, text: note }, ...input.content]
+  return {
+    type: 'write',
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+    entry: { ...input.entry, model: [{ role: 'user', content, timestamp: Date.now() }] },
+  }
+}
+
 export async function subject(
   host: Pick<ExtensionHost, 'harness' | 'metadata'>,
   id: ConversationId,
@@ -326,6 +357,7 @@ export default (host: ExtensionHost) => {
     concludeIn: (tx, ids) => concludeIn(host, tx, ids),
     concludedIn,
     concludedTreeIn,
+    resultIn,
     summaryModel: () => summaryModel(host),
     summaryModelStatus: () => summaryModelStatus(host),
     requestSummary: (tx, id, request, model) => requestSummary(tx, host, id, request, model),

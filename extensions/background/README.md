@@ -14,7 +14,9 @@ durable `background.run` task then:
    group gone without a code is `lost` (killed from outside, or a reboot). When the leader was killed from outside, the group
    can no longer be proven this task's: nothing is signalled, and the card says what to check;
 4. submits one `background.result` input (request id `background.result:<task>`): outcome, exit code, duration, the
-   last 40 lines of output (at most 4 KB) and the log path.
+   last 40 lines of output (at most 4 KB) and the log path. While the caller or a conversation above it is concluded
+   (a landing concludes a branch without stopping its commands), the same card goes in as a note that starts no run;
+   the conversations service's `resultIn` decides it in the commit that submits.
 
 Below the RAM floor (`memory.minAvailableMiB`, `extensions/memory/README.md`) a command whose estimated need does not
 fit waits before step 1: the task sleeps durably, looks again every 10 s, and after 30 min delivers a `not-started`
