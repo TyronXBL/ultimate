@@ -102,6 +102,8 @@ const closeTimeoutMs = 5_000
  * error, which says what it waited for (no match, hidden, covered), then arrives before the backstop's bare one.
  */
 const ownTimeoutMs = 2_000
+/** How long a failed step may spend on the page's title and a screenshot of what it showed. */
+const evidenceTimeoutMs = 3_000
 /** Lines of an error kept in the result; Playwright's call log for a long wait runs on. */
 const errorLines = 12
 
@@ -145,6 +147,31 @@ async function capture(page: Page, file: string, selector?: string, fullPage = f
       ? formatDimensionNote(resized)
       : '[Image omitted: could not be resized below the inline image size limit.]',
   }
+}
+
+type Capture = Awaited<ReturnType<typeof capture>>
+
+/** A failed step, with what the page showed when it failed: its URL, its title and a screenshot when it gave one in time. */
+class StepFailure extends Error {
+  readonly url: string
+  readonly title: string | undefined
+  readonly shot: Capture | undefined
+  constructor(cause: unknown, page: { url: string; title?: string; shot?: Capture }) {
+    super(describe(cause), { cause })
+    this.url = page.url
+    this.title = page.title
+    this.shot = page.shot
+  }
+}
+
+/** The failed page's URL, title and (unless `png` is undefined) screenshot; a busy or closed page gives up each after a short limit. */
+async function failure(cause: unknown, page: Page, png: string | undefined) {
+  // A hung script or a closed page gives no title or screenshot; the error itself is the evidence then.
+  const [title, shot] = await Promise.all([
+    within(evidenceTimeoutMs, page.title()).catch(() => undefined),
+    png ? within(evidenceTimeoutMs, capture(page, png)).catch(() => undefined) : undefined,
+  ])
+  return new StepFailure(cause, { url: page.url(), title, shot })
 }
 
 export default function browserExtension(host: ExtensionHost) {
@@ -358,7 +385,8 @@ export default function browserExtension(host: ExtensionHost) {
                 )
               } catch (error) {
                 outcomes.push(`Step ${index + 1}: ${describe(error)}`)
-                throw error
+                if (context.abortSignal?.aborted) throw error
+                throw await failure(error, page, args.screenshot === false ? undefined : png)
               }
             }
             return args.screenshot === false ? undefined : guard(capture(page, png), ownTimeoutMs)
@@ -516,13 +544,27 @@ export default function browserExtension(host: ExtensionHost) {
         ],
       }
     } catch (error) {
-      // A failed step already ends the outcomes with its error.
-      const failure = describe(error)
-      const said = outcomes.at(-1)?.endsWith(failure)
+      // A failed step already ends the outcomes with its error, and brings what the page showed.
+      const step = error instanceof StepFailure ? error : undefined
+      const message = step?.message ?? describe(error)
+      const said = outcomes.at(-1)?.endsWith(message)
+      const page = step
+        ? [
+            ...(step.title === undefined ? [] : [`Title: ${step.title}`]),
+            `URL: ${step.url}`,
+            ...(step.shot ? [`PNG: ${step.shot.file}`] : []),
+          ]
+        : []
+      const shot = step?.shot
       return {
         isError: true,
         output: [
-          { type: 'text' as const, text: [...outcomes, ...(said ? [] : [failure])].join('\n') },
+          ...(shot?.note ? [{ type: 'text' as const, text: shot.note }] : []),
+          ...(shot?.image ? [shot.image] : []),
+          {
+            type: 'text' as const,
+            text: [...page, ...outcomes, ...(said ? [] : [message])].join('\n'),
+          },
         ],
       }
     } finally {
