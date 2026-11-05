@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JsonValue } from '@earendil-works/chord'
-import { createUiState } from '../../web/src/sdk/ui-state.ts'
+import { createUiState, step } from '../../web/src/sdk/ui-state.ts'
 import { UI_REVISION } from '../../shared/protocol.ts'
 import type { UiUpdateRequest, UiUpdateResponse } from '../../shared/protocol.ts'
 
@@ -289,6 +289,23 @@ describe('durable UI state', () => {
     expect(requests[1].change.set).toEqual({ panel: 'second' })
   })
 
+  it('reports a refused batch whose keys were all written again, but not an old process’s', async () => {
+    const { state, requests, errors, start } = setup()
+    start({ panel: 'start' })
+    state.set('panel', 'first')
+    await wait()
+    state.set('panel', 'second')
+    requests[0].fail(new Error('offline'))
+    await wait()
+    expect(errors).toHaveLength(1)
+    expect(state.get('panel')).toBe('second')
+    // The second batch goes to a process that then goes away: its failure is about storage nobody shows.
+    state.restarted()
+    requests[1].fail(new Error('connection reset'))
+    await wait()
+    expect(errors).toHaveLength(1)
+  })
+
   it('keeps a detached page’s writes to itself: applied, kept, never sent', async () => {
     // A page an agent drives: its `?conversation=1` must not move the user's tabs.
     const state = createUiState(undefined, { delayMs: 5 })
@@ -303,5 +320,148 @@ describe('durable UI state', () => {
     state.receive({ 'shell.conversation': 43, 'shell.panel': 'info', [UI_REVISION]: 8 })
     expect(state.get('shell.conversation')).toBe(1)
     expect(state.get('shell.panel')).toBeUndefined()
+  })
+})
+
+type SyncState = Parameters<typeof step>[0]
+type SyncEvent = Parameters<typeof step>[1]
+type Write = NonNullable<ReturnType<SyncState['writes']['get']>>
+/** A sync state; `writes` is given as an object. */
+const sync = (
+  over: Partial<Omit<SyncState, 'writes'>> & { writes?: Record<string, Write> } = {},
+): SyncState => ({
+  remote: {},
+  batch: 0,
+  firstBatch: 1,
+  stream: { phase: 'live', shown: 0 },
+  send: { phase: 'idle' },
+  ...over,
+  writes: new Map(Object.entries(over.writes ?? {})),
+})
+const pending = (value?: JsonValue): Write => ({ phase: 'pending', value })
+const sentIn = (batch: number, value?: JsonValue): Write => ({ phase: 'sent', value, batch })
+const acked = (rev: number, value?: JsonValue): Write => ({ phase: 'acknowledged', value, rev })
+const sending = (batch: number) => ({ phase: 'sending', batch }) as const
+const debouncing = (delayMs: number) => ({ phase: 'debouncing', delayMs }) as const
+const live = (shown: number) => ({ phase: 'live', shown }) as const
+const set = (key: string, value: JsonValue | undefined, delayMs = 150): SyncEvent => ({
+  type: 'set',
+  key,
+  value,
+  delayMs,
+})
+const values = (rev: number, v: Record<string, JsonValue> = {}) => ({ ...v, [UI_REVISION]: rev })
+
+/** The transitions the tab walks through; the cases above prove the replies and snapshots end to end. */
+describe('durable UI state transitions', () => {
+  const rows: [string, SyncState, SyncEvent, SyncState][] = [
+    [
+      'a write is pending and arms the debounce',
+      sync(),
+      set('panel', 'info'),
+      sync({ writes: { panel: pending('info') }, send: debouncing(150) }),
+    ],
+    [
+      'a page that never sends keeps its writes pending',
+      sync({ send: { phase: 'local' } }),
+      set('panel', 'info'),
+      sync({ writes: { panel: pending('info') }, send: { phase: 'local' } }),
+    ],
+    [
+      'a key written again while its batch is in flight is pending, so the old answer cannot confirm it',
+      sync({ batch: 1, writes: { panel: sentIn(1, 'first') }, send: sending(1) }),
+      set('panel', 'second'),
+      sync({ batch: 1, writes: { panel: pending('second') }, send: sending(1) }),
+    ],
+    [
+      'the timer sends every pending write as the next batch',
+      sync({ batch: 4, writes: { a: pending(1), b: acked(9, 2) }, send: debouncing(150) }),
+      { type: 'flush', force: false },
+      sync({ batch: 5, writes: { a: sentIn(5, 1), b: acked(9, 2) }, send: sending(5) }),
+    ],
+    [
+      'the timer sends nothing while a batch is in flight',
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+      { type: 'flush', force: false },
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+    ],
+    [
+      'a page going away sends even with a batch in flight',
+      sync({ batch: 1, writes: { a: sentIn(1, 1), b: pending(2) }, send: sending(1) }),
+      { type: 'flush', force: true },
+      sync({ batch: 2, writes: { a: sentIn(1, 1), b: sentIn(2, 2) }, send: sending(2) }),
+    ],
+    [
+      'an answer ahead of the stream keeps the write shown, and sends what waited for it next',
+      sync({
+        batch: 1,
+        stream: live(5),
+        writes: { a: sentIn(1, 1), b: pending(2) },
+        send: sending(1),
+      }),
+      { type: 'acknowledged', batch: 1, rev: 7 },
+      sync({
+        batch: 1,
+        stream: live(5),
+        writes: { a: acked(7, 1), b: pending(2) },
+        send: debouncing(0),
+      }),
+    ],
+    [
+      'an answer leaves a key written again alone',
+      sync({
+        batch: 1,
+        stream: live(9),
+        writes: { panel: pending('second'), view: sentIn(1, 'v') },
+        send: sending(1),
+      }),
+      { type: 'acknowledged', batch: 1, rev: 3 },
+      sync({
+        batch: 1,
+        stream: live(9),
+        writes: { panel: pending('second') },
+        send: debouncing(0),
+      }),
+    ],
+    [
+      'a refused batch drops its writes and keeps a key written again',
+      sync({
+        batch: 1,
+        writes: { a: sentIn(1, 1), b: sentIn(1, 2), c: pending(3) },
+        send: sending(1),
+      }),
+      { type: 'rejected', batch: 1 },
+      sync({ batch: 1, writes: { c: pending(3) }, send: debouncing(0) }),
+    ],
+    [
+      'a snapshot becomes the document and releases the writes it reached',
+      sync({ stream: live(2), writes: { a: acked(3, 1), b: acked(4, 2), c: pending(3) } }),
+      { type: 'snapshot', rev: 3, values: values(3, { a: 1 }) },
+      sync({
+        remote: values(3, { a: 1 }),
+        stream: live(3),
+        writes: { b: acked(4, 2), c: pending(3) },
+      }),
+    ],
+    [
+      'a restart keeps sent writes shown until the new snapshot, and sends unsent ones to the new process',
+      sync({
+        batch: 3,
+        stream: live(40),
+        writes: { a: sentIn(3, 1), b: acked(41, 2), c: pending(3) },
+        send: sending(3),
+      }),
+      { type: 'restarted' },
+      sync({
+        batch: 3,
+        firstBatch: 4,
+        stream: { phase: 'restarting' },
+        writes: { a: acked(0, 1), b: acked(0, 2), c: pending(3) },
+        send: debouncing(0),
+      }),
+    ],
+  ]
+  it.each(rows)('%s', (_name, from, event, expected) => {
+    expect(step(from, event)).toEqual(expected)
   })
 })
