@@ -179,3 +179,50 @@ describe('resuming a reload', () => {
     expect(stale.body.children).toEqual([])
   })
 })
+
+describe('the cover phases', () => {
+  const node = {} as HTMLElement
+  const loading = { phase: 'loading' } as const
+  const ready = { phase: 'ready' } as const
+  const covering = { phase: 'covering', node } as const
+  const settling = { phase: 'settling', node } as const
+  const fading = { phase: 'fading', node } as const
+  const fadingUnrendered = { phase: 'fadingUnrendered', node } as const
+
+  const rows = [
+    // From            event        to
+    [loading, 'rendered', ready],
+    [covering, 'rendered', settling],
+    // The app went quiet, or hit the settle cap while still changing (ad45e417).
+    [settling, 'quiet', fading],
+    [settling, 'settled', fading],
+    [settling, 'deadline', fading],
+    [fading, 'faded', ready],
+    // The app never rendered: the cover goes after the deadline, and the page still counts as loading (27704513).
+    [covering, 'deadline', fadingUnrendered],
+    [fadingUnrendered, 'rendered', fading],
+    [fadingUnrendered, 'faded', loading],
+    // A second uncover, a repeated render, or going away mid-way change no phase.
+    [fading, 'deadline', fading],
+    [fading, 'quiet', fading],
+    [fading, 'rendered', fading],
+    [fadingUnrendered, 'deadline', fadingUnrendered],
+    [ready, 'deadline', ready],
+    [ready, 'rendered', ready],
+    [loading, 'deadline', loading],
+    [covering, 'quiet', covering],
+    [settling, 'rendered', settling],
+    [settling, 'pagehide', settling],
+    [covering, 'pagehide', covering],
+    [loading, 'pagehide', loading],
+    [fading, 'pagehide', fading],
+  ] as const
+
+  for (const [from, event, to] of rows)
+    it(`${event} while ${from.phase} gives ${to.phase}`, async () => {
+      vi.stubGlobal('document', { getElementById: () => null })
+      vi.stubGlobal('addEventListener', () => {})
+      const { step } = await import('../../web/src/sdk/resume.ts')
+      expect(step(from, event)).toEqual(to)
+    })
+})
