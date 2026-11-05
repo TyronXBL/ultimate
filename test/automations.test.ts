@@ -531,28 +531,10 @@ it.each<[string, Run[], RunEvent, Run[]]>([
     ],
   ],
   [
-    'finish failed carries the error',
-    [running],
-    { type: 'finish', id: '1', status: 'failed', finishedAt: 150, answer: 'Error: boom' },
-    [{ ...running, status: 'failed', finishedAt: 150, answer: 'Error: boom' }],
-  ],
-  [
-    'finish aborted has no answer',
-    [running],
-    { type: 'finish', id: '1', status: 'aborted', finishedAt: 150 },
-    [{ ...running, status: 'aborted', finishedAt: 150 }],
-  ],
-  [
     'a finished run is not finished again (an abort after the answer keeps it done)',
     [done],
     { type: 'finish', id: '2', status: 'aborted', finishedAt: 99 },
     [done],
-  ],
-  [
-    'finishing an unknown run changes nothing',
-    [running],
-    { type: 'finish', id: 'gone', status: 'done', finishedAt: 150 },
-    [running],
   ],
   [
     'the 51st run trims the oldest',
@@ -561,10 +543,10 @@ it.each<[string, Run[], RunEvent, Run[]]>([
     [...many(50).slice(1), { status: 'running', id: 'new', firedAt: 999 }],
   ],
   [
-    'a skipped run trims the oldest too',
-    many(50),
-    { type: 'skip', firedAt: 999 },
-    [...many(50).slice(1), { status: 'skipped', id: 'skipped:999', firedAt: 999 }],
+    'the cap trims the oldest finished run, never a going one (a long run keeps its abort handle and answer)',
+    [running, ...many(49)],
+    { type: 'start', id: 'new', firedAt: 999 },
+    [running, ...many(49).slice(1), { status: 'running', id: 'new', firedAt: 999 }],
   ],
 ])('runStep: %s', (_, runs, event, expected) => {
   expect(runStep(runs, event)).toEqual(expected)

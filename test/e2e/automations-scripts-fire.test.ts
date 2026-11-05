@@ -38,7 +38,9 @@ it('starts a prompt run from script FIRE with its payload', async () => {
   await writeRun(folder(a.id), 'echo FIRE hello')
   await call(app, 'resume', a.id)
   const record = async () => (await app.harness.snapshot(Automations, context))!.automations[a.id]
-  await until(async () => (await record()).runs[0]?.status !== 'running')
+  await until(async () =>
+    ['done', 'failed', 'aborted'].includes((await record()).runs[0]?.status ?? ''),
+  )
   const run = (await record()).runs[0]
   expect(run.status).toBe('done')
   const child = (await app.harness.conversation(runConversation(run)!, context))!

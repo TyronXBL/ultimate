@@ -30,6 +30,16 @@ export type RunEvent =
 /** How many runs an automation keeps. */
 const KEPT = 50
 
+/** The runs over the cap leave oldest first, but a going run never does: it keeps its abort handle and its answer. */
+function trim(runs: Run[]): Run[] {
+  let excess = runs.length - KEPT
+  return runs.filter((run) => {
+    if (excess <= 0 || run.status === 'running') return true
+    excess--
+    return false
+  })
+}
+
 /** Whether a run is going: a new fire skips while one is, and only a going run can be aborted. */
 export const isRunning = (run: Run | undefined) => run?.status === 'running'
 export const hasRunningRun = (runs: Run[]) => runs.some(isRunning)
@@ -46,12 +56,12 @@ export const runEndedAt = (run: Run) =>
 export function runStep(runs: Run[], event: RunEvent): Run[] {
   switch (event.type) {
     case 'start':
-      return [...runs, { status: 'running', id: event.id, firedAt: event.firedAt }].slice(-KEPT)
+      return trim([...runs, { status: 'running', id: event.id, firedAt: event.firedAt }])
     case 'skip':
-      return [
+      return trim([
         ...runs,
         { status: 'skipped', id: `skipped:${event.firedAt}`, firedAt: event.firedAt },
-      ].slice(-KEPT)
+      ])
     case 'attach':
       return runs.map((run) =>
         run.id === event.id && run.status === 'running'

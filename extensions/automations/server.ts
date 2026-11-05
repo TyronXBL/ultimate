@@ -82,16 +82,18 @@ type Ledger = { next: number; automations: Record<string, Automation> }
 export const Automations = defineDoc<Ledger>({
   kind: 'ultimate.automations',
   checkpointWhen: () => false,
-  version: 3,
+  version: 4,
   scope: 'session',
   initial: () => ({ next: 1, automations: {} }),
   // Version 1 also holds schedule records from before scripts and subscribers. Version 3: a project script discovery
   // made with nobody to wake wakes @ultimate, as its manifest now says by default. Pi Durable stores the migrated
-  // value as a version 3 base on the ledger's next write.
+  // value as a version 4 base on the ledger's next write. Version 4: a skipped run no longer stores `finishedAt`.
   migrate: (value) => {
     const ledger = value as unknown as Ledger
     for (const a of Object.values(ledger.automations)) {
       a.subscribers ??= []
+      for (const run of a.runs)
+        if (run.status === 'skipped') delete (run as { finishedAt?: number }).finishedAt
       if (a.fires === undefined) {
         // Old records counted fires only as runs; the last run anchors the next interval, as it did then.
         a.fires = a.runs.length
