@@ -13,13 +13,14 @@ import type { ToolCallView } from '@/sdk'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 
-/** The result text: `Title: …`, `PNG: …`, then outcomes (`Step n: OK …`, `Console error: …`, `Page error: …`). */
+/** The result text: `Title: …`, `URL: …` (a failed step's page), `PNG: …`, then outcomes (`Step n: OK …`, `Console error: …`, `Page error: …`). */
 function parse(output: string) {
   const lines = output.split('\n').filter(Boolean)
   const value = (prefix: string) =>
     lines.find((line) => line.startsWith(prefix))?.slice(prefix.length)
   return {
     title: value('Title: '),
+    url: value('URL: '),
     png: value('PNG: '),
     errors: lines.filter((line) => /^(Console|Page) error: /.test(line)),
     steps: new Map(
@@ -29,7 +30,7 @@ function parse(output: string) {
       }),
     ),
     other: lines.filter(
-      (line) => !/^(Title|PNG|Loading|Console error|Page error): |^Step \d+: /.test(line),
+      (line) => !/^(Title|URL|PNG|Loading|Console error|Page error): |^Step \d+: /.test(line),
     ),
   }
 }
@@ -54,7 +55,7 @@ function Errors({ errors }: { errors: readonly string[] }) {
 
 function Shot({ call, parsed }: { call: ToolCallView; parsed: ReturnType<typeof parse> }) {
   const image = call.images[0]
-  if (!image && !parsed.title) return null
+  if (!image && !parsed.title && !parsed.url) return null
   return (
     <ToolSection className="flex gap-3">
       {image && <ToolImage alt={parsed.title ?? 'Screenshot'} className="shrink-0" image={image} />}
@@ -62,6 +63,11 @@ function Shot({ call, parsed }: { call: ToolCallView; parsed: ReturnType<typeof 
         {parsed.title !== undefined && (
           <span className="truncate text-foreground/90" title={parsed.title}>
             {parsed.title || 'untitled'}
+          </span>
+        )}
+        {parsed.url && (
+          <span className="truncate text-muted-foreground" title={parsed.url}>
+            {parsed.url}
           </span>
         )}
         {parsed.png && (

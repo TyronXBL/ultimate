@@ -101,6 +101,20 @@ it('saves screenshots at the given path, relative to the conversation cwd, creat
       .execute({ path: '/?conversation=1' }, api(), context)
     expect(wrong.isError).toBe(true)
     expect(JSON.stringify(wrong.output)).toContain('must end in .png')
+    // A failed step still shows what the page looked like: its title, URL and a saved screenshot.
+    const failed = await tools
+      .get('browser')!
+      .execute(
+        { url, path: 'failed.png', steps: [{ click: 'text=Nowhere' }], timeoutMs: 2000 },
+        api(),
+        context,
+      )
+    expect(failed.isError).toBe(true)
+    expect(failed.output!.map((part) => part.type)).toContain('image')
+    const text = JSON.stringify(failed.output)
+    expect(text).toContain(`Title: Shot\\nURL: ${url}\\nPNG: ${join(cwd, 'failed.png')}\\n`)
+    expect(text).toContain('Step 1: TimeoutError: locator.click')
+    await access(join(cwd, 'failed.png'))
   } finally {
     for (const close of closers) await close()
     await removeTemp(directory)

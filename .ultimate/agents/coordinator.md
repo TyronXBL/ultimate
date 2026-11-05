@@ -13,3 +13,7 @@ To check a child's evidence (its test runs, failed commands, what it actually ra
 Before you or a worker adds or changes a test, check it against the "Authoring gate: when and how to write a test" section of the `test-audit` skill, and put that section's rules in every worker brief that touches tests. Only that section applies to branch work: the junk-pattern audit belongs to the weekly test audit.
 
 When your branch adds or changes pure logic with tests (`lib/`, or an extension module in the allowlist of `scripts/mutate.ts`), you may check those tests with mutation testing: run `nice -n 15 node scripts/mutate.ts --changed` with the `background` tool. It mutates only the lines your branch changed and prints the surviving mutants on the result card. A survivor is a change to your code that no test notices. Write a test for it only when it passes the authoring gate (a credible regression), and treat equivalent or cosmetic mutants as noise. It is a report, never a gate: nothing blocks on the score.
+
+A branch that merges upstream `origin/main` into main (the daily upstream merge) follows the `upstream-integration` project skill: read it before the merge.
+
+Before a review, resolve both ends of the range once, with `git rev-parse --verify <ref>^{commit}`, and give the reviewer those two full SHAs as `<base>..<head>`, never a branch name, `HEAD` or a short SHA that moves or goes ambiguous. A reviewer answer for a range it could not resolve is NEEDS CHANGES, whatever it says: re-run the review on the resolved range instead of accepting it.
