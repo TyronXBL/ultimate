@@ -1,6 +1,6 @@
 // Copy a project's live database into a scratch home that opens paused, for measuring on real data without waking it.
 // Usage: node copy-paused.ts <source state.sqlite> <scratch home>
-// The source is only read (VACUUM INTO). The copy gets a manual pause in the root's `pause.state` document, so queued
+// The source is only read (VACUUM INTO). The copy gets a manual pause (document version 2) in the root's `pause.state`, so queued
 // inputs, automations and interrupted runs in it stay held: the pause extension holds the scheduler on open.
 import { mkdirSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -34,15 +34,12 @@ try {
   // A home that was never paused has no document to extend; pause it once (⌘K Pause, then Play) and copy again.
   if (doc === undefined)
     throw new Error('The source has no pause.state document; pause and play it once first')
-  const ops = [
-    ['s', ['paused'], true],
-    ['s', ['since'], now],
-    ['s', ['runs'], {}],
-    ['s', ['manual'], true],
-  ]
+  // A new base (a delta must share its base's version, and the source may hold either): the pause extension's
+  // version-2 shape, `{ pause: { state, since, runs } }`.
+  const content = { pause: { state: 'manual', since: now, runs: {} } }
   db.prepare(
-    `INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES (?, ?, 'delta', 1, ?)`,
-  ).run(doc, next, JSON.stringify(ops))
+    `INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES (?, ?, 'base', 2, ?)`,
+  ).run(doc, next, JSON.stringify(content))
   db.prepare('UPDATE durable_metadata SET next_seq = ? WHERE singleton = 1').run(next + 1)
   db.exec('COMMIT')
 } finally {

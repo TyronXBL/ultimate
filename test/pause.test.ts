@@ -29,6 +29,9 @@ import pauseExtension, {
 } from '../extensions/pause/server.ts'
 import { lasted } from '../extensions/pause/lasted.ts'
 import { PauseApi } from '../extensions/pause/api.ts'
+import type { PauseDocState, RateLimit } from '../extensions/pause/refs.ts'
+import { autoPlayOf, pauseStep } from '../extensions/pause/state.ts'
+import type { PauseEvent } from '../extensions/pause/state.ts'
 import { apis, removeTemps, temp, until } from './helpers.ts'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -670,4 +673,96 @@ it('words how long a pause lasted', () => {
   expect(lasted(40_000)).toBe('40s')
   expect(lasted(5 * 60_000)).toBe('5m')
   expect(lasted((2 * 60 + 14) * 60_000)).toBe('2h 14m')
+})
+
+const rateLimit = (when: number): RateLimit => ({
+  provider: 'p',
+  model: 'm',
+  error: 'rate limit',
+  at: when,
+  conversationId: 2,
+})
+const runs = { '2': { task: 7, input: 8 } }
+const running: PauseDocState = { pause: { state: 'running' }, autoPlay: 30 }
+const manual: PauseDocState = { pause: { state: 'manual', since: 1000, runs }, autoPlay: 30 }
+const limited: PauseDocState = {
+  pause: { state: 'limit', since: 1000, runs, limit: rateLimit(900) },
+  autoPlay: 30,
+}
+const both = (first: RateLimit): PauseDocState => ({
+  pause: { state: 'both', since: 1000, runs, limit: first },
+  autoPlay: 30,
+})
+
+// The integration tests above run these through the scheduler; this table is every transition of the stored state.
+it.each<[string, PauseDocState, PauseEvent, PauseDocState, number | undefined]>([
+  [
+    'the user pauses: it never plays by itself',
+    running,
+    { type: 'hold', now: 1000, runs },
+    manual,
+    undefined,
+  ],
+  [
+    'a rate limit pauses: it plays at its start plus the setting',
+    running,
+    { type: 'hold', now: 1000, runs, limit: rateLimit(900) },
+    limited,
+    1000 + 30 * 60_000,
+  ],
+  [
+    'the user pauses during a limit pause: both, keeping the limit and never playing by itself',
+    limited,
+    { type: 'hold', now: 2000, runs: {} },
+    both(rateLimit(900)),
+    undefined,
+  ],
+  [
+    'a limit joins the user’s pause: both, so it still shows and never plays by itself',
+    manual,
+    { type: 'hold', now: 2000, runs: {}, limit: rateLimit(1500) },
+    both(rateLimit(1500)),
+    undefined,
+  ],
+  [
+    'a second limit keeps the first',
+    limited,
+    { type: 'hold', now: 2000, runs: {}, limit: rateLimit(1500) },
+    limited,
+    1000 + 30 * 60_000,
+  ],
+  [
+    'pausing again keeps both',
+    both(rateLimit(900)),
+    { type: 'hold', now: 2000, runs: {} },
+    both(rateLimit(900)),
+    undefined,
+  ],
+  [
+    'pausing again keeps the user’s pause',
+    manual,
+    { type: 'hold', now: 2000, runs: {} },
+    manual,
+    undefined,
+  ],
+  ['play ends a limit pause and keeps the setting', limited, { type: 'play' }, running, undefined],
+  ['play ends both', both(rateLimit(900)), { type: 'play' }, running, undefined],
+  [
+    'the setting turns on during a limit pause',
+    { pause: limited.pause },
+    { type: 'autoPlay', minutes: 5 },
+    { pause: limited.pause, autoPlay: 5 },
+    1000 + 5 * 60_000,
+  ],
+  [
+    'the setting turns off',
+    limited,
+    { type: 'autoPlay', minutes: null },
+    { pause: limited.pause },
+    undefined,
+  ],
+])('pause: %s', (_name, from, event, expected, playsAt) => {
+  const next = pauseStep(from, event)
+  expect(next).toStrictEqual(expected)
+  expect(autoPlayOf(next)?.at).toBe(playsAt)
 })

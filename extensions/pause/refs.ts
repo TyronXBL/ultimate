@@ -13,20 +13,25 @@ export type RateLimit = {
   conversationId: number
 }
 
+/** What a pause holds: when it began (ms) and each conversation mid-turn then, by id, with its run's generation task and first input submission, so Play notes that run only. */
+export type Held = { since: number; runs: Record<string, { task: number; input?: number }> }
+
 /**
- * The pause on conversation 1: `since` when it began; `runs` each conversation mid-turn then, by id, with its run's
- * generation task and first input submission, so Play notes that run only; `limit` when a rate limit paused it.
+ * Whether Ultimate is paused, and by whom: `manual`, the user pressed Pause; `limit`, a rate limit paused it (`limit`
+ * is the first one); `both`, the user pressed Pause during a limit pause or a limit hit their pause. Only `limit`
+ * plays by itself.
  */
-export type PauseDocState = {
-  paused: boolean
-  since?: number
-  runs?: Record<string, { task: number; input?: number }>
-  limit?: RateLimit
-  /** The user pressed Pause during this pause: it never plays by itself. */
-  manual?: boolean
-  /** The user's setting: minutes after a rate-limit pause began that Ultimate presses Play by itself; unset is off. */
-  autoPlay?: number
-}
+export type Pause =
+  | { state: 'running' }
+  | ({ state: 'manual' } & Held)
+  | ({ state: 'limit'; limit: RateLimit } & Held)
+  | ({ state: 'both'; limit: RateLimit } & Held)
+
+/**
+ * The pause on conversation 1, written only through `pauseStep` (`state.ts`); `autoPlay` is the user's setting:
+ * minutes after a rate-limit pause began that Ultimate presses Play by itself; unset is off.
+ */
+export type PauseDocState = { pause: Pause; autoPlay?: number }
 
 /** A task still running while paused: it finishes on its own, nothing new starts after it. */
 export type RunningTask = {

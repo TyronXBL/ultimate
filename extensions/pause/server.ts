@@ -13,23 +13,54 @@ import { lasted } from './lasted.ts'
 import { AutoPlayAction, PauseAction, PauseDoc, PlayAction, StateAction } from './refs.ts'
 import type {
   AutoPlayed,
+  Held,
   HeldNote,
+  Pause,
   PauseDocState,
   PauseNote,
   PauseState,
   RateLimit,
   RunningTask,
 } from './refs.ts'
+import {
+  autoPlayOf,
+  heldOf,
+  initialPause,
+  isPaused,
+  limitOf,
+  pauseStep,
+  pauseView,
+} from './state.ts'
+import type { PauseEvent } from './state.ts'
 
 const State = defineDoc<PauseDocState>({
   kind: PauseDoc.kind,
   checkpointWhen: () => false,
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
-  initial: () => ({ paused: false }),
+  initial: initialPause,
+  // Version 2: the pause is one state (running, manual, limit, both), not `paused`, `limit` and `manual` set or not.
+  migrate: (value) => {
+    const old = value as unknown as LegacyPause
+    const at = { since: old.since ?? 0, runs: old.runs ?? {} }
+    const next: Pause = !old.paused
+      ? { state: 'running' }
+      : old.limit
+        ? { state: old.manual ? 'both' : 'limit', limit: old.limit, ...at }
+        : { state: 'manual', ...at }
+    return { pause: next, ...(old.autoPlay === undefined ? {} : { autoPlay: old.autoPlay }) }
+  },
 })
+type LegacyPause = {
+  paused: boolean
+  since?: number
+  runs?: Held['runs']
+  limit?: RateLimit
+  manual?: boolean
+  autoPlay?: number
+}
 export const docs = [State]
 
 type Host = Pick<
@@ -49,7 +80,18 @@ const flag = (host: Pick<ExtensionHost, 'resource'>) =>
   host.resource('pause.flag', () => ({ paused: false }))
 
 const read = async (host: Host) =>
-  (await host.harness().snapshot(State, ROOT_CONVERSATION_ID, context)) ?? { paused: false }
+  (await host.harness().snapshot(State, ROOT_CONVERSATION_ID, context)) ?? initialPause()
+
+/** Record `event` in the live pause document: the only place it is written. */
+function write(doc: PauseDocState, event: PauseEvent) {
+  const current = JSON.parse(JSON.stringify(doc)) as PauseDocState
+  const next = pauseStep(current, event)
+  // A step that changes nothing (a second Pause, Play while running) leaves no revision.
+  if (JSON.stringify(next.pause) !== JSON.stringify(current.pause)) doc.pause = next.pause
+  if (next.autoPlay === current.autoPlay) return
+  if (next.autoPlay === undefined) delete doc.autoPlay
+  else doc.autoPlay = next.autoPlay
+}
 
 /** Run pause, play and the reopen hold one at a time, across reloads: an interleaving could release a paused host. */
 function serial<T>(host: Pick<ExtensionHost, 'resource'>, work: () => Promise<T>): Promise<T> {
@@ -126,11 +168,7 @@ async function running(host: Host): Promise<RunningTask[]> {
 async function state(host: Host): Promise<PauseState> {
   const doc = await read(host)
   return {
-    paused: doc.paused,
-    ...(doc.since === undefined ? {} : { since: doc.since }),
-    ...(doc.limit === undefined ? {} : { limit: doc.limit }),
-    ...(doc.autoPlay === undefined ? {} : { autoPlay: doc.autoPlay }),
-    ...(autoPlayAt(doc) === undefined ? {} : { autoPlayAt: autoPlayAt(doc) }),
+    ...pauseView(doc),
     running: await running(host),
   }
 }
@@ -146,13 +184,8 @@ async function hold(host: Host, limit?: RateLimit) {
   flag(host).paused = true
   await harness.commit(async (tx) => {
     const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
-    if (doc.paused) {
-      if (limit && !doc.limit) doc.limit = limit
-      // The user pressed Pause too: this pause waits for them.
-      if (!limit) doc.manual = true
-      return
-    }
-    const runs: NonNullable<PauseDocState['runs']> = {}
+    if (isPaused(doc)) return write(doc, { type: 'hold', now: Date.now(), runs: {}, limit })
+    const runs: Held['runs'] = {}
     // Sleeping: a generation waiting out its retry backoff, as one that just hit a rate limit does.
     for (const status of ['pending', 'running', 'waiting', 'sleeping'] as const) {
       let cursor: Cursor | undefined
@@ -166,12 +199,7 @@ async function hold(host: Host, limit?: RateLimit) {
         cursor = page.next
       } while (cursor)
     }
-    Object.assign(doc, {
-      paused: true,
-      since: Date.now(),
-      runs,
-      ...(limit ? { limit } : { manual: true }),
-    })
+    write(doc, { type: 'hold', now: Date.now(), runs, limit })
   }, context)
   arm(host, await read(host))
 }
@@ -180,12 +208,6 @@ async function pause(host: Host) {
   await hold(host)
   return state(host)
 }
-
-/** When `doc`'s pause plays by itself: a rate-limit pause the user did not also pause, with the setting on. */
-const autoPlayAt = (doc: PauseDocState) =>
-  doc.paused && doc.limit && !doc.manual && doc.autoPlay && doc.since !== undefined
-    ? doc.since + doc.autoPlay * 60_000
-    : undefined
 
 /** The timer that plays a rate-limit pause by itself; outside the scheduler, which the pause holds. */
 const timer = (host: Pick<ExtensionHost, 'resource'>) =>
@@ -196,7 +218,7 @@ function arm(host: Host, doc: PauseDocState) {
   const slot = timer(host)
   clearTimeout(slot.handle)
   slot.handle = undefined
-  const at = autoPlayAt(doc)
+  const at = autoPlayOf(doc)?.at
   if (at === undefined) return
   slot.handle = setTimeout(
     () => {
@@ -220,9 +242,9 @@ function arm(host: Host, doc: PauseDocState) {
 export async function autoPlay(host: Host, now = Date.now()) {
   return serial(host, async () => {
     const doc = await read(host)
-    const at = autoPlayAt(doc)
-    if (at === undefined || now < at) return false
-    const data: AutoPlayed = { since: doc.since!, at: now, minutes: doc.autoPlay! }
+    const plan = autoPlayOf(doc)
+    if (!plan || now < plan.at) return false
+    const data: AutoPlayed = { since: plan.since, at: now, minutes: plan.minutes }
     const harness = host.harness()
     const ultimate = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
     if (ultimate !== undefined)
@@ -260,8 +282,7 @@ async function setAutoPlay(host: Host, minutes: unknown) {
     throw new Error('minutes must be a whole number from 1 to 1440, or null to turn it off')
   await host.harness().commit(async (tx) => {
     const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
-    if (minutes === null) delete doc.autoPlay
-    else doc.autoPlay = minutes
+    write(doc, { type: 'autoPlay', minutes })
   }, context)
   arm(host, await read(host))
   return state(host)
@@ -320,7 +341,9 @@ async function held(host: Host, limit: RateLimit) {
 async function card(host: Host, doc: PauseDocState) {
   const harness = host.harness()
   const ultimate = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
-  if (!doc.paused || !doc.limit || ultimate === undefined) return
+  const pausing = heldOf(doc)
+  const limit = limitOf(doc)
+  if (!pausing || !limit || ultimate === undefined) return
   // Only kind and data, so Pi appends it at once even while @ultimate's own run is held; the model learns of the limit
   // from the note Play leaves on each held run.
   await (
@@ -328,8 +351,8 @@ async function card(host: Host, doc: PauseDocState) {
   )?.submit(
     {
       type: 'write',
-      requestId: `pause.limit:${doc.since}`,
-      entry: { kind: 'pause.limit', data: doc.limit },
+      requestId: `pause.limit:${pausing.since}`,
+      entry: { kind: 'pause.limit', data: limit },
     },
     context,
   )
@@ -416,15 +439,17 @@ async function noted(host: Host, id: ConversationId, recorded: { task: number; i
 async function play(host: Host, auto = false) {
   const harness = host.harness()
   const doc = await read(host)
-  if (doc.paused && doc.since !== undefined) {
+  const pausing = heldOf(doc)
+  if (pausing) {
     const until = Date.now()
-    const span = `${lasted(until - doc.since)}${doc.limit ? ` (${doc.limit.provider} rate limited ${doc.limit.model})` : ''}`
-    for (const [key, recorded] of Object.entries(doc.runs ?? {})) {
+    const limit = limitOf(doc)
+    const span = `${lasted(until - pausing.since)}${limit ? ` (${limit.provider} rate limited ${limit.model})` : ''}`
+    for (const [key, recorded] of Object.entries(pausing.runs)) {
       const id = Number(key) as ConversationId
       const how = await noted(host, id, recorded)
       if (!how) continue
       const note: PauseNote = {
-        since: doc.since,
+        since: pausing.since,
         until,
         ...(how === 'finished' && { finished: true }),
         ...(auto && { auto: true }),
@@ -450,11 +475,7 @@ async function play(host: Host, auto = false) {
   }
   await harness.commit(async (tx) => {
     const current = await tx.doc(State, ROOT_CONVERSATION_ID)
-    current.paused = false
-    delete current.since
-    delete current.runs
-    delete current.limit
-    delete current.manual
+    write(current, { type: 'play' })
   }, context)
   arm(host, await read(host))
   flag(host).paused = false
@@ -478,8 +499,8 @@ export default function pauseExtension(host: Host) {
     // Before watching: scheduling starts only after the openers, so no model answer arrives in between.
     await serial(host, async () => {
       const doc = await read(host)
-      flag(host).paused = doc.paused
-      if (!doc.paused) return
+      flag(host).paused = isPaused(doc)
+      if (!isPaused(doc)) return
       host.harness().hold()
       arm(host, doc)
       // A crash between the pause and its card left none; its request ID makes this a no-op otherwise.

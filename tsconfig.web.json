@@ -59,6 +59,7 @@
     "extensions/attachments/limits.ts",
     "extensions/pause/lasted.ts",
     "extensions/pause/parked.ts",
+    "extensions/pause/state.ts",
     "extensions/sidebar/work.ts",
     "extensions/sidebar/landings.ts",
     "extensions/subagents/landing.ts",

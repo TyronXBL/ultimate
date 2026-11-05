@@ -25,7 +25,15 @@ import { ConversationRef } from '../conversations/ui.tsx'
 import { lasted } from './lasted.ts'
 import { parkedConversations } from './parked.ts'
 import { AutoPlayAction, PauseAction, PauseDoc, PlayAction, StateAction } from './refs.ts'
-import type { AutoPlayed, HeldNote, PauseNote, PauseState, RateLimit } from './refs.ts'
+import type {
+  AutoPlayed,
+  HeldNote,
+  PauseDocState,
+  PauseNote,
+  PauseState,
+  RateLimit,
+} from './refs.ts'
+import { autoPlayOf, heldOf, isPaused, limitOf, pausePhase } from './state.ts'
 
 const statusButton =
   '-mx-1 flex cursor-pointer items-center gap-1.5 rounded-sm px-1 transition-colors hover:bg-accent'
@@ -39,13 +47,13 @@ const said = (error: string) =>
   error
 
 /** Whether the host is paused, live from the root's pause document. */
-const usePaused = () => useDocOf(1, PauseDoc)?.paused === true
+const usePaused = () => isPaused(useDocOf(1, PauseDoc))
 
 /** The pause and what still runs, refreshed when the doc changes and, while paused, with the task graph. */
 function usePauseState() {
   const doc = useDocOf(1, PauseDoc)
   const live = useTasks()
-  const graph = doc?.paused ? live : undefined
+  const graph = isPaused(doc) ? live : undefined
   const { data, refetch } = useAction(
     StateAction,
     null,
@@ -97,7 +105,8 @@ function Popup({
   toggle: () => void
 }) {
   const now = useNow(1000, state.paused)
-  const pausing = state.paused && state.running.length > 0
+  const phase = pausePhase(state)
+  const pausing = phase === 'pausing'
   const { limit } = state
   return (
     <>
@@ -229,7 +238,8 @@ function Item() {
       )
       .finally(() => setBusy(false))
   }
-  const pausing = state.paused && state.running.length > 0
+  const phase = pausePhase(state)
+  const pausing = phase === 'pausing'
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -238,7 +248,7 @@ function Item() {
             statusButton,
             state.paused ? 'text-warning' : 'text-muted-foreground/70 hover:text-foreground',
           )}
-          data-pause={state.paused ? (pausing ? 'pausing' : 'paused') : 'running'}
+          data-pause={phase}
           title="Pause or continue all work"
           type="button"
         >
@@ -370,7 +380,8 @@ function Held({ entry }: { entry: EntryRecord }) {
 function Limit({ entry }: { entry: EntryRecord }) {
   const limit = (entry.data ?? {}) as Partial<RateLimit>
   const doc = useDocOf(1, PauseDoc)
-  const holding = doc?.paused === true && doc.limit?.at === limit.at
+  const holding = !!doc && limitOf(doc)?.at === limit.at
+  const plan = doc && holding ? autoPlayOf(doc) : undefined
   const now = useNow(1000, holding)
   const { switchConversation } = useUltimate()
   const [busy, setBusy] = useState(false)
@@ -400,8 +411,8 @@ function Limit({ entry }: { entry: EntryRecord }) {
           · no reset time given
         </p>
         <p className="text-[12px] text-muted-foreground">
-          {holding && doc.autoPlay && !doc.manual
-            ? `Plays by itself ${doc.autoPlay} min after the limit, or press Play`
+          {plan
+            ? `Plays by itself ${plan.minutes} min after the limit, or press Play`
             : 'Nothing retries until you press Play'}
           ; held runs then continue where they stopped. A model you switch meanwhile applies on
           Play.
@@ -410,7 +421,9 @@ function Limit({ entry }: { entry: EntryRecord }) {
       <footer className="flex items-center justify-between gap-2 border-t border-border/60 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
         {holding ? (
           <>
-            <span>paused for {lasted(Math.max(0, now - (doc.since ?? now)))}</span>
+            <span>
+              paused for {lasted(Math.max(0, now - ((doc && heldOf(doc)?.since) ?? now)))}
+            </span>
             <Button
               className="h-7 font-sans text-[12px]"
               disabled={busy}
@@ -462,7 +475,7 @@ function AutoPlayedNote({ entry }: { entry: EntryRecord }) {
   )
 }
 
-const paused = () => getState().docsOf[1]?.[PauseDoc.kind]?.paused === true
+const paused = () => isPaused(getState().docsOf[1]?.[PauseDoc.kind] as PauseDocState | undefined)
 
 /** The conversations this pause parked, for the transcript and the lists of conversations. */
 function useParked() {
