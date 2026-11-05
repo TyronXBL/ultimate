@@ -45,13 +45,13 @@ export default function self(host: ExtensionHost) {
         replay: 'safe',
         async execute(_args, api, context): Promise<ToolExecutionResult> {
           const own = await workspaces.get(api.conversationId, context)
+          const landed = own && workspaces.lastLanded(own)
           if (
             own &&
             ((await realpath(own.source)) !== (await realpath(host.ultimateRoot)) ||
-              !workspaces.lastLanded(own) ||
+              !landed ||
               (await workspaces.git(host.ultimateRoot, 'status', '--porcelain')) ||
-              (await workspaces.git(host.ultimateRoot, 'rev-parse', 'HEAD')) !==
-                workspaces.lastLanded(own))
+              (await workspaces.git(host.ultimateRoot, 'rev-parse', 'HEAD')) !== landed)
           ) {
             const error = `Restart refused: land your workspace into ${own.source} first`
             return {

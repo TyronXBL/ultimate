@@ -184,8 +184,8 @@ function IsolateRow({ child, parent }: { child: ConversationSummary; parent: num
                 : 'border-brand/40 text-brand',
           )}
         >
-          {isolate.state === 'ready' && lastLanded(isolate)
-            ? `Landed ${lastLanded(isolate)!.slice(0, 7)}`
+          {isolate.state === 'ready' && isolate.landed
+            ? `Landed ${isolate.landed.slice(0, 7)}`
             : stateLabel(isolate)}
         </Tag>
         {isolate.ahead !== null && (
