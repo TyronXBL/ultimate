@@ -193,7 +193,7 @@ it.concurrent('failed setup keeps its output tail, removes its empty branch, and
   await f.service.ready(id, context)
   const workspace = (await f.service.get(id, context))!
   expect(workspace.state).toBe('failed')
-  expect(workspace.error).toContain('SETUP_OUTPUT_TAIL')
+  expect('error' in workspace && workspace.error).toContain('SETUP_OUTPUT_TAIL')
   expect(await git(f.projectRoot, 'branch', '--list', workspace.branch)).toBe('')
   const result = await f.call(id, 'write_commit')
   expect(result?.role === 'toolResult' && result.isError).toBe(true)
@@ -217,7 +217,7 @@ it.concurrent('retries a failed setup on the next tool call, so a fixed environm
   expect(result?.role === 'toolResult' && result.isError).toBe(false)
   const workspace = (await f.service.get(id, context))!
   expect(workspace.state).toBe('ready')
-  expect(workspace.error).toBeUndefined()
+  expect('error' in workspace ? workspace.error : undefined).toBeUndefined()
   expect(f.writes).toBe(1)
   expect(await readFile(join(workspace.path, 'change.txt'), 'utf8')).toBe('change')
   await expect(access(join(f.projectRoot, 'change.txt'))).rejects.toThrow('ENOENT')
@@ -293,7 +293,9 @@ it.concurrent('rejects a detached source and preserves existing paths and branch
     await f.service.ready(id, context)
     const workspace = (await f.service.get(id, context))!
     expect(workspace.state).toBe('failed')
-    expect(workspace.error).toContain(`Workspace ${existing} already exists`)
+    expect('error' in workspace && workspace.error).toContain(
+      `Workspace ${existing} already exists`,
+    )
     expect(await git(f.projectRoot, 'rev-parse', workspace.branch)).toBe(workspace.base)
     expect(await readFile(join(workspace.path, 'keep.txt'), 'utf8').catch(() => undefined)).toBe(
       existing === 'path' ? 'keep' : undefined,

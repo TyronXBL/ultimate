@@ -15,6 +15,7 @@ import { ConversationRef } from '../conversations/ui.tsx'
 import { stateLabel, useLanderQueue, useWorkspaces } from './data.tsx'
 import type { WorkspaceConversation } from './data.tsx'
 import { DiskAction, InfoAction, StatsAction } from './refs.ts'
+import { lastLanded } from './state.ts'
 
 const heading = 'mb-1 font-mono text-[10.5px] text-muted-foreground/70'
 
@@ -58,15 +59,16 @@ function Checkout({ conversation }: { conversation: WorkspaceConversation }) {
   const info = useAction(InfoAction, { id: conversation.id }, { onError: () => undefined })
   const queued = useLanderQueue().find((item) => item.conversationId === conversation.id)
   const recorded = conversation.workspace!
+  const landed = lastLanded(recorded)
   const workspace =
-    info.data && info.data.state === recorded.state && info.data.landed === recorded.landed
+    info.data && info.data.state === recorded.state && lastLanded(info.data) === landed
       ? info.data
       : recorded
   const { refetch } = info
   useEffect(() => {
     // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
     void refetch()
-  }, [recorded.state, recorded.landed, conversation.busy, refetch])
+  }, [recorded.state, landed, conversation.busy, refetch])
   const ahead = info.data?.ahead
   const home = useSystem()?.machine.home
   return (
@@ -113,7 +115,7 @@ function Checkout({ conversation }: { conversation: WorkspaceConversation }) {
             {ahead} commit{ahead === 1 ? '' : 's'}
           </Row>
         )}
-        {workspace.landed && <Row label="landed">{workspace.landed.slice(0, 7)}</Row>}
+        {landed && <Row label="landed">{landed.slice(0, 7)}</Row>}
       </Rows>
       {(workspace.state === 'failed' || info.error) && (
         <p
@@ -183,7 +185,7 @@ function Stats() {
   const disk = useAction(DiskAction)
   const { refetch: refetchDisk } = disk
   const states = Object.entries(records)
-    .map(([id, workspace]) => `${id}:${workspace.state}:${workspace.landed ?? ''}`)
+    .map(([id, workspace]) => `${id}:${workspace.state}:${lastLanded(workspace) ?? ''}`)
     .join()
   useEffect(() => {
     // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
@@ -219,6 +221,7 @@ function Stats() {
               [data.ready, 'ready'],
               [data.preparing, 'setting up'],
               [data.failed, 'failed'],
+              [data.releasing, 'removing'],
             ])}
           </span>
         </Row>

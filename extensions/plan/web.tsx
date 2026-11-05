@@ -37,7 +37,7 @@ import {
 } from '@/sdk'
 import type { ConversationSummary, ToolCallView } from '@/sdk'
 import { ConversationEpic, ConversationTask } from '../conversations/ui.tsx'
-import { InfoAction, stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
+import { InfoAction, lastLanded, released, stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
 import { criteriaOf, sectionsOf, verbatim } from './body.tsx'
 import { criteriaOfBody, finished, number, pillOf, progressLabel } from './progress.tsx'
 import { PlanDoc } from './refs.ts'
@@ -177,9 +177,9 @@ function IsolateRow({ child, parent }: { child: ConversationSummary; parent: num
         </span>
         <Tag
           className={cn(
-            isolate.state === 'removed'
+            released(isolate)
               ? 'text-muted-foreground/70'
-              : isolate.landed
+              : lastLanded(isolate)
                 ? 'border-success/40 text-success'
                 : 'border-brand/40 text-brand',
           )}

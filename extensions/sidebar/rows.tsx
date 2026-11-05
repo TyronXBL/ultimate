@@ -32,7 +32,7 @@ import {
   useAgentTitle,
 } from '../conversations/ui.tsx'
 import type { Presence } from '../conversations/ui.tsx'
-import { Review } from '../workspaces/ui.tsx'
+import { released, Review } from '../workspaces/ui.tsx'
 import { RunName } from '../subagents/ui.tsx'
 import type { WorkspaceConversation as ConversationSummary } from '../workspaces/ui.tsx'
 import type { OverviewRow } from '../conversations/types.ts'
@@ -333,7 +333,7 @@ export function RowMenu({
             Workspace details
           </DropdownMenuItem>
         )}
-        {conversation.workspace && conversation.workspace.state !== 'removed' && (
+        {conversation.workspace && !released(conversation.workspace) && (
           <Provided input={`branch:${conversation.workspace.branch}`} point={Review}>
             {(open) =>
               open && (

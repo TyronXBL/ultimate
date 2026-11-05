@@ -12,6 +12,10 @@ import type { Workspaces, workspaces } from './workspaces.ts'
 type Implementation = ReturnType<typeof workspaces>
 
 export type WorkspaceService = {
+  /** Whether the checkout is released or being released (`state.ts`). */
+  released: Implementation['released']
+  /** The tip the checkout's last landing brought, if one did (`state.ts`). */
+  lastLanded: Implementation['lastLanded']
   /** The worktree of conversation `id` (path, branch, target, state), or undefined when it has none. */
   get: Implementation['get']
   /** Wait for a preparing checkout to finish; failed preparation remains failed. */

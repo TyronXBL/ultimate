@@ -21,14 +21,15 @@ type Scope = Source & {
  * landed, read from that branch's last commit, most recently committed first.
  */
 async function scopes(host: ExtensionHost): Promise<Scope[]> {
-  const doc = host.need(WorkspacesApi).doc
+  const workspaces = host.need(WorkspacesApi)
+  const doc = workspaces.doc
   const state = await host.harness().snapshot(doc, ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT)
   const items = Object.entries(state?.items ?? {})
   const worktrees = items
     .filter(([, item]) => item.state === 'ready')
     .toSorted(([a], [b]) => Number(b) - Number(a))
   const titles = new Map(host.conversations().map((item) => [item.id, item.title]))
-  const removed = items.filter(([, item]) => item.state === 'removed')
+  const removed = items.filter(([, item]) => workspaces.released(item))
   // Branches with commits the checkout's branch lacks, by name, with their last commit's time, asked only when a
   // worktree was released. A checkout on a branch without commits (an orphan) lacks every branch's commits.
   const head =

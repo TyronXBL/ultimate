@@ -326,7 +326,7 @@ it.concurrent('aborting release finishes the current checkout and leaves the rem
   }
 })
 
-it.concurrent('input admitted after release marks removed waits for deletion and recreates a usable checkout', async () => {
+it.concurrent('input admitted after release marks releasing waits for deletion and recreates a usable checkout', async () => {
   const f = await fixture()
   const id = await f.create()
   await f.service.ready(id, context)
@@ -347,7 +347,7 @@ it.concurrent('input admitted after release marks removed waits for deletion and
     .mockImplementation(
       async <T>(change: (tx: Tx) => T | Promise<T>, ctx: typeof context): Promise<T> => {
         const result = await original(change, ctx)
-        if (!held && (await f.service.get(id, context))!.state === 'removed') {
+        if (!held && (await f.service.get(id, context))!.state === 'releasing') {
           held = true
           reached()
           await gate
@@ -360,7 +360,7 @@ it.concurrent('input admitted after release marks removed waits for deletion and
   let request!: Promise<Submission>
   try {
     await marked
-    // The idle check and removed state are committed, but filesystem removal has not started.
+    // The idle check and releasing state are committed, but filesystem removal has not started.
     await access(workspace.path)
     request = conversation.submit({ type: 'input', content: 'resume during release' }, context)
     await request
@@ -390,7 +390,7 @@ it.concurrent.each([false, true])(
     await f.opened.harness.commit(async (tx) => {
       ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = removed
         ? 'ready'
-        : 'removed'
+        : 'releasing'
     }, context)
     f.host.implement(
       ConversationsApi,
@@ -399,8 +399,9 @@ it.concurrent.each([false, true])(
       }),
     )
     await f.reopen()
-    await until(async () => !(await git(f.projectRoot, 'branch', '--list', workspace.branch)))
-    expect((await f.service.get(id, context))!.state).toBe('removed')
+    // The record becomes removed last, once the checkout and its branch are gone.
+    await until(async () => (await f.service.get(id, context))!.state === 'removed')
+    expect(await git(f.projectRoot, 'branch', '--list', workspace.branch)).toBe('')
     await expect(access(workspace.path)).rejects.toThrow('ENOENT')
     await f.call(id, 'bash', { command: 'pwd' })
     expect((await f.service.get(id, context))!.state).toBe('ready')
@@ -415,11 +416,11 @@ it.concurrent('reconcile and recreate keep new work found in an interrupted remo
   const workspace = (await f.service.get(id, context))!
   await writeFile(join(workspace.path, 'precious.txt'), 'keep me')
   await f.opened.harness.commit(async (tx) => {
-    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'removed'
+    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'releasing'
   }, context)
   expect(await f.service.release([id], context)).toEqual([{ id, uncommitted: 1, unlanded: 0 }])
   await f.opened.harness.commit(async (tx) => {
-    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'removed'
+    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'releasing'
   }, context)
   await f.call(id, 'bash', { command: 'cat precious.txt' })
   expect((await f.service.get(id, context))!.state).toBe('ready')
@@ -475,7 +476,7 @@ it('resuming a child after its removal keeps the parent in the same release batc
   let request!: Promise<Submission>
   try {
     await deletingChildBranch.started()
-    expect((await f.service.get(child, context))!.state).toBe('removed')
+    expect((await f.service.get(child, context))!.state).toBe('releasing')
     await expect(access(childWorkspace.path)).rejects.toThrow('ENOENT')
     request = conversation.submit(
       { type: 'input', content: 'resume child between removals' },

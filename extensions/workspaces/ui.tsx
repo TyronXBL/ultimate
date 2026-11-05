@@ -7,6 +7,7 @@ export { stateLabel, useWorkspaceConversations, useWorkspaceIndex, useWorkspaces
 export type { WorkspaceConversation } from './data.tsx'
 export { CommitCount, Open, Review, useGithubRepo } from './landing.tsx'
 export { Workspaces, useWorkspacesMeta } from './panel.tsx'
+export { lastLanded, released } from './state.ts'
 export {
   CheckRan,
   InfoAction,
