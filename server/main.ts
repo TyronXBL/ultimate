@@ -24,6 +24,8 @@ import { reportCore } from './supervisor-protocol.ts'
 import { viteLogger } from './vite-logger.ts'
 import type { Notice } from '../shared/protocol.ts'
 import { assertInstalled } from '../lib/packages.ts'
+import { shouldExitOnStorageFailure, stepCorePhase } from '../lib/supervisor.ts'
+import type { CorePhase } from '../lib/supervisor.ts'
 
 const send = (message: ChildMessage) => process.send?.(message)
 
@@ -292,7 +294,11 @@ if (process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.met
   let closing: Promise<void> | undefined
   // Every caller waits for the one close: under systemd the child gets SIGTERM and then the supervisor's `exit`, and
   // exiting on the second while the first still tears down (the Tailscale mapping) would cut it short.
-  const close = () => (closing ??= Promise.resolve(server?.close()))
+  let phase: CorePhase = 'prepared'
+  const close = () => {
+    phase = stepCorePhase(phase, 'close')
+    return (closing ??= Promise.resolve(server?.close()))
+  }
   const shutdown = () => {
     void close().then(
       () => process.exit(0),
@@ -307,9 +313,8 @@ if (process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.met
   if (process.env.ULTIMATE_SUPERVISED === '1' && process.send) {
     // While this core serves, a failed storage leaves it alive but unable to do anything: exit instead, so the
     // supervisor starts a fresh core and durable work resumes there, as after a crash.
-    let serving = false
     const storageFailed = () => {
-      if (!serving || closing) return
+      if (!shouldExitOnStorageFailure(phase)) return
       console.error('Storage failed: exiting so the supervisor starts a fresh core')
       process.exit(1)
     }
@@ -323,11 +328,11 @@ if (process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.met
         void (async () => {
           if (message.type === 'go' || message.type === 'reacquire') {
             await server!.go(message.type === 'reacquire' ? message.error : undefined)
-            serving = true
+            phase = stepCorePhase(phase, 'go')
             send({ type: 'ready' })
           }
           if (message.type === 'release') {
-            serving = false
+            phase = stepCorePhase(phase, 'release')
             await server!.release()
             send({ type: 'released' })
           }

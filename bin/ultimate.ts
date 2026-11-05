@@ -20,6 +20,13 @@ import type { CoreReport } from '../server/supervisor-protocol.ts'
 import { dashboard } from './dashboard.ts'
 import { exec } from '../lib/exec.ts'
 import { installOwed, installPackages } from '../lib/packages.ts'
+import {
+  initialSupervisorState,
+  routeMode,
+  servingCore,
+  stepSupervisor,
+} from '../lib/supervisor.ts'
+import type { SupervisorEvent } from '../lib/supervisor.ts'
 
 const ultimateRoot = resolvePath(fileURLToPath(new URL('..', import.meta.url)))
 const { values, positionals } = parseArgs({
@@ -106,11 +113,11 @@ if (lock.stale) {
 }
 const display = dashboard(join(home, 'supervisor.log'))
 process.on('exit', () => display.close())
-let active: Core | undefined
-let swapping = false
-let stopping = false
-let crashPage = false
-let failures = 0
+// The only writer of `state` is `step`; sockets are routed by `routeMode(state)`.
+let state = initialSupervisorState<Core>()
+const step = (event: SupervisorEvent<Core>) => (state = stepSupervisor(state, event))
+// Reads `state.kind` afresh after an await, which narrowing of `state` would otherwise freeze.
+const kind = () => state.kind
 let generation = 0
 let announced = false
 let stderr = ''
@@ -122,21 +129,22 @@ const escape = (text: string) =>
   text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 function route(socket: Socket) {
   if (socket.destroyed) return
-  if (active) {
-    const upstream = connect(active.port, '127.0.0.1')
+  const mode = routeMode(state)
+  if (mode.kind === 'active') {
+    const upstream = connect(mode.core.port, '127.0.0.1')
     upstream.on('error', () => socket.destroy())
     socket.on('error', () => upstream.destroy())
     socket.on('close', () => upstream.destroy())
     upstream.on('close', () => socket.destroy())
     socket.pipe(upstream).pipe(socket)
     socket.resume()
-  } else if (crashPage) {
+  } else if (mode.kind === 'crash') {
     let head = ''
     const expired = () => socket.destroy()
     socket.setTimeout(5000, expired)
     const receive = (chunk: Buffer) => {
       head += chunk.toString('latin1')
-      if (active || !crashPage) {
+      if (routeMode(state).kind !== 'crash') {
         socket.pause()
         socket.off('data', receive)
         socket.off('timeout', expired)
@@ -314,12 +322,12 @@ function boot(previousBuild?: BuildInfo): Core {
         display.log(message.level, `${message.source} · core ${core.generation}`, message.text)
       } else {
         core.reports.set(message.type, message)
-        if (core === active) display.report(message)
+        if (core === servingCore(state)) display.report(message)
       }
       return
     }
     if (message.type === 'swap') {
-      if (core === active)
+      if (core === servingCore(state))
         void swap(core, message.requestId, message.build).catch((error: unknown) =>
           display.log('error', 'supervisor', `Core swap failed: ${String(error)}`),
         )
@@ -329,8 +337,9 @@ function boot(previousBuild?: BuildInfo): Core {
   })
   child.on('exit', () => {
     children.delete(core)
-    if (core === active && !swapping && !stopping) {
-      active = undefined
+    const wasActive = state.kind === 'active' && state.core === core
+    step({ type: 'exited', core })
+    if (wasActive) {
       display.lifecycle('crashed')
       display.log('error', 'supervisor', `Core ${core.generation} exited unexpectedly`)
       void recover().catch((error: unknown) =>
@@ -343,7 +352,9 @@ function boot(previousBuild?: BuildInfo): Core {
 async function checkTypes() {
   display.lifecycle(
     'checking',
-    active ? { generation: active.generation, pid: active.child.pid } : undefined,
+    servingCore(state)
+      ? { generation: servingCore(state)!.generation, pid: servingCore(state)!.child.pid }
+      : undefined,
   )
   const child = spawn(
     join(ultimateRoot, 'node_modules/.bin/tsc'),
@@ -370,7 +381,9 @@ async function ensurePackages() {
   if (!(await installOwed(ultimateRoot))) return
   display.lifecycle(
     'installing',
-    active ? { generation: active.generation, pid: active.child.pid } : undefined,
+    servingCore(state)
+      ? { generation: servingCore(state)!.generation, pid: servingCore(state)!.child.pid }
+      : undefined,
   )
   const { stdout } = await exec('git', ['rev-parse', '--git-path', 'ultimate-update.lock'], {
     cwd: ultimateRoot,
@@ -403,15 +416,13 @@ async function prepare(core: Core) {
 async function start(core: Core) {
   send(core, { type: 'go' })
   await wait(core, 'ready')
-  if (stopping) {
+  if (kind() === 'stopping') {
     await kill(core)
     return
   }
-  active = core
+  step({ type: 'started', core })
   display.lifecycle('ready', { generation: core.generation, pid: core.child.pid })
   for (const report of core.reports.values()) display.report(report)
-  failures = 0
-  crashPage = false
   flush()
   if (!announced) {
     announced = true
@@ -420,7 +431,7 @@ async function start(core: Core) {
   }
 }
 async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
-  if (swapping) {
+  if (state.kind === 'swapping') {
     send(old, {
       type: 'swap-result',
       requestId,
@@ -429,7 +440,7 @@ async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
     })
     return
   }
-  swapping = true
+  step({ type: 'swap' })
   let next: Core | undefined
   let released = false
   try {
@@ -442,7 +453,7 @@ async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
     const acknowledgement = await ack
     if (acknowledgement.type === 'swap-ack' && !acknowledgement.ok)
       throw new Error(acknowledgement.error ?? 'Restart memo failed')
-    active = undefined
+    step({ type: 'released' })
     display.lifecycle('swapping')
     released = true
     const release = wait(old, 'released', undefined, 10000)
@@ -461,64 +472,58 @@ async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
       send(old, { type: 'reacquire', error: stderr })
       try {
         await wait(old, 'ready')
-        active = old
+        step({ type: 'started', core: old })
         display.lifecycle('ready', { generation: old.generation, pid: old.child.pid })
         for (const report of old.reports.values()) display.report(report)
         flush()
       } catch {
         await kill(old)
-        active = undefined
+        step({ type: 'released' })
       }
     }
   } finally {
-    swapping = false
-    if (active && (active.child.exitCode !== null || active.child.signalCode !== null))
-      active = undefined
-    if (active) {
-      display.lifecycle('ready', { generation: active.generation, pid: active.child.pid })
-      for (const report of active.reports.values()) display.report(report)
+    step({ type: 'swap ended' })
+    if (state.kind === 'active') {
+      display.lifecycle('ready', { generation: state.core.generation, pid: state.core.child.pid })
+      for (const report of state.core.reports.values()) display.report(report)
     }
-    if (!active && !stopping)
+    if (state.kind === 'down')
       void recover().catch((error: unknown) =>
         display.log('error', 'supervisor', `Core recovery failed: ${String(error)}`),
       )
   }
 }
-let recovering = false
 async function recover() {
-  if (recovering || stopping) return
-  recovering = true
-  try {
-    while (!active && failures < 3) {
-      display.lifecycle(failures ? 'recovering' : 'starting')
-      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** failures))
-      if (stopping) break
-      let core: Core | undefined
-      try {
-        await ensurePackages()
-        core = boot()
-        await prepare(core)
-        await start(core)
-      } catch (error) {
-        if (core) await kill(core)
-        stderr = tail(String(error) + '\n' + (core?.stderr ?? ''))
-        display.log('error', 'supervisor', stderr)
-        failures++
-      }
+  if (kind() !== 'down') return
+  step({ type: 'recover' })
+  for (;;) {
+    const current: typeof state = state
+    if (current.kind !== 'recovering' || current.failures >= 3) break
+    display.lifecycle(current.failures ? 'recovering' : 'starting')
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** current.failures))
+    if (kind() !== 'recovering') break
+    let core: Core | undefined
+    try {
+      await ensurePackages()
+      core = boot()
+      await prepare(core)
+      await start(core)
+    } catch (error) {
+      if (core) await kill(core)
+      stderr = tail(String(error) + '\n' + (core?.stderr ?? ''))
+      display.log('error', 'supervisor', stderr)
+      step({ type: 'boot failed' })
     }
-    if (!active && !stopping) {
-      crashPage = true
-      display.lifecycle('failed · waiting for changes')
-      flush()
-    }
-  } finally {
-    recovering = false
+  }
+  if (kind() === 'recovering') {
+    step({ type: 'parked' })
+    display.lifecycle('failed · waiting for changes')
+    flush()
   }
 }
 const retry = () => {
-  if (crashPage && !recovering && !stopping) {
-    failures = 0
-    crashPage = false
+  if (state.kind === 'crashed') {
+    step({ type: 'retry' })
     void recover().catch((error: unknown) =>
       display.log('error', 'supervisor', `Core recovery failed: ${String(error)}`),
     )
@@ -547,8 +552,8 @@ const watchConfig = () => {
 if (existsSync(projectConfig)) watchConfig()
 const stopRoots = watchRoots([projectConfig], watchConfig)
 async function shutdown() {
-  if (stopping) return
-  stopping = true
+  if (state.kind === 'stopping') return
+  step({ type: 'stop' })
   display.lifecycle('stopping')
   stopRoots()
   configWatcher?.close()
