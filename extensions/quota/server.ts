@@ -115,9 +115,13 @@ export default function quotaExtension(host: ExtensionHost) {
     },
   })
   host.implement(Resets, {
+    // Asked after a limit error that went around `afterResponse`: read again, a reading from before it may show room.
     // The limit is lifted once every exhausted window has reset.
     async resetsAt(provider) {
-      const reading = (await state(host, true)).providers.find((item) => item.provider === provider)
+      cacheStep(cached(current, provider), { type: 'answer', at: Date.now(), limited: true })
+      const reading = (await state(host, false)).providers.find(
+        (item) => item.provider === provider,
+      )
       const resets = (reading?.windows ?? []).flatMap((window) =>
         window.used >= 100 && window.resetsAt !== undefined ? [window.resetsAt] : [],
       )

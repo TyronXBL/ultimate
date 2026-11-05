@@ -211,15 +211,16 @@ async function ask(
   return result
 }
 
-/** A summary model that did not answer: why, and when its provider's limit resets when it says. */
-type Refused = { model: string; limit?: Limit; error: string; resetsAt?: number }
+/** A summary model that did not answer, and why. */
+type Refused = { model: ModelRef; limit?: Limit; error: string }
 
-const refusal = ({ model, limit, error, resetsAt }: Refused) => {
+/** One refusal as the failure names it, with when its provider's limit resets when that is known. */
+const refusal = ({ model, limit, error }: Refused, resetsAt: number | undefined) => {
   const until = resetsAt
     ? ` until ${new Date(resetsAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`
     : ''
   const why = error.length > 300 ? `${error.slice(0, 300)}…` : error
-  return `${model} (${limit ? `${limit}${until}: ` : ''}${why})`
+  return `${model.provider}/${model.modelId} (${limit ? `${limit}${until}: ` : ''}${why})`
 }
 
 /**
@@ -234,7 +235,6 @@ async function summarize(
   agent: { model: ModelRef; thinkingLevel?: ModelThinkingLevel },
   ctx: Context,
 ): Promise<{ summary: string } | { fail: string }> {
-  const name = (ref: ModelRef) => `${ref.provider}/${ref.modelId}`
   const text = (error: unknown) => (error instanceof Error ? error.message : String(error))
   const refused: Refused[] = []
   try {
@@ -242,7 +242,7 @@ async function summarize(
   } catch (error) {
     const limit = limitOf(text(error))
     if (!limit) throw error
-    refused.push({ model: name(agent.model), limit, error: text(error) })
+    refused.push({ model: agent.model, limit, error: text(error) })
   }
   const order =
     (await host.harness().commit((tx) => host.want(BackupOrder)?.order(tx, id), ctx)) ?? []
@@ -250,18 +250,20 @@ async function summarize(
     try {
       return { summary: await request(next, next.thinking) }
     } catch (error) {
-      refused.push({ model: name(next), limit: limitOf(text(error)), error: text(error) })
+      refused.push({ model: next, limit: limitOf(text(error)), error: text(error) })
     }
   }
   const resets = host.want(Resets)
-  for (const entry of refused) {
-    if (!entry.limit || !resets) continue
-    const provider = entry.model.slice(0, entry.model.indexOf('/'))
-    // Only the failure's wording loses the reset time; the failure itself stands.
-    entry.resetsAt = await resets.resetsAt(provider).catch(() => undefined)
-  }
+  const named = await Promise.all(
+    refused.map(async (entry) => {
+      if (!entry.limit || !resets) return refusal(entry, undefined)
+      // Only the failure's wording loses the reset time; the failure itself stands.
+      const at = await resets.resetsAt(entry.model.provider).catch(() => undefined)
+      return refusal(entry, at)
+    }),
+  )
   return {
-    fail: `No model could write the summary, so nothing was compacted or dropped: ${refused.map(refusal).join('; ')}. Resume once a limit resets, or pick another model.`,
+    fail: `No model could write the summary, so nothing was compacted or dropped: ${named.join('; ')}. Resume once a limit resets, or pick another model.`,
   }
 }
 

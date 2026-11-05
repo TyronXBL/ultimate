@@ -39,7 +39,10 @@ export type BackupOrderService = {
 export const BackupOrder = defineApi<BackupOrderService>()('models.backup-order')
 
 export type ResetsService = {
-  /** When `provider`'s exhausted usage limits reset (ms), as it reports; undefined when none is known exhausted. */
+  /**
+   * When `provider`'s exhausted usage limits reset (ms), as it reports now; undefined when none is exhausted. For a
+   * limit error just seen: it reads the provider's usage again.
+   */
   resetsAt(provider: string): Promise<number | undefined>
 }
 /** The extension point that says when a provider's usage limit resets. Quota provides it. */
