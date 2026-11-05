@@ -64,16 +64,25 @@ export async function fixture(onRequest?: (text: string, home: string) => Promis
       const text = textOf(last.content)
       requests.push(text)
       await onRequest?.(text, home)
-      if (last.role === 'user' && text.startsWith('BRANCH '))
-        return fauxAssistantMessage([fauxToolCall('branch', JSON.parse(text.slice(7)))], {
+      // Inputs queued while the agent was busy share one request, so a command need not be last: a branch's answer
+      // waking @ultimate came after the test's BRANCH input about 1 in 20 runs under load (#160482).
+      const pending: string[] = []
+      for (const message of transcript.messages.toReversed()) {
+        if (message.role === 'system') continue
+        if (message.role !== 'user') break
+        pending.push(textOf(message.content))
+      }
+      const command = pending.find((input) => /^(BRANCH|CODE|SEND) /.test(input))
+      if (command?.startsWith('BRANCH '))
+        return fauxAssistantMessage([fauxToolCall('branch', JSON.parse(command.slice(7)))], {
           stopReason: 'toolUse',
         })
-      if (last.role === 'user' && text.startsWith('CODE '))
-        return fauxAssistantMessage([fauxToolCall('codemode', { code: text.slice(5) })], {
+      if (command?.startsWith('CODE '))
+        return fauxAssistantMessage([fauxToolCall('codemode', { code: command.slice(5) })], {
           stopReason: 'toolUse',
         })
-      if (last.role === 'user' && text.startsWith('SEND '))
-        return fauxAssistantMessage([fauxToolCall('message', JSON.parse(text.slice(5)))], {
+      if (command?.startsWith('SEND '))
+        return fauxAssistantMessage([fauxToolCall('message', JSON.parse(command.slice(5)))], {
           stopReason: 'toolUse',
         })
       return fauxAssistantMessage(

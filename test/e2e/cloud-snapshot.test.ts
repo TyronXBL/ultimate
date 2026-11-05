@@ -102,7 +102,8 @@ beforeAll(async () => {
   progress = []
   manifest = await uploadSnapshot({
     ...remote,
-    machine: 'desk',
+    // Long enough that ~33 MB of ciphertext never contains it by chance: 'desk' did, about once in 130 runs (#160482).
+    machine: 'desk-workstation',
     database,
     repo: source,
     progress: (done, total, uploaded) => progress.push([done, total, uploaded]),
@@ -114,7 +115,7 @@ afterAll(() => {
 })
 
 it('round-trips the database and fetches branches without force, keeping conflicting ones aside', async () => {
-  expect(manifest).toMatchObject({ key, machine: 'desk', database: { chunks: 2 } })
+  expect(manifest).toMatchObject({ key, machine: 'desk-workstation', database: { chunks: 2 } })
   expect(manifest.bundle?.chunks).toBe(1)
   expect(await contentHash(database)).toBe(manifest.database.sha256)
   expect(progress.at(-1)).toEqual([
@@ -172,7 +173,7 @@ it('stores only ciphertext in R2', () => {
   )
   for (const bytes of stored.values()) {
     const text = Buffer.from(bytes)
-    for (const plain of ['SQLite format 3', 'git bundle', key, manifest.id, 'desk'])
+    for (const plain of ['SQLite format 3', 'git bundle', key, manifest.id, 'desk-workstation'])
       expect(text.includes(plain)).toBe(false)
     expect(() => JSON.parse(text.toString())).toThrow(SyntaxError)
   }
