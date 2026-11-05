@@ -45,6 +45,31 @@ export const LogoutAction = actionRef<{ provider: string }, null>('models', 'log
 export type Fallback = { from: string; to?: string; reason: 'same' | 'pin' | 'default' | 'none' }
 
 /**
+ * `models.owner`, on that conversation: who set its model. `default` it started on (also every conversation from
+ * before this record), `user` picked it, `login-fallback` switched off `from` (`provider/modelId`), which had no login
+ * here, for `reason`, and `login-wait` kept `from` without a login and asked the user once, over the owner it found
+ * (`under`), so the way back to it survives the wait. Only `ownerStep` (owner.ts) decides it.
+ */
+export type ModelOwner =
+  | OwnerBeforeWait
+  | { by: 'login-wait'; from: string; under: OwnerBeforeWait }
+type OwnerBeforeWait =
+  | { by: 'default' }
+  | { by: 'user' }
+  | { by: 'login-fallback'; from: string; reason: Exclude<Fallback['reason'], 'none'> }
+/** Who set the conversation's model, on that conversation; a conversation without it reads `default`. */
+export const ModelOwnerDoc = docRef<ModelOwner>('models.owner')
+
+/**
+ * `{ model, thinkingLevel? }` → null: the user picks the calling conversation's model; the level must suit the model,
+ * and without one the current level is clamped to it.
+ */
+export const PickAction = actionRef<
+  { model: { provider: string; modelId: string }; thinkingLevel?: ModelThinkingLevel },
+  null
+>('models', 'pick')
+
+/**
  * A login or logout of model provider `provider` completed through Ultimate; react to it to drop what you knew about
  * that provider's credentials (health resets its record to unknown).
  */

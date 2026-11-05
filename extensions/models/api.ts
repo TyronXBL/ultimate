@@ -5,7 +5,18 @@
 import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
 import type { FallbackModel } from '../../lib/agents.ts'
+import type { ModelEvent } from './owner.ts'
 export { LoginChanged } from './refs.ts'
+
+export type ModelsService = {
+  /**
+   * Inside `tx`, set conversation `id`'s model as `event` says and record who set it (`models.owner`): the one writer
+   * of both, so another extension sends an event instead of assigning `agent.model`.
+   */
+  setModel(tx: Tx, id: ConversationId, event: ModelEvent): Promise<void>
+}
+/** A conversation's model and who set it; models provides it. */
+export const ModelsApi = defineApi<ModelsService>()('models')
 export type PinService = {
   /**
    * The definition conversation `id` runs as, read inside `tx`: the model it pins and its ordered backup models;

@@ -20,6 +20,7 @@ import { UiState } from '../server/ui-state.ts'
 import { Metadata } from '../server/metadata.ts'
 import type { ConversationSummary, ServerEvents } from '../shared/protocol.ts'
 import { Logins } from '../extensions/models/server.ts'
+import { Owner } from '../extensions/models/set-model.ts'
 import { transition } from '../extensions/models/login-state.ts'
 import type { LoginEvent } from '../extensions/models/login-state.ts'
 import type { LoginPhase } from '../extensions/models/refs.ts'
@@ -954,6 +955,29 @@ export const actions = { list: async (_args, ctx) => ctx.host.conversations() }`
   ]
   it.each(loginMoves)('moves a login flow on %s', (_name, from, event, expected) => {
     expect(transition(from, event)).toEqual(expected)
+  })
+  it('records the picker’s model as the user’s choice, with Pi’s thinking rules', async () => {
+    const { server } = await fixture(false, {
+      models: `export { default, actions, docs, userActions } from ${JSON.stringify(resolvePath('extensions/models/server.ts'))}`,
+    })
+    // Pi's levels for this model: off, low, high.
+    Object.assign(server.host.faux!.models[0], {
+      reasoning: true,
+      thinkingLevelMap: { minimal: null, medium: null },
+    })
+    await server.root.configure({ thinkingLevel: 'medium' }, context)
+    const pick = (args: Record<string, unknown>) =>
+      post(server, '/api/extensions/models/actions/pick', { args, conversationId: 1 })
+    const model = { provider: 'faux', modelId: 'faux-1' }
+    expect((await pick({ model, thinkingLevel: 'max' })).status).not.toBe(200)
+    expect((await pick({ model: { provider: 'faux', modelId: 'none' } })).status).not.toBe(200)
+    expect(await server.harness.snapshot(Owner, 1 as ConversationId, context)).toBeUndefined()
+    // Without a level, the current one is clamped as Pi does: medium becomes high.
+    expect((await pick({ model })).status).toBe(200)
+    expect(await server.root.agent(context)).toMatchObject({ model, thinkingLevel: 'high' })
+    expect(await server.harness.snapshot(Owner, 1 as ConversationId, context)).toEqual({
+      by: 'user',
+    })
   })
   it('keeps a login completing while its facet reloads complete', async () => {
     const { server, options } = await fixture(false, {

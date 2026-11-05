@@ -4,13 +4,14 @@
  * `models.fallback` entry. A subscription never switches to a pay-per-token login: then nothing replaces it, the
  * conversation keeps its model and the entry asks the user. An availability Pi has not settled switches nothing.
  */
-import { clampThinkingLevel } from '@earendil-works/pi-ai'
 import { AgentDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, EntryDraft, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { configuredModel, familyDefault, hasLogin } from '../../lib/agents.ts'
 import { Pin } from './api.ts'
+import { waitsForLogin } from './owner.ts'
 import type { Fallback } from './refs.ts'
+import { Owner, setModel } from './set-model.ts'
 
 type Ref = { provider: string; modelId: string }
 const name = (ref: Ref) => `${ref.provider}/${ref.modelId}`
@@ -50,7 +51,7 @@ export async function fallback(
     (model) =>
       model.id === from.modelId && model.provider !== from.provider && allowed(model.provider),
   )
-  const candidates: [Ref | undefined, Fallback['reason']][] = [
+  const candidates: [Ref | undefined, Exclude<Fallback['reason'], 'none'>][] = [
     [same && { provider: same.provider, modelId: same.id }, 'same'],
     [(await host.want(Pin)?.definition(tx, conversationId))?.model, 'pin'],
     [configuredModel(fresh, host.settings, await familyDefault(host)), 'default'],
@@ -59,14 +60,16 @@ export async function fallback(
   const data: Fallback = found
     ? { from: name(from), to: name(found[0]!), reason: found[1] }
     : { from: name(from), reason: 'none' }
-  if (!found && (await alreadyAsked(tx, conversationId, data.from))) return undefined
-  if (found) {
-    const to = found[0]!
-    agent.model = { provider: to.provider, modelId: to.modelId }
-    const model = runtime.getModel(to.provider, to.modelId)
-    if (model && agent.thinkingLevel)
-      agent.thinkingLevel = clampThinkingLevel(model, agent.thinkingLevel)
-  }
+  // Each next input says it once.
+  if (!found && waitsForLogin(await tx.doc(Owner, conversationId)) === data.from) return undefined
+  await setModel(
+    host,
+    tx,
+    conversationId,
+    found
+      ? { type: 'login-fallback', from: data.from, to: found[0]!, reason: found[1] }
+      : { type: 'login-wait', from: data.from },
+  )
   const content = found
     ? `Model ${data.from} has no login here; this conversation now runs on ${data.to}.`
     : `Model ${data.from} has no login here and no subscription login can replace it, so this conversation keeps it until the user logs in to ${from.provider} or picks another model.`
@@ -104,17 +107,4 @@ function wasSubscription(host: ExtensionHost, provider: string) {
     !BILLED.has(provider) &&
     host.modelRuntime.getProvider(provider)?.auth.oauth?.isSubscription === true
   )
-}
-
-/** Whether this conversation's newest fallback entry already asks about `from`, so each next input says it once. */
-async function alreadyAsked(tx: Tx, conversationId: ConversationId, from: string) {
-  for (let page = await tx.scanEntries({ conversationId }, 200); ;) {
-    const entry = page.items.find((item) => item.kind === 'models.fallback')
-    if (entry) {
-      const data = entry.data as Fallback
-      return data.reason === 'none' && data.from === from
-    }
-    if (!page.next) return false
-    page = await tx.scanEntries({ conversationId }, 200, page.next)
-  }
 }

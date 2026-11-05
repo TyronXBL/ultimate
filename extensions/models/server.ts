@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { AuthEvent, AuthPrompt, AuthType } from '@earendil-works/pi-ai'
+import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import {
+  AgentDoc,
   defineDoc,
   defineExtension,
   GenerationTask,
@@ -11,7 +13,7 @@ import {
 import type { ConversationId, Cursor } from '@earendil-works/pi-durable'
 import type { ActionContext } from '../../server/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { LoginChanged } from './api.ts'
+import { LoginChanged, ModelsApi } from './api.ts'
 import { implementAction } from '../../lib/actions.ts'
 import type { ActionInput } from '../../lib/actions.ts'
 import {
@@ -21,6 +23,7 @@ import {
   LoginAction,
   LoginDoc,
   LogoutAction,
+  PickAction,
   SaveFamiliesAction,
 } from './refs.ts'
 import type { LoginPhase, SaveFamilies } from './refs.ts'
@@ -28,6 +31,7 @@ import { transition } from './login-state.ts'
 import type { LoginEvent } from './login-state.ts'
 import { familiesView, saveFamilies } from './families.ts'
 import { fallback } from './fallback.ts'
+import { Owner, setModel } from './set-model.ts'
 
 /** A Pi type as a document holds it: plain JSON, arrays mutable. */
 type Json<T> = T extends readonly (infer U)[]
@@ -78,7 +82,7 @@ export const Logins = defineDoc<{ flows: Record<string, LoginFlow> }>({
     return doc as unknown as { flows: Record<string, LoginFlow> }
   },
 })
-export const docs = [Logins]
+export const docs = [Logins, Owner]
 
 /** A running flow: process-local, so a flow the document shows running without one here died with its process. */
 interface Flow {
@@ -117,7 +121,7 @@ function running(host: ExtensionHost, args: ActionInput<{ flowId: string }>) {
 /** Prompts and events as plain JSON: a document holds no `undefined`. */
 const json = <T>(value: T): Json<T> => JSON.parse(JSON.stringify(value))
 
-export const userActions = ['login', 'answer', 'cancel', 'logout']
+export const userActions = ['pick', 'login', 'answer', 'cancel', 'logout']
 
 /**
  * Record that `provider`'s login changed: its recorded health is meaningless now, and health resets it to unknown
@@ -133,6 +137,38 @@ const loginChanged = async (host: ActionContext['host'], provider: string) =>
     })
 
 export const actions = {
+  /**
+   * The picker's choice of the calling conversation's model, recorded as the user's. As Pi does it: a requested level
+   * must suit the model, and without one the current level is clamped to it.
+   */
+  pick: implementAction(PickAction, async (args, { host, conversationId }) => {
+    const ref = field(args, 'model')
+    const provider = text(ref as ActionInput<{ provider: string }>, 'provider')
+    const modelId = text(ref as ActionInput<{ modelId: string }>, 'modelId')
+    const level = field(args, 'thinkingLevel')
+    const model = host.modelRuntime.getModel(provider, modelId)
+    if (
+      !model ||
+      !(await host.modelRuntime.getAvailable()).some(
+        (candidate) => candidate.provider === provider && candidate.id === modelId,
+      )
+    )
+      throw new Error('Model is not available')
+    const id = (conversationId ?? ROOT_CONVERSATION_ID) as ConversationId
+    await host.harness().commit(async (tx) => {
+      if (!(await tx.conversation(id))) throw new Error('Unknown conversation')
+      const thinkingLevel =
+        level === undefined
+          ? clampThinkingLevel(model, (await tx.doc(AgentDoc, id)).thinkingLevel ?? 'off')
+          : getSupportedThinkingLevels(model).find((supported) => supported === level)
+      if (!thinkingLevel)
+        throw new Error(
+          `${provider}/${modelId} does not support thinking level ${JSON.stringify(level)}`,
+        )
+      await setModel(host, tx, id, { type: 'pick', model: { provider, modelId }, thinkingLevel })
+    }, context)
+    return null
+  }),
   /** The families, and who runs on which, for the Agents panel. */
   families: implementAction(FamiliesAction, (_args, { host }) => familiesView(host)),
   /** Save the families: their models, the features' assignments; optionally move open conversations along. */
@@ -257,6 +293,7 @@ export const actions = {
 }
 
 export default function models(host: ExtensionHost) {
+  host.implement(ModelsApi, { setModel: (tx, id, event) => setModel(host, tx, id, event) })
   const live = liveFlows(host)
   // Each facet registers its own, so it reads Logins with this load's token: flows no live login drives (those of a
   // previous process) are marked cancelled.

@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
-import { api, cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
+import { cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
 import { familyTitle } from '../../lib/families.ts'
 import {
   agentsPanel,
@@ -156,7 +156,7 @@ export function ModelPicker() {
       return
     }
     setError(undefined)
-    selectModel(model, id).then(
+    selectModel({ provider: model.provider, modelId: model.id }, id).then(
       () => setOpen(false),
       (failure: unknown) => setError(errorMessage(failure)),
     )
@@ -170,13 +170,10 @@ export function ModelPicker() {
     if (loading) return
     if (model && !model.available) return choose(model)
     setError(undefined)
-    const level = thinkingOf(family)
-    api
-      .configure({ model: { provider, modelId }, ...(level ? { thinkingLevel: level } : {}) }, id)
-      .then(
-        () => setOpen(false),
-        (failure: unknown) => setError(errorMessage(failure)),
-      )
+    selectModel({ provider, modelId }, id, thinkingOf(family)).then(
+      () => setOpen(false),
+      (failure: unknown) => setError(errorMessage(failure)),
+    )
   }
 
   return (

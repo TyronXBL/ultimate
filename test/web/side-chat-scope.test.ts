@@ -140,6 +140,13 @@ const calls = () =>
   harness.fetch.mock.calls.flatMap(([url, init]) =>
     (url as string).endsWith('/configure') ? [[url as string, init?.body as string]] : [],
   )
+/** The picker's picks, `[conversationId, args]`: the user's choice goes through the models `pick` action. */
+const picks = (): [number, unknown][] =>
+  harness.fetch.mock.calls.flatMap(([url, init]) => {
+    if (!(url as string).endsWith('/extensions/models/actions/pick')) return []
+    const { conversationId, args } = JSON.parse(init?.body as string)
+    return [[conversationId, args]]
+  })
 const inScope = (id: number, children: ReactNode) => h(ConversationScope, { id, children })
 
 /** Renders `component`'s own output, for calling the handlers on it, inside whatever wraps `Capture`. */
@@ -192,11 +199,8 @@ it('points the model and thinking controls inside a scope at the scoped conversa
   renderToStaticMarkup(h(ModelPicker))
   harness.select.get('faux/main-model')!()
   await vi.advanceTimersByTimeAsync(10)
-  expect(calls().at(-1)).toEqual([
-    '/api/conversations/17/configure',
-    JSON.stringify({ model: { provider: 'faux', modelId: 'main-model' } }),
-  ])
-  expect(calls().some(([url]) => url === '/api/conversations/1/configure')).toBe(false)
+  expect(picks().at(-1)).toEqual([17, { model: { provider: 'faux', modelId: 'main-model' } }])
+  expect(picks().some(([id]) => id === 1)).toBe(false)
 
   // A login started from the side chat's picker comes back to it: "Pick a model" still configures the side chat.
   renderToStaticMarkup(h(ModelPicker))
@@ -206,8 +210,8 @@ it('points the model and thinking controls inside a scope at the scoped conversa
   renderToStaticMarkup(h(ModelPicker))
   harness.select.get('faux/side-model')!()
   await vi.advanceTimersByTimeAsync(10)
-  expect(calls().at(-1)?.[0]).toBe('/api/conversations/17/configure')
-  expect(calls().some(([url]) => url === '/api/conversations/1/configure')).toBe(false)
+  expect(picks().at(-1)?.[0]).toBe(17)
+  expect(picks().some(([id]) => id === 1)).toBe(false)
 
   // Shift+Tab typed in the side chat cycles its level; typed in main, main's.
   const cycle = models.commands!.find((command) => command.id === 'model.thinking.cycle')!
@@ -225,7 +229,7 @@ it('points the model and thinking controls inside a scope at the scoped conversa
   renderToStaticMarkup(h(ModelPicker))
   harness.select.get('faux/side-model')!()
   await vi.advanceTimersByTimeAsync(10)
-  expect(calls().at(-1)?.[0]).toBe('/api/conversations/1/configure')
+  expect(picks().at(-1)?.[0]).toBe(1)
 })
 
 it('makes main’s composer inert while a side chat is in front, with Back to main outside it', async () => {
