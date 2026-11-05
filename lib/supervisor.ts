@@ -3,7 +3,7 @@
 // derivations every reader uses. `T` is the supervisor's core handle, compared by identity.
 
 /**
- * - `down`: no core serves and nothing is booting (the start, or a core just lost); `failures` boots failed so far.
+ * - `down`: no core serves and nothing is booting (the start, or a core just lost).
  * - `recovering`: booting a core; after 3 failed boots it parks on the crash page.
  * - `active`: `core` serves.
  * - `swapping`: a core swap runs; `core` serves until the old one is released, none while it is, then the new or restored one.
@@ -11,8 +11,8 @@
  * - `stopping`: shutting down; nothing starts again.
  */
 export type SupervisorState<T> =
-  | { kind: 'down'; failures: number }
-  | { kind: 'recovering'; failures: number }
+  | { kind: 'down' }
+  | { kind: 'recovering'; failures: number } // boots failed so far
   | { kind: 'active'; core: T }
   | { kind: 'swapping'; core?: T }
   | { kind: 'crashed' }
@@ -36,7 +36,7 @@ export type SupervisorEvent<T> =
   | { type: 'exited'; core: T }
   | { type: 'stop' }
 
-export const initialSupervisorState = <T>(): SupervisorState<T> => ({ kind: 'down', failures: 0 })
+export const initialSupervisorState = <T>(): SupervisorState<T> => ({ kind: 'down' })
 
 /** The core serving sockets, if any. */
 export const servingCore = <T>(state: SupervisorState<T>) =>
@@ -61,13 +61,13 @@ export function stepSupervisor<T>(
     case 'stop':
       return { kind: 'stopping' }
     case 'recover':
-      return state.kind === 'down' ? { kind: 'recovering', failures: state.failures } : state
+      return state.kind === 'down' ? { kind: 'recovering', failures: 0 } : state
     case 'boot failed':
       return state.kind === 'recovering' ? { ...state, failures: state.failures + 1 } : state
     case 'parked':
       return state.kind === 'recovering' ? { kind: 'crashed' } : state
     case 'retry':
-      return state.kind === 'crashed' ? { kind: 'down', failures: 0 } : state
+      return state.kind === 'crashed' ? { kind: 'down' } : state
     case 'started':
       return state.kind === 'swapping'
         ? { kind: 'swapping', core: event.core }
@@ -80,12 +80,12 @@ export function stepSupervisor<T>(
       return state.kind === 'swapping' ? { kind: 'swapping' } : state
     case 'swap ended':
       if (state.kind !== 'swapping') return state
-      return state.core ? { kind: 'active', core: state.core } : { kind: 'down', failures: 0 }
+      return state.core ? { kind: 'active', core: state.core } : { kind: 'down' }
     case 'exited':
-    default:
-      if (servingCore(state) !== event.core) return state
-      return state.kind === 'swapping' ? { kind: 'swapping' } : { kind: 'down', failures: 0 }
+      break
   }
+  if (servingCore(state) !== event.core) return state
+  return state.kind === 'swapping' ? { kind: 'swapping' } : { kind: 'down' }
 }
 
 /** A core: `prepared` (storage open, not serving), `serving`, or `closing` (for good). */

@@ -10,7 +10,7 @@ import type { CorePhase, SupervisorEvent, SupervisorState } from '../lib/supervi
 
 type State = SupervisorState<string>
 type Event = SupervisorEvent<string>
-const DOWN: State = { kind: 'down', failures: 0 }
+const DOWN: State = { kind: 'down' }
 const RECOVERING = (failures: number): State => ({ kind: 'recovering', failures })
 const ACTIVE: State = { kind: 'active', core: 'a' }
 const SWAPPING: State = { kind: 'swapping', core: 'a' }
@@ -85,7 +85,6 @@ it.each<[string, State, ReturnType<typeof routeMode<string>>]>([
 it.each<[string, CorePhase, 'go' | 'release' | 'close', CorePhase, boolean]>([
   ['serves on go', 'prepared', 'go', 'serving', true],
   ['stops serving on release', 'serving', 'release', 'prepared', false],
-  ['serves again on reacquire', 'prepared', 'go', 'serving', true],
   ['closes while serving', 'serving', 'close', 'closing', false],
   ['closes while prepared', 'prepared', 'close', 'closing', false],
   // A storage failure while closing must not exit before the close finishes.

@@ -26,7 +26,7 @@ import {
   servingCore,
   stepSupervisor,
 } from '../lib/supervisor.ts'
-import type { SupervisorEvent } from '../lib/supervisor.ts'
+import type { SupervisorEvent, SupervisorState } from '../lib/supervisor.ts'
 
 const ultimateRoot = resolvePath(fileURLToPath(new URL('..', import.meta.url)))
 const { values, positionals } = parseArgs({
@@ -116,8 +116,8 @@ process.on('exit', () => display.close())
 // The only writer of `state` is `step`; sockets are routed by `routeMode(state)`.
 let state = initialSupervisorState<Core>()
 const step = (event: SupervisorEvent<Core>) => (state = stepSupervisor(state, event))
-// Reads `state.kind` afresh after an await, which narrowing of `state` would otherwise freeze.
-const kind = () => state.kind
+// Reads `state` afresh after an await, which narrowing of `state` would otherwise freeze.
+const current = (): SupervisorState<Core> => state
 let generation = 0
 let announced = false
 let stderr = ''
@@ -350,11 +350,10 @@ function boot(previousBuild?: BuildInfo): Core {
   return core
 }
 async function checkTypes() {
+  const serving = servingCore(state)
   display.lifecycle(
     'checking',
-    servingCore(state)
-      ? { generation: servingCore(state)!.generation, pid: servingCore(state)!.child.pid }
-      : undefined,
+    serving ? { generation: serving.generation, pid: serving.child.pid } : undefined,
   )
   const child = spawn(
     join(ultimateRoot, 'node_modules/.bin/tsc'),
@@ -379,11 +378,10 @@ async function checkTypes() {
  */
 async function ensurePackages() {
   if (!(await installOwed(ultimateRoot))) return
+  const serving = servingCore(state)
   display.lifecycle(
     'installing',
-    servingCore(state)
-      ? { generation: servingCore(state)!.generation, pid: servingCore(state)!.child.pid }
-      : undefined,
+    serving ? { generation: serving.generation, pid: serving.child.pid } : undefined,
   )
   const { stdout } = await exec('git', ['rev-parse', '--git-path', 'ultimate-update.lock'], {
     cwd: ultimateRoot,
@@ -416,7 +414,7 @@ async function prepare(core: Core) {
 async function start(core: Core) {
   send(core, { type: 'go' })
   await wait(core, 'ready')
-  if (kind() === 'stopping') {
+  if (current().kind === 'stopping') {
     await kill(core)
     return
   }
@@ -494,14 +492,14 @@ async function swap(old: Core, requestId: string, previousBuild?: BuildInfo) {
   }
 }
 async function recover() {
-  if (kind() !== 'down') return
+  if (current().kind !== 'down') return
   step({ type: 'recover' })
   for (;;) {
-    const current: typeof state = state
-    if (current.kind !== 'recovering' || current.failures >= 3) break
-    display.lifecycle(current.failures ? 'recovering' : 'starting')
-    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** current.failures))
-    if (kind() !== 'recovering') break
+    const attempt = current()
+    if (attempt.kind !== 'recovering' || attempt.failures >= 3) break
+    display.lifecycle(attempt.failures ? 'recovering' : 'starting')
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt.failures))
+    if (current().kind !== 'recovering') break
     let core: Core | undefined
     try {
       await ensurePackages()
@@ -515,7 +513,7 @@ async function recover() {
       step({ type: 'boot failed' })
     }
   }
-  if (kind() === 'recovering') {
+  if (current().kind === 'recovering') {
     step({ type: 'parked' })
     display.lifecycle('failed · waiting for changes')
     flush()
