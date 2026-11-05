@@ -54,6 +54,10 @@ export function AgentMessages() {
 const senderAgent = (origin: AgentOrigin, label?: string) =>
   label === 'agent' ? undefined : (label ?? (origin.kind === 'report' ? origin.agent : undefined))
 
+/** What an agent input is: an instruction, a report, or a report placed as a note, which woke nobody. */
+const originKind = (origin: AgentOrigin) =>
+  origin.kind === 'instruction' ? 'instruction' : origin.note ? 'note' : 'report'
+
 /** Who sent a message: a subagent by its agent name, a standing agent by its `@name`, a coordinator by its feature. */
 function Sender({ origin, label }: { origin: AgentOrigin; label?: string }) {
   const agent = senderAgent(origin, label)
@@ -75,9 +79,7 @@ export function AgentInput({ entry }: { entry: EntryRecord }) {
           <span className="flex min-w-0 truncate text-foreground/80">
             <Sender origin={origin} label={sender?.label} />
           </span>
-          <span className="shrink-0">
-            {origin.kind === 'instruction' ? 'instruction' : 'report'}
-          </span>
+          <span className="shrink-0">{originKind(origin)}</span>
         </>
       }
     >
@@ -90,7 +92,17 @@ export function AgentInput({ entry }: { entry: EntryRecord }) {
           <Provided input={origin?.sender} point={ConversationTask}>
             {(task) => task?.chip}
           </Provided>
-          <span>{origin.kind === 'instruction' ? 'instruction' : 'report'}</span>
+          <span
+            title={
+              origin.note === 'waiting'
+                ? 'A status update while it waited on its own job; it woke nobody'
+                : origin.note === 'concluded'
+                  ? 'Recorded while this conversation was concluded; it woke nobody'
+                  : undefined
+            }
+          >
+            {originKind(origin)}
+          </span>
           <button
             disabled={!sender}
             title={

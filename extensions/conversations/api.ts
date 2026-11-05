@@ -25,6 +25,11 @@ export type ConversationsService = {
   /** Read concluded conversations inside an existing transaction, including its pending changes. */
   concludedIn(tx: Tx): Promise<Set<ConversationId>>
   /**
+   * Inside `tx`, whether `id` or a conversation above it is concluded. Any run in `id` resumes them all, so a report
+   * for `id` goes in as a note instead.
+   */
+  concludedTreeIn(tx: Tx, id: ConversationId): Promise<boolean>
+  /**
    * Conclude top-level conversations `ids` inside `tx`, as the Conclude action does before it frees their resources
    * through `Release`; throws for unknown and owned conversations, roots and standing agents.
    */

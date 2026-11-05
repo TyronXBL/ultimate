@@ -268,20 +268,30 @@ function resumeIds(host: ExtensionHost, ids: ConversationId[]) {
   return host.harness().commit((tx) => resumeIn(tx, ids), context)
 }
 
+/** Add `id` and the conversations above it (owner, else parent) to `into`, stopping at one already there. */
+async function ancestry(tx: Tx, id: ConversationId, into = new Set<ConversationId>()) {
+  let current: ConversationId | undefined = id
+  while (current !== undefined && !into.has(current)) {
+    into.add(current)
+    const found = await tx.conversation(current)
+    if (!found) throw new Error(`Unknown conversation ${current}`)
+    current = found.owner?.conversationId ?? found.parent?.conversationId
+  }
+  return into
+}
+
 /** Removes `ids` and their ancestors from the concluded list inside `tx`; returns the ids it removed. */
 async function resumeIn(tx: Tx, ids: ConversationId[]) {
   const ancestors = new Set<ConversationId>()
-  for (const id of ids) {
-    let current: ConversationId | undefined = id
-    while (current !== undefined && !ancestors.has(current)) {
-      ancestors.add(current)
-      const found = await tx.conversation(current)
-      if (!found) throw new Error(`Unknown conversation ${current}`)
-      current = found.owner?.conversationId ?? found.parent?.conversationId
-    }
-  }
+  for (const id of ids) await ancestry(tx, id, ancestors)
   const ui = await tx.doc(UiState, ROOT_CONVERSATION_ID)
   return markResumed(ui, ancestors)
+}
+
+/** Whether `id` or a conversation above it is concluded, which a run in `id` would resume. */
+async function concludedTreeIn(tx: Tx, id: ConversationId) {
+  const concluded = await concludedIn(tx)
+  return [...(await ancestry(tx, id))].some((at) => concluded.has(at))
 }
 
 export async function subject(
@@ -315,6 +325,7 @@ export default (host: ExtensionHost) => {
     subject: (id, caller) => subject(host, id, caller),
     concludeIn: (tx, ids) => concludeIn(host, tx, ids),
     concludedIn,
+    concludedTreeIn,
     summaryModel: () => summaryModel(host),
     summaryModelStatus: () => summaryModelStatus(host),
     requestSummary: (tx, id, request, model) => requestSummary(tx, host, id, request, model),

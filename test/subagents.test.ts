@@ -16,6 +16,7 @@ import {
   AssistantEntry,
   configure,
   defineExtension,
+  defineTask,
   defineTool,
   InboxDoc,
   LiveDoc,
@@ -89,13 +90,18 @@ async function fixture(
   const onOpen: (() => Promise<void>)[] = []
   const onClose: (() => Promise<void>)[] = []
   const provided = new Map<string, unknown>()
+  // Methods a test gives the APIs subagents needs; every other one does nothing.
+  const stubs = new Map<string, Record<string, unknown>>()
   const backend = subagents({
     projectSettings: () => projectSettings(prepared.projectRoot, prepared.userHome),
     ...prepared,
     harness: () => opened!.harness,
     metadata: Metadata,
     implement: (api, value) => void provided.set(api.name, value),
-    need: idleNeed,
+    need: (api) =>
+      new Proxy(idleNeed(api) as object, {
+        get: (idle, key) => stubs.get(api.name)?.[key as string] ?? Reflect.get(idle, key),
+      }) as never,
     resource: (_key, create) => create(),
     extensions: () => [],
     notice: () => {},
@@ -254,6 +260,7 @@ async function fixture(
     userHome,
     errors,
     provided,
+    stubs,
     reopen: open,
   }
 }
@@ -1207,7 +1214,136 @@ describe('turns without an answer', () => {
     await resumed.harness.waitForIdle(context)
     expect(await reports(resumed)).toHaveLength(2)
   })
+  it('leaves a self-woken answer the open-time scan finds undelivered, however old', async () => {
+    const f = await fixture()
+    await call(f.opened, { action: 'start', agent: 'scout', task: 'Waiting', background: true })
+    await until(async () => (await reports(f.opened)).length === 1)
+    await f.opened.harness.waitForIdle(context)
+    const [child] = await children(f.opened)
+    // Answered with nobody watching, as every such answer before a004d79 was: only the scan on open sees it, and
+    // delivering them all at once on open was the bug.
+    await f.opened.close()
+    hosts.splice(hosts.indexOf(f.opened), 1)
+    const offline = await f.prepared.open()
+    hosts.push(offline)
+    await jobResult(offline, child.conversationId)
+    await offline.close()
+    hosts.splice(hosts.indexOf(offline), 1)
+    const resumed = await f.reopen()
+    // Reporters are background work, which idle waits leave out.
+    await until(async () =>
+      (await resumed.harness.inspect(context)).tasks.every(
+        ({ record }) =>
+          record.kind !== 'ultimate.subagent-reporter' || record.state.status === 'terminal',
+      ),
+    )
+    await resumed.harness.waitForIdle(context)
+    expect(await reports(resumed)).toHaveLength(1)
+  })
+  it('notes an answer given while the child’s own job runs, and reports the one its result wakes', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => (release = resolve))
+    // Stands in for the background extension's job: a live `background.run` task of the child's.
+    const Job = defineTask<null, { phase: 'run' }, null>({
+      name: 'background.run',
+      version: 1,
+      initial: () => ({ phase: 'run' }),
+      phases: {
+        run: async (_task, runtime, ctx) => {
+          await awaitWithContext(released, ctx)
+          await runtime.commit(
+            () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
+            ctx,
+          )
+        },
+      },
+      abort: (_task, runtime, ctx) =>
+        runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+    })
+    const f = await fixture(defineExtension({ name: 'jobs', tasks: [Job] }))
+    await call(f.opened, { action: 'start', agent: 'scout', task: 'Start', background: true })
+    await until(async () => (await reports(f.opened)).length === 1)
+    await f.opened.harness.waitForIdle(context)
+    const [child] = await children(f.opened)
+    await f.opened.harness.commit(
+      (tx) =>
+        tx.createTask(Job, null, {
+          conversationId: child.conversationId,
+          ownership: { kind: 'conversation' },
+          background: true,
+        }),
+      context,
+    )
+    const answers = await rootAnswers(f.opened)
+    await call(f.opened, {
+      action: 'message',
+      id: child.conversationId,
+      text: 'Waiting for the tests',
+    })
+    await until(async () => (await reports(f.opened)).length === 2)
+    await f.opened.harness.waitForIdle(context)
+    const [, note] = await reports(f.opened)
+    expect(note.data).toMatchObject({ note: 'waiting' })
+    expect(note.model?.[0]).toMatchObject({
+      content: expect.stringContaining('Child: Waiting for the tests'),
+    })
+    // The message call's own turn answered; the note started none.
+    expect(await rootAnswers(f.opened)).toBe(answers + 1)
+    release()
+    await until(async () =>
+      (await f.opened.harness.inspect(context)).tasks.every(
+        ({ record }) => record.kind !== 'background.run' || record.state.status === 'terminal',
+      ),
+    )
+    await jobResult(f.opened, child.conversationId)
+    await until(async () => (await reports(f.opened)).length === 3)
+    await f.opened.harness.waitForIdle(context)
+    const report = (await reports(f.opened))[2]
+    expect(report.data).not.toHaveProperty('note')
+    expect(await rootAnswers(f.opened)).toBe(answers + 2)
+  })
+  it('notes a late answer for a concluded parent without starting its run', async () => {
+    const f = await fixture()
+    await call(f.opened, { action: 'start', agent: 'scout', task: 'Waiting', background: true })
+    await until(async () => (await reports(f.opened)).length === 1)
+    await f.opened.harness.waitForIdle(context)
+    const [child] = await children(f.opened)
+    const answers = await rootAnswers(f.opened)
+    f.stubs.set('conversations', {
+      concludedTreeIn: async (_tx: unknown, id: number) => id === f.opened.root.id,
+    })
+    await jobResult(f.opened, child.conversationId)
+    await until(async () => (await reports(f.opened)).length === 2)
+    await f.opened.harness.waitForIdle(context)
+    expect((await reports(f.opened))[1].data).toMatchObject({ note: 'concluded' })
+    expect(await rootAnswers(f.opened)).toBe(answers)
+  })
 })
+
+/** What the background extension submits when the child's own job finishes after its turn ended. */
+async function jobResult(opened: OpenHost, child: ConversationId) {
+  await (
+    await (await opened.harness.conversation(child, context))!.submit(
+      {
+        type: 'input',
+        content: 'Job finished',
+        requestId: `background.result:${child}`,
+        whenBusy: 'steer',
+        entry: { kind: 'background.result', data: { command: 'pnpm test', exitCode: 0 } },
+      },
+      context,
+    )
+  ).wait(context)
+}
+/** How many answers the root has given: each is a run. */
+async function rootAnswers(opened: OpenHost) {
+  return (await opened.root.context(context)).entries.filter(
+    (entry) =>
+      entry.kind === 'pi.assistant' &&
+      entry.model?.[0]?.role === 'assistant' &&
+      (entry.model[0] as { stopReason?: string }).stopReason === 'stop',
+  ).length
+}
 
 function stopCaptureGate(f: Awaited<ReturnType<typeof gatedFixture>>) {
   const state = { ...gate(), entered: false, enabled: true }

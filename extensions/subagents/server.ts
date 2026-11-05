@@ -33,6 +33,7 @@ import type {
   TaskId,
   ToolExecutionApi,
   SubmissionRecord,
+  Tx,
 } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { Source } from '../../server/project.ts'
@@ -51,6 +52,7 @@ import type { AgentDefinition, DefinitionFields } from '../../lib/agents.ts'
 import { createChild, setupFor, started } from './children.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { exec } from '../../lib/exec.ts'
+import { awaitsJob, awaitsNotify } from '../../lib/jobs.ts'
 import { shortTitle } from '../../lib/title.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
@@ -150,7 +152,22 @@ const replyText = (id: ConversationId, message: AssistantMessage | undefined) =>
 const selfRequested = new Set(['background.result', 'ci.result', 'lineage.finished'])
 /** A provider error the watchdog holds: it retries or reports it, and its continuation answers the action. */
 const providerFailure = (reason: string) => reason === 'model_error' || reason === 'no_model'
-function createReporter() {
+/**
+ * How a child's answer or failure reaches its parent, decided in the commit that records it. A `report` is input that
+ * starts the parent's run. The others are notes, which start no run and resume nothing; the parent reads them with its
+ * next input: `waiting` while the child still waits on a background command, CI run or notify of its own (a status
+ * update: its final answer reports), `concluded` while the parent or a conversation above it is concluded.
+ */
+type Delivery = 'report' | 'waiting' | 'concluded'
+type DeliveryOf = (
+  tx: Tx,
+  parent: ConversationId,
+  child: ConversationId,
+  answer: boolean,
+) => Promise<Delivery>
+const noteText = (id: ConversationId, delivery: Delivery, report: string) =>
+  `Note from subagent ${id} (${delivery === 'waiting' ? 'a status update while it waits on its own job; its final answer reaches you as a report' : 'recorded while this conversation was concluded, so it did not wake it'}):\n${report}`
+function createReporter(deliveryOf: DeliveryOf) {
   return defineTask<
     {
       conversationId: ConversationId
@@ -158,8 +175,10 @@ function createReporter() {
       steer: boolean
       sourceEntry?: EntryId
       answer?: EntryId
+      delivery?: Delivery
     },
-    { phase: 'deliver' } | { phase: 'report'; report?: string; answer?: EntryId },
+    | { phase: 'deliver' }
+    | { phase: 'report'; report?: string; answer?: EntryId; delivery?: Delivery },
     null
   >({
     name: 'ultimate.subagent-reporter',
@@ -167,7 +186,12 @@ function createReporter() {
     initial: (input) =>
       input.answer === undefined
         ? { phase: 'deliver' }
-        : { phase: 'report', report: input.text, answer: input.answer },
+        : {
+            phase: 'report',
+            report: input.text,
+            answer: input.answer,
+            ...(input.delivery ? { delivery: input.delivery } : {}),
+          },
     phases: {
       deliver: async (task, runtime, context) => {
         try {
@@ -216,6 +240,7 @@ function createReporter() {
                   phase: 'report',
                   report: reportText(child.id, agent.agent, answer),
                   answer: settled.answer,
+                  delivery: await deliveryOf(tx, runtime.conversationId, child.id, true),
                 },
               }
             }
@@ -228,7 +253,14 @@ function createReporter() {
             }
             if (settled.status === 'unanswered' && settled.reason !== 'aborted') {
               const failure = settled.reason
-              return { status: 'running', checkpoint: { phase: 'report', report: failure } }
+              return {
+                status: 'running',
+                checkpoint: {
+                  phase: 'report',
+                  report: failure,
+                  delivery: await deliveryOf(tx, runtime.conversationId, child.id, false),
+                },
+              }
             }
             // A parent stop aborts this task before the input, so this abort came from the child's
             // own conversation: whatever answers its next input there still belongs to the parent.
@@ -249,13 +281,19 @@ function createReporter() {
               checkpoint: {
                 phase: 'report',
                 report: message,
+                delivery: await deliveryOf(
+                  tx,
+                  runtime.conversationId,
+                  task.input.conversationId,
+                  false,
+                ),
               },
             }
           }, context)
         }
       },
       report: async (task, runtime, context) => {
-        const { report, answer } = task.state.checkpoint
+        const { report, answer, delivery = 'report' } = task.state.checkpoint
         if (report !== undefined) {
           const parent = (await runtime.conversation(runtime.conversationId, context))!
           const agent = (await runtime.snapshot(Subagents, runtime.conversationId, context))!
@@ -272,30 +310,62 @@ function createReporter() {
               : failed
                 ? `Failed: ${unanswered(message)}`
                 : answerText(message)
-          await parent.submit(
-            {
-              type: 'input',
-              content:
-                answer === undefined
-                  ? `[subagent ${task.input.conversationId} failed: ${report}]`
-                  : report,
-              entry: {
-                kind: 'subagents.report',
-                data: {
-                  sender: task.input.conversationId,
-                  kind: 'report',
-                  agent,
-                  failed,
-                  body,
-                  ...(answer ? { entry: answer } : {}),
-                },
-              },
-              whenBusy: 'steer',
-              requestId:
-                answer === undefined ? `subagent-report:${task.id}` : answerRequest(answer),
+          const content =
+            answer === undefined
+              ? `[subagent ${task.input.conversationId} failed: ${report}]`
+              : report
+          const entry = {
+            kind: 'subagents.report',
+            data: {
+              sender: task.input.conversationId,
+              kind: 'report',
+              agent,
+              failed,
+              body,
+              ...(answer ? { entry: answer } : {}),
+              ...(delivery === 'report' ? {} : { note: delivery }),
             },
-            context,
-          )
+          }
+          const requestId =
+            answer === undefined ? `subagent-report:${task.id}` : answerRequest(answer)
+          if (delivery === 'report')
+            await parent.submit(
+              { type: 'input', content, entry, whenBusy: 'steer', requestId },
+              context,
+            )
+          else {
+            // A tool that returned this answer already recorded its request as an input: nothing left to note.
+            const delivered = async () => {
+              let found = false
+              await runtime.commit(async (tx) => {
+                found = (await tx.submissionByRequest(parent.id, requestId)) !== undefined
+              }, context)
+              return found
+            }
+            if (!(await delivered()))
+              await parent
+                .submit(
+                  {
+                    type: 'write',
+                    requestId,
+                    entry: {
+                      ...entry,
+                      model: [
+                        {
+                          role: 'user',
+                          content: noteText(task.input.conversationId, delivery, content),
+                          timestamp: Date.now(),
+                        },
+                      ],
+                    },
+                  },
+                  context,
+                )
+                .catch(async (error: unknown) => {
+                  // The tool recorded it between the check and this write, as an input of the same request.
+                  if (!(await delivered())) throw error
+                })
+          }
         }
         await runtime.commit(
           () => ({ status: 'terminal', outcome: { status: 'completed', result: null } }),
@@ -808,10 +878,17 @@ export default function subagents(
     }
     return { ...definition, runs }
   }
-  const Reporter = createReporter()
+  const deliveryOf: DeliveryOf = async (tx, parent, child, answer) => {
+    if (await host.need(ConversationsApi).concludedTreeIn(tx, parent)) return 'concluded'
+    return answer && ((await awaitsJob(tx, child)) || (await awaitsNotify(tx, child)))
+      ? 'waiting'
+      : 'report'
+  }
+  const Reporter = createReporter(deliveryOf)
   let unsubscribe: (() => void) | undefined
   let recovery = Promise.resolve()
-  const recover = async (submission: SubmissionRecord) => {
+  /** `live` as each submission settles; not on open, which scans every submission ever settled. */
+  const recover = async (submission: SubmissionRecord, live: boolean) => {
     if (
       submission.type !== 'input' ||
       submission.status !== 'done' ||
@@ -832,11 +909,12 @@ export default function subagents(
       // child requested itself (a background job, CI, a notify) that wakes it after it answered has
       // no reporter and no reply: without this, the answer it starts never reaches the parent,
       // which stays idle. A pending reporter whose input was answered in the same run delivers
-      // that answer itself.
+      // that answer itself. Self-requested results count only live: the scan on open would
+      // otherwise deliver every such answer ever given (hours or weeks old) at once.
       const input = await tx.entry(submission.entry)
       const message = input?.data as { from?: unknown; reply?: unknown } | undefined
       let messaged =
-        selfRequested.has(input?.kind ?? '') ||
+        (live && selfRequested.has(input?.kind ?? '')) ||
         (message?.from === parent &&
           ((input?.kind === 'board.message' && message.reply === false) ||
             input?.kind === 'board.reply'))
@@ -880,6 +958,7 @@ export default function subagents(
           text: reportText(submission.conversationId, agent.agent, answer),
           steer: false,
           answer: submission.answer,
+          delivery: await deliveryOf(tx, parent, submission.conversationId, true),
         },
         { conversationId: parent, ownership: { kind: 'conversation' }, background: true },
       )
@@ -905,7 +984,7 @@ export default function subagents(
       for (const change of publication.changes) {
         if (change.type !== 'submission') continue
         recovery = recovery
-          .then(() => recover(change.value))
+          .then(() => recover(change.value, true))
           .catch((error: unknown) => {
             host.notice(`Subagent answer recovery failed: ${String(error)}`)
           })
@@ -914,7 +993,7 @@ export default function subagents(
     let cursor: Cursor | undefined
     do {
       const page = await host.scanSubmissions({ status: 'done' }, 500, cursor, BACKGROUND_CONTEXT)
-      for (const submission of page.items) await recover(submission)
+      for (const submission of page.items) await recover(submission, false)
       cursor = page.next
     } while (cursor)
   })

@@ -15,31 +15,13 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { Subagents } from '../subagents/api.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
+import { awaitsJob, awaitsNotify, liveTasks as live } from '../../lib/jobs.ts'
 import { isOpen } from '../../lib/messages.ts'
 import { Messages } from './api.ts'
 import { terminal } from './log.ts'
 import { send } from './send.ts'
 import { Started } from './addresses.ts'
 
-/** Every task state but `terminal`: queried by status, so finished tasks are never scanned. */
-const LIVE = ['pending', 'running', 'waiting', 'sleeping', 'completing'] as const
-/** Live tasks of `kind` in `conversationId` (any conversation when undefined). */
-async function live(tx: Tx, kind: string, conversationId?: ConversationId) {
-  const found = []
-  for (const status of LIVE) {
-    let cursor: Parameters<Tx['scanTasks']>[2]
-    do {
-      const page = await tx.scanTasks(
-        { ...(conversationId === undefined ? {} : { conversationId }), kind, status },
-        100,
-        cursor,
-      )
-      found.push(...page.items)
-      cursor = page.next
-    } while (cursor !== undefined)
-  }
-  return found
-}
 /**
  * Whether `id` runs or has input queued, or one of its tasks will wake it: a subagent's report until its input is
  * admitted, or a waking `notify` on another conversation. Matched by kind, so messages needs neither extension.
@@ -47,16 +29,8 @@ async function live(tx: Tx, kind: string, conversationId?: ConversationId) {
 async function busy(tx: Tx, id: ConversationId) {
   if ((await tx.doc(LiveDoc, id)).run || (await tx.doc(InboxDoc, id)).items.length) return true
   if ((await live(tx, 'ultimate.subagent-reporter', id)).length) return true
-  return (await live(tx, 'lineage.notify', id)).some(
-    (task) => (task.input as { wake?: unknown }).wake !== false,
-  )
+  return awaitsNotify(tx, id)
 }
-/**
- * Jobs that deliver their result to the conversation that started them as input: a `background` command and a `ci`
- * run. Matched by kind, so messages needs neither extension. Each submits its result in its `deliver` phase before it
- * ends, so from then on the result counts (as input or a run), not the job: an answer in between still reports.
- */
-const JOBS = ['background.run', 'ci.run']
 /**
  * Whether branch `id` still has work under way that will wake it again: a run or queued input, a waking task, a
  * subagent at any depth that is busy, a background command or CI run of its own, a submission the lander has not
@@ -76,11 +50,9 @@ async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promis
       .checkpoint
     if (checkpoint?.phase === 'report' && checkpoint.conversationId === id) return true
   }
-  // Not part of `working`: a landing still concludes a branch that waits on a job, which stops the job.
-  for (const kind of JOBS)
-    for (const task of await live(tx, kind, id))
-      if ((task.state as { checkpoint?: { phase?: string } }).checkpoint?.phase !== 'deliver')
-        return true
+  // Not part of `working`: a landing still concludes a branch that waits on a job, which stops the job. A job in its
+  // `deliver` phase no longer counts: an answer in between still reports.
+  if (await awaitsJob(tx, id)) return true
   return working(tx, id)
 }
 /**
