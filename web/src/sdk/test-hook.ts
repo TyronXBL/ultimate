@@ -101,7 +101,7 @@ export function createTestHook(store: Store, api: Api) {
 
   return {
     /**
-     * The page's SDK client, for setting up state without clicking through the UI: `api.configure({model}, id)`,
+     * The page's SDK client, for setting up state without clicking through the UI: `api.configure({thinkingLevel}, id)`,
      * `api.abort(id)`, `api.compact(undefined, id)`, `api.action({extension: 'pause', name: 'play'}, null)`.
      */
     api,

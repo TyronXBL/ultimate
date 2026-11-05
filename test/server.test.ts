@@ -765,15 +765,15 @@ export default host => { host.resource('cleanup.process',()=>{
       const { status } = await post(server, '/api/conversations/1/configure', data)
       return { status, thinkingLevel: (await server.root.agent(context)).thinkingLevel }
     }
-    expect(
-      await configure({ model: { provider: 'faux', modelId: 'faux-1' }, thinkingLevel: 'high' }),
-    ).toEqual({ status: 200, thinkingLevel: 'high' })
+    expect(await configure({ thinkingLevel: 'high' })).toEqual({
+      status: 200,
+      thinkingLevel: 'high',
+    })
     for (const thinkingLevel of ['medium', 'max', 'bogus', 7])
       expect(await configure({ thinkingLevel })).toEqual({ status: 400, thinkingLevel: 'high' })
-    // A new model keeps a supported level and clamps another as Pi does: medium becomes high, not low.
-    await server.root.configure({ thinkingLevel: 'medium' }, context)
+    // The model is the models extension's to set, through its `pick` action, so its owner records who set it.
     expect(await configure({ model: { provider: 'faux', modelId: 'faux-1' } })).toEqual({
-      status: 200,
+      status: 400,
       thinkingLevel: 'high',
     })
     expect(await configure({ thinkingLevel: 'low' })).toEqual({ status: 200, thinkingLevel: 'low' })

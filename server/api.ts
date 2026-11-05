@@ -20,7 +20,7 @@ import type { createSystem } from './system.ts'
 import { requestSwap } from './supervisor-protocol.ts'
 import { UiState } from './ui-state.ts'
 import type { JsonValue } from '@earendil-works/chord'
-import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import { Metadata } from './metadata.ts'
 import { EVENT_LOG_LABEL, emit } from './events.ts'
 import { UserInputEvent } from '../shared/events.ts'
@@ -708,42 +708,23 @@ export async function createApi(
               break
             }
             case 'configure': {
+              // Who set a conversation's model is the models extension's to record: the picker's `pick` action sets it.
+              if (data.model !== undefined)
+                throw new HttpError(400, 'Set the model with the models pick action')
               const configure: ConfigureRequest = {}
-              if (data.model !== undefined) {
-                if (!data.model || typeof data.model !== 'object')
-                  throw new HttpError(400, 'Invalid model')
-                const model = data.model as Record<string, unknown>
-                const provider = text(model.provider, 'model.provider'),
-                  modelId = text(model.modelId, 'model.modelId')
-                if (
-                  !(await host.models()).some(
-                    (candidate) =>
-                      candidate.available &&
-                      candidate.provider === provider &&
-                      candidate.id === modelId,
-                  )
-                )
-                  throw new HttpError(400, 'Model is not available')
-                configure.model = { provider, modelId }
-              }
-              // Pi's policy: a requested level must suit the model; a new model clamps the current one.
-              if (data.thinkingLevel !== undefined || configure.model) {
-                const agent = await conversation.agent(context)
-                const ref = configure.model ?? agent.model
+              // Pi's policy: a requested level must suit the model.
+              if (data.thinkingLevel !== undefined) {
+                const ref = (await conversation.agent(context)).model
                 const model = ref && host.model(ref)
                 if (!model) throw new HttpError(400, 'No model to set a thinking level for')
-                if (data.thinkingLevel === undefined)
-                  configure.thinkingLevel = clampThinkingLevel(model, agent.thinkingLevel)
-                else {
-                  configure.thinkingLevel = getSupportedThinkingLevels(model).find(
-                    (level) => level === data.thinkingLevel,
+                configure.thinkingLevel = getSupportedThinkingLevels(model).find(
+                  (level) => level === data.thinkingLevel,
+                )
+                if (!configure.thinkingLevel)
+                  throw new HttpError(
+                    400,
+                    `${model.provider}/${model.id} does not support thinking level ${JSON.stringify(data.thinkingLevel)}`,
                   )
-                  if (!configure.thinkingLevel)
-                    throw new HttpError(
-                      400,
-                      `${model.provider}/${model.id} does not support thinking level ${JSON.stringify(data.thinkingLevel)}`,
-                    )
-                }
               }
               await conversation.configure(configure, context)
               json(200, { ok: true })

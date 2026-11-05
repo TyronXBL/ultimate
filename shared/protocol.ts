@@ -5,7 +5,6 @@ import type {
   ConversationView,
   EntryRecord,
   JsonObject,
-  ModelRef,
   TaskGraph,
 } from '@earendil-works/pi-durable'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
@@ -22,8 +21,8 @@ export interface SubmitRequest {
 export interface SubmitResponse {
   submissionId: number
 }
+/** A conversation's thinking level; its model is set through the models extension's `pick` action. */
 export interface ConfigureRequest {
-  model?: ModelRef
   thinkingLevel?: ModelThinkingLevel
 }
 /**
