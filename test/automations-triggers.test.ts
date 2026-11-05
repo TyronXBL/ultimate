@@ -17,6 +17,7 @@ import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
 import automations, { actions, Automations } from '../extensions/automations/server.ts'
 import type { Automation } from '../extensions/automations/types.ts'
+import { runConversation } from '../extensions/automations/state.ts'
 import { conditionLook, editCondition, step } from '../extensions/automations/condition.ts'
 import type { Condition } from '../extensions/automations/types.ts'
 import { IDLE_TICK } from '../extensions/automations/triggers.ts'
@@ -259,7 +260,7 @@ it('skips events from its own prompt runs, by trace or by the conversation they 
   })) as Automation
   await f.action('run', { id: own.id })
   await until(async () => (await f.record(own.id)).runs[0]?.status === 'done')
-  const run = (await f.record(own.id)).runs[0].conversationId!
+  const run = runConversation((await f.record(own.id)).runs[0])!
   // Pushed out of the bounded run history: ownership, not the history, says it is this automation's run.
   await f.harness.commit(async (tx) => {
     ;(await tx.doc(Automations)).automations[own.id].runs = []
@@ -305,8 +306,8 @@ it('fires multiple prompt automations for one event in the same transaction', as
       (await f.record(first.id)).runs[0]?.status === 'done' &&
       (await f.record(second.id)).runs[0]?.status === 'done',
   )
-  expect((await f.record(first.id)).runs[0].conversationId).not.toBe(
-    (await f.record(second.id)).runs[0].conversationId,
+  expect(runConversation((await f.record(first.id)).runs[0])).not.toBe(
+    runConversation((await f.record(second.id)).runs[0]),
   )
 })
 

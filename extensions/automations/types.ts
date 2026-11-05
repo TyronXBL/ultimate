@@ -1,5 +1,6 @@
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai'
-import type { TaskId, ConversationId } from '@earendil-works/pi-durable'
+import type { TaskId } from '@earendil-works/pi-durable'
+import type { Run } from './state.ts'
 
 export type TriggerEvent = { name: string; description: string; fields: Record<string, string> }
 /** The labels automations gives the conversations it creates: a prompt run's, and a script's watcher. */
@@ -29,14 +30,7 @@ export type Schedule =
   | { kind: 'cron'; expr: string; tz: string }
   | { kind: 'at'; time: string }
   | { kind: 'every'; ms: number }
-export type Run = {
-  id: string
-  firedAt: number
-  conversationId?: ConversationId
-  status: 'running' | 'done' | 'failed' | 'aborted' | 'skipped'
-  finishedAt?: number
-  answer?: string
-}
+export type { Run }
 /** A conversation an automation wakes: `#id` as a number, or a standing agent's `@name`, resolved at each delivery. */
 export type Subscriber = number | string
 export type Automation = {

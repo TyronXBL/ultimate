@@ -76,6 +76,7 @@ import {
 } from './refs.ts'
 import { RunLabel, WatcherLabel } from './types.ts'
 import type { Automation, AutomationListItem, Run, Schedule } from './refs.ts'
+import { hasRunningRun, isRunning, runConversation } from './state.ts'
 
 /**
  * Refetches when automation work changes: a scheduler, run or delivery task in the live task graph, or a run or watcher
@@ -192,11 +193,12 @@ const plain = (line: string) => line.replace(/^[\s#>*+-]+/, '').replace(/[*_`]+/
 /** One past run: status, fire time, the first line of its answer, and a way into its conversation. */
 function RunRow({ run, now }: { run: Run; now: number }) {
   const { conversationId, switchConversation } = useUltimate()
-  const conversation = useConversationSummary(run.conversationId)
-  const working = run.status === 'running'
-  const shown = run.conversationId !== undefined && run.conversationId === conversationId
+  const runConversationId = runConversation(run)
+  const conversation = useConversationSummary(runConversationId)
+  const working = isRunning(run)
+  const shown = runConversationId !== undefined && runConversationId === conversationId
   const took =
-    run.finishedAt !== undefined && run.status !== 'skipped'
+    run.status !== 'running' && run.status !== 'skipped'
       ? ` · took ${formatDuration(run.finishedAt - run.firedAt)}`
       : ''
   const line = working ? (
@@ -229,20 +231,20 @@ function RunRow({ run, now }: { run: Run; now: number }) {
       </span>
       <span
         className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground"
-        title={typeof line === 'string' ? line : run.answer}
+        title={typeof line === 'string' ? line : 'answer' in run ? run.answer : undefined}
       >
         {line}
       </span>
-      {run.conversationId !== undefined && (
+      {runConversationId !== undefined && (
         <Button
           className="h-5 shrink-0 gap-1 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-          onClick={() => switchConversation(run.conversationId!)}
+          onClick={() => switchConversation(runConversationId)}
           size="xs"
-          title={`Show the run's conversation #${run.conversationId}`}
+          title={`Show the run's conversation #${runConversationId}`}
           variant="ghost"
         >
           <SquareArrowOutUpRightIcon className="size-3" />
-          open #{run.conversationId}
+          open #{runConversationId}
         </Button>
       )}
     </li>
@@ -375,9 +377,9 @@ function AutomationRow({
   const afterMenu = useRef<() => void>(undefined)
   const script = automation.script
   const look = lookOf(automation, now)
-  const running = automation.runs.some((run) => run.status === 'running')
+  const running = hasRunningRun(automation.runs)
   const kept =
-    automation.runs.filter((run) => run.conversationId !== undefined).length + (script ? 1 : 0)
+    automation.runs.filter((run) => runConversation(run) !== undefined).length + (script ? 1 : 0)
   const runNow = () => {
     setBusy('run')
     if (!script) onExpand(true)
@@ -613,7 +615,7 @@ export function AutomationsPanel() {
     shown ||
     list.some(
       (automation) =>
-        automation.runs.some((run) => run.status === 'running') ||
+        hasRunningRun(automation.runs) ||
         (automation.nextAt !== undefined && automation.nextAt - Date.now() < 120000),
     )
   const now = useNow(soon ? 1000 : 15000)

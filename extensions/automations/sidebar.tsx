@@ -18,6 +18,7 @@ import {
   worstFirst,
 } from './parts.tsx'
 import type { Automation } from './refs.ts'
+import { isRunning, runConversation } from './state.ts'
 
 const FIRST = 5
 
@@ -101,8 +102,7 @@ function Row({ automation, now }: { automation: Automation; now: number }) {
   const look = lookOf(automation, now)
   const last = automation.runs.at(-1)
   // A run that is going or just failed is what the user wants to see; a script opens beside its watcher.
-  const run =
-    last && (last.status === 'running' || look === 'failed') ? last.conversationId : undefined
+  const run = last && (isRunning(last) || look === 'failed') ? runConversation(last) : undefined
   return (
     <button
       className="group/row mx-2 flex h-7 min-w-0 cursor-pointer pointer-coarse:h-10 items-center gap-2 rounded-md pr-2 pl-2.5 text-left outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"

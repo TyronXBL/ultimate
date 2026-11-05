@@ -47,6 +47,7 @@
     "extensions/quota/chip.ts",
     "extensions/goal/state.ts",
     "extensions/automations/condition.ts",
+    "extensions/automations/state.ts",
     "extensions/theme/palette.ts",
     "extensions/theme/fonts.ts",
     "extensions/sounds/tones.ts",

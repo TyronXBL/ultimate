@@ -8,13 +8,15 @@ import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { afterEach, expect, it, vi } from 'vitest'
 import { obj } from '@earendil-works/pi-schema'
 import { defineDoc, defineExtension, defineTool, configure } from '@earendil-works/pi-durable'
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable'
+import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable'
 import { context, prepareHarness } from '../server/harness.ts'
 import type { OpenHost } from '../server/harness.ts'
 import { Metadata } from '../server/metadata.ts'
 import { Profile } from '../extensions/subagents/api.ts'
 import automations, { actions, Automations } from '../extensions/automations/server.ts'
 import type { Automation } from '../extensions/automations/server.ts'
+import { runConversation, runStep } from '../extensions/automations/state.ts'
+import type { Run, RunEvent } from '../extensions/automations/state.ts'
 import type { ActionContext } from '../server/actions.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { createChild } from '../extensions/subagents/children.ts'
@@ -163,10 +165,10 @@ it('fires every 2s into distinct answered conversations and supports pause, resu
   )
   await f.action('pause', { id: a.id })
   const runs = (await f.records())[0].runs
-  expect(new Set(runs.map((r) => r.conversationId)).size).toBe(runs.length)
+  expect(new Set(runs.map(runConversation)).size).toBe(runs.length)
   for (const run of runs) {
-    expect(run.answer).toBe('Answer: Scheduled report')
-    const child = (await f.opened.harness.conversation(run.conversationId!, context))!
+    expect(run).toMatchObject({ answer: 'Answer: Scheduled report' })
+    const child = (await f.opened.harness.conversation(runConversation(run)!, context))!
     const view = await child.context(context)
     expect(
       view.entries.some(
@@ -188,7 +190,7 @@ it('fires every 2s into distinct answered conversations and supports pause, resu
   }, 3500)
   await f.action('delete', { id: a.id })
   expect(await f.records()).toEqual([])
-  expect(await f.opened.harness.conversation(runs[0].conversationId!, context)).toBeDefined()
+  expect(await f.opened.harness.conversation(runConversation(runs[0])!, context)).toBeDefined()
 })
 
 it('fires a subscriber-only schedule without creating a run conversation', async () => {
@@ -235,7 +237,7 @@ it('pause keeps a running profile run alive, skips overlap, and abort cancels a 
   })) as Automation
   await until(f.held)
   const run = (await f.records())[0].runs[0]
-  const child = (await f.opened.harness.conversation(run.conversationId!, context))!
+  const child = (await f.opened.harness.conversation(runConversation(run)!, context))!
   const agent = await child.agent(context)
   expect(agent.tools.map((t) => t.name)).toEqual(['hold'])
   expect(agent.instructions).toBe('Only write the report.')
@@ -251,7 +253,7 @@ it('pause keeps a running profile run alive, skips overlap, and abort cancels a 
   await f.opened.harness.waitForTask(Number(run.id) as TaskId, context)
   const manual = (await f.action('run', { id: a.id })) as { id: string }
   expect(manual.id).not.toMatch(/^skipped:/)
-  await until(async () => !!(await f.records())[0].runs.at(-1)?.conversationId)
+  await until(async () => !!runConversation((await f.records())[0].runs.at(-1)!))
   await f.action('abort', { id: a.id, runId: manual.id })
   await until(async () => (await f.records())[0].runs.at(-1)?.status === 'aborted')
   await expect(f.action('update', { id: a.id, agent: 'missing' })).rejects.toThrow('Unknown agent')
@@ -306,7 +308,9 @@ it('fails removed profiles clearly and requires the subagents extension', async 
   await f.removeProfile()
   await f.action('run', { id: a.id })
   await until(async () => (await f.records())[0].runs[0]?.status === 'failed')
-  expect((await f.records())[0].runs[0].answer).toContain('Unknown agent: writer')
+  expect((await f.records())[0].runs[0]).toMatchObject({
+    answer: expect.stringContaining('Unknown agent: writer'),
+  })
   await f.action('pause', { id: a.id })
   f.disableDependency()
   await expect(f.action('list')).rejects.toThrow(
@@ -478,4 +482,90 @@ it('preserves the next interval fire on rename, even when the same schedule is s
   expect(reordered.nextAt).toBe(a.nextAt)
   const changed = (await f.action('update', { id: a.id, schedule: 'every 2d' })) as Automation
   expect(changed.nextAt).toBeGreaterThan(a.nextAt!)
+})
+
+const conversation = 7 as ConversationId
+const running: Run = { status: 'running', id: '1', firedAt: 100 }
+const done: Run = { status: 'done', id: '2', firedAt: 50, finishedAt: 60 }
+const many = (n: number): Run[] =>
+  Array.from({ length: n }, (_, i) => ({ ...done, id: `old${i}`, firedAt: i }))
+
+it.each<[string, Run[], RunEvent, Run[]]>([
+  ['start adds a running run', [], { type: 'start', id: '1', firedAt: 100 }, [running]],
+  [
+    'a fire while a run is going is recorded as skipped, with no conversation or end',
+    [running],
+    { type: 'skip', firedAt: 200 },
+    [running, { status: 'skipped', id: 'skipped:200', firedAt: 200 }],
+  ],
+  [
+    'attach gives the going run its conversation',
+    [running],
+    { type: 'attach', id: '1', conversationId: conversation },
+    [{ ...running, conversationId: conversation }],
+  ],
+  [
+    'attach to a finished run changes nothing',
+    [done],
+    { type: 'attach', id: '2', conversationId: conversation },
+    [done],
+  ],
+  [
+    'finish done keeps the conversation and adds the end and the answer cut to its first 200 characters',
+    [{ ...running, conversationId: conversation }],
+    {
+      type: 'finish',
+      id: '1',
+      status: 'done',
+      finishedAt: 150,
+      answer: ` ${'a'.repeat(300)}\nmore`,
+    },
+    [
+      {
+        ...running,
+        conversationId: conversation,
+        status: 'done',
+        finishedAt: 150,
+        answer: 'a'.repeat(200),
+      },
+    ],
+  ],
+  [
+    'finish failed carries the error',
+    [running],
+    { type: 'finish', id: '1', status: 'failed', finishedAt: 150, answer: 'Error: boom' },
+    [{ ...running, status: 'failed', finishedAt: 150, answer: 'Error: boom' }],
+  ],
+  [
+    'finish aborted has no answer',
+    [running],
+    { type: 'finish', id: '1', status: 'aborted', finishedAt: 150 },
+    [{ ...running, status: 'aborted', finishedAt: 150 }],
+  ],
+  [
+    'a finished run is not finished again (an abort after the answer keeps it done)',
+    [done],
+    { type: 'finish', id: '2', status: 'aborted', finishedAt: 99 },
+    [done],
+  ],
+  [
+    'finishing an unknown run changes nothing',
+    [running],
+    { type: 'finish', id: 'gone', status: 'done', finishedAt: 150 },
+    [running],
+  ],
+  [
+    'the 51st run trims the oldest',
+    many(50),
+    { type: 'start', id: 'new', firedAt: 999 },
+    [...many(50).slice(1), { status: 'running', id: 'new', firedAt: 999 }],
+  ],
+  [
+    'a skipped run trims the oldest too',
+    many(50),
+    { type: 'skip', firedAt: 999 },
+    [...many(50).slice(1), { status: 'skipped', id: 'skipped:999', firedAt: 999 }],
+  ],
+])('runStep: %s', (_, runs, event, expected) => {
+  expect(runStep(runs, event)).toEqual(expected)
 })

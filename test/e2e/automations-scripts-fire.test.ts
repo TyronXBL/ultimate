@@ -7,6 +7,7 @@ import type { JsonValue } from '@earendil-works/chord'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { Messages } from '../../extensions/messages/api.ts'
 import { Automations } from '../../extensions/automations/server.ts'
+import { runConversation } from '../../extensions/automations/state.ts'
 import type { Automation } from '../../extensions/automations/types.ts'
 import { context } from '../../server/harness.ts'
 import { fauxServer, until } from '../helpers.ts'
@@ -37,10 +38,10 @@ it('starts a prompt run from script FIRE with its payload', async () => {
   await writeRun(folder(a.id), 'echo FIRE hello')
   await call(app, 'resume', a.id)
   const record = async () => (await app.harness.snapshot(Automations, context))!.automations[a.id]
-  await until(async () => !!(await record()).runs[0]?.finishedAt)
+  await until(async () => (await record()).runs[0]?.status !== 'running')
   const run = (await record()).runs[0]
   expect(run.status).toBe('done')
-  const child = (await app.harness.conversation(run.conversationId!, context))!
+  const child = (await app.harness.conversation(runConversation(run)!, context))!
   const entries = (await child.context(context)).entries.filter(
     (e) => e.conversationId === child.id,
   )

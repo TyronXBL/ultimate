@@ -62,6 +62,7 @@ import {
 import { editCondition } from './condition.ts'
 import { describeSchedule, nextAt, parseSchedule } from './schedule.ts'
 import { scheduler } from './scheduler.ts'
+import { isRunning } from './state.ts'
 import { triggers, TRIGGER_EVENTS, describeTrigger } from './triggers.ts'
 import { supervisor } from './supervisor.ts'
 import type { Prepared } from './supervisor.ts'
@@ -597,7 +598,7 @@ function backend(host: ExtensionHost) {
       return { result: await schedule.fire(tx, a, Date.now()) }
     if (args.action === 'abort') {
       const run = a.runs.find((r) => r.id === args.runId)
-      if (!run || run.status !== 'running') throw new Error('runId must identify a running run')
+      if (!run || !isRunning(run)) throw new Error('runId must identify a running run')
       return { result: { id: run.id }, abort: Number(run.id) as TaskId }
     }
     if (

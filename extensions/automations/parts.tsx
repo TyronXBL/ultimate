@@ -13,6 +13,7 @@ import type { ReactNode } from 'react'
 import { api, cn, formatDuration, formatTime, useUltimate } from '@/sdk'
 import { conditionLook } from './condition.ts'
 import { ListAction } from './refs.ts'
+import { isRunning, runEndedAt } from './state.ts'
 import type { Automation, AutomationListItem, Run, Schedule } from './refs.ts'
 
 /** A one-shot schedule whose time has passed: resuming it would fire at once, so its switch stays off. */
@@ -143,11 +144,11 @@ export const looks: Record<
 export function lookOf(automation: Automation, now: number): Look {
   const state = automation.script?.state
   if (state === 'failed' || state === 'investigating' || state === 'writing') return state
-  const last = automation.runs.at(-1)?.status
-  if (last === 'running') return 'working'
+  const last = automation.runs.at(-1)
+  if (isRunning(last)) return 'working'
   // A failed run of a paused automation was already dealt with by pausing it; a fired one-shot script is disabled by
   // its fire, not by anyone, so its failed run still needs attention.
-  if (last === 'failed' && (automation.enabled || state === 'done')) return 'failed'
+  if (last?.status === 'failed' && (automation.enabled || state === 'done')) return 'failed'
   if (state === 'running') return 'watching'
   if (state === 'done') return 'done'
   if (automation.enabled) {
@@ -250,7 +251,7 @@ export function stateLine(automation: Automation, now: number): string {
     parts.push(
       script?.state === 'failed'
         ? (script.error ?? 'the script failed')
-        : `last run failed ${last ? ago(last.finishedAt ?? last.firedAt, now) : ''}`,
+        : `last run failed ${last ? ago(runEndedAt(last), now) : ''}`,
     )
   else if (look === 'investigating') parts.push('the watcher is repairing the script')
   else if (look === 'writing') parts.push('the watcher is writing the script')
@@ -263,12 +264,11 @@ export function stateLine(automation: Automation, now: number): string {
     parts.push(
       automation.nextAt !== undefined ? `next ${until(automation.nextAt, now)}` : 'scheduling…',
     )
-    if (last) parts.push(`${statusLabel(last.status)} ${ago(last.finishedAt ?? last.firedAt, now)}`)
+    if (last) parts.push(`${statusLabel(last.status)} ${ago(runEndedAt(last), now)}`)
   } else {
     // The state word already stands before this line: add only what happened.
     if (script) parts.push(fired(automation, now) ?? 'never fired')
-    else if (last)
-      parts.push(`last ${statusLabel(last.status)} ${ago(last.finishedAt ?? last.firedAt, now)}`)
+    else if (last) parts.push(`last ${statusLabel(last.status)} ${ago(runEndedAt(last), now)}`)
   }
   return parts.filter(Boolean).join(' · ')
 }

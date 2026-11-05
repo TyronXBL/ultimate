@@ -9,7 +9,9 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { SubagentsApi } from '../subagents/api.ts'
 import { discoverAgents, hostDefaultModel } from '../../lib/agents.ts'
 import { nextAt } from './schedule.ts'
-import type { Automation, Run } from './types.ts'
+import type { Automation } from './types.ts'
+import { hasRunningRun, runStep } from './state.ts'
+import type { RunEvent } from './state.ts'
 import { RUN_TASK } from './types.ts'
 import type { Automations as Ledger } from './server.ts'
 import { Escalated, Fired } from './refs.ts'
@@ -73,22 +75,23 @@ export function scheduler(
               model: a.model,
               thinking: a.thinking,
             })
-            const run = (await tx.doc(Automations)).automations[a.id]?.runs.find(
-              (r) => r.id === String(task.id),
-            )
-            if (run) run.conversationId = child.id
+            step(await tx.doc(Automations), a.id, {
+              type: 'attach',
+              id: String(task.id),
+              conversationId: child.id,
+            })
             return { status: 'running', checkpoint: { phase: 'deliver', conversationId: child.id } }
           }, context)
         } catch (error) {
           if (runtime.signal.aborted) throw error
           await runtime.commit(async (tx) => {
-            finish(
-              await tx.doc(Automations),
-              task.input.automation.id,
-              String(task.id),
-              'failed',
-              String(error),
-            )
+            step(await tx.doc(Automations), task.input.automation.id, {
+              type: 'finish',
+              id: String(task.id),
+              status: 'failed',
+              finishedAt: Date.now(),
+              answer: String(error),
+            })
             return terminal
           }, context)
         }
@@ -118,29 +121,30 @@ export function scheduler(
               answer?.role === 'assistant'
                 ? answer.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('')
                 : undefined
-            finish(
-              await tx.doc(Automations),
-              task.input.automation.id,
-              String(task.id),
-              result.status === 'done'
-                ? 'done'
-                : result.status === 'unanswered' && result.reason === 'aborted'
-                  ? 'aborted'
-                  : 'failed',
-              text,
-            )
+            step(await tx.doc(Automations), task.input.automation.id, {
+              type: 'finish',
+              id: String(task.id),
+              status:
+                result.status === 'done'
+                  ? 'done'
+                  : result.status === 'unanswered' && result.reason === 'aborted'
+                    ? 'aborted'
+                    : 'failed',
+              finishedAt: Date.now(),
+              answer: text,
+            })
             return terminal
           }, context)
         } catch (error) {
           if (runtime.signal.aborted) throw error
           await runtime.commit(async (tx) => {
-            finish(
-              await tx.doc(Automations),
-              task.input.automation.id,
-              String(task.id),
-              'failed',
-              String(error),
-            )
+            step(await tx.doc(Automations), task.input.automation.id, {
+              type: 'finish',
+              id: String(task.id),
+              status: 'failed',
+              finishedAt: Date.now(),
+              answer: String(error),
+            })
             return terminal
           }, context)
         }
@@ -148,7 +152,12 @@ export function scheduler(
     },
     abort: (task, runtime, context) =>
       runtime.commit(async (tx) => {
-        finish(await tx.doc(Automations), task.input.automation.id, String(task.id), 'aborted')
+        step(await tx.doc(Automations), task.input.automation.id, {
+          type: 'finish',
+          id: String(task.id),
+          status: 'aborted',
+          finishedAt: Date.now(),
+        })
         return { status: 'terminal', outcome: { status: 'aborted' } }
       }, context),
   })
@@ -199,9 +208,8 @@ export function scheduler(
     return ids
   }
   async function fireRun(tx: Tx, a: Automation, firedAt: number, text: string) {
-    const running = a.runs.some((r) => r.status === 'running') || (await prepareFires(tx)).has(a.id)
-    if (running) {
-      a.runs.push({ id: `skipped:${firedAt}`, firedAt, finishedAt: firedAt, status: 'skipped' })
+    if (hasRunningRun(a.runs) || (await prepareFires(tx)).has(a.id)) {
+      a.runs = runStep(a.runs, { type: 'skip', firedAt })
     } else {
       const id = await tx.createTask(
         RunTask,
@@ -213,9 +221,8 @@ export function scheduler(
         owner,
       )
       activeRuns.get(tx)!.add(a.id)
-      a.runs.push({ id: String(id), firedAt, status: 'running' })
+      a.runs = runStep(a.runs, { type: 'start', id: String(id), firedAt })
     }
-    a.runs = a.runs.slice(-50)
     return a.runs.at(-1)!
   }
   const Scheduler = defineTask<
@@ -267,17 +274,7 @@ export function scheduler(
 
   return { RunTask, Scheduler, fire, prepareFires }
 }
-function finish(
-  state: { automations: Record<string, Automation> },
-  id: string,
-  runId: string,
-  status: Run['status'],
-  answer?: string,
-) {
-  const run = state.automations[id]?.runs.find((r) => r.id === runId)
-  if (run) {
-    run.status = status
-    run.finishedAt = Date.now()
-    if (answer !== undefined) run.answer = answer.trim().split('\n')[0].slice(0, 200)
-  }
+function step(state: { automations: Record<string, Automation> }, id: string, event: RunEvent) {
+  const a = state.automations[id]
+  if (a) a.runs = runStep(a.runs, event)
 }
