@@ -110,7 +110,11 @@ it('keeps listing and supervising scripts after a reload bumps the ledger versio
   const source = await readFile(file, 'utf8')
   const loaded = () => app.extensions.info().find((e) => e.name === 'automations')!.server!.loadedAt
   const previous = loaded()
-  const bumped = source.replace('  version: 3,\n  scope: ', '  version: 4,\n  scope: ')
+  // Whatever version the ledger is at, one more.
+  const bumped = source.replace(
+    /  version: (\d+),\n  scope: /,
+    (_line, version: string) => `  version: ${Number(version) + 1},\n  scope: `,
+  )
   expect(bumped).not.toBe(source)
   // One reload, from the emit below: the real watcher's event for the same write could arrive after it and reload
   // again while the test's resume is launching, which fails that launch as the supervisor closes.
@@ -123,7 +127,7 @@ it('keeps listing and supervising scripts after a reload bumps the ledger versio
     const now = await get()
     return now.alive && now.script!.pid !== before.script!.pid
   })
-  // The new token migrates the ledger to version 4 on its next write; the supervisor must use it too.
+  // The new token migrates the ledger to the next version on its next write; the supervisor must use it too.
   await call(app, 'pause', sub.id)
   await until(async () => !!(await get()).script!.exitedAt)
   expect(await get()).toMatchObject({ enabled: false, script: { state: 'stopped' } })
