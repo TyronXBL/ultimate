@@ -26,6 +26,7 @@ it('kills a browser that drops its connection and keeps running, without a notic
     onClose: (close: () => Promise<void>) => closers.push(close),
     notice: (message: string) => notices.push(message),
     system: () => ({ process: { url: 'http://127.0.0.1:1/' } }),
+    implement() {},
   } as unknown as ExtensionHost
   const screenshot = browserExtension(host).tools!.find((tool) => tool.name === 'screenshot')!
   const api = { output() {} } as unknown as ToolExecutionApi

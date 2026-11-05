@@ -98,24 +98,38 @@ async function setup() {
   return { server, branch, other, asked, browser }
 }
 
-/** How far a card's top sits below the strip's bottom, once both show. */
+/**
+ * How far a card's top sits below the pinned strips' bottom, once the card and the prompt strip show. This fork's
+ * `transcript.top` also holds the pinned user turn (`extensions/pinned-turn`), which shows below the prompt strip while
+ * the view reads up through an answer; the card belongs below whichever strip is lowest.
+ */
 const gap = (page: Page, id: number) =>
   page.evaluate((message) => {
     const card = document.querySelector(`[data-message-outgoing="${message}"]`)
-    const strip = document.querySelector('[data-ui="pinned-prompt"]')
-    return card && strip
-      ? card.getBoundingClientRect().top - strip.getBoundingClientRect().bottom
+    const strips = [
+      ...document.querySelectorAll('[data-ui="pinned-prompt"], [data-pinned-turn]'),
+    ].map((strip) => strip.getBoundingClientRect().bottom)
+    return card && document.querySelector('[data-ui="pinned-prompt"]')
+      ? card.getBoundingClientRect().top - Math.max(...strips)
       : Number.NaN
   }, id)
 
+const top = (page: Page, id: number) =>
+  page.evaluate(
+    (message) =>
+      document.querySelector(`[data-message-outgoing="${message}"]`)!.getBoundingClientRect().top,
+    id,
+  )
+
 /**
- * How far a revealed card settles from the strip plus the bubble's own top margin, which should be the only space
- * between them, and stay so.
+ * Once a revealed card settles below the strips, with only the bubble's own top margin between them, how far it moves
+ * after. The pinned turn hides when the reveal reaches the end of the transcript; the card stays where it settled.
  */
 async function drift(page: Page, id: number) {
   await until(async () => Math.abs((await gap(page, id)) - 8) < 4, 10_000)
+  const settled = await top(page, id)
   await page.waitForTimeout(500)
-  return Math.abs((await gap(page, id)) - 8)
+  return Math.abs((await top(page, id)) - settled)
 }
 
 it('brings the question card to the top of the view below the pinned strip', async () => {
