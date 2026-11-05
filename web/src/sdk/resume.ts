@@ -14,14 +14,75 @@ const deadline = 8000
  */
 const settle = 700
 const quiet = 120
-let covering = shown !== null
-/** The app has rendered: there is a view worth resuming. */
-let ready = false
+
+/**
+ * Where the cover is. `covering`: the previous view hides the app, which has not rendered. `settling`: it has, and
+ * the cover waits for it to go quiet. `fading`: the cover fades out. `fadingUnrendered`: the same, after the
+ * deadline gave up on an app that never rendered. Without a cover the page is `loading` or, rendered, `ready`.
+ */
+export type Cover =
+  | { phase: 'loading' }
+  | { phase: 'ready' }
+  | { phase: 'covering'; node: HTMLElement }
+  | { phase: 'settling'; node: HTMLElement }
+  | { phase: 'fading'; node: HTMLElement }
+  | { phase: 'fadingUnrendered'; node: HTMLElement }
+
+/** `quiet`: the app stopped changing; `settled`: the settle cap passed; `faded`: the fade ended. */
+type Event = 'rendered' | 'quiet' | 'settled' | 'deadline' | 'faded' | 'pagehide'
+
+/** The only writer of the cover's phase: what `event` does in `state` (nothing, when it does not apply). */
+export function step(state: Cover, event: Event): Cover {
+  switch (state.phase) {
+    case 'loading':
+      return event === 'rendered' ? { phase: 'ready' } : state
+    case 'ready':
+      return state
+    case 'covering':
+      return event === 'rendered'
+        ? { phase: 'settling', node: state.node }
+        : event === 'deadline'
+          ? { phase: 'fadingUnrendered', node: state.node }
+          : state
+    case 'settling':
+      return event === 'quiet' || event === 'settled' || event === 'deadline'
+        ? { phase: 'fading', node: state.node }
+        : state
+    case 'fading':
+      return event === 'faded' ? { phase: 'ready' } : state
+    case 'fadingUnrendered':
+      return event === 'rendered'
+        ? { phase: 'fading', node: state.node }
+        : event === 'faded'
+          ? { phase: 'loading' }
+          : state
+    default:
+      return state satisfies never
+  }
+}
+
+let state: Cover = shown ? { phase: 'covering', node: shown } : { phase: 'loading' }
+/** Ends the watch on the app, while `settling`. */
+let stopWatching = () => {}
 
 /** True when this page load painted the previous page's view: a reload, not a fresh start. */
 export const resumed = shown !== null
 /** True while the previous page's view still covers the app. */
-export const covered = () => covering
+export const covered = () => state.phase === 'covering' || state.phase === 'settling'
+
+const fading = (cover: Cover): cover is Extract<Cover, { node: HTMLElement }> =>
+  cover.phase === 'fading' || cover.phase === 'fadingUnrendered'
+
+/** Applies `event`, then does what entering or leaving a phase takes. */
+function send(event: Event) {
+  const before = state
+  state = step(before, event)
+  if (event === 'pagehide') return store(state)
+  if (before.phase === 'settling' && state.phase !== 'settling') stopWatching()
+  if (state.phase === 'settling' && before.phase !== 'settling') stopWatching = watch()
+  if (fading(state) && !fading(before)) fade(state.node)
+  if (fading(before) && !fading(state)) before.node.remove()
+}
 
 /**
  * What `node` shows, for the stored view: elements on screen as they are, each off screen as a blank of its size, so
@@ -48,19 +109,29 @@ function copy(node: Node): Node {
   return view
 }
 
+/** The page goes away: stores what the next load resumes from, or nothing when it should start fresh. */
+function store(cover: Cover) {
+  switch (cover.phase) {
+    // Going away again before the app rendered: the previous view is still the one to show, stored as it came.
+    case 'covering':
+    case 'settling': {
+      const stored = sessionStorage.getItem(key)
+      if (stored)
+        sessionStorage.setItem(key, JSON.stringify({ ...JSON.parse(stored), at: Date.now() }))
+      return
+    }
+    // Still loading, under the splash: the next load starts fresh too.
+    case 'loading':
+    case 'fadingUnrendered':
+      sessionStorage.removeItem(key)
+      return
+    case 'ready':
+    case 'fading':
+      capture()
+  }
+}
+
 function capture() {
-  // Going away again before the app rendered: the previous view is still the one to show, stored as it came.
-  if (covering) {
-    const stored = sessionStorage.getItem(key)
-    if (stored)
-      sessionStorage.setItem(key, JSON.stringify({ ...JSON.parse(stored), at: Date.now() }))
-    return
-  }
-  // Still loading, under the splash: the next load starts fresh too.
-  if (!ready) {
-    sessionStorage.removeItem(key)
-    return
-  }
   const view = document.createElement('div')
   for (const element of document.body.children) {
     if (element.tagName === 'SCRIPT' || element === shown) continue
@@ -80,48 +151,44 @@ function capture() {
 }
 
 /** Crossfades the previous view out over the app beneath, which shows the same page by now. */
-function uncover() {
-  if (!shown || !covering) return
-  covering = false
+function fade(node: HTMLElement) {
   sessionStorage.removeItem(key)
-  if (document.hidden) shown.remove()
+  if (document.hidden) send('faded')
   else
-    void shown
+    void node
       .animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out' })
       // Cancellation also ends the cover; do not leave its rejected finished promise floating.
       .finished.then(
-        () => shown.remove(),
-        () => shown.remove(),
+        () => send('faded'),
+        () => send('faded'),
       )
 }
 
 /**
- * The app has rendered: a reload from here resumes it, and the previous view uncovers it once it has settled, when
- * nothing in it was added, removed or scrolled for `quiet` ms (such as the transcript sticking to its bottom as code
- * blocks highlight) or after `settle` ms.
+ * Watches the app until it has settled: nothing in it was added, removed or scrolled for `quiet` ms (such as the
+ * transcript sticking to its bottom as code blocks highlight) or `settle` ms passed. Returns how to stop.
  */
-export function rendered() {
-  if (ready) return
-  ready = true
-  if (!covering) return
+function watch() {
   const app = document.getElementById('app')!
-  let timer = setTimeout(done, quiet)
+  let timer = setTimeout(() => send('quiet'), quiet)
   const wait = () => {
     clearTimeout(timer)
-    timer = setTimeout(done, quiet)
+    timer = setTimeout(() => send('quiet'), quiet)
   }
   const changes = new MutationObserver(wait)
   changes.observe(app, { subtree: true, childList: true })
   addEventListener('scroll', wait, true)
-  const cap = setTimeout(done, settle)
-  function done() {
+  const cap = setTimeout(() => send('settled'), settle)
+  return () => {
     changes.disconnect()
     removeEventListener('scroll', wait, true)
     clearTimeout(timer)
     clearTimeout(cap)
-    uncover()
   }
 }
 
-addEventListener('pagehide', capture)
-if (shown) setTimeout(uncover, deadline)
+/** The app has rendered: a reload from here resumes it, and the previous view uncovers it once it has settled. */
+export const rendered = () => send('rendered')
+
+addEventListener('pagehide', () => send('pagehide'))
+if (shown) setTimeout(() => send('deadline'), deadline)
