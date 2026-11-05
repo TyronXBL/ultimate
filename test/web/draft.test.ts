@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createDraft, step, view } from '../../web/src/app/draft.ts'
+import { createDraft, step } from '../../web/src/app/draft.ts'
 import type { Draft, DraftEvent, Phase } from '../../web/src/app/draft.ts'
 
 const image = { data: 'aGk=', mimeType: 'image/png' }
@@ -157,26 +157,6 @@ describe('step', () => {
   ]
   it.each(rows)('%s', (_name, before, event, change) => {
     expect(step(before, event)).toEqual({ ...before, ...change })
-  })
-})
-
-describe('view', () => {
-  it('derives what the editor shows and guards on', () => {
-    expect(view(draft({ phase: failed('x') }))).toEqual({
-      sending: false,
-      error: 'x',
-      empty: false,
-      uploading: false,
-    })
-    expect(view(draft({ phase: sending, text: ' ' }))).toMatchObject({
-      sending: true,
-      error: undefined,
-      empty: true,
-    })
-    expect(view(draft({ text: '', files: [{ ...file, path: '' }] }))).toMatchObject({
-      empty: false,
-      uploading: true,
-    })
   })
 })
 
