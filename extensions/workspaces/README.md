@@ -10,7 +10,7 @@ folder is `empty`; once the project can be isolated, it stands the lander if the
 without a restart. `setupGit` makes an empty folder isolatable (`git init` where needed, then an empty first commit) and
 refuses a folder with files, whose first commit is a judgement for an agent; onboarding's Git card offers both.
 
-Each conversation has one record in the root `ultimate.workspaces` document.
+Each conversation has one record in the root `ultimate.workspaces` document. Its typed lifecycle is `preparing` → `ready` or `failed`; a release moves it to `releasing` (removal owed), then `removed`, or back to `ready` if work must be kept. `workspaceStep` in `state.ts` is the sole writer; `reconcileWorkspace` derives the event from the record and checkout facts on disk, so a later `ready()` or release finishes interrupted removal. `released` and `lastLanded` are the shared reader derivations.
 Its path is `<home>/worktrees/<conversationId>`; its branch includes the home hash and conversation ID.
 Where checkouts live and how they are made can be configured in the project's settings, for repositories whose
 tooling owns worktrees: company-internal monorepo tooling that must create and register each tree, a Git setup that

@@ -36,7 +36,7 @@ import {
 } from '@/sdk'
 import type { ToolCallView } from '@/sdk'
 import { ConversationTask } from '../conversations/ui.tsx'
-import { stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
+import { lastLanded, stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
 import type { Workspace as Isolate, LandResult } from '../workspaces/types.ts'
 import { agentsPanel } from '../models/ui.tsx'
 import { DefinitionDialog } from './definitions.tsx'
@@ -57,6 +57,7 @@ function BusyDot({ className }: { className?: string }) {
 
 function StateTag({ isolate }: { isolate: Isolate }) {
   if (isolate.state === 'ready') return null
+  const landed = lastLanded(isolate)
   return (
     <Tag
       className={cn(
@@ -64,7 +65,7 @@ function StateTag({ isolate }: { isolate: Isolate }) {
         isolate.state === 'failed' ? 'border-error/40 text-error' : 'text-muted-foreground/70',
       )}
     >
-      <span title={isolate.landed ? `Last landed ${isolate.landed.slice(0, 7)}` : undefined}>
+      <span title={landed ? `Last landed ${landed.slice(0, 7)}` : undefined}>
         {stateLabel(isolate)}
       </span>
     </Tag>

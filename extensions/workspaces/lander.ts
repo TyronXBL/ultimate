@@ -25,6 +25,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionLanded } from './api.ts'
 import { advance, type QueueEvent } from './queue.ts'
 import { setup, setupCommands } from './setup.ts'
+import { advanceWorkspace } from './state.ts'
 import { failedTests, failingTests } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
 import type { Landed, LanderEntry, LanderOutcome, QueueEntry, WorkspaceIndex } from './types.ts'
@@ -452,7 +453,11 @@ export function createLander(
             const draft = await tx.doc(Workspaces, ROOT_CONVERSATION_ID)
             const steps = draft.queue.find((item) => item.id === id)!.steps
             draft.queue = draft.queue.filter((item) => item.id !== id)
-            if (outcome.sha) draft.items[String(entry.conversationId)].landed = outcome.sha
+            if (outcome.sha)
+              advanceWorkspace(draft.items, entry.conversationId, {
+                type: 'landed',
+                sha: outcome.sha,
+              })
             draft.results[id] = {
               ...outcome,
               at: entry.at,
@@ -892,7 +897,10 @@ export function createLander(
             const saved = advance(draft.queue, id, { type: 'landed', landed: candidate })
             // A copy: the draft is gone once the commit settles.
             landed = copyJson(saved.landed) as Landed
-            draft.items[String(entry.conversationId)].landed = integrated
+            advanceWorkspace(draft.items, entry.conversationId, {
+              type: 'landed',
+              sha: integrated,
+            })
           }, context)
           return await landedReport(settings, landed, integrated)
         } catch (error) {

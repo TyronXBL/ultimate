@@ -80,7 +80,7 @@ async function ranges(host: ExtensionHost): Promise<ReviewRange[]> {
   const titles = new Map(host.conversations().map((item) => [item.id, item.title]))
   const owner = new Map(
     items
-      .filter(([, item]) => item.state !== 'removed')
+      .filter(([, item]) => !host.need(WorkspacesApi).released(item))
       .map(([id, item]) => [item.branch, Number(id)]),
   )
   const [branches, commits, landings] = await Promise.all([

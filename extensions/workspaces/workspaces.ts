@@ -29,9 +29,12 @@ import {
 } from './tree.ts'
 import { contains, createLander, landerCheckout, landerPath, log } from './lander.ts'
 import { advance, newQueueEntry } from './queue.ts'
+import { advanceWorkspace, lastLanded, reconcileWorkspace, released } from './state.ts'
+import type { CheckoutFacts } from './state.ts'
 import type {
   LandResult,
   SubmitResult,
+  Workspace,
   WorkspaceIndex,
   WorkspaceDisk,
   WorkspaceInfo,
@@ -42,14 +45,15 @@ import type { KeptWork } from '../conversations/types.ts'
 export const Workspaces = defineDoc<WorkspaceIndex>({
   kind: WorkspacesDoc.kind,
   checkpointWhen: () => false,
-  version: 4,
+  version: 5,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({ items: {}, queue: [], landers: {}, landerConversations: {}, results: {} }),
   migrate: (value, from) => {
+    let index = value as WorkspaceIndex
     if (from < 3)
-      return {
+      index = {
         ...(from < 2
           ? { items: (value as Pick<WorkspaceIndex, 'items'>).items, queue: [], landers: {} }
           : (value as Pick<WorkspaceIndex, 'items' | 'queue' | 'landers'>)),
@@ -57,19 +61,45 @@ export const Workspaces = defineDoc<WorkspaceIndex>({
         results: {},
       }
     // Version 4 records each submission's steps; earlier ones start without.
-    const index = value as WorkspaceIndex
+    else if (from < 4)
+      index = {
+        ...index,
+        queue: index.queue.map((item) => ({ ...item, steps: [] })),
+        results: Object.fromEntries(
+          Object.entries(index.results).map(([id, result]) => [
+            id,
+            { ...result, tip: id.split('-')[1], steps: [] },
+          ]),
+        ),
+      }
+    // Version 5 stores each record with only its state's fields.
     return {
       ...index,
-      queue: index.queue.map((item) => ({ ...item, steps: [] })),
-      results: Object.fromEntries(
-        Object.entries(index.results).map(([id, result]) => [
-          id,
-          { ...result, tip: id.split('-')[1], steps: [] },
-        ]),
+      items: Object.fromEntries(
+        Object.entries(index.items).map(([id, item]) => [id, storedWorkspace(item)]),
       ),
     }
   },
 })
+/** A record of version 4 or earlier, which carried `error` and `landed` in any state, with only its state's fields. */
+function storedWorkspace(item: Workspace & { error?: string; landed?: string }): Workspace {
+  const { state, error, landed, path, branch, base, source, target } = item
+  const checkout = { path, branch, base, source, target }
+  const kept = { ...(landed ? { landed } : {}), ...(error ? { error } : {}) }
+  switch (state) {
+    case 'preparing':
+      return { ...checkout, state }
+    case 'failed':
+      return { ...checkout, state, error: error ?? '' }
+    case 'ready':
+    case 'removed':
+      return { ...checkout, state, ...kept }
+    case 'releasing':
+      return { ...checkout, state, ...(landed ? { landed } : {}) }
+    default:
+      return state satisfies never
+  }
+}
 /**
  * Lander tasks started by this version of the code. A reload that changes it imports this module anew with an empty
  * set, so a fault of a task outside it is the previous code's.
@@ -394,8 +424,13 @@ export function workspaces(host: Host) {
             runtime.signal,
           )
           await runtime.commit(async (tx) => {
-            ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(task.input.id)].state =
-              'ready'
+            advanceWorkspace(
+              (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items,
+              task.input.id,
+              {
+                type: 'prepared',
+              },
+            )
             return { status: 'terminal', outcome: { status: 'completed', result: null } }
           }, context)
         } catch (error) {
@@ -430,11 +465,14 @@ export function workspaces(host: Host) {
             }
           })
           await runtime.commit(async (tx) => {
-            const saved = (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[
-              String(task.input.id)
-            ]
-            saved.state = 'failed'
-            saved.error = (error instanceof Error ? error.message : String(error)).slice(-4000)
+            advanceWorkspace(
+              (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items,
+              task.input.id,
+              {
+                type: 'failed',
+                error: (error instanceof Error ? error.message : String(error)).slice(-4000),
+              },
+            )
             return { status: 'terminal', outcome: { status: 'completed', result: null } }
           }, context)
         }
@@ -442,9 +480,10 @@ export function workspaces(host: Host) {
     },
     abort: (task, runtime, context) =>
       runtime.commit(async (tx) => {
-        const saved = (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(task.input.id)]
-        saved.state = 'failed'
-        saved.error = 'Workspace preparation aborted'
+        advanceWorkspace((await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items, task.input.id, {
+          type: 'failed',
+          error: 'Workspace preparation aborted',
+        })
         return { status: 'terminal', outcome: { status: 'aborted' } }
       }, context),
   })
@@ -490,7 +529,7 @@ export function workspaces(host: Host) {
   }
   async function presentCheckout(id: ConversationId, context: Context) {
     const workspace = await get(id, context)
-    if (!workspace || !['ready', 'failed', 'removed'].includes(workspace.state)) return undefined
+    if (!workspace || workspace.state === 'preparing') return undefined
     return (await onDisk(workspace.path)) ? workspace : undefined
   }
   /**
@@ -535,6 +574,18 @@ export function workspaces(host: Host) {
     )
     return result.filter((item) => item !== undefined)
   }
+  /** Bring the record of `id` in line with its checkout on disk, after a removal that failed with `failure` if one did. */
+  const reconcile = (
+    id: ConversationId,
+    facts: CheckoutFacts,
+    context: Context,
+    failure?: string,
+  ) =>
+    host.harness().commit(async (tx) => {
+      const items = (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items
+      advanceWorkspace(items, id, reconcileWorkspace(items[String(id)], facts, failure))
+    }, context)
+  const gone: CheckoutFacts = { present: false, registered: false, held: false }
   /** Finish an interrupted removal, or keep newly found work and make the checkout usable again. */
   async function finishRemoval(
     id: ConversationId,
@@ -546,9 +597,7 @@ export function workspaces(host: Host) {
       if (await listedBySource(workspace)) {
         item = await atRisk(id, workspace)
         if (item.uncommitted || item.unlanded) {
-          await host.harness().commit(async (tx) => {
-            ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'ready'
-          }, context)
+          await reconcile(id, { present: true, registered: true, held: true }, context)
           return item
         }
         // Never force: Git refuses uncommitted changes made since the status check.
@@ -578,15 +627,15 @@ export function workspaces(host: Host) {
         )
         if (merged) await git(workspace.source, 'branch', '-D', workspace.branch)
       }
+      await reconcile(id, gone, context)
       return undefined
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      const present = await registeredCheckout(workspace)
-      await host.harness().commit(async (tx) => {
-        const saved = (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)]
-        saved.state = present ? 'ready' : 'removed'
-        saved.error = reason
-      }, context)
+      const [present, registered] = await Promise.all([
+        onDisk(workspace.path),
+        registeredCheckout(workspace),
+      ])
+      await reconcile(id, { present, registered, held: false }, context, reason)
       return { ...item, reason }
     }
   }
@@ -631,13 +680,17 @@ export function workspaces(host: Host) {
             for (const [child, descendant] of Object.entries(index.items)) {
               if (!sources.has(descendant.source)) continue
               sources.add(descendant.path)
-              if (descendant.state !== 'removed') item.descendant = Number(child)
+              if (!released(descendant)) item.descendant = Number(child)
             }
           } while (size !== sources.size)
-          if (!item.uncommitted && !item.unlanded && !item.descendant)
-            index.items[String(id)].state = 'removed'
-          else if (registered && index.items[String(id)].state === 'removed')
-            index.items[String(id)].state = 'ready'
+          const keeps = Boolean(item.uncommitted || item.unlanded || item.descendant)
+          advanceWorkspace(
+            index.items,
+            id,
+            keeps
+              ? reconcileWorkspace(index.items[String(id)], { present, registered, held: true })
+              : { type: 'release' },
+          )
           return undefined
         }, context)
         if (reason) item.busy = reason
@@ -651,8 +704,11 @@ export function workspaces(host: Host) {
             if (error.code !== 'ENOENT') throw error
             return undefined
           }))
-        )
+        ) {
+          // Its source is gone, and the checkout with it.
+          await reconcile(id, gone, context)
           return
+        }
         // Git already removed this worktree; what remains in its folder is not tracked by any checkout.
         if (present && !registered) await rm(workspace.path, { recursive: true, force: true })
         const remaining = await finishRemoval(id, workspace, context)
@@ -793,7 +849,10 @@ export function workspaces(host: Host) {
         }
       }
       await host.harness().commit(async (tx) => {
-        ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].landed = tip
+        advanceWorkspace((await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items, id, {
+          type: 'landed',
+          sha: tip,
+        })
       }, context)
       return result
     })
@@ -877,14 +936,14 @@ export function workspaces(host: Host) {
       if (workspace.state === 'failed')
         return `Workspace setup failed: ${workspace.error}; fix the cause, then call a tool again to retry the setup`
     }
-    if (workspace.state === 'removed') {
+    if (released(workspace)) {
       // A released checkout comes back on its first tool call, also mid-run.
       const kept = await ready(id, context)
       if (kept) return `Workspace is removed: ${kept.reason ?? 'its checkout keeps changes'}`
       workspace = (await get(id, context))!
     }
     if (workspace.state !== 'ready')
-      return `Workspace is ${workspace.state}: ${workspace.error ?? 'checkout is not ready; send a new input to retry'}`
+      return `Workspace is ${workspace.state}: ${('error' in workspace ? workspace.error : undefined) ?? 'checkout is not ready; send a new input to retry'}`
     if (!(await registeredCheckout(workspace)))
       return `Workspace checkout is missing or unregistered: ${workspace.path}${workspace.error ? `; ${workspace.error}` : ''}`
     return undefined
@@ -911,11 +970,9 @@ export function workspaces(host: Host) {
           return true
         const workspace = (await get(id, context))!
         if (workspace.state === 'ready' && !(await presentCheckout(id, context))) {
-          await harness.commit(async (tx) => {
-            ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'removed'
-          }, context)
+          await reconcile(id, gone, context)
         } else if (
-          workspace.state !== 'removed' &&
+          !released(workspace) &&
           !(
             retryFailed &&
             workspace.state === 'failed' &&
@@ -959,11 +1016,7 @@ export function workspaces(host: Host) {
             )
               return true
           }
-          const saved = savedIndex.items[String(id)]
-          saved.base = base
-          saved.state = 'preparing'
-          delete saved.error
-          delete saved.landed
+          advanceWorkspace(savedIndex.items, id, { type: 'recreate', base })
           await tx.createTask(
             Preparation,
             { id, reset: true, preserve },
@@ -1000,6 +1053,8 @@ export function workspaces(host: Host) {
     return undefined
   }
   return {
+    released,
+    lastLanded,
     Preparation,
     Lander,
     resume,
@@ -1073,7 +1128,7 @@ export function workspaces(host: Host) {
       const workspace = await get(id, context)
       if (!workspace) throw new Error('Conversation has no workspace')
       if (workspace.state === 'preparing') throw new Error('Workspace is preparing')
-      if (workspace.state !== 'removed') {
+      if (!released(workspace)) {
         if (await listedBySource(workspace)) {
           const dirty = await git(workspace.path, 'status', '--porcelain', '--untracked-files=all')
           if (dirty && !options.force) {
@@ -1095,7 +1150,9 @@ export function workspaces(host: Host) {
           )
         }
         await host.harness().commit(async (tx) => {
-          ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items[String(id)].state = 'removed'
+          advanceWorkspace((await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).items, id, {
+            type: 'removed',
+          })
         }, context)
       }
       return { text: `Discarded isolate; kept branch ${workspace.branch}.` }
@@ -1110,6 +1167,7 @@ export function workspaces(host: Host) {
         ready: 0,
         preparing: 0,
         failed: 0,
+        releasing: 0,
         removed: 0,
         landed: 0,
         ahead: 0,

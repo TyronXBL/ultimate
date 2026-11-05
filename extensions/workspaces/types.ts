@@ -1,15 +1,25 @@
 import type { ConversationSubject } from '../conversations/types.ts'
 
-export type Workspace = {
+/** Where a conversation's checkout lives and what it lands on, in every state. */
+type Checkout = {
   path: string
   branch: string
   base: string
   source: string
   target: string
-  state: 'preparing' | 'ready' | 'failed' | 'removed'
-  error?: string
-  landed?: string
 }
+/**
+ * A conversation's checkout by state, each with only its fields; only `workspaceStep` (state.ts) changes them.
+ * `landed` is the tip its last landing brought; a ready checkout's `error` says why its removal failed, a removed one's
+ * what its removal left behind (a merged branch it could not delete, a foreign folder at the path).
+ */
+export type Workspace =
+  | (Checkout & { state: 'preparing' })
+  | (Checkout & { state: 'ready'; landed?: string; error?: string })
+  | (Checkout & { state: 'failed'; error: string })
+  /** Release decided to remove it; the removal is owed. */
+  | (Checkout & { state: 'releasing'; landed?: string })
+  | (Checkout & { state: 'removed'; landed?: string; error?: string })
 /** One `workspace submit`, waiting for or being processed by its source's lander. */
 type Submitted = {
   id: string

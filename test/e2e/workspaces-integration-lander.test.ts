@@ -97,7 +97,8 @@ it.concurrent('lands two submissions in order onto a moved target and reports bo
   expect(await git(f.projectRoot, 'status', '--porcelain')).toBe('')
   for (const name of ['one.txt', 'two.txt', 'moved.txt'])
     expect(await readFile(join(f.projectRoot, name), 'utf8')).toBe(name)
-  expect((await f.service.get(second, context))!.landed).toBe(
+  const secondWorkspace = (await f.service.get(second, context))!
+  expect('landed' in secondWorkspace ? secondWorkspace.landed : undefined).toBe(
     await git(f.projectRoot, 'rev-parse', 'HEAD'),
   )
   // Both submissions logged into one lander conversation, each ending with its landed outcome.
@@ -342,6 +343,7 @@ it.concurrent('counts checkouts by state, commits and uncommitted changes, and m
     ready: 3,
     preparing: 0,
     failed: 0,
+    releasing: 0,
     removed: 1,
     landed: 1,
     ahead: 1,
@@ -478,7 +480,8 @@ it.concurrent('reports a local landing whose push retry conflicts as landed loca
   expect(
     await git(f.projectRoot, 'merge-base', '--is-ancestor', tip, landed).then(() => true),
   ).toBe(true)
-  expect((await f.service.get(id, context))!.landed).toBe(landed)
+  const landedWorkspace = (await f.service.get(id, context))!
+  expect('landed' in landedWorkspace ? landedWorkspace.landed : undefined).toBe(landed)
 })
 it.concurrent('resumes checks after a restart without rerunning passed ones and keeps flaky notes', async () => {
   const f = await fixture()

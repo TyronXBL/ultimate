@@ -12,6 +12,10 @@ import type { Workspaces, workspaces } from './workspaces.ts'
 type Implementation = ReturnType<typeof workspaces>
 
 export type WorkspaceService = {
+  /** Shared derivation: whether the checkout was or is being released. */
+  released: Implementation['released']
+  /** Shared derivation: the checkout's last landing tip. */
+  lastLanded: Implementation['lastLanded']
   /** The worktree of conversation `id` (path, branch, target, state), or undefined when it has none. */
   get: Implementation['get']
   /** Wait for a preparing checkout to finish; failed preparation remains failed. */

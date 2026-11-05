@@ -48,9 +48,10 @@ export default function self(host: ExtensionHost) {
           if (
             own &&
             ((await realpath(own.source)) !== (await realpath(host.ultimateRoot)) ||
-              !own.landed ||
+              !workspaces.lastLanded(own) ||
               (await workspaces.git(host.ultimateRoot, 'status', '--porcelain')) ||
-              (await workspaces.git(host.ultimateRoot, 'rev-parse', 'HEAD')) !== own.landed)
+              (await workspaces.git(host.ultimateRoot, 'rev-parse', 'HEAD')) !==
+                workspaces.lastLanded(own))
           ) {
             const error = `Restart refused: land your workspace into ${own.source} first`
             return {

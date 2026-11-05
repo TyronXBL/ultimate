@@ -31,6 +31,10 @@ export function useWorkspaceConversations(): WorkspaceConversation[] {
 }
 
 export const stateLabel = (workspace: Workspace) =>
-  ({ preparing: 'Setting up…', ready: 'Ready', failed: 'Setup failed', removed: 'Removed' })[
-    workspace.state
-  ]
+  ({
+    preparing: 'Setting up…',
+    ready: 'Ready',
+    failed: 'Setup failed',
+    releasing: 'Removing…',
+    removed: 'Removed',
+  })[workspace.state]
