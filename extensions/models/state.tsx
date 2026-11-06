@@ -20,9 +20,10 @@ export function useCurrentModel(target?: number) {
   const ownId = useConversation((c) => c.id)
   const ownAgent = useConversation((c) => c.agent)
   const ownLoading = useConversation((c) => c.loading)
-  const own = { id: ownId, agent: ownAgent, loading: ownLoading }
   const other = useStore(() => (target === undefined ? undefined : getConversation(target)))
-  const { id, agent, loading } = other ?? own
+  const id = other ? other.id : ownId
+  const agent = other ? other.agent : ownAgent
+  const loading = other ? other.loading : ownLoading
   const models = useModels()
   const ref = agent.model
   const model = models?.models.find(

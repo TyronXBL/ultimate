@@ -76,17 +76,21 @@ type Icons = (typeof import('./lucide-icons.tsx'))['icons']
 let loadedIcons: Icons | undefined
 let loadingIcons: Promise<Icons> | undefined
 
-/** lucide's icon map once loaded; `wanted` starts loading it. */
+/** lucide's icon map once loaded, `null` when loading it failed; `wanted` starts loading it. */
 function useIcons(wanted: boolean) {
-  const [icons, setIcons] = useState(loadedIcons)
+  const [icons, setIcons] = useState<Icons | null | undefined>(loadedIcons)
+  const current = icons === undefined ? loadedIcons : icons
   useEffect(() => {
-    if (!wanted || icons) return
+    if (!wanted || current !== undefined) return
     loadingIcons ??= import('./lucide-icons.tsx').then((module) => (loadedIcons = module.icons))
-    loadingIcons.then(setIcons, (error: unknown) =>
-      console.warn('Could not load the lucide icons; agent marks show the default', error),
-    )
-  }, [wanted, icons])
-  return icons
+    loadingIcons.then(setIcons, (error: unknown) => {
+      // A later mark tries again; this one shows the default.
+      loadingIcons = undefined
+      console.warn('Could not load the lucide icons; agent marks show the default', error)
+      setIcons(null)
+    })
+  }, [wanted, current])
+  return current
 }
 
 /** A lucide icon by the name a definition gives, PascalCase or kebab-case; undefined for an unknown one. */
@@ -102,9 +106,9 @@ const warned = new Set<string>()
  * A standing agent's tile as its definition's `icon` and `tint` ask, else the grey bot; no glyph while the icons load,
  * so a configured icon never flashes the bot first.
  */
-function definedTile(style: AgentMarkStyle | undefined, icons: Icons | undefined) {
+function definedTile(style: AgentMarkStyle | undefined, icons: Icons | null | undefined) {
   const tint = (style?.tint && tints[style.tint as MarkTint]) || fallbackTint
-  if (!style?.icon) return { tint, glyph: fallbackGlyph }
+  if (!style?.icon || icons === null) return { tint, glyph: fallbackGlyph }
   if (!icons) return { tint, glyph: null }
   const Icon = iconOf(icons, style.icon)
   if (!Icon && !warned.has(style.icon)) {

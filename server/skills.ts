@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { useProjectSetup } from './project-setup.ts'
@@ -13,14 +14,15 @@ type ScopedSkill = Skill & { scope: SkillScope; overrides: string[] }
 const ignoreFiles = ['.gitignore', '.ignore', '.fdignore']
 
 /**
- * The paths and texts of every file Pi's skill walk (`loadSkillsFromDirInternal`) can read under `dir`: SKILL.md
- * files, the layer's own `.md` files and ignore files. Ignore rules are not applied, so this reads a superset; Pi stops
- * at a folder's SKILL.md, and so does this unless an ignore file on the way could hide that SKILL.md.
+ * The paths, real paths (Pi drops a second link to one file) and texts of every file Pi's skill walk
+ * (`loadSkillsFromDirInternal`) can read under `dir`: SKILL.md files, the layer's own `.md` files and ignore files.
+ * Ignore rules are not applied, so this reads a superset; Pi stops at a folder's SKILL.md, and so does this unless an
+ * ignore file on the way could hide that SKILL.md.
  */
 function skillInputs(dir: string, top: boolean, ignoring: boolean, out: string[]) {
   const read = (path: string) => {
     try {
-      return readFileSync(path, 'utf8')
+      return `${realpathSync.native(path)}\0${readFileSync(path, 'utf8')}`
     } catch (error) {
       return String(error)
     }
@@ -64,9 +66,11 @@ function skillInputs(dir: string, top: boolean, ignoring: boolean, out: string[]
 /**
  * The last load per working directory, reused while the trust decision and every file the walk reads are the same: the
  * skills section renders before each model request, and parsing every skill was most of its time (#166097). Keyed by
- * content, not modification times or folder watches, so an edit shows on the next call however fast it follows.
+ * content, not modification times or folder watches, so an edit shows on the next call however fast it follows. It
+ * keeps a digest of the inputs and the most recent directories only: every worktree is a directory of its own.
  */
 const loads = new Map<string, { inputs: string; result: ReturnType<typeof loadLayers> }>()
+const LOADS_KEPT = 32
 
 /**
  * Skills from the clone, `~/.ultimate/skills` and, once the project is trusted, its `.pi/skills` (before the user's),
@@ -97,12 +101,19 @@ export function projectSkills(
   const present = layers.filter(([folder]) => existsSync(folder))
   const out: string[] = []
   for (const [folder] of present) skillInputs(folder, true, false, out)
-  const inputs = [...present.flat(), ...out].join('\0')
+  const inputs = createHash('sha256')
+    .update(JSON.stringify([present, out]))
+    .digest('base64')
   const key = [host.ultimateRoot, host.projectRoot, host.userHome, cwd].join('\0')
   const last = loads.get(key)
-  if (last?.inputs === inputs) return last.result
-  const result = loadLayers(present, cwd, join(host.userHome, '.ultimate'))
+  // Deleted and set again, so the map's order is least recently used first.
+  loads.delete(key)
+  const result =
+    last?.inputs === inputs
+      ? last.result
+      : loadLayers(present, cwd, join(host.userHome, '.ultimate'))
   loads.set(key, { inputs, result })
+  if (loads.size > LOADS_KEPT) loads.delete(loads.keys().next().value!)
   return result
 }
 

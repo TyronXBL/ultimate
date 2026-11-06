@@ -487,6 +487,8 @@ export async function agentRoots(ultimateRoot: string, projectRoot: string, user
  * The last discovery per set of roots, reused while every input reads the same and the models are unchanged: prompt
  * setup discovers before each model request, and parsing and model resolution were most of its time (#166097). Keyed
  * by content, not modification times or folder watches, so an edit shows on the next call however fast it follows.
+ * The one state in this stateless `lib/` module, on purpose: no caller can tell it apart from a fresh discovery, and
+ * every caller (prompt sections, residents, tools) shares it without an owner to route through.
  */
 const discoveries = new Map<string, { inputs: string; models: object; result: AgentDiscovery }>()
 
