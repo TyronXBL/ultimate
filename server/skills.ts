@@ -17,9 +17,15 @@ const ignoreFiles = ['.gitignore', '.ignore', '.fdignore']
  * The paths, real paths (Pi drops a second link to one file) and texts of every file Pi's skill walk
  * (`loadSkillsFromDirInternal`) can read under `dir`: SKILL.md files, the layer's own `.md` files and ignore files.
  * Ignore rules are not applied, so this reads a superset; Pi stops at a folder's SKILL.md, and so does this unless an
- * ignore file on the way could hide that SKILL.md.
+ * ignore file on the way could hide that SKILL.md. Each real folder is read once, so a link back to an ancestor ends.
  */
-function skillInputs(dir: string, top: boolean, ignoring: boolean, out: string[]) {
+function skillInputs(
+  dir: string,
+  top: boolean,
+  ignoring: boolean,
+  out: string[],
+  seen = new Set<string>(),
+) {
   const read = (path: string) => {
     try {
       return `${realpathSync.native(path)}\0${readFileSync(path, 'utf8')}`
@@ -29,6 +35,9 @@ function skillInputs(dir: string, top: boolean, ignoring: boolean, out: string[]
   }
   let entries: Dirent[]
   try {
+    const real = realpathSync.native(dir)
+    if (seen.has(real)) return
+    seen.add(real)
     entries = readdirSync(dir, { withFileTypes: true })
   } catch (error) {
     out.push(dir, String(error))
@@ -58,7 +67,7 @@ function skillInputs(dir: string, top: boolean, ignoring: boolean, out: string[]
   }
   for (const { entry, path, file, folder } of kinds) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-    if (folder) skillInputs(path, false, ignoring, out)
+    if (folder) skillInputs(path, false, ignoring, out, seen)
     else if (top && file && entry.name.endsWith('.md')) out.push(path, read(path))
   }
 }

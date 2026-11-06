@@ -73,24 +73,27 @@ const tints: Record<MarkTint, string> = {
 type Icons = (typeof import('./lucide-icons.tsx'))['icons']
 // The whole icon set was a fifth of the startup JavaScript while no definition named an icon (#166097): it loads on
 // the first mark that needs it.
-let loadedIcons: Icons | undefined
-let loadingIcons: Promise<Icons> | undefined
+// `null` once loading failed: the browser keeps a failed module import for the page's life, so marks show the default
+// until it reloads, as it does onto each new bundle.
+let loadedIcons: Icons | null | undefined
+let loadingIcons: Promise<void> | undefined
 
 /** lucide's icon map once loaded, `null` when loading it failed; `wanted` starts loading it. */
 function useIcons(wanted: boolean) {
-  const [icons, setIcons] = useState<Icons | null | undefined>(loadedIcons)
-  const current = icons === undefined ? loadedIcons : icons
+  const [, setLoaded] = useState(loadedIcons)
   useEffect(() => {
-    if (!wanted || current !== undefined) return
-    loadingIcons ??= import('./lucide-icons.tsx').then((module) => (loadedIcons = module.icons))
-    loadingIcons.then(setIcons, (error: unknown) => {
-      // A later mark tries again; this one shows the default.
-      loadingIcons = undefined
-      console.warn('Could not load the lucide icons; agent marks show the default', error)
-      setIcons(null)
-    })
-  }, [wanted, current])
-  return current
+    if (!wanted || loadedIcons !== undefined) return
+    loadingIcons ??= import('./lucide-icons.tsx').then(
+      (module) => void (loadedIcons = module.icons),
+      (error: unknown) => {
+        loadedIcons = null
+        console.warn('Could not load the lucide icons; agent marks show the default', error)
+      },
+    )
+    // oxlint-disable-next-line typescript/no-floating-promises -- loadingIcons handles its own failure above.
+    loadingIcons.then(() => setLoaded(loadedIcons))
+  }, [wanted])
+  return loadedIcons
 }
 
 /** A lucide icon by the name a definition gives, PascalCase or kebab-case; undefined for an unknown one. */

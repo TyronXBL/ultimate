@@ -539,11 +539,12 @@ export async function discoverAgents(
   // Pi's ModelRuntime replaces this list whenever its catalog or credentials change (`updateModelSnapshot` and the
   // availability refreshes), and model resolution (`resolveCliModel`) reads only those two.
   const models = modelRuntime.getAvailableSnapshot()
-  const key = [ultimateRoot, projectRoot, userHome, skip ?? ''].join('\0')
+  // Saving an overlay skips a different file each time: that discovery is not kept.
+  const key = skip ? undefined : [ultimateRoot, projectRoot, userHome].join('\0')
   const inputs = JSON.stringify([roots, families, decision], (_key, value: unknown) =>
     value instanceof Error ? String(value) : value,
   )
-  const last = discoveries.get(key)
+  const last = key === undefined ? undefined : discoveries.get(key)
   if (last?.models === models && last.inputs === inputs) return last.result
   for (const { source, path: directory, files } of roots) {
     if ('error' in files) {
@@ -604,7 +605,7 @@ export async function discoverAgents(
     replaced,
     projectSetup: decision === true ? 'trusted' : decision === false ? 'declined' : 'undecided',
   }
-  discoveries.set(key, { inputs, models, result })
+  if (key !== undefined) discoveries.set(key, { inputs, models, result })
   return result
 }
 
