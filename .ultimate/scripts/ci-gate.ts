@@ -148,14 +148,16 @@ async function admitted(command: string[]) {
   const need = commandNeedMiB(command.join(' '))
   const since = Date.now()
   let short = await admitRam(floor, need)
-  if (short) log(`waiting for RAM: ${describeShort(short)}`)
-  while (short) {
+  for (let polls = 0; short; polls++) {
     if (Date.now() - since > RAM_WAIT_MS) {
       log(
         `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeShort(short)}`,
       )
       return false
     }
+    // A line a minute: the lander stops a check after 2 min without output.
+    if (polls % (60_000 / RAM_POLL_MS) === 0)
+      log(`waiting for RAM for ${command.join(' ')}: ${describeShort(short)}`)
     await sleep(RAM_POLL_MS)
     short = await admitRam(floor, need)
   }

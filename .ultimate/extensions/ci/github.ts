@@ -36,11 +36,12 @@ type Annotation = {
 export class Unreachable extends Error {}
 
 /**
- * The annotation GitHub puts on a job it refuses to start: "The job was not started because recent account payments
- * have failed or your spending limit needs to be increased…". A private repository on a $0 budget gets it once the
- * month's included minutes are spent (#169933); it says nothing about the code.
+ * The annotation GitHub itself (path `.github`) puts on a job it refuses to start: "The job was not started because
+ * recent account payments have failed or your spending limit needs to be increased…". A private repository on a $0
+ * budget gets it once the month's included minutes are spent (#169933); it says nothing about the code.
  */
-const NOT_STARTED = /\bjob was not started\b/i
+const notStartedBy = (note: Annotation) =>
+  note.path === '.github' && note.message.startsWith('The job was not started because ')
 
 /** Run git in `cwd`, `input` on its stdin; resolves its stdout, trimmed. */
 export function git(cwd: string, args: string[], input?: string) {
@@ -185,8 +186,10 @@ export const jobResult = (job: Job): JobResult => ({
 })
 
 /**
- * The failing tests of a run's failed jobs, from their annotations (Vitest titles one `file > test`), and `notStarted`,
- * GitHub's reason when it did not start a job at all (billing), which is no verdict on the code.
+ * The failing tests of a run's failed jobs, from their annotations (Vitest titles one `file > test`). `notStarted` is
+ * GitHub's reason when the only failed jobs are ones it did not start (billing): no verdict on the code. A job that ran
+ * and failed is a verdict, so its failures win over another job's refusal. Throws `Unreachable` when annotations
+ * cannot be read, since a refused job cannot be told from a failed one without them.
  */
 export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
   const failures: Failure[] = []
@@ -198,11 +201,12 @@ export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
       cwd,
       repo,
       `/repos/${repo}/check-runs/${job.id}/annotations`,
-    ).catch(
-      // The run's conclusion already decides; without annotations the job's own line names it.
-      () => [],
     )
-    notStarted ??= notes.find((note) => NOT_STARTED.test(note.message))?.message.split('\n')[0]
+    const refused = notes.find(notStartedBy)
+    if (refused) {
+      notStarted ??= refused.message.split('\n')[0]
+      continue
+    }
     const named = notes.filter(
       (note) => note.annotation_level === 'failure' && note.path !== '.github',
     )
@@ -213,5 +217,5 @@ export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
       })
     if (!named.length) failures.push({ title: job.name, message: job.conclusion ?? 'failed' })
   }
-  return { failures, ...(notStarted ? { notStarted } : {}) }
+  return { failures, ...(notStarted && !failures.length ? { notStarted } : {}) }
 }

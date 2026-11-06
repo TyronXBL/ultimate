@@ -19,8 +19,7 @@ export type CiResult = {
   runner?: string
   /**
    * `refused`: the secret scan stopped the push; `no-run`: no run started, or GitHub did not start its jobs (billing);
-   * `timeout`: the run did not finish within
-   * an hour; `unreachable`: GitHub failed.
+   * `timeout`: the run did not finish within an hour; `unreachable`: GitHub failed.
    */
   conclusion: 'success' | 'failure' | 'cancelled' | 'refused' | 'no-run' | 'timeout' | 'unreachable'
   /** First job start to last job end. */

@@ -17,7 +17,8 @@ and returns at once. A durable `ci.run` task then:
    whole machine's), until it ends, no run started within 5 minutes, it has not finished an hour after the push
    (`timeout`), or GitHub has failed for 5 minutes (`unreachable`). A run whose jobs GitHub did not start (the
    annotation "The job was not started because … your spending limit needs to be increased", once a private repository
-   on a $0 budget spent the month's minutes) is `no-run` with GitHub's reason, not a failure of the code;
+   on a $0 budget spent the month's minutes) is `no-run` with GitHub's reason, not a failure of the code, unless another
+   job ran and failed, which is a verdict. Annotations that cannot be read count as GitHub failing;
 6. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it (a
    note that starts no run while the caller is concluded: the conversations service's `resultIn`). A ref that could
    not be deleted is named on the card.
