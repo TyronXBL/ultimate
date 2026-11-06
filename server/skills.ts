@@ -15,17 +15,11 @@ const ignoreFiles = ['.gitignore', '.ignore', '.fdignore']
 
 /**
  * The paths, real paths (Pi drops a second link to one file) and texts of every file Pi's skill walk
- * (`loadSkillsFromDirInternal`) can read under `dir`: SKILL.md files, the layer's own `.md` files and ignore files.
- * Ignore rules are not applied, so this reads a superset; Pi stops at a folder's SKILL.md, and so does this unless an
- * ignore file on the way could hide that SKILL.md. Each real folder is read once, so a link back to an ancestor ends.
+ * (`loadSkillsFromDirInternal`) reads under `dir`: SKILL.md files and the layer's own `.md` files, walked as Pi walks.
+ * False, and the walk ends, at an ignore file: Pi applies its rules (with the `ignore` package, not one of ours), so a
+ * folder holding one is loaded by Pi on every call. Each real folder is read once, so a link back to an ancestor ends.
  */
-function skillInputs(
-  dir: string,
-  top: boolean,
-  ignoring: boolean,
-  out: string[],
-  seen = new Set<string>(),
-) {
+function skillInputs(dir: string, top: boolean, out: string[], seen = new Set<string>()): boolean {
   const read = (path: string) => {
     try {
       return `${realpathSync.native(path)}\0${readFileSync(path, 'utf8')}`
@@ -36,13 +30,14 @@ function skillInputs(
   let entries: Dirent[]
   try {
     const real = realpathSync.native(dir)
-    if (seen.has(real)) return
+    if (seen.has(real)) return true
     seen.add(real)
     entries = readdirSync(dir, { withFileTypes: true })
   } catch (error) {
     out.push(dir, String(error))
-    return
+    return true
   }
+  if (entries.some((entry) => ignoreFiles.includes(entry.name))) return false
   const kinds = entries.map((entry) => {
     const path = join(dir, entry.name)
     if (!entry.isSymbolicLink())
@@ -55,21 +50,17 @@ function skillInputs(
       return { entry, path, file: false, folder: false }
     }
   })
-  for (const { entry, path } of kinds)
-    if (ignoreFiles.includes(entry.name)) {
-      ignoring = true
-      out.push(path, read(path))
-    }
   const skill = kinds.find(({ entry, file }) => entry.name === 'SKILL.md' && file)
   if (skill) {
     out.push(skill.path, read(skill.path))
-    if (!ignoring) return
+    return true
   }
   for (const { entry, path, file, folder } of kinds) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-    if (folder) skillInputs(path, false, ignoring, out, seen)
-    else if (top && file && entry.name.endsWith('.md')) out.push(path, read(path))
+    if (folder && !skillInputs(path, false, out, seen)) return false
+    if (top && file && entry.name.endsWith('.md')) out.push(path, read(path))
   }
+  return true
 }
 
 /**
@@ -109,14 +100,15 @@ export function projectSkills(
   // Most folders don't exist; Pi warns about each missing one, which says nothing here.
   const present = layers.filter(([folder]) => existsSync(folder))
   const out: string[] = []
-  for (const [folder] of present) skillInputs(folder, true, false, out)
-  const inputs = createHash('sha256')
-    .update(JSON.stringify([present, out]))
-    .digest('base64')
+  const cacheable = present.every(([folder]) => skillInputs(folder, true, out))
   const key = [host.ultimateRoot, host.projectRoot, host.userHome, cwd].join('\0')
   const last = loads.get(key)
   // Deleted and set again, so the map's order is least recently used first.
   loads.delete(key)
+  if (!cacheable) return loadLayers(present, cwd, join(host.userHome, '.ultimate'))
+  const inputs = createHash('sha256')
+    .update(JSON.stringify([present, out]))
+    .digest('base64')
   const result =
     last?.inputs === inputs
       ? last.result

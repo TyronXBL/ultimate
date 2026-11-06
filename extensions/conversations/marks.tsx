@@ -82,7 +82,7 @@ let loadingIcons: Promise<void> | undefined
 function useIcons(wanted: boolean) {
   const [, setLoaded] = useState(loadedIcons)
   useEffect(() => {
-    if (!wanted || loadedIcons !== undefined) return
+    if (!wanted) return
     loadingIcons ??= import('./lucide-icons.tsx').then(
       (module) => void (loadedIcons = module.icons),
       (error: unknown) => {
