@@ -105,7 +105,8 @@ function derive(view: StreamedView | undefined): ConversationState {
   if (!state) {
     const docs = view.docs as Readonly<Record<string, JsonObject | undefined>>
     const live = (docs['pi.live'] ?? {}) as LiveState
-    const inbox = (docs['pi.inbox'] as { items?: InboxItem[] } | undefined)?.items ?? []
+    // The empty state's own values when a document is missing: a selector that picks one re-renders only when it changes.
+    const inbox = (docs['pi.inbox'] as { items?: InboxItem[] } | undefined)?.items ?? empty.inbox
     const activity = activityOf({
       run: !!live.run,
       queued: inbox.some((item) => item.mode !== 'write'),
@@ -115,7 +116,7 @@ function derive(view: StreamedView | undefined): ConversationState {
       loading: false,
       entries: view.entries,
       older: view.before === undefined ? undefined : view.before + 1,
-      agent: docs['pi.agent'] ?? {},
+      agent: docs['pi.agent'] ?? empty.agent,
       usage: (docs['pi.usage'] ?? empty.usage) as UsageState,
       live,
       inbox,

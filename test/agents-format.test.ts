@@ -90,6 +90,32 @@ it('reads a single fallback model as a list of one', () => {
   expect(parseDefinition(text, 'helper.md').fallback).toEqual(['provider/model'])
 })
 
+it('discovers an edited or added definition on the next call, even within the same instant', async () => {
+  const repo = await directory(),
+    home = await directory(),
+    cwd = await directory()
+  await mkdir(join(repo, 'agents'))
+  const modelRuntime = await ModelRuntime.create()
+  const described = async () =>
+    (await discoverAgents(repo, cwd, home, modelRuntime)).definitions.map((agent) => [
+      agent.name,
+      agent.instructions,
+    ])
+  await writeFile(join(repo, 'agents/scout.md'), definition('Look around'))
+  expect(await described()).toEqual([['scout', 'Look around']])
+  // Same length, so neither the size nor a coarse modification time tells the edit apart.
+  await writeFile(join(repo, 'agents/scout.md'), definition('Look aroune'))
+  expect(await described()).toEqual([['scout', 'Look aroune']])
+  await writeFile(
+    join(repo, 'agents/worker.md'),
+    definition('Build it').replace('name: scout', 'name: worker'),
+  )
+  expect(await described()).toEqual([
+    ['scout', 'Look aroune'],
+    ['worker', 'Build it'],
+  ])
+})
+
 it('discovers model and thinking settings and reports unknown models', async () => {
   const repo = await directory(),
     home = await directory(),

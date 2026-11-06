@@ -484,6 +484,13 @@ export async function agentRoots(ultimateRoot: string, projectRoot: string, user
 }
 
 /**
+ * The last discovery per set of roots, reused while every input reads the same and the models are unchanged: prompt
+ * setup discovers before each model request, and parsing and model resolution were most of its time (#166097). Keyed
+ * by content, not modification times or folder watches, so an edit shows on the next call however fast it follows.
+ */
+const discoveries = new Map<string, { inputs: string; models: object; result: AgentDiscovery }>()
+
+/**
  * Definitions from `agents/` in Ultimate's clone, `~/.ultimate/`, and the project's `.ultimate/`; a later file wins
  * by name, unless it is an overlay (marked by `addTools`), which extends the earlier one.
  */
@@ -526,6 +533,16 @@ export async function discoverAgents(
     ),
     readFamilies(userHome, projectRoot),
   ])
+  const decision = projectDecision(projectRoot, userHome)
+  // Pi's ModelRuntime replaces this list whenever its catalog or credentials change (`updateModelSnapshot` and the
+  // availability refreshes), and model resolution (`resolveCliModel`) reads only those two.
+  const models = modelRuntime.getAvailableSnapshot()
+  const key = [ultimateRoot, projectRoot, userHome, skip ?? ''].join('\0')
+  const inputs = JSON.stringify([roots, families, decision], (_key, value: unknown) =>
+    value instanceof Error ? String(value) : value,
+  )
+  const last = discoveries.get(key)
+  if (last?.models === models && last.inputs === inputs) return last.result
   for (const { source, path: directory, files } of roots) {
     if ('error' in files) {
       if ((files.error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -576,8 +593,7 @@ export async function discoverAgents(
       }
     }
   }
-  const decision = projectDecision(projectRoot, userHome)
-  return {
+  const result: AgentDiscovery = {
     definitions: [...definitions.values()].map((definition) => ({
       ...definition,
       runs: definitionRuns(definition, families),
@@ -586,6 +602,8 @@ export async function discoverAgents(
     replaced,
     projectSetup: decision === true ? 'trusted' : decision === false ? 'declined' : 'undecided',
   }
+  discoveries.set(key, { inputs, models, result })
+  return result
 }
 
 /**

@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { useProjectSetup } from './project-setup.ts'
 import { loadSkills, stripFrontmatter } from '@earendil-works/pi-coding-agent'
@@ -7,7 +8,65 @@ import type { Skill } from '@earendil-works/pi-coding-agent'
 type SkillScope = 'clone' | 'user' | 'project'
 
 /** A loaded skill with where it came from, and the paths of same-named skills it overrides in earlier scopes. */
-export type ScopedSkill = Skill & { scope: SkillScope; overrides: string[] }
+type ScopedSkill = Skill & { scope: SkillScope; overrides: string[] }
+
+const ignoreFiles = ['.gitignore', '.ignore', '.fdignore']
+
+/**
+ * The paths and texts of every file Pi's skill walk (`loadSkillsFromDirInternal`) can read under `dir`: SKILL.md
+ * files, the layer's own `.md` files and ignore files. Ignore rules are not applied, so this reads a superset; Pi stops
+ * at a folder's SKILL.md, and so does this unless an ignore file on the way could hide that SKILL.md.
+ */
+function skillInputs(dir: string, top: boolean, ignoring: boolean, out: string[]) {
+  const read = (path: string) => {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch (error) {
+      return String(error)
+    }
+  }
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch (error) {
+    out.push(dir, String(error))
+    return
+  }
+  const kinds = entries.map((entry) => {
+    const path = join(dir, entry.name)
+    if (!entry.isSymbolicLink())
+      return { entry, path, file: entry.isFile(), folder: entry.isDirectory() }
+    try {
+      const stats = statSync(path)
+      return { entry, path, file: stats.isFile(), folder: stats.isDirectory() }
+    } catch {
+      // A broken link, which Pi skips too; once it resolves, what it points at is read here.
+      return { entry, path, file: false, folder: false }
+    }
+  })
+  for (const { entry, path } of kinds)
+    if (ignoreFiles.includes(entry.name)) {
+      ignoring = true
+      out.push(path, read(path))
+    }
+  const skill = kinds.find(({ entry, file }) => entry.name === 'SKILL.md' && file)
+  if (skill) {
+    out.push(skill.path, read(skill.path))
+    if (!ignoring) return
+  }
+  for (const { entry, path, file, folder } of kinds) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+    if (folder) skillInputs(path, false, ignoring, out)
+    else if (top && file && entry.name.endsWith('.md')) out.push(path, read(path))
+  }
+}
+
+/**
+ * The last load per working directory, reused while the trust decision and every file the walk reads are the same: the
+ * skills section renders before each model request, and parsing every skill was most of its time (#166097). Keyed by
+ * content, not modification times or folder watches, so an edit shows on the next call however fast it follows.
+ */
+const loads = new Map<string, { inputs: string; result: ReturnType<typeof loadLayers> }>()
 
 /**
  * Skills from the clone, the project's `.pi/skills`, `~/.ultimate/skills` and, once the project is trusted,
@@ -33,11 +92,24 @@ export function projectSkills(
         ] as [string, SkillScope][])
       : []),
   ]
-  const agentDir = join(host.userHome, '.ultimate')
+  // Most folders don't exist; Pi warns about each missing one, which says nothing here.
+  const present = layers.filter(([folder]) => existsSync(folder))
+  const out: string[] = []
+  for (const [folder] of present) skillInputs(folder, true, false, out)
+  const inputs = [...present.flat(), ...out].join('\0')
+  const key = [host.ultimateRoot, host.projectRoot, host.userHome, cwd].join('\0')
+  const last = loads.get(key)
+  if (last?.inputs === inputs) return last.result
+  const result = loadLayers(present, cwd, join(host.userHome, '.ultimate'))
+  loads.set(key, { inputs, result })
+  return result
+}
+
+/** Pi's skills of each layer, a later scope overriding an earlier skill of the same name. */
+function loadLayers(layers: [string, SkillScope][], cwd: string, agentDir: string) {
   const byName = new Map<string, ScopedSkill>()
   const diagnostics = []
-  // Most folders don't exist; Pi warns about each missing one, which says nothing here.
-  for (const [path, scope] of layers.filter(([folder]) => existsSync(folder))) {
+  for (const [path, scope] of layers) {
     const loaded = loadSkills({ cwd, agentDir, skillPaths: [path], includeDefaults: false })
     diagnostics.push(...loaded.diagnostics)
     for (const skill of loaded.skills) {

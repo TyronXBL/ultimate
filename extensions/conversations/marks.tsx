@@ -1,4 +1,5 @@
-import { BotIcon, BrainIcon, GitMergeIcon, icons, ScrollTextIcon } from 'lucide-react'
+import { BotIcon, BrainIcon, GitMergeIcon, ScrollTextIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn, useDocOf } from '@/sdk'
 import type { MarkTint } from '../../lib/marks.ts'
@@ -69,26 +70,48 @@ const tints: Record<MarkTint, string> = {
   grey: fallbackTint,
 }
 
+type Icons = (typeof import('./lucide-icons.tsx'))['icons']
+// The whole icon set was a fifth of the startup JavaScript while no definition named an icon (#166097): it loads on
+// the first mark that needs it.
+let loadedIcons: Icons | undefined
+let loadingIcons: Promise<Icons> | undefined
+
+/** lucide's icon map once loaded; `wanted` starts loading it. */
+function useIcons(wanted: boolean) {
+  const [icons, setIcons] = useState(loadedIcons)
+  useEffect(() => {
+    if (!wanted || icons) return
+    loadingIcons ??= import('./lucide-icons.tsx').then((module) => (loadedIcons = module.icons))
+    loadingIcons.then(setIcons, (error: unknown) =>
+      console.warn('Could not load the lucide icons; agent marks show the default', error),
+    )
+  }, [wanted, icons])
+  return icons
+}
+
 /** A lucide icon by the name a definition gives, PascalCase or kebab-case; undefined for an unknown one. */
-const iconOf = (name: string) =>
+const iconOf = (icons: Icons, name: string) =>
   icons[
     name.replace(/(^|-)([a-z0-9])/g, (_, _dash: string, letter: string) =>
       letter.toUpperCase(),
-    ) as keyof typeof icons
+    ) as keyof Icons
   ]
 
 const warned = new Set<string>()
-/** A standing agent's tile as its definition's `icon` and `tint` ask, else the grey bot. */
-function definedTile(style: AgentMarkStyle | undefined) {
-  const Icon = style?.icon ? iconOf(style.icon) : undefined
-  if (style?.icon && !Icon && !warned.has(style.icon)) {
+/**
+ * A standing agent's tile as its definition's `icon` and `tint` ask, else the grey bot; no glyph while the icons load,
+ * so a configured icon never flashes the bot first.
+ */
+function definedTile(style: AgentMarkStyle | undefined, icons: Icons | undefined) {
+  const tint = (style?.tint && tints[style.tint as MarkTint]) || fallbackTint
+  if (!style?.icon) return { tint, glyph: fallbackGlyph }
+  if (!icons) return { tint, glyph: null }
+  const Icon = iconOf(icons, style.icon)
+  if (!Icon && !warned.has(style.icon)) {
     warned.add(style.icon)
     console.warn(`Unknown lucide icon "${style.icon}" in an agent definition; showing the default`)
   }
-  return {
-    tint: (style?.tint && tints[style.tint as MarkTint]) || fallbackTint,
-    glyph: Icon ? <Icon className="size-[60%]" strokeWidth={2} /> : fallbackGlyph,
-  }
+  return { tint, glyph: Icon ? <Icon className="size-[60%]" strokeWidth={2} /> : fallbackGlyph }
 }
 
 /** The presence dot in a mark's corner: pulsing while it works, amber while it waits on you, else muted. */
@@ -109,7 +132,8 @@ export function AgentMark({
 }) {
   const marks = useDocOf(1, MarksDoc)
   const style = marks?.[name]
-  const tile = tiles[name] ?? definedTile(style)
+  const icons = useIcons(!tiles[name] && !!style?.icon)
+  const tile = tiles[name] ?? definedTile(style, icons)
   // @ultimate's letter is its title's first; unknown, and so blank, until the marks doc arrives.
   const glyph =
     name !== 'ultimate'

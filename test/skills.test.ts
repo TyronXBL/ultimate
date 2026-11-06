@@ -69,6 +69,27 @@ it('loads every scope, lets later scopes override and keeps Pi diagnostics', asy
   ])
 })
 
+it('reloads on the next call after a skill is edited, added or nested, even within the same instant', async () => {
+  const host = await setup()
+  const described = () =>
+    projectSkills(host).skills.map((s) => [s.name, s.description] as [string, string])
+  expect(described()).toEqual([['ship', 'User ship']])
+  // Same length, so neither the size nor a coarse modification time tells the edit apart.
+  await skill(
+    join(host.userHome, '.ultimate/skills/ship/SKILL.md'),
+    'name: ship\ndescription: User shiq',
+  )
+  expect(described()).toEqual([['ship', 'User shiq']])
+  await skill(
+    join(host.ultimateRoot, 'skills/group/deep/SKILL.md'),
+    'name: deep\ndescription: Nested',
+  )
+  expect(described()).toEqual([
+    ['deep', 'Nested'],
+    ['ship', 'User shiq'],
+  ])
+})
+
 it('expands /skill:name args as Pi does and leaves anything else alone', async () => {
   const host = await setup()
   const { skills } = projectSkills(host)
