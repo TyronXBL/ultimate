@@ -123,6 +123,8 @@ it('runs a definition with fast: true on the priority tier, and only on OpenAI m
   await agent('coordinator')
   const providers = new Map<string, { streamSimple: ReturnType<typeof fastStream> }>()
   const resources = new Map<string, unknown>()
+  // Discovery reuses its last result while this snapshot stays the same.
+  const available: never[] = []
   // 1: an automation run of worker (label 'automation'), 2: a branch (labelled coordinator), 3: a worker on the OpenAI API,
   // 4: a worker on another provider.
   const conversations: Record<number, { label: string; definition?: string; provider: string }> = {
@@ -147,6 +149,7 @@ it('runs a definition with fast: true on the priority tier, and only on OpenAI m
       registerProvider: (name: string, overlay: { streamSimple: ReturnType<typeof fastStream> }) =>
         providers.set(name, overlay),
       registry: { getAll: () => [] },
+      getAvailableSnapshot: () => available,
     },
   } as unknown as Parameters<typeof fastExtension>[0])
   const hooks = extension.hooks![0].handlers as GenerationHooks
