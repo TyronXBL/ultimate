@@ -30,7 +30,11 @@ function skillInputs(dir: string, top: boolean, out: string[], seen = new Set<st
   let entries: Dirent[]
   try {
     const real = realpathSync.native(dir)
-    if (seen.has(real)) return true
+    // Pi reports a second link's skills before it drops them as duplicates: the link counts, its content once.
+    if (seen.has(real)) {
+      out.push(dir, real)
+      return true
+    }
     seen.add(real)
     entries = readdirSync(dir, { withFileTypes: true })
   } catch (error) {
