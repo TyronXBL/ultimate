@@ -42,6 +42,14 @@ try {
       rolldownOptions: {
         output: {
           keepNames: true,
+          codeSplitting: {
+            groups: [
+              // lucide's whole icon map is a lazy chunk of its own (extensions/conversations/lucide-icons.tsx); without
+              // this, every icon it shares with a facet became a chunk of its own, some 70 more requests at startup
+              // (#166097). The icons used by name stay together; the rest stay in the lazy chunk.
+              { name: 'lucide', test: /[\\/]lucide-react[\\/]/, minShareCount: 2 },
+            ],
+          },
           // Absolute paths: a resolved frame names the file to open, wherever the bundle folder is.
           sourcemapPathTransform: (source, map) => resolve(dirname(map), source),
         },
