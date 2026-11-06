@@ -91,7 +91,8 @@ export function useTranscriptScroll() {
 
 /** The shown conversation; `dock` fits it into a narrow side region. */
 export function Transcript({ dock }: { dock?: boolean }) {
-  const { id, loading } = useConversation()
+  const id = useConversation((c) => c.id)
+  const loading = useConversation((c) => c.loading)
   const { conversationId } = useUltimate()
   // A conversation without messages opens as it is: no placeholder, nothing rising in.
   const messages = useStore((state) => {
@@ -1014,7 +1015,7 @@ function StepLines({
 /** What this Ultimate is and runs on, before the first message. */
 function EmptyState() {
   const system = useSystem()
-  const { agent } = useConversation()
+  const agent = useConversation((c) => c.agent)
   const reasoning = useModels()?.models.find(
     (model) => model.provider === agent.model?.provider && model.id === agent.model.modelId,
   )?.reasoning

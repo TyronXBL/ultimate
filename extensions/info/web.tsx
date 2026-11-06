@@ -154,7 +154,7 @@ function Persistence({ system }: { system: SystemInfo }) {
 
 function Execution({ system }: { system: SystemInfo }) {
   const path = usePath(system)
-  const { agent } = useConversation()
+  const agent = useConversation((c) => c.agent)
   const cwd = agent.cwd ?? system.execution.defaultCwd
   return (
     <Section id="execution" meta="local" title="Execution">
@@ -242,7 +242,8 @@ const cost = (value: number) =>
   `$${value < 1 ? value.toFixed(value < 0.01 ? 4 : 3) : value.toFixed(2)}`
 
 function Model() {
-  const { agent, usage } = useConversation()
+  const agent = useConversation((c) => c.agent)
+  const usage = useConversation((c) => c.usage)
   const models = useModels()
   const ref = agent.model
   const model = models?.models.find(

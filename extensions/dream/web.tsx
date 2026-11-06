@@ -57,7 +57,9 @@ function contextShare(entries: readonly EntryRecord[], window: number) {
  * again, and no fresh chapter is prepared: a good time to dream. Clicking it explains what a dream does.
  */
 function TimeToDream() {
-  const { id, entries, agent } = useConversation()
+  const id = useConversation((c) => c.id)
+  const entries = useConversation((c) => c.entries)
+  const agent = useConversation((c) => c.agent)
   const ultimate = useDocOf(1, StandingDoc)?.ultimate
   const doc = useDocOf(1, DreamDoc)
   const models = useModels()

@@ -463,7 +463,7 @@ export function Dock({
   const open = stored.open !== false
   const [dragging, setDragging] = useState<number>()
   const live = useRef<number | undefined>(undefined)
-  const { busy } = useConversation()
+  const busy = useConversation((c) => c.busy)
   const width = clamp(dragging ?? (typeof stored.width === 'number' ? stored.width : DOCK_WIDTH))
   const border = side === 'right' ? 'border-l' : 'border-r'
   const setOpen = (next: boolean) => setStored({ open: next, width })

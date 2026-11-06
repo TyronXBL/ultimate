@@ -44,7 +44,7 @@ export function FirstRun({
   onClosed: () => void
 }) {
   const models = useModels()
-  const { agent } = useConversation()
+  const agent = useConversation((c) => c.agent)
   const commands = useCommands()
   const ui = useUltimate()
   const model = models?.models.find(

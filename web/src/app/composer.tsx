@@ -89,7 +89,7 @@ function QueuedPreview({ text }: { text: string }) {
 
 /** Steers and follow-ups waiting for the run, as Pi lists them above its editor. */
 function Inbox({ items }: { items: readonly InboxItem[] }) {
-  const { id } = useConversation()
+  const id = useConversation((c) => c.id)
   const [error, setError] = useState<string>()
   const renderer = inboxRenderer(useExtensions())
   const queued = items.filter((item) => item.mode !== 'write')
@@ -167,7 +167,8 @@ export function ComposerRedirect({ to, children }: { to?: ComposerTarget; childr
 }
 
 export function Composer({ dock }: { dock?: boolean }) {
-  const { id, entries } = useConversation()
+  const id = useConversation((c) => c.id)
+  const entries = useConversation((c) => c.entries)
   // Keyed by the conversation it is for, also while that one loads: one mount per switch, not one for the loading state.
   const scoped = useContext(ConversationIdContext)
   const requested = useStore((state) => state.requested)
@@ -246,7 +247,11 @@ function ConversationComposer({ dock }: { dock?: boolean }) {
 }
 
 function ComposerEditor({ dock, upload }: { dock?: boolean; upload: Upload }) {
-  const { id, agent, activity, loading, inbox } = useConversation()
+  const id = useConversation((c) => c.id)
+  const agent = useConversation((c) => c.agent)
+  const activity = useConversation((c) => c.activity)
+  const loading = useConversation((c) => c.loading)
+  const inbox = useConversation((c) => c.inbox)
   // Steer or queue only into a run: queued input alone sends as a new prompt.
   const busy = activity === 'working'
   const queued = inbox.filter((item) => item.mode !== 'write')

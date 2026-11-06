@@ -58,7 +58,9 @@ function MessageAnswerLabel({ entry }: { entry: EntryRecord }) {
  * the log), as a link `?conversation=<c>&message=<m>` does once on load.
  */
 function MessageNavigation() {
-  const { id, entries, loading } = useConversation()
+  const id = useConversation((c) => c.id)
+  const entries = useConversation((c) => c.entries)
+  const loading = useConversation((c) => c.loading)
   const { surface, showSurface } = useUltimate()
   // A cold load mounts the overlays first: the transcript that reveals comes with the page.
   const { ready } = useReady()

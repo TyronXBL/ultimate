@@ -5,7 +5,7 @@ import { SetAction, StatusAction } from './refs.ts'
 
 /** Fast mode for the composer's OpenAI model: on for every request to that model, wherever it runs. */
 function FastToggle() {
-  const ref = useConversation().agent.model
+  const ref = useConversation((c) => c.agent.model)
   const status = useAction(StatusAction)
   useEvent('fast:changed', () => void status.refetch())
   if ((ref?.provider !== 'openai-codex' && ref?.provider !== 'openai') || !status.data) return null

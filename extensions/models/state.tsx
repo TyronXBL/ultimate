@@ -17,7 +17,10 @@ export const thinkingDialog = (id: number | undefined) => `models.thinking.${id}
 
 /** The scoped (or shown) conversation's model and thinking, or those of `target`, and its id to configure. */
 export function useCurrentModel(target?: number) {
-  const own = useConversation()
+  const ownId = useConversation((c) => c.id)
+  const ownAgent = useConversation((c) => c.agent)
+  const ownLoading = useConversation((c) => c.loading)
+  const own = { id: ownId, agent: ownAgent, loading: ownLoading }
   const other = useStore(() => (target === undefined ? undefined : getConversation(target)))
   const { id, agent, loading } = other ?? own
   const models = useModels()

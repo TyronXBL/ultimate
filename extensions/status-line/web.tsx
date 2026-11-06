@@ -52,7 +52,8 @@ function Item({
 
 function Cwd() {
   const system = useSystem()
-  const { agent, id } = useConversation()
+  const agent = useConversation((c) => c.agent)
+  const id = useConversation((c) => c.id)
   const workspace = useWorkspaces()[String(id)]
   if (!system) return null
   const cwd = agent.cwd ?? system.execution.defaultCwd
@@ -130,7 +131,9 @@ function useTokenRates() {
 }
 
 function Tokens() {
-  const { usage, entries, agent } = useConversation()
+  const usage = useConversation((c) => c.usage)
+  const entries = useConversation((c) => c.entries)
+  const agent = useConversation((c) => c.agent)
   const models = useModels()
   const total = usageTotals(usage)
   const latest = lastAssistant(entries).message?.usage

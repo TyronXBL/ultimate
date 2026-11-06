@@ -117,7 +117,8 @@ function Surfaces({ surfaces }: { surfaces: readonly SurfaceItem[] }) {
  * Agent or the surface elsewhere; a dot while the agent works.
  */
 function useDocumentTitle(surface: { id: string; title: string } | undefined) {
-  const { id, busy } = useConversation()
+  const id = useConversation((c) => c.id)
+  const busy = useConversation((c) => c.busy)
   const label = useConversationSummary(id)?.label
   const project = projectTitle(useSystem())
   const app = surface && surface.id !== HOME ? surface.title : undefined

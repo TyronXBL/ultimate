@@ -93,7 +93,7 @@ function Level({ audio, stream }: { audio?: AudioContext; stream: MediaStream })
 
 /** Tap to record, tap to stop; the words land in the draft at the cursor, unsent, for review. */
 function VoiceButton() {
-  const { id } = useConversation()
+  const id = useConversation((c) => c.id)
   const status = useAction(StatusAction)
   useEvent('secrets:changed', () => void status.refetch())
   const [recording, setRecording] = useState<Recording>()

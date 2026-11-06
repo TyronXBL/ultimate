@@ -77,7 +77,7 @@ const nameOf = (conversation: ConversationSummary) =>
 
 /** Where the shown conversation sits: its ancestors (beyond a phone), a busy dot, and its title. */
 function Trail() {
-  const { busy } = useConversation()
+  const busy = useConversation((c) => c.busy)
   // The requested conversation while its snapshot loads, so a switch keeps naming where it goes.
   const id = useStore(shownConversation)
   const conversations = useConversations()

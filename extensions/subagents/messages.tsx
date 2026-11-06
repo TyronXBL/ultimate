@@ -20,7 +20,9 @@ import { openAgentSource } from './ui.tsx'
 type Destination = { conversation: number; entry?: number }
 
 export function AgentMessages() {
-  const { id, entries, loading } = useConversation()
+  const id = useConversation((c) => c.id)
+  const entries = useConversation((c) => c.entries)
+  const loading = useConversation((c) => c.loading)
   const { switchConversation } = useUltimate()
   const [navigation, setNavigation] = useState<{ target?: Destination; back?: Destination }>({})
   const { target, back } = navigation
@@ -141,7 +143,7 @@ export function AgentInbox({
   core: ReactNode
   cancel: ReactNode
 }) {
-  const { id } = useConversation()
+  const id = useConversation((c) => c.id)
   const { switchConversation } = useUltimate()
   const sender = useConversationSummary((item.entry?.data as AgentOrigin | undefined)?.sender)
   if (
