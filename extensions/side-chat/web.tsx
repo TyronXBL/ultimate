@@ -117,11 +117,11 @@ function ModeSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 function SideComposer({ core, dock }: { core: ReactNode; dock?: boolean }) {
   const id = useConversation((conversation) => conversation.id)
   const { main, index } = useMain()
-  const on = useSideMode()
+  // Keep the editor in the same tree position while the standing conversation's document arrives.
+  const active = id !== undefined && id === main && !dock
+  const on = useSideMode() && active
   const [front, setFront] = useFront()
-  const shown = frontSide(front, index)
-  // A side chat's own composer, and @ultimate's in a docked region, stay as they are: one level only.
-  if (id === undefined || id !== main || dock) return core
+  const shown = active ? frontSide(front, index) : undefined
   const parked = openSides(index).filter((item) => item.id !== shown?.id)
   const sideTarget: ComposerTarget | undefined = on
     ? {
@@ -134,78 +134,85 @@ function SideComposer({ core, dock }: { core: ReactNode; dock?: boolean }) {
       }
     : undefined
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!(event.target instanceof HTMLTextAreaElement)) return
+    if (!active || !(event.target instanceof HTMLTextAreaElement)) return
     const popup = event.target.getAttribute('aria-expanded') === 'true'
     const key = { ...event, isComposing: event.nativeEvent.isComposing }
     if (!togglesSideMode(key, { conversation: id, ultimate: main, popup })) return
     event.preventDefault()
     setSide(!on)
   }
-  // Another composer mode (a branch setup) sits beside the switch; side chat on wins over it.
+  // Another composer mode (a branch setup) sits beside the switch; side chat on wins over it. A side chat's own
+  // composer, and @ultimate's in a docked region, get neither: one level only.
   return (
     <Provided point={ComposerMode} input={{ side: on, normal: () => setSide(false) }}>
-      {(mode) => (
-        <div
-          className="relative"
-          data-side-mode={on ? 'side' : 'normal'}
-          onKeyDownCapture={onKeyDown}
-        >
-          {/* Covered by a side chat in front, main's composer and its controls take no focus, typing or clicks. */}
-          <div data-main-composer inert={!!shown}>
-            <div className="mx-auto flex w-full max-w-[46rem] items-center justify-between gap-2 px-3 pb-1.5 sm:px-6">
+      {(provided) => {
+        const mode = active ? provided : undefined
+        return (
+          <div
+            className="relative"
+            data-side-mode={active ? (on ? 'side' : 'normal') : undefined}
+            onKeyDownCapture={onKeyDown}
+          >
+            {/* Covered by a side chat in front, main's composer and its controls take no focus, typing or clicks. */}
+            <div data-main-composer={active || undefined} inert={!!shown}>
               <div
-                className="flex min-w-0 items-center gap-3 font-mono text-[11px] text-muted-foreground/70"
-                data-ui="side-chat-hint"
+                className="mx-auto flex w-full max-w-[46rem] items-center justify-between gap-2 px-3 pb-1.5 sm:px-6"
+                hidden={!active}
               >
-                {parked.map((item) => (
-                  <button
-                    className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground hover:text-foreground"
-                    key={item.id}
-                    onClick={() => setFront(item.id)}
-                    title="Bring this side chat back to the front"
-                    type="button"
-                  >
-                    <GitForkIcon className="size-3 text-brand" />
-                    Side chat · {formatTime(item.openedAt)}
-                    <span className="text-brand">show</span>
-                  </button>
-                ))}
-                {parked.length === 0 && (
-                  <span className="truncate pointer-coarse:hidden">
-                    {on ? (
-                      <>
-                        <span className="text-brand">↵</span> forks @ultimate · <Kbd>Tab</Kbd> back
-                        to normal
-                      </>
-                    ) : (
-                      <>
-                        <Kbd>Tab</Kbd> side chat
-                      </>
-                    )}
-                  </span>
+                <div
+                  className="flex min-w-0 items-center gap-3 font-mono text-[11px] text-muted-foreground/70"
+                  data-ui="side-chat-hint"
+                >
+                  {parked.map((item) => (
+                    <button
+                      className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground hover:text-foreground"
+                      key={item.id}
+                      onClick={() => setFront(item.id)}
+                      title="Bring this side chat back to the front"
+                      type="button"
+                    >
+                      <GitForkIcon className="size-3 text-brand" />
+                      Side chat · {formatTime(item.openedAt)}
+                      <span className="text-brand">show</span>
+                    </button>
+                  ))}
+                  {parked.length === 0 && (
+                    <span className="truncate pointer-coarse:hidden">
+                      {on ? (
+                        <>
+                          <span className="text-brand">↵</span> forks @ultimate · <Kbd>Tab</Kbd>{' '}
+                          back to normal
+                        </>
+                      ) : (
+                        <>
+                          <Kbd>Tab</Kbd> side chat
+                        </>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {mode?.control}
+                  <ModeSwitch on={on} onToggle={() => setSide(!on)} />
+                </div>
+              </div>
+              <div
+                className={cn(
+                  'relative transition-[padding] duration-300 motion-reduce:transition-none',
+                  on ? 'sm:pl-6' : 'pl-0',
+                  '[&_form]:transition-[border-color] [&_form]:duration-300',
+                  on &&
+                    '[&_form]:border-dashed [&_form]:border-brand/60 [&_form]:focus-within:border-brand/80',
                 )}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {mode?.control}
-                <ModeSwitch on={on} onToggle={() => setSide(!on)} />
+                style={{ transitionTimingFunction: ease }}
+              >
+                <ComposerRedirect to={sideTarget ?? mode?.target}>{core}</ComposerRedirect>
               </div>
             </div>
-            <div
-              className={cn(
-                'relative transition-[padding] duration-300 motion-reduce:transition-none',
-                on ? 'sm:pl-6' : 'pl-0',
-                '[&_form]:transition-[border-color] [&_form]:duration-300',
-                on &&
-                  '[&_form]:border-dashed [&_form]:border-brand/60 [&_form]:focus-within:border-brand/80',
-              )}
-              style={{ transitionTimingFunction: ease }}
-            >
-              <ComposerRedirect to={sideTarget ?? mode?.target}>{core}</ComposerRedirect>
-            </div>
+            {shown && <MainBlocked onBack={() => setFront(null)} />}
           </div>
-          {shown && <MainBlocked onBack={() => setFront(null)} />}
-        </div>
-      )}
+        )
+      }}
     </Provided>
   )
 }

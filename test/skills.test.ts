@@ -27,6 +27,14 @@ async function setup() {
     'name: ship\ndescription: Clone ship',
   )
   await skill(
+    join(host.ultimateRoot, 'skills/review/SKILL.md'),
+    'name: review\ndescription: Clone review',
+  )
+  await skill(
+    join(host.projectRoot, '.pi/skills/review/SKILL.md'),
+    'name: review\ndescription: Project review',
+  )
+  await skill(
     join(host.userHome, '.ultimate/skills/ship/SKILL.md'),
     'name: ship\ndescription: User ship',
   )
@@ -46,15 +54,21 @@ async function setup() {
 it('loads every scope, lets later scopes override and keeps Pi diagnostics', async () => {
   const host = await setup()
   const untrusted = skillInfo(projectSkills(host))
-  // The project's .agents and .ultimate skills wait for the project to be trusted.
-  expect(untrusted.skills.map((s) => [s.name, s.scope, s.description])).toEqual([
-    ['ship', 'user', 'User ship'],
+  // The project's .pi, .agents and .ultimate skills wait for the project to be trusted: an untrusted .pi/skills
+  // neither loads nor shadows the clone's skill of the same name (#162411).
+  expect(untrusted.skills.map((s) => [s.name, s.scope, s.description, s.overrides])).toEqual([
+    ['review', 'clone', 'Clone review', []],
+    ['ship', 'user', 'User ship', [join(host.ultimateRoot, 'skills/ship/SKILL.md')]],
   ])
-  expect(untrusted.skills[0]?.overrides).toEqual([join(host.ultimateRoot, 'skills/ship/SKILL.md')])
   expect(untrusted.skillDiagnostics).toEqual([])
 
   new ProjectTrustStore(join(host.userHome, '.ultimate')).set(host.projectRoot, true)
   const trusted = skillInfo(projectSkills(host))
+  expect(trusted.skills.find((s) => s.name === 'review')).toMatchObject({
+    scope: 'project',
+    description: 'Project review',
+    overrides: [join(host.ultimateRoot, 'skills/review/SKILL.md')],
+  })
   expect(trusted.skills.find((s) => s.name === 'team')).toMatchObject({
     scope: 'project',
     manual: true,

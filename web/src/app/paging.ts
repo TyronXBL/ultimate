@@ -1,6 +1,6 @@
 /**
  * What a transcript's reads of stored history are doing: paging into earlier history, and filling the ranges a fresh
- * window does not cover. `TranscriptEntries` performs the reads; `step` is the only writer of their state, and
+ * window does not cover. `useHistory` (`history.ts`) performs the reads; `step` is the only writer of their state, and
  * `pagingView` is what every reader of it sees.
  */
 

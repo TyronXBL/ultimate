@@ -16,7 +16,6 @@ import {
   useEffectEvent,
   useLayoutEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
 } from 'react'
@@ -24,7 +23,6 @@ import type { ComponentType, ReactNode, RefObject } from 'react'
 import { useStickToBottomContext } from 'use-stick-to-bottom'
 import type { StickToBottomContext } from 'use-stick-to-bottom'
 import { useEvent } from '../sdk/events.ts'
-import { api } from '../sdk/client.ts'
 import { Button } from '@/components/ui/button'
 import {
   Conversation,
@@ -71,8 +69,7 @@ import {
 } from './compact.ts'
 import type { AsideGroup, BetweenGroup, CompactPart, WorkRun } from './compact.ts'
 import { foldKey, readFold, writeFold } from './fold.tsx'
-import { reachedFork } from './fork.ts'
-import { initialPaging, pagingView, step } from './paging.ts'
+import { useHistory } from './history.ts'
 import { readerLeft } from './follow.ts'
 import { column } from './layout.ts'
 import { callsStart, indexTools, partialOf, slotsOf, toolCallView } from './model.ts'
@@ -199,18 +196,19 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   const { id, entries: active, older, live, activity, loading } = useConversation()
   // Running now: queued input alone shows no working row.
   const busy = activity === 'working'
-  const [history, setHistory] = useState<EntryRecord[]>([])
-  const previousActive = useRef(active)
-  const previousOlder = useRef<number>(undefined)
+  const {
+    entries,
+    history,
+    cursor,
+    pending,
+    canLoad,
+    failed,
+    filling,
+    retry,
+    loadEarlier,
+    loadDown,
+  } = useHistory(id, active, older)
   const [tailSpace, setTailSpace] = useState(0)
-  const [paging, dispatch] = useReducer(step, initialPaging)
-  // A windowed stream pages on from its oldest entry; a whole one is the whole history.
-  // A fork's history before its own first entry is its source's and stays hidden: paging stops at the fork point.
-  const forked = reachedFork([...active, ...history], id)
-  const { cursor, pending, canLoad, failed, filling } = pagingView(paging, older, forked)
-  // The page read in flight, aborted when the transcript goes. Set at once, it also keeps a second read from starting
-  // in the same tick, before the loading phase renders.
-  const request = useRef<AbortController | null>(null)
   const anchor = useRef<{
     entryId: number
     /** The last entry of a folded run: its row keeps that id when a page brings earlier entries into the run. */
@@ -220,10 +218,6 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     toolCallId?: string
     top: number
   } | null>(null)
-  // Ranges of stored history a fresh window does not cover: discarded markers after a head marker, and what arrived
-  // while a reconnect was away. Filled once per range, by its `after:before` key; failed ones wait for Retry. The keys
-  // only deduplicate reads; what each fill is doing is in `paging`.
-  const filled = useRef(new Set<string>())
   const sentinel = useRef<HTMLDivElement>(null)
   const { contentRef, scrollRef, stopScroll, state, isAtBottom, escapedFromLock } =
     useStickToBottomContext()
@@ -262,70 +256,6 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     })
     return () => scroll.removeEventListener('scroll', onScroll, { capture: true })
   }, [scrollRef, stopScroll])
-  // Retain already displayed rows when a live compaction replaces the active context, or a fresh window moves past them.
-  const entries = useMemo(() => {
-    const rows = new Map(history.map((entry) => [entry.id, entry]))
-    for (const entry of previousActive.current) rows.set(entry.id, entry)
-    for (const entry of active) rows.set(entry.id, entry)
-    return [...rows.values()].toSorted((a, b) => a.id - b.id)
-  }, [history, active])
-  /** Read every stored entry from `after` up to `upTo`, once per range, into the loaded history. */
-  const fill = useEffectEvent((after: number, upTo: number) => {
-    const key = `${after}:${upTo}`
-    if (id === undefined || after >= upTo || filled.current.has(key)) return
-    filled.current.add(key)
-    const range = [after, upTo] as const
-    dispatch({ type: 'fill', range })
-    // oxlint-disable-next-line typescript/no-floating-promises -- this task catches history failures and reports them as fillFailed.
-    void (async () => {
-      try {
-        const rows: EntryRecord[] = []
-        for (let next: number | undefined = upTo; next !== undefined;) {
-          const page = await api.history(id, next, undefined, after)
-          rows.push(...page.entries)
-          next = page.before
-        }
-        setHistory((previous) => {
-          const merged = new Map(previous.map((entry) => [entry.id, entry]))
-          for (const entry of rows) merged.set(entry.id, entry)
-          return [...merged.values()]
-        })
-        dispatch({ type: 'filled', range })
-      } catch {
-        // The sentinel offers Retry, which reads the range again.
-        filled.current.delete(key)
-        dispatch({ type: 'fillFailed', range })
-      }
-    })()
-  })
-  // Retry clears the failure; failed fills then run again, and the sentinel pages on.
-  const retry = () => dispatch({ type: 'retry' })
-  useEffect(() => {
-    for (const { phase, range } of paging.fills) if (phase === 'retrying') fill(...range)
-  }, [paging.fills])
-  const loadedBelow = useEffectEvent((dropped: readonly EntryRecord[]) => [...history, ...dropped])
-  useLayoutEffect(() => {
-    const current = new Set(active.map((entry) => entry.id))
-    const dropped = previousActive.current.filter((entry) => !current.has(entry.id))
-    if (dropped.length)
-      setHistory((previous) => {
-        const rows = new Map(previous.map((entry) => [entry.id, entry]))
-        for (const entry of dropped) rows.set(entry.id, entry)
-        return [...rows.values()]
-      })
-    // A fresh window (a new `older`; appends keep it) can leave stored history between it and the rows kept below it.
-    const fresh = older !== previousOlder.current
-    previousOlder.current = older
-    if (older !== undefined && fresh) {
-      const below = Math.max(
-        0,
-        ...loadedBelow(dropped).flatMap((e) => (e.id < older ? [e.id] : [])),
-      )
-      if (below) fill(below + 1, older)
-    }
-    previousActive.current = active
-  }, [active, older])
-  useEffect(() => () => request.current?.abort(), [])
   useLayoutEffect(() => {
     if (anchor.current && scrollRef.current) {
       const { toolCallId: callId, top } = anchor.current
@@ -353,17 +283,12 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     releaseTail()
     return () => scroll.removeEventListener('scroll', releaseTail)
   }, [tailSpace, active, scrollRef, contentRef])
-  const loadEarlier = useEffectEvent(async () => {
-    if (id === undefined || request.current || !canLoad) return
-    const controller = new AbortController()
-    request.current = controller
-    dispatch({ type: 'load' })
-    try {
-      const page = await api.history(id, cursor, controller.signal)
-      if (controller.signal.aborted) return
-      const { calls: mergedCalls } = indexTools([...entries, ...page.entries])
+  // Page in earlier history, holding the rows the reader sees in place while the page goes in above them.
+  const earlier = useEffectEvent(() =>
+    loadEarlier((page) => {
+      const { calls: mergedCalls } = indexTools([...entries, ...page])
       // Rows older than the page, such as a head marker shown first, stay above it: anchor a row the page goes above.
-      const newest = Math.max(0, ...page.entries.map((entry) => entry.id))
+      const newest = Math.max(0, ...page.map((entry) => entry.id))
       const survivors = new Set<number>(
         entries
           .filter(
@@ -404,7 +329,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           (entry) => entry.id === Number(candidates[0].getAttribute('data-entry-id')),
         )
         const callId = orphan && toolCallId(orphan)
-        const replacement = page.entries.find((entry) => {
+        const replacement = page.find((entry) => {
           const message = entry.model?.[0]
           return (
             entry.kind === 'pi.assistant' &&
@@ -429,19 +354,8 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           (scrollRef.current?.clientHeight ?? 0) - (contentRef.current?.clientHeight ?? 0),
         ),
       )
-      setHistory((previous) => {
-        const rows = new Map(previous.map((entry) => [entry.id, entry]))
-        for (const entry of page.entries) rows.set(entry.id, entry)
-        return [...rows.values()]
-      })
-      dispatch({ type: 'loaded', before: page.before })
-    } catch {
-      // Aborted: the transcript is gone, nothing reads its state. Otherwise the sentinel offers Retry.
-      if (!controller.signal.aborted) dispatch({ type: 'failed' })
-    } finally {
-      request.current = null
-    }
-  })
+    }),
+  )
   // Page in earlier history while the top comes within a viewport. A new observer after each page reports at once
   // whether the top is still that close.
   useEffect(() => {
@@ -450,41 +364,13 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     const observer = new IntersectionObserver(
       ([entry]) => {
         // oxlint-disable-next-line typescript/no-floating-promises -- loadEarlier catches history failures and reports them as failed.
-        if (entry?.isIntersecting) void loadEarlier()
+        if (entry?.isIntersecting) void earlier()
       },
       { root, rootMargin: '100% 0px 0px 0px' },
     )
     observer.observe(sentinel.current)
     return () => observer.disconnect()
   }, [scrollRef, loading, canLoad, history])
-  /** Read stored history down to entry `target`, in large pages bounded by it, so a reveal can scroll there. */
-  const loadDown = async (target: number) => {
-    if (id === undefined || request.current || !canLoad) return
-    const controller = new AbortController()
-    request.current = controller
-    dispatch({ type: 'load' })
-    try {
-      const rows: EntryRecord[] = []
-      for (let next: number | undefined = cursor; next !== undefined;) {
-        const page = await api.history(id, next, controller.signal, target)
-        rows.push(...page.entries)
-        next = page.before
-      }
-      if (controller.signal.aborted) return
-      stopScroll()
-      setHistory((previous) => {
-        const merged = new Map(previous.map((entry) => [entry.id, entry]))
-        for (const entry of rows) merged.set(entry.id, entry)
-        return [...merged.values()]
-      })
-      dispatch({ type: 'loadedDown', target })
-    } catch {
-      // Aborted: the transcript is gone, nothing reads its state. Otherwise the sentinel offers Retry.
-      if (!controller.signal.aborted) dispatch({ type: 'failed' })
-    } finally {
-      request.current = null
-    }
-  }
   const { results, calls } = useMemo(() => indexTools(entries), [entries])
   // Keyed on the tools, not `live`: a streamed token must not re-render every row.
   const slots = useMemo(() => slotsOf(live.tools), [live.tools])
@@ -582,7 +468,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     if (!entries.some((entry) => entry.id === revealed)) {
       if (cursor !== undefined && revealed < cursor) {
         // oxlint-disable-next-line typescript/no-floating-promises -- loadDown catches history failures and reports them as failed.
-        void loadDown(revealed)
+        void loadDown(revealed, stopScroll)
         return
       }
       // Inside the window's range: a fill still reading it brings it.

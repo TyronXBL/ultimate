@@ -4,8 +4,9 @@ Discovery is clone built-ins, then `~/.ultimate/`, then `<project>/.ultimate/`; 
 Enabled extensions may ship `agents/` definitions, loaded as built-ins before user and project definitions or overlays.
 Disabling the extension removes its definitions too.
 Skills ([Agent Skills](https://agentskills.io) folders with a `SKILL.md`, as Pi loads them) come from clone `skills/`, the
-project's `.pi/skills/`, `~/.ultimate/skills/`, then, once the project is trusted, its `.agents/skills/` and
-`.ultimate/skills/`; a later scope overrides an earlier skill of the same name. Every agent's
+project's `.pi/skills/`, `~/.ultimate/skills/`, then the project's `.agents/skills/` and `.ultimate/skills/`; a
+later scope overrides an earlier skill of the same name. Every project folder, `.pi/skills/` included, loads only once
+the project is trusted, so an untrusted checkout can neither reach the prompt nor shadow a built-in skill. Every agent's
 system prompt lists each skill's name, description and path after the project context (a skill inside the host project
 at the work checkout's copy when a worktree has one), and the agent reads `SKILL.md`
 when a task matches (`disable-model-invocation: true` leaves a skill out of that list). The user runs one with
@@ -55,7 +56,7 @@ This repository's `.ultimate/settings.json` holds its isolate setup,
 lander checks and preview model.
 
 A project's `.ultimate/` applies only once it is chosen: its `extensions/`, the project `extensions` settings layer,
-`agents/`, and `skills/` load only when the project decision is local. Decisions are kept per project path with Pi's
+`agents/`, and `skills/` (with its `.pi/skills/` and `.agents/skills/`) load only when the project decision is local. Decisions are kept per project path with Pi's
 `ProjectTrustStore` in `~/.ultimate/trust.json`, and a linked git worktree shares its main checkout's; undecided behaves like global and is reported in system info
 (`project.decision`). Every `.ultimate/settings.json` key (`defaultSurface`, `isolates`, …) goes through the gated
 `host.projectSettings()`; onboarding reads the file only to show what choosing the project would bring. The `onboarding` extension asks once and its Extensions panel changes the choice live. Resources you add to a
