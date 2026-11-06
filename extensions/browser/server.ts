@@ -21,7 +21,7 @@ import { defineExtension, defineTool, section } from '@earendil-works/pi-durable
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import { identify } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { sourceFrames } from '../../lib/source-frames.ts'
+import { fetchAssets, sourceFrames } from '../../lib/source-frames.ts'
 import { BrowserApi, type ChromiumStatus } from './api.ts'
 import { chromiumStatus } from './chromium-version.ts'
 import { refusal, scopeProxy } from './scope.ts'
@@ -535,14 +535,15 @@ export default function browserExtension(host: ExtensionHost) {
       const result = await action(page, outcomes, png, guard)
       const title = await guard(page.title())
       // Errors name source files and lines, as dev tools show them, not positions in the bundle. Scripts and maps
-      // are read through the context's scope proxy, so a page's error text cannot make the host fetch a public URL.
+      // are read through the context's scope proxy, so a page's error text cannot make the host fetch a public URL, and
+      // only as the `/assets/` files of the page's own origin after redirects, which Chromium already reached (PR #89).
       const maps = new Map()
       const requests = isolated.request
-      const read = (script: string) =>
-        requests.get(script).then(
-          (response) => (response.ok() ? response.text() : undefined),
-          () => undefined, // Out of scope, unreachable or not a URL: the frame stays as it is.
-        )
+      const read = fetchAssets(new URL(page.url()).origin, (asset) =>
+        requests
+          .get(asset, { timeout: 5000 })
+          .then((response) => (response.ok() ? response.text() : undefined)),
+      )
       outcomes.splice(
         0,
         outcomes.length,
