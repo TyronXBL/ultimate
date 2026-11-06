@@ -9,7 +9,7 @@ import type { Failure, JobResult } from './refs.ts'
 /** The API base; tests point it at a local listener. */
 const api = () => process.env.CI_GATE_API ?? 'https://api.github.com'
 
-// The token and key shapes that must never reach the public fork (GitHub, OpenAI, Anthropic, AWS, Slack, Google, keys).
+// The token and key shapes that must never reach the fork (GitHub, OpenAI, Anthropic, AWS, Slack, Google, keys).
 const SECRETS =
   /gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY/
 
@@ -29,8 +29,18 @@ type Annotation = {
   annotation_level: string
 }
 
-/** The GitHub API failed (network, rate limit, outage) after its retries; the message names the last failure. */
+/**
+ * GitHub gave no verdict on the code: its API failed (network, rate limit, outage) after its retries, or Actions did not
+ * start the jobs; the message names why.
+ */
 export class Unreachable extends Error {}
+
+/**
+ * The annotation GitHub puts on a job it refuses to start: "The job was not started because recent account payments
+ * have failed or your spending limit needs to be increased…". A private repository on a $0 budget gets it once the
+ * month's included minutes are spent (#169933); it says nothing about the code.
+ */
+const NOT_STARTED = /\bjob was not started\b/i
 
 /** Run git in `cwd`, `input` on its stdin; resolves its stdout, trimmed. */
 export function git(cwd: string, args: string[], input?: string) {
@@ -174,9 +184,13 @@ export const jobResult = (job: Job): JobResult => ({
     : {}),
 })
 
-/** The failing tests of a run's failed jobs, from their annotations (Vitest titles one `file > test`). */
+/**
+ * The failing tests of a run's failed jobs, from their annotations (Vitest titles one `file > test`), and `notStarted`,
+ * GitHub's reason when it did not start a job at all (billing), which is no verdict on the code.
+ */
 export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
   const failures: Failure[] = []
+  let notStarted: string | undefined
   for (const job of jobs.filter(
     (item) => item.conclusion !== 'success' && item.conclusion !== 'skipped',
   )) {
@@ -188,6 +202,7 @@ export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
       // The run's conclusion already decides; without annotations the job's own line names it.
       () => [],
     )
+    notStarted ??= notes.find((note) => NOT_STARTED.test(note.message))?.message.split('\n')[0]
     const named = notes.filter(
       (note) => note.annotation_level === 'failure' && note.path !== '.github',
     )
@@ -198,5 +213,5 @@ export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
       })
     if (!named.length) failures.push({ title: job.name, message: job.conclusion ?? 'failed' })
   }
-  return failures
+  return { failures, ...(notStarted ? { notStarted } : {}) }
 }

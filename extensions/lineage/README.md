@@ -36,8 +36,8 @@ document, tools and model-facing text, where agents and stored entries already u
   `recent` `{ id, limit?, types? }` → `RootEvent[]` (`types.ts`) lists a listed root's newest events, newest first
   (default 3, at most 20; only the given `types` when set): landings `{ sha, base?, commits, feature?, title?, from?,
   compare? }` (`commits` counts the note's listed commits plus `more`), other notes `{ from?, text }`, new branches
-  `{ branch, intent }`, compactions, and the genesis (`started`), each with its `entry` and `at`. With a GitHub
-  `origin`, a landing's `compare` is `https://diffshub.com/<owner>/<repo>/compare/<base>...<sha>` (DiffsHub's view of the GitHub range); a note from before
+  `{ branch, intent }`, compactions, and the genesis (`started`), each with its `entry` and `at`. When landings go to
+  GitHub (the `lander.push` remote, else `origin`), a landing's `compare` is `https://diffshub.com/<owner>/<repo>/compare/<base>...<sha>` (DiffsHub's view of the GitHub range); a note from before
   landings recorded `base` uses the landing before it, which is where the lander's serial queue left the target.
   Catch-up notes and abstracts are left out. The sidebar's Landed section, under the lander, shows the landings.
   Workspaces' `github` action gives the root page's landing cards the same range.

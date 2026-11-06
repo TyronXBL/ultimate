@@ -232,29 +232,42 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
           const run = (await runsOf(cwd, repo, sha, ref, 1))[0]
           if (run?.status === 'completed') {
             const state = await runState(cwd, repo, run.id)
-            const failures =
-              state.run.conclusion === 'success' ? [] : await failuresOf(cwd, repo, state.jobs)
-            if (failures.length) await attachEarlier(extension, task.input.to, failures, ctx)
+            const verdict =
+              state.run.conclusion === 'success'
+                ? undefined
+                : await failuresOf(cwd, repo, state.jobs)
+            const failures = verdict?.failures ?? []
+            const notStarted = verdict?.notStarted
+            if (failures.length && !notStarted)
+              await attachEarlier(extension, task.input.to, failures, ctx)
             const ends = state.jobs.flatMap((job) =>
               job.completed_at ? [Date.parse(job.completed_at)] : [],
             )
             const starts = state.jobs.flatMap((job) =>
               job.started_at ? [Date.parse(job.started_at)] : [],
             )
-            next = await end({
-              url: state.run.html_url,
-              conclusion:
-                state.run.conclusion === 'success'
-                  ? 'success'
-                  : state.run.conclusion === 'cancelled'
-                    ? 'cancelled'
-                    : 'failure',
-              ...(starts.length && ends.length
-                ? { seconds: Math.round((Math.max(...ends) - Math.min(...starts)) / 1000) }
-                : {}),
-              jobs: state.jobs.map(jobResult),
-              failures,
-            })
+            next = notStarted
+              ? await end({
+                  url: state.run.html_url,
+                  conclusion: 'no-run',
+                  reason: `GitHub Actions did not start the jobs, so nothing was tested: ${notStarted}`,
+                  jobs: [],
+                  failures: [],
+                })
+              : await end({
+                  url: state.run.html_url,
+                  conclusion:
+                    state.run.conclusion === 'success'
+                      ? 'success'
+                      : state.run.conclusion === 'cancelled'
+                        ? 'cancelled'
+                        : 'failure',
+                  ...(starts.length && ends.length
+                    ? { seconds: Math.round((Math.max(...ends) - Math.min(...starts)) / 1000) }
+                    : {}),
+                  jobs: state.jobs.map(jobResult),
+                  failures,
+                })
           } else if (!run && now - pushed > PATIENCE_MS)
             next = await end({
               conclusion: 'no-run',

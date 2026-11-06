@@ -197,6 +197,82 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
   api.close()
 })
 
+it('runs the suites locally when GitHub did not start the jobs for billing, instead of failing the landing', async () => {
+  const root = await temp('ultimate-ci-gate-')
+  const checkout = join(root, 'checkout')
+  await mkdir(checkout)
+  await git(checkout, 'init', '-q', '-b', 'main')
+  await writeFile(
+    join(checkout, 'package.json'),
+    JSON.stringify({
+      name: 'p',
+      private: true,
+      scripts: { test: 'echo local test', 'test:e2e': 'echo local e2e' },
+    }),
+  )
+  await git(checkout, 'add', '.')
+  await git(checkout, 'commit', '-qm', 'first')
+  await git(checkout, 'remote', 'add', 'fork', 'https://github.com/owner/ultimate.git')
+  await git(checkout, 'config', 'credential.helper', `!f() { echo password=${TOKEN}; }; f`)
+  // A run of the commit already under way, whose jobs GitHub refuses to start once the month's minutes are spent.
+  const api = createServer((request, response) => {
+    const path = new URL(request.url!, 'http://api').pathname
+    const ended = { id: 7, status: 'completed', conclusion: 'failure', html_url: 'https://run/7' }
+    const body =
+      path === '/repos/owner/ultimate/actions/runs'
+        ? { workflow_runs: [{ ...ended, status: 'in_progress', conclusion: null }] }
+        : path === '/repos/owner/ultimate/actions/runs/7'
+          ? ended
+          : path === '/repos/owner/ultimate/actions/runs/7/jobs'
+            ? {
+                jobs: [
+                  {
+                    id: 2,
+                    name: 'test (1/2)',
+                    conclusion: 'failure',
+                    started_at: '2026-01-01T00:00:00Z',
+                    completed_at: '2026-01-01T00:00:00Z',
+                  },
+                ],
+              }
+            : path === '/repos/owner/ultimate/check-runs/2/annotations'
+              ? [
+                  {
+                    path: '.github',
+                    start_line: 1,
+                    message:
+                      "The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings",
+                    annotation_level: 'failure',
+                  },
+                ]
+              : undefined
+    response.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(body ?? { message: 'Not Found' }))
+  })
+  await new Promise<void>((done) => api.listen(0, '127.0.0.1', done))
+  const { stdout } = await run(
+    process.execPath,
+    [join(import.meta.dirname, '../../.ultimate/scripts/ci-gate.ts'), 'fork'],
+    {
+      cwd: checkout,
+      env: {
+        ...process.env,
+        CI_GATE_API: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+        // No RAM floor in this home: the local suites are admitted at once.
+        HOME: join(root, 'home'),
+      },
+    },
+  )
+  api.close()
+  expect(stdout).toContain(
+    'CI GATE FALLBACK: GitHub Actions did not start the jobs: The job was not started because recent account payments have failed',
+  )
+  expect(stdout).toContain('local test')
+  expect(stdout).toContain('local e2e')
+  expect(stdout).toContain('FALLBACK: local suites passed')
+  expect(stdout).not.toContain(TOKEN)
+})
+
 it('runs CI on the PC runner first and delivers its failing tests without GitHub', async () => {
   const root = await temp('ultimate-ci-pc-')
   // The PC: a bare ci.git in its runner's home, reached by an `ssh` that runs the real forced command there.

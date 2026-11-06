@@ -18,7 +18,8 @@ export type CiResult = {
   /** PC host that ran the suites. */
   runner?: string
   /**
-   * `refused`: the secret scan stopped the push; `no-run`: no run started; `timeout`: the run did not finish within
+   * `refused`: the secret scan stopped the push; `no-run`: no run started, or GitHub did not start its jobs (billing);
+   * `timeout`: the run did not finish within
    * an hour; `unreachable`: GitHub failed.
    */
   conclusion: 'success' | 'failure' | 'cancelled' | 'refused' | 'no-run' | 'timeout' | 'unreachable'

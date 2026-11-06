@@ -67,7 +67,6 @@ import { admitCompaction } from '../../lib/compaction.ts'
 import { limitOf } from '../../lib/rate-limit.ts'
 import type { Limit } from '../../lib/rate-limit.ts'
 import { BackupOrder, ModelsApi, Resets } from '../models/api.ts'
-import { githubRepo } from '../../lib/project-identity.ts'
 
 export type BranchImage = { data: string; mimeType: string }
 
@@ -1193,16 +1192,17 @@ function rootEvent(entry: EntryRecord): RootEvent | undefined {
 }
 
 /**
- * Each landing's DiffsHub compare URL, `base...sha`, when the project's `origin` is on GitHub. A landing from before notes
- * recorded their base takes the landing before it, which is where the lander's serial queue left the target.
+ * Each landing's DiffsHub compare URL, `base...sha`, when the repository landings go to is on GitHub (workspaces'
+ * `github`). A landing from before notes recorded their base takes the landing before it, which is where the lander's
+ * serial queue left the target.
  */
 async function withCompare(
-  projectRoot: string,
+  host: Pick<ExtensionHost, 'need'>,
   events: RootEvent[],
   older: string | undefined,
 ): Promise<RootEvent[]> {
   if (!events.some((event) => event.type === 'landed')) return events
-  const remote = await githubRepo(projectRoot)
+  const remote = await host.need(WorkspacesApi).github()
   return remote ? compareLinks(remote, events, older) : events
 }
 
@@ -1233,7 +1233,7 @@ export const actions = {
   },
   /**
    * `{id, limit?, types?}`: the newest landings, notes, branches and compactions in root `id`, newest first (default
-   * 3), only of `types` when given. A landing on a GitHub `origin` links its compare range.
+   * 3), only of `types` when given. A landing on GitHub links its compare range.
    */
   recent: implementAction(RecentAction, async (args, { host }) => {
     const id = conversationArg(args)
@@ -1273,7 +1273,7 @@ export const actions = {
       } while (cursor)
       return { events, older }
     }, context)
-    return withCompare(host.projectRoot, scanned.events, scanned.older)
+    return withCompare(host, scanned.events, scanned.older)
   }),
   /** `{id, instructions?}`: compact root tally `id`, for the history footer and the palette. */
   compact: implementAction(CompactAction, async (args, { host }) => {

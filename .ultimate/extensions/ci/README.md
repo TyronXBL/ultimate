@@ -15,7 +15,9 @@ and returns at once. A durable `ci.run` task then:
 4. pushes `fork:ci/<sha>-t<task>` (apart from the gate's `ci/<sha>[-n]`), which starts `.github/workflows/ci.yml`;
 5. looks at the run every 20 s, or every 3 min without a stored credential (60 unauthenticated calls an hour are the
    whole machine's), until it ends, no run started within 5 minutes, it has not finished an hour after the push
-   (`timeout`), or GitHub has failed for 5 minutes (`unreachable`);
+   (`timeout`), or GitHub has failed for 5 minutes (`unreachable`). A run whose jobs GitHub did not start (the
+   annotation "The job was not started because … your spending limit needs to be increased", once a private repository
+   on a $0 budget spent the month's minutes) is `no-run` with GitHub's reason, not a failure of the code;
 6. deletes the ref and submits one `ci.result` input (request id `ci.result:<task>`) to the caller, which wakes it (a
    note that starts no run while the caller is concluded: the conversations service's `resultIn`). A ref that could
    not be deleted is named on the card.
@@ -28,7 +30,9 @@ Aborting the task (its conversation concluded; Stop leaves it running) deletes t
 the host's error report. It never runs the suites on this machine.
 
 The lander's gate, `.ultimate/scripts/ci-gate.ts`, tries the same PC first (`test`, `test:e2e`) and uses the same
-`github.ts`: the secret scan, the remote's repository
+`github.ts`. When GitHub gives no verdict (unreachable, or jobs not started for billing) it runs `pnpm test` and
+`pnpm test:e2e` on this machine instead, each once the RAM floor admits it (`lib/memory.ts`, waiting up to 10 min),
+with a `CI GATE FALLBACK` banner naming why. `github.ts` holds the secret scan, the remote's repository
 and the Actions API, authenticated with the token Git's credential helper stores for the fork (`git credential fill`,
 never prompting). The token goes only into request headers and is masked in any error text.
 

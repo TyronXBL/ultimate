@@ -46,6 +46,11 @@ For each file in `git diff --name-only --diff-filter=U`:
   that implement it (`rg <name> test/ extensions/`); upstream's new tests mocking a module the fork extended need the
   fork's additions too.
 - No markers left: `rg -n '^(<<<<<<<|=======|>>>>>>>)( |$)'`.
+- `rerere` is on in the clone (`git config rerere.enabled true`, shared by every worktree), so a conflict resolved in
+  an earlier merge is filled in again: `git merge` says `Resolved '<file>' using previous resolution.`. Such a file
+  has no markers but stays in the `U` list until `git add`, and gets the same reading, since the code around the old
+  resolution may have moved. A wrong one is undone with `git rerere forget <file>` and `git checkout -m <file>`, then
+  resolved again.
 
 ## 4. Lockfile and patches
 

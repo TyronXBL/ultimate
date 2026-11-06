@@ -1,12 +1,21 @@
 // The lander's test gate. With a `pc` remote it first runs `pnpm test` and `pnpm test:e2e` on that PC
 // (`.ultimate/extensions/ci/pc.ts`); when the PC gives no verdict (unreachable, busy), it pushes the checked-out commit
-// to `<remote>:ci/<sha>`, waits for its GitHub Actions run and exits with its result. When GitHub cannot be reached
-// either it runs the suites here instead, and says so.
+// to `<remote>:ci/<sha>`, waits for its GitHub Actions run and exits with its result. When GitHub gives no verdict
+// either (unreachable, or Actions refused to start the jobs for billing) it runs the suites here instead, each once the
+// machine's RAM floor admits it, and says so.
 // The API calls carry the remote's stored Git credential when there is one (`.ultimate/extensions/ci/github.ts`).
 //
 // Usage, in the checkout to test: node .ultimate/scripts/ci-gate.ts [remote]   (default remote: fork)
 // CI_GATE_API overrides the API base URL (default https://api.github.com).
 import { spawn } from 'node:child_process'
+import { homedir } from 'node:os'
+import {
+  admitRam,
+  commandNeedMiB,
+  describeShort,
+  memoryFloor,
+  RAM_POLL_MS,
+} from '../../lib/memory.ts'
 import {
   failuresOf,
   git,
@@ -32,6 +41,8 @@ const LOCAL = [
 const LOCAL_TIMEOUT_MS = 600_000
 /** How long the PC may take before GitHub runs it instead, within the lander's 30 min for this check. */
 const PC_TIMEOUT_MS = 15 * 60_000
+/** How long a local suite waits for the RAM floor to admit it before the gate fails. */
+const RAM_WAIT_MS = 10 * 60_000
 
 const log = (line: string) => console.log(`ci-gate: ${line}`)
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
@@ -82,9 +93,11 @@ async function gate(repo: string, sha: string) {
             `  ${job.name}: ${job.conclusion} in ${job.seconds === undefined ? '-' : `${job.seconds} s`}`,
           )
         if (run.conclusion === 'success') return 0
+        const { failures, notStarted } = await failuresOf(cwd, repo, state.jobs)
+        if (notStarted)
+          throw new Unreachable(`GitHub Actions did not start the jobs: ${notStarted}`)
         // Vitest titles a failure with its test, `file > name`; the message's first line is the error.
-        for (const failure of await failuresOf(cwd, repo, state.jobs))
-          console.log(`FAIL ${failure.title}\n  ${failure.message}`)
+        for (const failure of failures) console.log(`FAIL ${failure.title}\n  ${failure.message}`)
         log(`CI ${run.conclusion} for ${sha.slice(0, 7)}: ${run.html_url}`)
         return 1
       }
@@ -129,8 +142,29 @@ async function onPc(sha: string) {
   return 1
 }
 
+/** Wait until the machine's RAM floor admits `command`; false when it still does not after `RAM_WAIT_MS`. */
+async function admitted(command: string[]) {
+  const floor = await memoryFloor(homedir())
+  const need = commandNeedMiB(command.join(' '))
+  const since = Date.now()
+  let short = await admitRam(floor, need)
+  if (short) log(`waiting for RAM: ${describeShort(short)}`)
+  while (short) {
+    if (Date.now() - since > RAM_WAIT_MS) {
+      log(
+        `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeShort(short)}`,
+      )
+      return false
+    }
+    await sleep(RAM_POLL_MS)
+    short = await admitRam(floor, need)
+  }
+  return true
+}
+
 /** Run `command` in its own process group, stopped with it after the time limit; resolves its exit code. */
-function local(command: string[]) {
+async function local(command: string[]) {
+  if (!(await admitted(command))) return 1
   return new Promise<number>((done) => {
     log(`running ${command.join(' ')} locally (limit ${LOCAL_TIMEOUT_MS / 1000} s)`)
     const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true })
@@ -164,7 +198,7 @@ async function main() {
         '',
         '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!',
         `!! CI GATE FALLBACK: ${error.message}`,
-        '!! GitHub is unreachable; running the test suites on this machine instead.',
+        '!! GitHub gave no verdict; running the test suites on this machine instead.',
         '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!',
         '',
       ].join('\n'),

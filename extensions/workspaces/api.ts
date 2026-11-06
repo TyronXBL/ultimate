@@ -55,6 +55,8 @@ export type WorkspaceService = {
       commitCount: number
     }[]
   >
+  /** `github.com/<owner>/<repo>` landings go to: the `lander.push` remote's, else `origin`'s; undefined off GitHub. */
+  github(): Promise<string | undefined>
   /** The worktree index document (`ultimate.workspaces` on the root), for reads inside a transaction. */
   doc: typeof Workspaces
   /** Make the project folder a Git repository with a first commit, so worktrees and landing work. */

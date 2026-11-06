@@ -34,7 +34,7 @@ import {
   SubmissionLanded,
 } from './refs.ts'
 import { githubRepo } from '../../lib/project-identity.ts'
-import { sweepChecks } from './lander.ts'
+import { landerSettings, sweepChecks } from './lander.ts'
 import { Workspaces, workspaces } from './workspaces.ts'
 import { failingTests } from './failing.ts'
 export const order = -200
@@ -60,6 +60,20 @@ async function setupGit(host: ExtensionHost) {
   await workspaces(host).standLander(context)
 }
 
+/**
+ * `github.com/<owner>/<repo>` landings go to: the `lander.push` remote's, else `origin`'s. A fork that left its network
+ * has its landed commits only there, not on `origin` (#169933).
+ */
+const landingRepo = async (host: ExtensionHost) =>
+  githubRepo(
+    host.projectRoot,
+    await landerSettings(host).then(
+      (settings) => settings.push,
+      // Malformed lander settings: the lander reports them at landing; links meanwhile use origin.
+      () => undefined,
+    ),
+  )
+
 const recentLandings = async (host: ExtensionHost) => {
   const events = await host.eventLog.recent({ events: [SubmissionLanded], limit: 200 })
   return events.map(({ data, at }) => ({
@@ -75,10 +89,10 @@ const recentLandings = async (host: ExtensionHost) => {
 
 export const actions = {
   recentLandings: implementAction(RecentLandingsAction, (_args, { host }) => recentLandings(host)),
-  /** `github.com/<owner>/<repo>` of the project's `origin`, or null off GitHub: landing cards link ranges. */
+  /** `github.com/<owner>/<repo>` landings go to (`landingRepo`), or null off GitHub: landing cards link ranges. */
   github: implementAction(
     GithubAction,
-    async (_args, { host }) => (await githubRepo(host.projectRoot)) ?? null,
+    async (_args, { host }) => (await landingRepo(host)) ?? null,
   ),
   progress: implementAction(ProgressAction, (args, { host }) => {
     const ids = args && typeof args === 'object' && !Array.isArray(args) ? args.ids : undefined
@@ -192,6 +206,7 @@ export default function workspaceExtension(host: ExtensionHost) {
   host.implement(WorkspacesApi, {
     ...service,
     recentLandings: () => recentLandings(host),
+    github: () => landingRepo(host),
     failing: (options, ctx) => failing(host, options, ctx),
     git,
     doc: Workspaces,

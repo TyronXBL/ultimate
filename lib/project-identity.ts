@@ -9,13 +9,13 @@ export function projectKey(remote: string): string | undefined {
   return match ? `github.com/${match[1]}/${match[2]}`.toLowerCase() : undefined
 }
 
-/** `github.com/<owner>/<repo>` of the project's `origin`, if it is on GitHub. */
-export const githubRepo = (projectRoot: string) =>
-  git(projectRoot, 'remote', 'get-url', 'origin')
+/** `github.com/<owner>/<repo>` of the project's `remote` (default `origin`), if it is on GitHub. */
+export const githubRepo = (projectRoot: string, remote = 'origin') =>
+  git(projectRoot, 'remote', 'get-url', remote)
     .then(projectKey)
     .catch(
       () =>
-        // No repository or no origin: the project is not on GitHub, so callers show no GitHub links.
+        // No repository or no such remote: the project is not on GitHub, so callers show no GitHub links.
         undefined,
     )
 

@@ -15,7 +15,7 @@ export type RootEvent = {
       feature?: string
       title?: string
       from?: number
-      /** `https://diffshub.com/<owner>/<repo>/compare/<base>...<sha>`, when `origin` is on GitHub. */
+      /** `https://diffshub.com/<owner>/<repo>/compare/<base>...<sha>`, when landings go to GitHub. */
       compare?: string
     }
   | { type: 'note'; from?: number; text: string }

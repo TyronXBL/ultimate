@@ -65,8 +65,9 @@ Failed setup keeps its output tail and never force-removes dirty output. The con
 Info's Workspace section (`Workspaces` in `ui.tsx`) shows the lander queue, the shown conversation's checkout and
 statistics over every checkout, read-only: landing goes through agents. Concluding a conversation can release its clean, landed checkout.
 `isolation` says why the project cannot be isolated, if it cannot; `info {id}` reads the record and current tips; `create {cwd?, title?}` returns a new conversation ID.
-`github` returns `https://github.com/<owner>/<repo>` of the project's `origin`, or null off GitHub; landing cards and
-the root row link commit ranges with it.
+`github` returns `github.com/<owner>/<repo>` of the repository landings go to (the `lander.push` remote, else
+`origin`), or null off GitHub; landing cards and the root row link commit ranges with it, and the service's `github()`
+gives lineage the same. Update links upstream's new commits on `origin` itself.
 The service's `land(id)` fast-forwards a worker's source (its owner's checkout) to the worker's clean tip, for
 `subagent land`; it refuses moved or diverged targets and never rebases or pushes. The only way to the project's
 target branch is `workspace submit`.
