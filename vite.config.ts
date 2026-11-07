@@ -211,7 +211,9 @@ export default defineConfig({
     // Node, not Vitest, loads the extension loader, so its import() and module hooks are the ones production runs.
     server: { deps: { external: [/\/server\/extension-loader\.ts$/] } },
     // Under an agent (AI_AGENT, CLAUDECODE, …) Vitest picks its minimal reporter, which prints nothing for passing
-    // files; the lander's stall watchdog then stops a passing run that is silent for two minutes.
-    reporters: ['default'],
+    // files; the lander's stall watchdog then stops a passing run that is silent for two minutes. Setting reporters
+    // replaces Vitest's defaults, so GitHub's reporter comes back by hand: its annotations name each failing test, which
+    // the ci extension's failuresOf reads into the CI card (#174111).
+    reporters: ['default', ...(process.env.GITHUB_ACTIONS === 'true' ? ['github-actions'] : [])],
   },
 })

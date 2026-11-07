@@ -9,7 +9,8 @@ export default defineConfig({
     maxWorkers: 4,
     // As in vite.config.ts: Node loads the extension loader, as in production.
     server: { deps: { external: [/\/server\/extension-loader\.ts$/] } },
-    // Like vite.config.ts: under an agent Vitest's minimal reporter is silent for passing files.
-    reporters: ['default'],
+    // Like vite.config.ts: under an agent Vitest's minimal reporter is silent for passing files, and on GitHub the
+    // github-actions reporter annotates each failing test for the CI card.
+    reporters: ['default', ...(process.env.GITHUB_ACTIONS === 'true' ? ['github-actions'] : [])],
   },
 })
