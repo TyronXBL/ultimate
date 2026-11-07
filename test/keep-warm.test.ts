@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import {
   chipOf,
   due,
@@ -47,6 +47,16 @@ it('clears a failed ping once a cached @ultimate answer follows it', () => {
   expect(failing(undefined, now)).toBe(false)
 })
 
+it('warms Claude Code, and the Anthropic API only under long cache retention', () => {
+  vi.stubEnv('PI_CACHE_RETENTION', undefined)
+  expect(keepWarm.hourLong('claude-code')).toBe(true)
+  expect(keepWarm.hourLong('anthropic')).toBe(false)
+  vi.stubEnv('PI_CACHE_RETENTION', 'long')
+  expect(keepWarm.hourLong('anthropic')).toBe(true)
+  expect(keepWarm.hourLong('openai')).toBe(false)
+  vi.unstubAllEnvs()
+})
+
 it('counts only answers that read or wrote the current model’s cache', () => {
   const answer = (change: Record<string, unknown>) =>
     ({
@@ -57,13 +67,24 @@ it('counts only answers that read or wrote the current model’s cache', () => {
       usage: { cacheRead: 500_000, cacheWrite: 2_000 },
       ...change,
     }) as unknown as Parameters<typeof keepWarm.cached>[0]
-  expect(keepWarm.cached(answer({}), 'claude-opus-5-5')).toBe(true)
-  expect(keepWarm.cached(answer({ stopReason: 'error' }), 'claude-opus-5-5')).toBe(false)
-  expect(keepWarm.cached(answer({ model: 'claude-fable-5-1' }), 'claude-opus-5-5')).toBe(false)
-  expect(keepWarm.cached(answer({ provider: 'openai-codex' }), 'claude-opus-5-5')).toBe(false)
-  expect(
-    keepWarm.cached(answer({ usage: { cacheRead: 0, cacheWrite: 0 } }), 'claude-opus-5-5'),
-  ).toBe(false)
+  const opus = { provider: 'claude-code', modelId: 'claude-opus-5-5' }
+  expect(keepWarm.cached(answer({}), opus)).toBe(true)
+  expect(keepWarm.cached(answer({ stopReason: 'error' }), opus)).toBe(false)
+  expect(keepWarm.cached(answer({ model: 'claude-fable-5-1' }), opus)).toBe(false)
+  expect(keepWarm.cached(answer({ provider: 'openai-codex' }), opus)).toBe(false)
+  expect(keepWarm.cached(answer({}), { ...opus, provider: 'anthropic' })).toBe(false)
+  expect(keepWarm.cached(answer({ usage: { cacheRead: 0, cacheWrite: 0 } }), opus)).toBe(false)
+})
+
+it('counts a ping only on the provider and model it warmed', () => {
+  const ping = { at: now, provider: 'claude-code', model: 'claude-opus-5-5' }
+  expect(keepWarm.lastOn(ping, { provider: 'claude-code', modelId: 'claude-opus-5-5' })).toBe(ping)
+  expect(keepWarm.lastOn(ping, { provider: 'anthropic', modelId: 'claude-opus-5-5' })).toBe(
+    undefined,
+  )
+  expect(keepWarm.lastOn(ping, { provider: 'claude-code', modelId: 'claude-fable-5-1' })).toBe(
+    undefined,
+  )
 })
 
 it('sends only while not paused and within the hour, checked right before the request', () => {
@@ -77,7 +98,12 @@ it('leaves the switch to the user', () => {
   expect(keepWarm.userActions).toEqual(['set'])
 })
 
-const ping = (error?: string) => ({ at: now - minutes(5), model: 'm', ...(error ? { error } : {}) })
+const ping = (error?: string) => ({
+  at: now - minutes(5),
+  provider: 'p',
+  model: 'm',
+  ...(error ? { error } : {}),
+})
 
 it('moves the document only through warmStep', () => {
   const at = now
@@ -86,23 +112,29 @@ it('moves the document only through warmStep', () => {
     [
       'claims',
       { last: ping(), pings: 2 },
-      { type: 'claim', at, model: 'm', previous: now - minutes(5) },
+      { type: 'claim', at, provider: 'p', model: 'm', previous: now - minutes(5) },
       true,
-      { last: { at, model: 'm', error: 'interrupted' }, pings: 3 },
+      { last: { at, provider: 'p', model: 'm', error: 'interrupted' }, pings: 3 },
     ],
     [
       'claims the first',
       {},
-      { type: 'claim', at, model: 'm' },
+      { type: 'claim', at, provider: 'p', model: 'm' },
       true,
-      { last: { at, model: 'm', error: 'interrupted' }, pings: 1 },
+      { last: { at, provider: 'p', model: 'm', error: 'interrupted' }, pings: 1 },
     ],
     // 89bccf4c: off, or another attempt recorded since the tick read, refuses the claim and changes nothing.
-    ['refused when off', { off: true }, { type: 'claim', at, model: 'm' }, false, { off: true }],
+    [
+      'refused when off',
+      { off: true },
+      { type: 'claim', at, provider: 'p', model: 'm' },
+      false,
+      { off: true },
+    ],
     [
       'refused after another attempt',
       { last: ping() },
-      { type: 'claim', at, model: 'm' },
+      { type: 'claim', at, provider: 'p', model: 'm' },
       false,
       { last: ping() },
     ],

@@ -58,7 +58,7 @@ export const chipOf = (state: WarmState, now: number): 'off' | 'warm' | 'cold' |
 
 export type WarmEvent =
   /** The tick claims an attempt at `at`, unless the switch is off or another attempt was recorded since `previous`. */
-  | { type: 'claim'; at: number; model: string; previous?: number }
+  | { type: 'claim'; at: number; provider: string; model: string; previous?: number }
   /** An attempt ended (or was skipped). */
   | { type: 'record'; ping: Ping }
   /** The user wrote to @ultimate (ms). */
@@ -71,7 +71,7 @@ export function warmStep(doc: WarmDocState, event: WarmEvent) {
   switch (event.type) {
     case 'claim':
       if (!isOn(doc) || doc.last?.at !== event.previous) return false
-      doc.last = { at: event.at, model: event.model, error: INTERRUPTED }
+      doc.last = { at: event.at, provider: event.provider, model: event.model, error: INTERRUPTED }
       doc.pings = (doc.pings ?? 0) + 1
       return true
     case 'record':
