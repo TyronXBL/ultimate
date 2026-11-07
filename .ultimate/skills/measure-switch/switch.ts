@@ -81,10 +81,19 @@ await page.waitForTimeout(4000)
 
 // What was measured: the checkout's commit and uncommitted files, the server build and the web bundle the page runs.
 // Commits alone do not say what a comparison changed when main moved (an upstream merge) between the two runs.
-const system = JSON.parse(
-  await page.evaluate(() => (window as unknown as { switchSystem: string }).switchSystem),
-) as SystemInfo
-const bundle = await page.locator('meta[name="ultimate-web"]').getAttribute('content')
+let reloaded = false
+page.on('load', () => (reloaded = true))
+// Read in one evaluation, between event handlers: the latest system event and how many bundle states it ends.
+const read = await page.evaluate(() => {
+  const w = window as unknown as { switchSystem: string; switchWebs: unknown[] }
+  return {
+    system: w.switchSystem,
+    announced: w.switchWebs.length,
+    bundle: document.querySelector('meta[name="ultimate-web"]')?.getAttribute('content'),
+  }
+})
+const system = JSON.parse(read.system) as SystemInfo
+const { announced, bundle } = read
 // A failed build keeps serving the previous bundle, and a broken facet is left out of it: neither is the checkout's code.
 const webStates = () =>
   page.evaluate(() => (window as unknown as { switchWebs: SystemInfo['web'][] }).switchWebs)
@@ -96,9 +105,6 @@ const servedAsBuilt = (web: SystemInfo['web']) => {
     throw new Error(`The bundle left out ${web.left.map((item) => item.file).join(', ')}`)
 }
 servedAsBuilt(system.web)
-const announced = (await webStates()).length
-let reloaded = false
-page.on('load', () => (reloaded = true))
 const root = system.code.ultimateRoot
 const identity = {
   url: base,
