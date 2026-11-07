@@ -5,8 +5,8 @@ document, tools and model-facing text, where agents and stored entries already u
 
 - **Branch** (`LineageApi.branch`
   `{ from, at?, prompt, title?, images?, isolated?, model?, thinkingLevel?, deliver?, by?, receipt? }` → `{ id }`; there
-  is no action: agents start branches with the messages extension's `branch` tool, whose reply-enabled first message
-  returns the branch's answer). It forks the source at `at` (default: its latest entry) as an
+  is no action: agents start branches with the messages extension's `branch` tool, whose one-way first message the
+  branch answers with notes and reports to its starter). It forks the source at `at` (default: its latest entry) as an
   ownerless conversation in the project root, optionally isolated in its own worktree. It inherits the source context
   (or, from a root with memories, starts at a memory brief: see Project memory), then the durable `lineage.prompt` task submits the prompt and images as its first
   input. Doc `lineage.branch` holds `{ from, at, intent }`; `inputAt` is when the branch was asked for, not inherited
@@ -201,7 +201,7 @@ is undefined. The conversations summarizer uses this to publish an abstract afte
 An optional `receipt: { taskId, callId }` records the branch id atomically with the fork in the originating task's
 `lineage.branch-receipts` document. Repeating that task and call returns the same branch; Pi retires the receipt when
 the task completes. The method returns `{ id }`. With `deliver: false`, no `lineage.prompt` task is created: the caller
-must deliver its first input (messages uses a reply-enabled message). `by: conversationId` attributes the tally's branch node to that caller,
+must deliver its first input (messages uses a one-way message). `by: conversationId` attributes the tally's branch node to that caller,
 including its standing-agent name when available.
 
 The user talks to @ultimate in its own conversation, opened by the first sidebar row (on phones, the top-bar @ultimate button); it picks a root by reading tallies and starts coordinator branches.
