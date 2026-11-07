@@ -2,10 +2,16 @@
 // Usage: node switch.ts <url> <start id> <id,id,...> [--rounds 2] [--profile out.cpuprofile]
 // Round 0 switches are cold (never shown in this tab), later rounds warm. Per switch it prints one JSON line: time to
 // the stream's `view` event, `settled` (the last DOM change before 300 ms of quiet), main-thread long tasks, server
-// event bytes, streams opened and JS heap; then medians per round. --profile writes a CDP CPU profile of every switch.
+// event bytes, streams opened and JS heap; then medians per round. The first line is the identity of what was measured.
+// --profile writes a CDP CPU profile of every switch, with that identity and each function's source position as its
+// bundle's source map names it (`ultimate.sources`, by node id), resolved now: a rebuild deletes the bundle soon after.
 import { writeFileSync } from 'node:fs'
+import { cpus, loadavg } from 'node:os'
 import { chromium } from 'playwright-core'
+import type { SystemInfo } from '../../../shared/protocol.ts'
 import { browserBinary } from '../../../extensions/browser/server.ts'
+import { git } from '../../../lib/git.ts'
+import { fetchAssets, sourceFrames } from '../../../lib/source-frames.ts'
 
 const args = process.argv.slice(2)
 const [base, start, list] = args
@@ -30,6 +36,8 @@ await page.addInitScript(() => {
   const log: { t: number; ev: string; url: string; kb?: number; conversation?: number }[] = []
   w.switchEvents = log
   const Native = window.EventSource
+  const systems: string[] = []
+  w.switchSystems = systems
   window.EventSource = class extends Native {
     constructor(url: string | URL, init?: EventSourceInit) {
       super(url, init)
@@ -38,6 +46,7 @@ await page.addInitScript(() => {
       for (const name of ['stream', 'view', 'conversations', 'system', 'tasks', 'ui', 'doc'])
         this.addEventListener(name, (event) => {
           const data = (event as MessageEvent<string>).data
+          if (name === 'system') systems.push(data)
           // A subscription's view is `<sub>\n{"conversation":{"id":N},…}`: read its id without parsing the rest.
           const id = /^\d+\n\{"conversation":\{"id":(\d+)/.exec(data.slice(0, 80))?.[1]
           log.push({
@@ -65,6 +74,37 @@ await page.evaluate(() =>
   (window as unknown as { ultimate: { state(): Promise<unknown> } }).ultimate.state(),
 )
 await page.waitForTimeout(4000)
+
+// What was measured: the checkout's commit and uncommitted files, the server build and the web bundle the page runs.
+// Commits alone do not say what a comparison changed when main moved (an upstream merge) between the two runs.
+const system = JSON.parse(
+  (await page.evaluate(() =>
+    (window as unknown as { switchSystems: string[] }).switchSystems.at(-1),
+  ))!,
+) as SystemInfo
+const bundle = await page.locator('meta[name="ultimate-web"]').getAttribute('content')
+if (system.web.building || bundle !== system.web.id)
+  throw new Error(
+    `The page runs bundle ${bundle}, the server serves ${system.web.id}${system.web.building ? ' and is building' : ''}: wait for the switch and run again`,
+  )
+const root = system.code.ultimateRoot
+const identity = {
+  url: base,
+  at: new Date().toISOString(),
+  ultimateRoot: root,
+  branch: system.code.branch,
+  sha: await git(root, 'rev-parse', 'HEAD'),
+  uncommitted: (await git(root, 'status', '--porcelain'))
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.trim().replace(/^\S+\s+/, '')),
+  serverBuild: system.build.id,
+  webBundle: bundle,
+  browser: browser.version(),
+  cpus: `${cpus().length} × ${cpus()[0]?.model}`,
+  loadavg: loadavg().map((load) => Math.round(load * 100) / 100),
+}
+console.log(JSON.stringify({ identity }))
 
 const cdp = await page.context().newCDPSession(page)
 if (profile) {
@@ -113,7 +153,18 @@ for (let round = 0; round < rounds; round++)
   }
 if (profile) {
   const { profile: data } = await cdp.send('Profiler.stop')
-  writeFileSync(profile, JSON.stringify(data))
+  // Each function's start as a stack frame (1-based), resolved by the helper that maps error stacks; one it leaves as it
+  // was has no mapping (no map, or code outside the bundle) and stays unattributed.
+  const frames = data.nodes.map(
+    ({ callFrame }) => `${callFrame.url}:${callFrame.lineNumber + 1}:${callFrame.columnNumber + 1}`,
+  )
+  const mapped = (await sourceFrames(frames.join('\n'), fetchAssets(base))).split('\n')
+  const sources = Object.fromEntries(
+    data.nodes.flatMap((node, index) =>
+      mapped[index] === frames[index] ? [] : [[node.id, mapped[index]]],
+    ),
+  )
+  writeFileSync(profile, JSON.stringify({ ...data, ultimate: { identity, sources } }))
 }
 await browser.close()
 
