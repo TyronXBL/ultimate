@@ -31,10 +31,12 @@ for (const node of profile.nodes)
 // never guessed at; code without a URL is native: DOM calls, V8 builtins, GC.
 const where = (node: Node) => {
   const source = sources[node.id]
-  if (source) {
+  if (source?.startsWith('/')) {
     const pkg = /.*\/node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(source)?.[1]
     return pkg ? `dependency ${pkg}` : 'app'
   }
+  // A map can name a virtual module instead of a file.
+  if (source) return `virtual ${source.replace(/:\d+:\d+$/, '')}`
   return node.callFrame.url
     ? `unmapped ${node.callFrame.url.replace(/^.*\//, '').replace(/\?.*$/, '')}`
     : 'native'
@@ -50,7 +52,8 @@ profile.samples.forEach((sample, index) => {
   const leaf = byId.get(sample)!
   if (/^\((idle|program|root)\)$/.test(leaf.callFrame.functionName)) return
   busy += ms
-  self.set(where(leaf), (self.get(where(leaf)) ?? 0) + ms)
+  const origin = where(leaf)
+  self.set(origin, (self.get(origin) ?? 0) + ms)
   const seen = new Set<string>()
   for (let id: number | undefined = sample; id !== undefined; id = parent.get(id)) {
     const node = byId.get(id)!
@@ -61,13 +64,13 @@ profile.samples.forEach((sample, index) => {
     inclusive.set(key, (inclusive.get(key) ?? 0) + ms)
   }
 })
-const rows = (map: Map<string, number>, count: number) =>
+const rows = (map: Map<string, number>, count = map.size) =>
   [...map]
     .toSorted((a, b) => b[1] - a[1])
     .slice(0, count)
     .map(([key, ms]) => `${String(Math.round(ms)).padStart(6)} ms  ${key}`)
 console.log(JSON.stringify({ identity }))
 console.log(`busy ${Math.round(busy)} ms; self time by origin:`)
-for (const row of rows(self, 12)) console.log(row)
+for (const row of rows(self)) console.log(row)
 console.log('app functions, inclusive:')
 for (const row of rows(inclusive, Number(top))) console.log(row)

@@ -6,7 +6,7 @@
 // --profile writes a CDP CPU profile of every switch, with that identity and each function's source position as its
 // bundle's source map names it (`ultimate.sources`, by node id), resolved now: a rebuild deletes the bundle soon after.
 import { writeFileSync } from 'node:fs'
-import { cpus, loadavg } from 'node:os'
+import { loadavg } from 'node:os'
 import { chromium } from 'playwright-core'
 import type { SystemInfo } from '../../../shared/protocol.ts'
 import { browserBinary } from '../../../extensions/browser/server.ts'
@@ -36,8 +36,9 @@ await page.addInitScript(() => {
   const log: { t: number; ev: string; url: string; kb?: number; conversation?: number }[] = []
   w.switchEvents = log
   const Native = window.EventSource
-  const systems: string[] = []
-  w.switchSystems = systems
+  // The latest system event, and every bundle state it announced, to tell a run that spanned a rebuild.
+  const webs: unknown[] = []
+  w.switchWebs = webs
   window.EventSource = class extends Native {
     constructor(url: string | URL, init?: EventSourceInit) {
       super(url, init)
@@ -46,7 +47,10 @@ await page.addInitScript(() => {
       for (const name of ['stream', 'view', 'conversations', 'system', 'tasks', 'ui', 'doc'])
         this.addEventListener(name, (event) => {
           const data = (event as MessageEvent<string>).data
-          if (name === 'system') systems.push(data)
+          if (name === 'system') {
+            w.switchSystem = data
+            webs.push(JSON.parse(data).web)
+          }
           // A subscription's view is `<sub>\n{"conversation":{"id":N},…}`: read its id without parsing the rest.
           const id = /^\d+\n\{"conversation":\{"id":(\d+)/.exec(data.slice(0, 80))?.[1]
           log.push({
@@ -78,15 +82,23 @@ await page.waitForTimeout(4000)
 // What was measured: the checkout's commit and uncommitted files, the server build and the web bundle the page runs.
 // Commits alone do not say what a comparison changed when main moved (an upstream merge) between the two runs.
 const system = JSON.parse(
-  (await page.evaluate(() =>
-    (window as unknown as { switchSystems: string[] }).switchSystems.at(-1),
-  ))!,
+  await page.evaluate(() => (window as unknown as { switchSystem: string }).switchSystem),
 ) as SystemInfo
 const bundle = await page.locator('meta[name="ultimate-web"]').getAttribute('content')
-if (system.web.building || bundle !== system.web.id)
-  throw new Error(
-    `The page runs bundle ${bundle}, the server serves ${system.web.id}${system.web.building ? ' and is building' : ''}: wait for the switch and run again`,
-  )
+// A failed build keeps serving the previous bundle, and a broken facet is left out of it: neither is the checkout's code.
+const webStates = () =>
+  page.evaluate(() => (window as unknown as { switchWebs: SystemInfo['web'][] }).switchWebs)
+const servedAsBuilt = (web: SystemInfo['web']) => {
+  if (web.id !== bundle) throw new Error(`The page runs bundle ${bundle}, the server ${web.id}`)
+  if (web.building) throw new Error('The bundle is building: wait for the switch and run again')
+  if (web.error) throw new Error(`The bundle did not build: ${web.error}`)
+  if (web.left?.length)
+    throw new Error(`The bundle left out ${web.left.map((item) => item.file).join(', ')}`)
+}
+servedAsBuilt(system.web)
+const announced = (await webStates()).length
+let reloaded = false
+page.on('load', () => (reloaded = true))
 const root = system.code.ultimateRoot
 const identity = {
   url: base,
@@ -101,7 +113,7 @@ const identity = {
   serverBuild: system.build.id,
   webBundle: bundle,
   browser: browser.version(),
-  cpus: `${cpus().length} × ${cpus()[0]?.model}`,
+  cpus: `${system.machine.cpuCount} × ${system.machine.cpuModel}`,
   loadavg: loadavg().map((load) => Math.round(load * 100) / 100),
 }
 console.log(JSON.stringify({ identity }))
@@ -151,6 +163,9 @@ for (let round = 0; round < rounds; round++)
     results.push({ round, ...result })
     console.log(JSON.stringify({ round, ...result }))
   }
+// A rebuild during the run (a save, a checkout switch) loads the machine and may swap the bundle: discard the run.
+if (reloaded) throw new Error('The page reloaded during the run')
+;(await webStates()).slice(announced).forEach(servedAsBuilt)
 if (profile) {
   const { profile: data } = await cdp.send('Profiler.stop')
   // Each function's start as a stack frame (1-based), resolved by the helper that maps error stacks; one it leaves as it

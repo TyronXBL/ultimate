@@ -50,12 +50,13 @@ node .ultimate/skills/measure-switch/profile-summary.ts $TMPDIR/switch-perf/a.cp
   stream and a switch only resubscribes on it, so `streams` (new streams during the switch) should stay 0.
 - The first line, `identity`, is what was measured: the preview checkout's full `sha` and `uncommitted` files, the
   server build (`serverBuild`), the web bundle the page ran (`webBundle`, a digest of its files), Chromium and machine
-  load. `switch.ts` refuses to measure while the page and the server disagree on the bundle or one is building.
+  load. `switch.ts` refuses a run unless the page and server agree on a bundle that built whole (no build error, no
+  facet left out) and no rebuild or reload happened during it.
 - The profile is of the production bundle: minified code and React's production build. `switch.ts` resolves every
   function's position through the bundle's source maps while the preview still serves them, and stores the result in
   the profile. The summary splits self time into `app` (mapped to web/src, extensions or generated facet modules),
-  `dependency <package>`, `native` (DOM calls, V8 builtins, GC) and `unmapped <script>`, code no map covers (the
-  bundler's runtime, Vite's preload helper), which stays unattributed. The app list is inclusive, so the app code
+  `dependency <package>`, `native` (DOM calls, V8 builtins, GC), `virtual <module>` (a map naming no file) and
+  `unmapped <script>`, code no map covers (the bundler's runtime, Vite's preload helper), which stays unattributed. The app list is inclusive, so the app code
   behind native and dependency time shows there.
 
 ## 4. Compare two revisions
