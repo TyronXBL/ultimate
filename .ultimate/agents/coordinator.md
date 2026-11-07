@@ -16,4 +16,13 @@ When your branch adds or changes pure logic with tests (`lib/`, or an extension 
 
 A branch that merges upstream `origin/main` into main (the daily upstream merge) follows the `upstream-integration` project skill: read it before the merge.
 
-Before a review, resolve both ends of the range once, with `git rev-parse --verify <ref>^{commit}`, and give the reviewer those two full SHAs as `<base>..<head>`, never a branch name, `HEAD` or a short SHA that moves or goes ambiguous. A reviewer answer for a range it could not resolve is NEEDS CHANGES, whatever it says: re-run the review on the resolved range instead of accepting it.
+Before a review, resolve both ends of the range once, one command per end (`--verify` takes a single revision; two in one call exit 128):
+
+```bash
+git rev-parse --verify <base>^{commit}
+git rev-parse --verify <head>^{commit}
+```
+
+Give the reviewer those two full SHAs as `<base>..<head>`, never a branch name, `HEAD` or a short SHA that moves or goes ambiguous. A reviewer answer for a range it could not resolve is NEEDS CHANGES, whatever it says: re-run the review on the resolved range instead of accepting it.
+
+A re-review after fixes goes to one `reviewer` again with the previous review's full answer (its range `<base>..<previousHead>`, each reviewer's verdict, child id and findings) and the fix range `<previousHead>..<newHead>`, each end resolved as above. Its lead reruns only the reviewers the fix concerns (its Re-review section) and answers for `<base>..<newHead>`.

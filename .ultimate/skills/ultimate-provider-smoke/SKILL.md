@@ -23,6 +23,15 @@ To try a different model, set it the way a user would: an agent definition or a 
 or the composer's model picker in the preview. Logins are read from `~/.pi/agent` and Claude Code's own login, never
 copied; do not copy `auth.json`, credentials or secrets anywhere.
 
+## A preview proves the file, not the running instances
+
+Every project's Ultimate is its own process (`ultimate.projects()` lists each running one's URL), and each holds its
+own model runtime: it read `~/.pi/agent/models.json` when it started and reads it again only when that runtime
+refreshes (on a login or logout, or an extension registering a provider). A fresh preview reads the current file. When a model or
+routing change is meant for an instance the user works in, check that instance: `GET <url>/api/models` lists its
+models, and one turn there shows the routing. If it still serves the old configuration, that instance needs its own
+restart; restarting this host reloads no other project's process.
+
 ## Only when the test needs the process: a scratch server
 
 A preview has no supervisor, so it cannot restart. For restart, a core swap or other process-level behaviour, run
@@ -53,7 +62,8 @@ Screenshot the URL. Its header shows @ultimate's `#<id>` and its composer shows 
 ```
 
 Use a prompt that exercises only the behaviour under test: one tool call to watch streaming arguments, or two sends
-to see the cache read on the second one.
+to see the cache read on the second one. To test reasoning replay, the first send must make the model reason (a
+small problem to work out, not `pong`), and the second runs on the same model.
 
 ## Read the evidence
 
@@ -73,6 +83,19 @@ sqlite3 -readonly <home>/state.sqlite "select d.kind, r.content from documents d
 `pi.agent.model` is the model that actually ran. `pi.usage` has its tokens, cache reads and writes, and cost. The
 trace also lists background calls such as titles and summaries on `summaryModel`; keep those apart.
 
+For reasoning replay, list each turn's thinking blocks with their text length and reasoning tokens:
+
+```bash
+sqlite3 -readonly <home>/state.sqlite "select e.id, length(j.value->>'thinking'),
+  e.record->>'\$.model[0].usage.reasoning' from entries e, json_each(e.record, '\$.model[0].content') j
+  where e.conversation_id = <id> and e.record->>'kind' = 'pi.assistant' and j.value->>'type' = 'thinking'
+  order by e.id"
+```
+
+Replay is verified only when the first turn's assistant entry has a thinking block with nonempty text and the second
+turn on the same model then succeeds. A first turn without one proves a two-turn request, not replay: report replay
+unproven.
+
 ## Clean up
 
 - Preview: `instance stop`, and check `~/.ultimate/settings.json` no longer has your `instance` key.
@@ -83,4 +106,5 @@ trace also lists background calls such as titles and summaries on `summaryModel`
 
 State the model that ran, taken from `pi.agent` or the trace, not the configured one. Give the measured numbers: the
 model call's milliseconds, its input, output and cache tokens, and the cost. Name what you could not reach as
-unverified. Leave out machine names and addresses.
+unverified, and say which instance you checked: a preview's result says nothing about one already running. Leave out
+machine names and addresses.

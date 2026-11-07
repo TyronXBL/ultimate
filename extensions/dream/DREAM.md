@@ -35,7 +35,7 @@ Start one branch with `branch`, the handoff in its prompt:
 > My handoff:
 > …
 
-Name the memory slugs the user cares about most in it, always including the memory about the user (`about-<name>`).
+Name the memory slugs the user cares about most in it, always including the project's existing memory about the user (its slug in the memory index, such as `user-profile`).
 Then end your turn with one line to the user. Other work may keep running: the dream only reads.
 
 ### Decide
