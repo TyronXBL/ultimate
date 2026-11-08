@@ -97,6 +97,24 @@ const job = defineTask<null, { phase: 'run' } | { phase: 'deliver' }, null>({
   abort: (_task, runtime, caller) =>
     runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
 })
+/**
+ * Stands in for another extension's live task, which routing reads by kind: it stays in the phase its input names until
+ * the host closes.
+ */
+const standIn = (name: string) => {
+  type State = { phase: 'run' | 'wait' | 'deliver' | 'report'; conversationId?: number }
+  const stay = (...[, , caller]: [unknown, unknown, Context]) =>
+    awaitWithContext(new Promise<never>(() => {}), caller)
+  return defineTask<{ wake?: boolean; state: State }, State, null>({
+    name,
+    version: 1,
+    initial: (input) => input.state,
+    phases: { run: stay, wait: stay, deliver: stay, report: stay },
+    abort: (_task, runtime, caller) =>
+      runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
+  })
+}
+const standIns = ['lineage.notify', 'ci.run', 'workspaces.lander'].map(standIn)
 const anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'messages-test.anchor',
   version: 1,
@@ -253,7 +271,7 @@ async function fixture(
   prepared.registry.install(
     defineExtension({
       name: 'test-hold',
-      tasks: [anchor, reporter, job],
+      tasks: [anchor, reporter, job, ...standIns],
       tools: [
         defineTool({
           name: 'hold',
@@ -1665,6 +1683,75 @@ it("leaves a branch's answer as a note while its own background command runs, an
   await until(async () => (await b.from()).length === 3)
   expect((await b.from())[2]).toMatchObject({ text: 'Answer: Tests pass', report: true })
   jobDelivered.resolve()
+})
+// What else keeps a branch's answer a note, pinned before the rules move into one place (E1.3).
+it.each([
+  ['a waking notify waits on its target', false, 'lineage.notify', { wake: true, phase: 'wait' }],
+  // Unlike a subagent's answer to its parent (subagents.test.ts), a waking notify counts here in any phase.
+  [
+    'a waking notify delivers its result',
+    false,
+    'lineage.notify',
+    { wake: true, phase: 'deliver' },
+  ],
+  ['a notify that leaves a note waits', true, 'lineage.notify', { wake: false, phase: 'wait' }],
+  ['its own CI run runs', false, 'ci.run', { phase: 'run' }],
+  ['the lander reports its landing', false, 'workspaces.lander', { phase: 'report' }],
+  ['a subagent of its subagent runs', false, 'grandchild', { phase: 'run' }],
+] as const)("routes a branch's answer while %s, as a report: %s", async (_, report, kind, live) => {
+  const f = await fixture()
+  const b = await branched(f)
+  const agent = await f.opened.root.agent(context)
+  const owned = (owner: ConversationId) =>
+    f.opened.harness.commit(async (tx) => {
+      const task = await tx.createTask(anchor, null, {
+        ownership: { kind: 'conversation' },
+        conversationId: owner,
+        background: true,
+      })
+      const { id } = await tx.createConversation({ ownership: { kind: 'task', taskId: task } })
+      await configure(tx, id, { model: agent.model, tools: agent.tools })
+      ;(await tx.doc(Subagents, owner)).agents[String(id)] = {
+        conversationId: id,
+        agent: 'worker',
+        background: true,
+        reported: [],
+      }
+      return id
+    }, context)
+  if (kind === 'grandchild') {
+    const grandchild = await owned(await owned(b.id as ConversationId))
+    await (await f.opened.harness.conversation(grandchild, context))!.submit(
+      { type: 'input', content: 'HOLD' },
+      context,
+    )
+    await until(f.holding)
+  } else {
+    const lander = kind === 'workspaces.lander'
+    await f.opened.harness.commit(
+      (tx) =>
+        tx.createTask(
+          standIns.find((task) => task.definition.name === kind)!,
+          {
+            ...('wake' in live ? { wake: live.wake } : {}),
+            state: { phase: live.phase, ...(lander ? { conversationId: b.id } : {}) },
+          },
+          {
+            // The lander runs in the root, reporting on the branch; the others in the branch that started them.
+            conversationId: (lander ? ROOT_CONVERSATION_ID : b.id) as ConversationId,
+            ownership: { kind: 'conversation' },
+            background: true,
+          },
+        ),
+      context,
+    )
+  }
+  // Not `later`: a held grandchild keeps the harness from idling.
+  await (await b.branch.submit({ type: 'input', content: 'Interim' }, context)).wait(context)
+  await until(async () => (await b.from()).length === 2)
+  expect((await b.from())[1]).toMatchObject({ text: 'Answer: Interim', reply: false })
+  expect((await b.from())[1].report).toBe(report || undefined)
+  f.hold.release()
 })
 it("places a branch's one-way message to its starter as a note", async () => {
   const f = await fixture()

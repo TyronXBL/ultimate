@@ -1133,8 +1133,11 @@ describe('turns without an answer', () => {
     const delivered = (await reports(f.opened)).slice(1).map((entry) => entry.data) as {
       entry: number
       body: string
+      note?: string
     }[]
     expect(delivered).toHaveLength(2)
+    // Its queued follow-up does not make the first answer a waiting note: both are reports.
+    expect(delivered.map((report) => report.note)).toEqual([undefined, undefined])
     expect(delivered.filter((report) => report.entry === answer)).toHaveLength(1)
     expect(delivered.find((report) => report.entry !== answer)?.body).toContain(
       'Child: Later follow-up',
@@ -1283,6 +1286,87 @@ describe('turns without an answer', () => {
     const report = (await reports(f.opened))[2]
     expect(report.data).not.toHaveProperty('note')
     expect(await rootAnswers(f.opened)).toBe(answers + 2)
+  })
+  // What else makes a child's answer a waiting note, pinned before the rules move into one place (E1.3).
+  it.each([
+    ['its job delivers its result', false, 'background.run', { phase: 'deliver' }],
+    ['its CI run runs', true, 'ci.run', { phase: 'run' }],
+    ['a waking notify waits on its target', true, 'lineage.notify', { wake: true, phase: 'wait' }],
+    // Unlike a branch's answer to its starter (messages.test.ts), a notify in its deliver phase no longer counts.
+    [
+      'a waking notify delivers its result',
+      false,
+      'lineage.notify',
+      { wake: true, phase: 'deliver' },
+    ],
+    ['a notify that leaves a note waits', false, 'lineage.notify', { wake: false, phase: 'wait' }],
+  ] as const)('notes a child’s answer while %s as waiting: %s', async (_, waiting, kind, live) => {
+    type State = { phase: 'run' | 'wait' | 'deliver' }
+    const stay = (...[, , ctx]: [unknown, unknown, Context]) =>
+      awaitWithContext(new Promise<never>(() => {}), ctx)
+    // Stands in for another extension's live task, read by kind: it stays in the phase its input names.
+    const Live = defineTask<{ wake?: boolean; state: State }, State, null>({
+      name: kind,
+      version: 1,
+      initial: (input) => input.state,
+      phases: { run: stay, wait: stay, deliver: stay },
+      abort: (_task, runtime, ctx) =>
+        runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+    })
+    const f = await fixture(defineExtension({ name: 'jobs', tasks: [Live] }))
+    await call(f.opened, { action: 'start', agent: 'scout', task: 'Start', background: true })
+    await until(async () => (await reports(f.opened)).length === 1)
+    await f.opened.harness.waitForIdle(context)
+    const [child] = await children(f.opened)
+    await f.opened.harness.commit(
+      (tx) =>
+        tx.createTask(
+          Live,
+          { ...('wake' in live ? { wake: live.wake } : {}), state: { phase: live.phase } },
+          {
+            conversationId: child.conversationId,
+            ownership: { kind: 'conversation' },
+            background: true,
+          },
+        ),
+      context,
+    )
+    const answers = await rootAnswers(f.opened)
+    await call(f.opened, { action: 'message', id: child.conversationId, text: 'Interim' })
+    await until(async () => (await reports(f.opened)).length === 2)
+    await f.opened.harness.waitForIdle(context)
+    const [, delivered] = await reports(f.opened)
+    expect(delivered.model?.[0]).toMatchObject({
+      content: expect.stringContaining('Child: Interim'),
+    })
+    expect((delivered.data as { note?: string }).note).toBe(waiting ? 'waiting' : undefined)
+    // The message call's own turn answered; only a report started another.
+    expect(await rootAnswers(f.opened)).toBe(answers + (waiting ? 1 : 2))
+  })
+  it('reports a child’s answer while its own subagent still runs', async () => {
+    const f = await gatedFixture()
+    // Only a definition that lists `subagent` can start subagents of its own; its scout inherits `hold`.
+    await writeFile(
+      join(f.ultimateRoot, 'agents/lead.md'),
+      '---\nname: lead\ndescription: Lead\ntools: [subagent, hold]\n---\nLead\n',
+    )
+    await call(f.opened, { action: 'start', agent: 'lead', task: 'Start', background: true })
+    await until(async () => (await reports(f.opened)).length === 1)
+    await f.opened.harness.waitForIdle(context)
+    const [child] = await children(f.opened)
+    const nested = { action: 'start', agent: 'scout', task: 'HOLD', background: true }
+    await call(f.opened, {
+      action: 'message',
+      id: child.conversationId,
+      text: `CALL ${JSON.stringify(nested)}`,
+    })
+    await until(async () => (await reports(f.opened)).length === 2)
+    const [grandchild] = Object.values(
+      (await f.opened.harness.snapshot(Subagents, child.conversationId, context))!.agents,
+    )
+    await until(async () => f.holding.has(grandchild.conversationId))
+    expect((await reports(f.opened))[1].data).not.toHaveProperty('note')
+    f.childGate.release()
   })
   it('notes a late answer for a concluded parent without starting its run', async () => {
     const f = await fixture()

@@ -998,6 +998,56 @@ it('includes only idle open branches, does not repeat unchanged IDs, clears the 
   expect((await note())?.entries[0].model[0].content).toContain('and 2 more')
 })
 
+it('reports an idle branch even while work it does not read is under way', async () => {
+  // idleNote reads runs only: what else will wake a branch (E1.3 gathers it in one place) does not hide a stalled one.
+  type State = { phase: 'run' | 'wait' | 'report'; conversationId?: number }
+  const stay = (...[, , ctx]: [unknown, unknown, typeof context]) =>
+    awaitWithContext(new Promise<never>(() => {}), ctx)
+  const live = (name: string) =>
+    defineTask<{ wake?: boolean; state: State }, State, null>({
+      name,
+      version: 1,
+      initial: (input) => input.state,
+      phases: { run: stay, wait: stay, report: stay },
+      abort: (_task, runtime, ctx) =>
+        runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+    })
+  const f = await fixture()
+  const kinds = {
+    job: ['background.run', { phase: 'run' }],
+    notify: ['lineage.notify', { wake: true, state: { phase: 'wait' } }],
+    report: ['ultimate.subagent-reporter', { phase: 'run' }],
+    landing: ['workspaces.lander', { phase: 'report' }],
+  } as const
+  const tasks = Object.fromEntries(Object.values(kinds).map(([name]) => [name, live(name)]))
+  f.registry.install(defineExtension({ name: 'live', tasks: Object.values(tasks) }))
+  const ids: ConversationId[] = []
+  for (const [name, [kind, input]] of Object.entries(kinds)) {
+    const id = await f.conversation(name)
+    ids.push(id)
+    await f.harness.commit(async (tx) => {
+      ;(await tx.doc(Branch, id)).branch = { from: ROOT_CONVERSATION_ID, at: 0, intent: name }
+      ;(await tx.doc(Metadata, id)).inputAt = 1
+      const state = 'state' in input ? input.state : input
+      await tx.createTask(
+        tasks[kind],
+        {
+          ...('wake' in input ? { wake: input.wake } : {}),
+          state: { ...state, ...(kind === 'workspaces.lander' ? { conversationId: id } : {}) },
+        },
+        {
+          // The lander runs in the root, reporting on the branch; the others in the branch that started them.
+          conversationId: kind === 'workspaces.lander' ? ROOT_CONVERSATION_ID : id,
+          ownership: { kind: 'conversation' },
+          background: true,
+        },
+      )
+    }, context)
+  }
+  const note = await f.harness.commit((tx) => idleNote(tx, f.host, f.ultimate, 20_000_000), context)
+  expect(note?.entries[0].data.ids).toEqual(ids)
+})
+
 it('reports a branch idle after 30 minutes, and one awaiting a reply only after 2 h', async () => {
   const f = await fixture()
   const ids: Record<string, ConversationId> = {}
