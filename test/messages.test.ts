@@ -1193,7 +1193,7 @@ it.each([false, true])(
     await f.opened.close()
     await f.open()
     pause.gate.release()
-    await until(async () => (await replies(f)).length === 1)
+    await until(async () => (await f.log())!.messages.some((m) => m.report))
     expect(await branches()).toEqual(created)
     await f.opened.root.waitForIdle(context)
     expect(await f.opened.harness.snapshot(BranchReceipts, pause.taskId!, context)).toBeUndefined()
@@ -1201,9 +1201,7 @@ it.each([false, true])(
       { from: 1, text: 'Explore durably' },
     ])
     expect(
-      (await f.log())!.messages.filter(
-        (message) => message.from === created[0] && message.re !== undefined,
-      ),
+      (await f.log())!.messages.filter((message) => message.from === created[0] && message.report),
     ).toHaveLength(1)
   },
 )
@@ -1340,7 +1338,7 @@ it("forwards tool-result images by id, not an earlier turn's as latest, and chec
   expect(f.observed.join('\n')).toContain(`entry ${elsewhere} is not in this conversation`)
   expect((await f.log())!.messages.filter((m) => m.from === 1)).toHaveLength(1)
 })
-async function branched(f: Awaited<ReturnType<typeof fixture>>, prompt = 'Explore') {
+async function openBranch(f: Awaited<ReturnType<typeof fixture>>, prompt: string) {
   const tool = (await f.opened.root.agent(context)).deferred.find(
     (candidate) => candidate.name === 'branch',
   )
@@ -1348,12 +1346,17 @@ async function branched(f: Awaited<ReturnType<typeof fixture>>, prompt = 'Explor
     ;(await tx.doc(Roots, ROOT_CONVERSATION_ID)).roots = [1]
     if (tool) await configure(tx, f.opened.root.id, { modelTools: { add: [tool] } })
   }, context)
+  const reports = async () => (await f.log())?.messages.filter((m) => m.report).length ?? 0
+  const before = await reports()
   await f.opened.root.submit(
     { type: 'input', content: 'BRANCH ' + JSON.stringify({ prompt, isolated: false }) },
     context,
   )
-  const before = (await replies(f)).length
-  await until(async () => (await replies(f)).length === before + 1)
+  return { reports, before }
+}
+async function branched(f: Awaited<ReturnType<typeof fixture>>, prompt = 'Explore') {
+  const { reports, before } = await openBranch(f, prompt)
+  await until(async () => (await reports()) === before + 1)
   await f.opened.root.waitForIdle(context)
   const id = (await f.log())!.messages.findLast((m) => m.from === 1)!.to as number
   const branch = (await f.opened.harness.conversation(id as ConversationId, context))!
@@ -1422,7 +1425,7 @@ it('lets a branch ask the user directly and leaves passive question and answer n
   expect(reply).toMatchObject({ to: b.id, text, state: 'answered', entry: expect.any(Number) })
   expect(f.observed).toContainEqual(expect.stringContaining(`Message from user:\n${text}`))
   // The user's answer is input, so the branch's final result still reports to its starter.
-  expect((await b.from()).find((m) => m.report)).toMatchObject({
+  expect((await b.from()).findLast((m) => m.report)).toMatchObject({
     to: 1,
     text: expect.stringContaining('A: Yes'),
   })
@@ -1441,9 +1444,10 @@ it('forwards images into a new branch with its prompt', async () => {
     'BRANCH ' + JSON.stringify({ prompt: 'Fix this card', isolated: false, images: 'latest' }),
     1,
   )
-  await until(async () => (await replies(f)).length === 1)
+  await until(async () => ((await f.log())?.messages.length ?? 0) > 0)
   const message = (await f.log())!.messages[0]
   expect(message.images?.count).toBe(1)
+  await until(async () => (await placed(f, message.to as number, message.id)) !== undefined)
   const entry = await placed(f, message.to as number, message.id)
   expect(imagesIn(entry)).toEqual([png(0)])
 })
@@ -1462,7 +1466,7 @@ it('starts a branch on its own agent setup and keeps it on the branch for the su
     },
     context,
   )
-  await until(async () => (await replies(f)).length === 1)
+  await until(async () => ((await f.log())?.messages.length ?? 0) > 0)
   const id = (await f.log())!.messages[0].to as ConversationId
   const branch = (await f.opened.harness.conversation(id, context))!
   expect(await branch.agent(context)).toMatchObject({
@@ -1498,6 +1502,52 @@ it("routes a branch's later final answer to its starter once, waking it when the
   await f.open()
   await b.settled()
   expect(await b.from()).toHaveLength(2)
+})
+it('starts a branch one-way: an interim answer stays a note, and its report wakes the starter once', async () => {
+  // #171672: the reply-enabled first message woke @ultimate with 14 interim waits out of 16 replies, and each
+  // acknowledgment woke the branch again.
+  const f = await fixture()
+  await openBranch(f, 'HOLD')
+  await until(f.holding)
+  const start = (await f.log())!.messages.find((m) => m.from === 1)!
+  const id = start.to as number
+  // Its first run ends while its submission waits in the lander's queue: the answer is an update.
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue.push({ conversationId: id } as never)
+  }, context)
+  f.hold.release()
+  const from = async () => (await f.log())!.messages.filter((m) => m.from === id)
+  await until(async () => (await from()).length === 1)
+  await f.opened.root.waitForIdle(context)
+  // What woke @ultimate from the branch: a reply or a report.
+  const inputs = async () =>
+    (await f.opened.root.context(context)).entries.filter(
+      (e) =>
+        (e.data as { from?: number } | undefined)?.from === id &&
+        (e.kind === 'board.reply' || (e.kind === 'board.message' && e.input)),
+    )
+  expect(await inputs()).toHaveLength(0)
+  expect(await from()).toMatchObject([{ to: 1, text: 'Done', reply: false }])
+  expect((await from())[0].report).toBeUndefined()
+  expect(f.observed.join('\n')).toContain(
+    'started you: your final answer reaches it when you stop with nothing under way',
+  )
+  // Its work ends and it stops with nothing under way: the decisions it reports wake the starter, once.
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue = []
+  }, context)
+  const branch = (await f.opened.harness.conversation(id as ConversationId, context))!
+  await (await branch.submit({ type: 'input', content: 'Decisions: 1a' }, context)).wait(context)
+  await until(async () => (await inputs()).length === 1)
+  await f.opened.root.waitForIdle(context)
+  await f.opened.close()
+  await f.open()
+  await f.opened.harness.waitForIdle(context)
+  expect((await from()).map((m) => [m.text, m.report])).toEqual([
+    ['Done', undefined],
+    ['Answer: Decisions: 1a', true],
+  ])
+  expect(await inputs()).toHaveLength(1)
 })
 it("leaves a branch's final answer as a note while its work is under way", async () => {
   const f = await fixture()
@@ -1633,7 +1683,16 @@ it("places a branch's one-way message to its starter as a note", async () => {
 it("routes @ultimate's final answer to a branch's reply back to the branch, once", async () => {
   // #468703 replied with its decisions; @ultimate's weigh-in, a final answer to that reply, stayed in its own transcript.
   const f = await fixture()
-  const b = await branched(f, 'Explore, then WEIGH')
+  const b = await branched(f)
+  const asked = await sendMessage(
+    f.host,
+    1,
+    { to: `#${b.id}`, text: 'WEIGH', reply: true },
+    context,
+    {
+      requestId: 'ask',
+    },
+  )
   await until(async () => (await f.log())!.messages.some((m) => m.from === 1 && m.routed))
   await b.settled()
   await b.branch.waitForIdle(context)
@@ -1642,13 +1701,15 @@ it("routes @ultimate's final answer to a branch's reply back to the branch, once
   await b.settled()
   const toBranch = (await f.log())!.messages.filter((m) => m.from === 1 && m.to === b.id)
   expect(toBranch.map((m) => [m.reply, m.routed])).toEqual([
+    [false, undefined],
     [true, undefined],
     [false, expect.any(Number)],
   ])
-  expect(toBranch[1].text).toContain('Reply from')
+  expect(toBranch[2].text).toContain('Reply from')
   // The branch woke, and its answer to the routed weigh-in is an echo: @ultimate's answer to it stays local.
   expect((await b.from()).map((m) => [m.re, m.report, m.echo])).toEqual([
-    [1, undefined, undefined],
+    [undefined, true, undefined],
+    [asked, undefined, undefined],
     [undefined, true, true],
   ])
 })
@@ -1682,6 +1743,8 @@ it("marks only a branch's reply as awaiting @ultimate, never a standing agent's"
   await f.send(`#${f.recipient.id}`)
   await until(async () => (await replies(f)).length === 1)
   const b = await branched(f)
+  await f.send(`#${b.id}`, 'Status?')
+  await until(async () => (await replies(f)).length === 2)
   const reply = async (id: number) => (await f.log())!.messages.find((m) => m.from === id && m.re)
   expect((await reply(f.recipient.id))?.awaits).toBeUndefined()
   expect((await reply(b.id))?.awaits).toBe(true)
@@ -1689,11 +1752,15 @@ it("marks only a branch's reply as awaiting @ultimate, never a standing agent's"
 it("does not route an answer to the starter's reply-enabled message", async () => {
   const f = await fixture()
   const b = await branched(f)
-  expect(await b.from()).toMatchObject([{ re: 1 }])
   await f.send(`#${b.id}`, 'Status?')
-  await until(async () => (await replies(f)).length === 2)
+  await until(async () => (await replies(f)).length === 1)
   await b.settled()
-  expect((await b.from()).map((m) => m.re)).toEqual([1, 3])
+  const asked = (await f.log())!.messages.find((m) => m.text === 'Status?')!
+  // Its first answer was the report; its answer to the question went back only as the reply.
+  expect((await b.from()).map((m) => [m.re, m.report])).toEqual([
+    [undefined, true],
+    [asked.id, undefined],
+  ])
 })
 it("does not route a branch's answer to a sibling's question to its starter", async () => {
   // #18872 answered sibling #18345's question; the answer went back to #18345 and, a second time, to @ultimate.
@@ -1709,7 +1776,7 @@ it("does not route a branch's answer to a sibling's question to its starter", as
   await b.settled()
   const question = (await f.log())!.messages.find((m) => m.text === 'Hook?')!
   expect((await b.from()).map((m) => [m.to, m.re])).toEqual([
-    [1, 1],
+    [1, undefined],
     [f.recipient.id, question.id],
   ])
 })
@@ -1752,7 +1819,7 @@ it("routes an answer to the starter's one-way message, waking it for a decision 
   expect(routed.re).toBeUndefined()
   // @ultimate woke and answered; that answer is to a one-way message, so nothing goes back to the branch.
   const root = await f.opened.root.context(context)
-  const input = root.entries.find((e) => e.kind === 'board.message' && e.input === true)
+  const input = root.entries.findLast((e) => e.kind === 'board.message' && e.input === true)
   expect(input?.data).toMatchObject({ id: routed.id, delivery: 'followUp' })
   expect(root.entries.at(-1)?.kind).toBe('pi.assistant')
   expect((await f.log())!.messages.filter((m) => m.to === b.id)).toHaveLength(2)
@@ -1767,7 +1834,7 @@ it("routes a branch's answer to its starter's reply, so the starter hears how it
   await until(async () => (await b.from()).length === 4)
   await b.settled()
   expect((await b.from()).map((m) => [m.text, m.report])).toEqual([
-    [expect.stringContaining('Explore'), undefined],
+    [expect.stringContaining('Explore'), true],
     ['Approve?', undefined],
     ['Done', undefined],
     [expect.stringContaining('Reply from'), true],

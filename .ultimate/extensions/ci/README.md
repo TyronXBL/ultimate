@@ -4,7 +4,10 @@ Runs this repository's full CI in the background and wakes the caller with a res
 machine has a `pc` remote, else on the fork's GitHub Actions.
 
 The `ci` tool takes the calling conversation's committed HEAD (its worktree, its nearest owner's, else the project)
-and returns at once. A durable `ci.run` task then:
+and returns at once. A checkout with staged, unstaged or untracked changes is refused with the paths and "commit
+first, in its own tool round": a `git commit` in the same tool round as `ci` used to lose the race, and CI tested the
+commit before it. HEAD is read after that check; the card names the exact sha it tested either way. It commits,
+stashes and cleans nothing. A durable `ci.run` task then:
 
 1. scans the commits a push would publish, merge resolutions included, for secret shapes and refuses without pushing
    on a hit;

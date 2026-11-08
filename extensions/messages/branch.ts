@@ -21,7 +21,7 @@ export const branchTool = (host: ExtensionHost) =>
     name: 'branch',
     deferred: true,
     description:
-      "Start a lineage branch. Its answer returns to you as a reply. Give it a title: one short line naming the work (at most 60 characters), shown in the sidebar and the tally until its summary renames it; without one, the prompt's first 80 characters name it. `agents` gives this branch its own models, `{ coordinator: 'provider/id:thinking', worker: 'provider/id', … }`: its coordinator and every subagent under it run on them instead of their definitions'.",
+      "Start a lineage branch. Its final answer wakes you once it stops with nothing under way; answers while its work is still under way arrive as notes. Give it a title: one short line naming the work (at most 60 characters), shown in the sidebar and the tally until its summary renames it; without one, the prompt's first 80 characters name it. `agents` gives this branch its own models, `{ coordinator: 'provider/id:thinking', worker: 'provider/id', … }`: its coordinator and every subagent under it run on them instead of their definitions'.",
     parameters: obj({
       prompt: str({ minLength: 1 }),
       title: opt(str({ minLength: 1, maxLength: 60 })),
@@ -98,13 +98,16 @@ export const branchTool = (host: ExtensionHost) =>
         }, ctx)
         id = await api.memo('branch-id', branch.id, ctx)
       }
+      // One-way: the branch's answers reach the starter through `board.route`, as notes while work is under way and as
+      // a waking report once nothing is. A reply-enabled start woke the starter with its first, usually interim, answer,
+      // and the starter's acknowledgment woke the branch again (#171672: 14 of 16 such replies were waits).
       const message = await send(
         host,
         from,
         {
           to: `#${id}`,
           text: input.prompt,
-          reply: true,
+          reply: false,
           ...(input.images === undefined ? {} : { images: input.images }),
           imagesFrom: api.conversationId,
         },

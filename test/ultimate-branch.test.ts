@@ -11,7 +11,7 @@ import { parseDefinition } from '../lib/agents.ts'
 import { seedTally, until } from './helpers.ts'
 import { fixture, dead, entries, log, ask } from './ultimate-fixture.ts'
 
-it('starts a lineage branch with a message input and caller attribution, returns its answer, and selects roots', async () => {
+it('starts a lineage branch with a message input and caller attribution, reports its answer, and selects roots', async () => {
   const f = await fixture()
   await seedTally(f.server.harness)
   const ultimate = await f.subagents.standing('ultimate', context)
@@ -32,15 +32,13 @@ it('starts a lineage branch with a message input and caller attribution, returns
   )
   const message = (await log(f.server)).find((m) => m.text === 'Explore the task')!
   const branch = message.to as ConversationId
-  await until(async () =>
-    (await entries(f.server, ultimate)).some((entry) => entry.kind === 'board.reply'),
-  )
+  await until(async () => (await log(f.server)).some((m) => m.from === branch && m.report))
   expect(await f.server.harness.snapshot(Branch, branch, context)).toMatchObject({
     branch: { from: 1, intent: 'Explore the task' },
   })
   expect(
     (await entries(f.server, branch)).filter((entry) => entry.kind === 'board.message'),
-  ).toMatchObject([{ data: { from: ultimate, text: 'Explore the task', reply: true } }])
+  ).toMatchObject([{ data: { from: ultimate, text: 'Explore the task', reply: false } }])
   expect(await f.server.harness.snapshot(Metadata, branch, context)).toMatchObject({
     title: 'Explore the task',
     label: 'coordinator',

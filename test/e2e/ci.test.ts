@@ -197,6 +197,53 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
   api.close()
 })
 
+it('refuses an uncommitted checkout instead of testing the HEAD before it', async () => {
+  // #147838, #151003, #156344, #166097: `git commit` and `ci` in one tool round, and CI tested the commit before.
+  const root = await temp('ultimate-ci-dirty-')
+  const checkout = join(root, 'checkout')
+  await mkdir(checkout)
+  await git(checkout, 'init', '-q', '-b', 'main')
+  await writeFile(join(checkout, 'a.txt'), 'a\n')
+  await git(checkout, 'add', '.')
+  await git(checkout, 'commit', '-qm', 'first')
+  await writeFile(join(checkout, 'a.txt'), 'changed\n')
+  const prepared = await prepareHarness({
+    ultimateRoot: root,
+    userHome: await temp(),
+    home: join(root, 'home'),
+    faux: fauxProvider(),
+  })
+  let opened: OpenHost
+  prepared.registry.install(
+    ciExtension({
+      projectRoot: checkout,
+      harness: () => opened.harness,
+      need: (() => ({ get: async () => undefined })) as never,
+    }),
+  )
+  prepared.faux!.setResponses([
+    fauxAssistantMessage([fauxToolCall('ci', {})], { stopReason: 'toolUse' }),
+    fauxAssistantMessage([fauxText('Refused.')]),
+  ])
+  opened = await prepared.open()
+  hosts.push(opened)
+  await (
+    await opened.root.submit({ type: 'input', requestId: 'go', content: 'Run CI' }, context)
+  ).wait(context)
+  const result = (await opened.root.context(context)).entries.find(
+    (entry) => entry.kind === 'pi.tool-result',
+  )
+  expect(result?.model?.[0]).toMatchObject({ role: 'toolResult', isError: true })
+  expect(JSON.stringify(result)).toContain(
+    'Uncommitted changes in ' +
+      checkout +
+      ', so CI would not test them: M a.txt. Commit first, in its own tool round, then call ci again.',
+  )
+  expect(
+    (await opened.harness.inspect(context)).tasks.some((t) => t.record.kind === 'ci.run'),
+  ).toBe(false)
+})
+
 it('runs the suites locally when GitHub did not start the jobs for billing, instead of failing the landing', async () => {
   const root = await temp('ultimate-ci-gate-')
   const checkout = join(root, 'checkout')

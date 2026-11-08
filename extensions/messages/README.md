@@ -71,8 +71,8 @@ conversation that started you is a note, and stopping with nothing under way is 
 - **Answers back down.** The primary agent's runs get a `board.route` task too (`down`). When every input of the run
   was a reply or one-way message (a report) from branches it started, its final answer goes to each of them that is
   not concluded and that the run sent no message, as a one-way message with `routed: true`, which wakes it. So a
-  weigh-in reaches the branch whether its decisions came as the reply to the branch's first message or as a later
-  report. A reply steers a busy starter, so replies arriving close together share one run: each branch in it gets the
+  weigh-in reaches the branch whether its decisions came as a report or as the reply to a reply-enabled message from
+  the starter. A reply steers a busy starter, so replies arriving close together share one run: each branch in it gets the
   answer, prefixed with which branches it answers together, or one would wait on it forever. User input, notes and
   landing cards in the run route nothing, and a message to the user ends the run without a final answer.
 
@@ -156,10 +156,11 @@ The deferred `branch { prompt, title?, root?, isolated?: true }` tool is offered
 `title` (one line, at most 60 characters) names the branch in the sidebar and the tally until its summary renames it.
 It chooses the explicit root, otherwise the caller's tree root, otherwise the only root. Ambiguous or missing roots
 produce an error listing the available ids. It forks the root's tally tip through lineage, attributes the tally's branch
-line to the caller, and sends the first input as a message with replies enabled. It returns the branch id and message id.
-The branch's answer therefore wakes its caller as a normal `board.reply`.
-The tool records the caller in the branch's `board.started` document, so later answers reach it as notes or reports
-(see Waking upward).
+line to the caller, and sends the first input as a one-way message. It returns the branch id and message id.
+The tool records the caller in the branch's `board.started` document, so every answer of the branch, the first one
+included, reaches it as a note or a report (see Waking upward): an interim "waiting on CI" answer is a note, and the
+branch wakes its caller only once it stops with nothing under way. A one-way message from the starter tells the branch
+so instead of the usual "expects no answer" line. A model failure of any branch run reaches @ultimate as a watchdog card.
 Before sending its first input, the tool rereads the `coordinator` definition (built-in, user, then trusted project override), applies its instructions and the model and thinking level it pins (thinking clamped to what the model supports), and marks `ultimate.metadata.label = 'coordinator'`. A pin whose provider has no login here is skipped; without a usable pin the branch starts on the default model (`defaultModel` in `lib/agents.ts`: Pi's default when it has a login, else the first model that has one), never on the root's stored model. Its tools stay inherited either way. Coordinators report results, decisions and landings to @ultimate in their final answers, which route as reports.
 The tool gives lineage its task and call ids for a task-scoped receipt, recorded atomically with the fork, so replay cannot
 create another branch even before the branch-id memo is saved. Pi retires that receipt when the originating task completes.

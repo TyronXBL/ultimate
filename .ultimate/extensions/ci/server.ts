@@ -366,13 +366,22 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
       defineTool({
         name: 'ci',
         description:
-          "Run this repository's full CI (check, unit tests, e2e) for your committed HEAD in the background, on the PC runner when one is configured, else on the fork's GitHub Actions, instead of running the suites on this machine. Returns at once; its result card (passed or failed, the failing tests, timings) steers your current run after its tool round, or wakes you when idle. Uncommitted changes are not tested.",
+          "Run this repository's full CI (check, unit tests, e2e) for your committed HEAD in the background, on the PC runner when one is configured, else on the fork's GitHub Actions, instead of running the suites on this machine. Returns at once; its result card (passed or failed, the failing tests, timings) steers your current run after its tool round, or wakes you when idle. Refuses a checkout with uncommitted changes: commit first, in its own tool round.",
         parameters: obj({}),
         // Not replay-safe (the default): an interrupted call is never rerun, so it starts at most one run.
         async execute(_args, api, ctx) {
           const cwd = await checkout(api.conversationId, ctx)
+          // A `git commit` in the same tool round raced this call five times (#147838, #151003, #156344, #166097): CI
+          // tested the HEAD before it. Staged, unstaged and untracked changes all refuse; HEAD is read after the check,
+          // so a commit that finished before it is the one tested. The result still names the exact sha it tested.
+          const dirty = await git(cwd, ['status', '--porcelain', '--untracked-files=normal'])
+          if (dirty) {
+            const paths = dirty.split('\n').map((line) => line.trim())
+            throw new Error(
+              `Uncommitted changes in ${cwd}, so CI would not test them: ${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ` and ${paths.length - 5} more` : ''}. Commit first, in its own tool round, then call ci again.`,
+            )
+          }
           const sha = await git(cwd, ['rev-parse', 'HEAD'])
-          const dirty = (await git(cwd, ['status', '--porcelain'])) !== ''
           await api.commit(
             (tx) =>
               tx.createTask(
@@ -386,7 +395,7 @@ export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness'
               ),
             ctx,
           )
-          const text = `CI started for ${sha.slice(0, 7)} in ${cwd}. Its result steers you or wakes you in about 2–10 minutes; keep working or end your turn.${dirty ? ' Uncommitted changes are not part of it.' : ''}`
+          const text = `CI started for ${sha.slice(0, 7)} in ${cwd}. Its result steers you or wakes you in about 2–10 minutes; keep working or end your turn.`
           return { output: [{ type: 'text', text }] }
         },
       }),

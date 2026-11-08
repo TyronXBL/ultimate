@@ -614,7 +614,7 @@ it('recognizes pi-ai retryable errors, and leaves a conversation that somebody r
   f.release()
 })
 
-it('lets reply:true board messages report their own failures, including during recovery', async () => {
+async function messaged(reply: boolean) {
   const f = await fixture((transcript) =>
     inputText(transcript) === 'fail' ? error() : fauxAssistantMessage('ok'),
   )
@@ -626,7 +626,7 @@ it('lets reply:true board messages report their own failures, including during r
       to: branch,
       text: 'fail',
       at: 0,
-      reply: true,
+      reply,
       state: 'delivered',
     })
   }, context)
@@ -634,8 +634,18 @@ it('lets reply:true board messages report their own failures, including during r
   await (await f.submit(branch, 'fail', 'board:7')).wait(context)
   await f.reopen()
   await f.harness.waitForIdle(context)
+  return f
+}
+it('lets reply:true board messages report their own failures, including during recovery', async () => {
+  const f = await messaged(true)
   expect(await f.entries()).toHaveLength(0)
   expect(await f.tasks()).toHaveLength(0)
+})
+it("reports a failure answering a branch's one-way first message, including during recovery", async () => {
+  // A branch's first message is one-way (#174579): no reply carries the failure to @ultimate, so the card does.
+  const f = await messaged(false)
+  await until(async () => (await f.entries()).length === 1)
+  expect((await f.entries())[0].data).toMatchObject({ title: 'Messaged' })
 })
 
 it('reports a generation running at installation without backfilling newer historical failures', async () => {
