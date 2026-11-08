@@ -547,7 +547,9 @@ export function BranchCall({ call, core }: { call: ToolCallView; core: ReactNode
         ? 'failed'
         : message?.state === 'stopped'
           ? 'stopped by the user'
-          : message?.state === 'answered'
+          : // A branch reports with a routed one-way message; one started before #174579 replied to its first message.
+            message?.state === 'answered' ||
+              log?.messages.some((m) => m.from === id && m.to === message?.from && m.report)
             ? 'reported back'
             : 'working'
   return (

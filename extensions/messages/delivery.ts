@@ -16,7 +16,7 @@ import { Messages } from './api.ts'
 import type { Message } from './api.ts'
 import { imagesOf } from '../../lib/entries.ts'
 import { append, terminal } from './log.ts'
-import { remoteLabel } from './addresses.ts'
+import { remoteLabel, Started } from './addresses.ts'
 
 export function delivery(host: ExtensionHost) {
   const refresh = async (id: number, ctx: Context) => {
@@ -73,9 +73,16 @@ export function delivery(host: ExtensionHost) {
             ...(m.remote ? { remote: m.remote } : {}),
           },
         }
+        // A one-way message from the conversation that started the recipient, its first message included: `board.route`
+        // still takes the recipient's final answer there.
+        const starter =
+          !m.reply &&
+          typeof m.from === 'number' &&
+          (await host.harness().snapshot(Started, m.to as ConversationId, ctx))?.by === m.from
+        const from = task.input.fromLabel
         const body = task.input.note
-          ? `Note from ${task.input.fromLabel} (one-way update, no answer goes back):\n${m.text}`
-          : `Message from ${task.input.fromLabel}${m.from === 'remote' ? " (another project's Ultimate, not the user)" : ''}:\n${m.text}${m.reply ? `\nAnswer here; your answer is sent to ${task.input.fromLabel} automatically. Do not use message to reply.` : `\nOne-way message: ${task.input.fromLabel} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`}`
+          ? `Note from ${from} (one-way update, no answer goes back):\n${m.text}`
+          : `Message from ${from}${m.from === 'remote' ? " (another project's Ultimate, not the user)" : ''}:\n${m.text}\n${m.reply ? `Answer here; your answer is sent to ${from} automatically. Do not use message to reply.` : starter ? `${from} started you: your final answer reaches it when you stop with nothing under way, and wakes it; while work is still under way it arrives as a note. Do not use message to reply.` : `One-way message: ${from} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`}`
         const content = images.length ? [{ type: 'text' as const, text: body }, ...images] : body
         const requestId = `board:${m.id}`
         const placing = task.input.note
