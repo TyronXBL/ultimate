@@ -1,4 +1,4 @@
-import { until } from './helpers.ts'
+import { noWorkspaces, testHost, until } from './helpers.ts'
 import { BACKGROUND_CONTEXT as context, awaitWithContext } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
 import { obj } from '@earendil-works/pi-schema'
@@ -34,13 +34,12 @@ import backupExtension from '../extensions/backup/server.ts'
 import modelsExtension from '../extensions/models/server.ts'
 import { Pin } from '../extensions/models/api.ts'
 import { idleNote } from '../extensions/watchdog/idle.ts'
-import type { WatchdogService } from '../extensions/watchdog/api.ts'
 import { Messages } from '../extensions/messages/api.ts'
 import { Branch } from '../extensions/lineage/api.ts'
 import { Standing, Subagents } from '../extensions/subagents/api.ts'
 import subagents from '../extensions/subagents/server.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
-import { concludedIn, concludedTreeIn, resultIn } from '../extensions/conversations/server.ts'
+import { WorkspacesApi } from '../extensions/workspaces/api.ts'
 import { Metadata } from '../server/metadata.ts'
 import { UiState } from '../server/ui-state.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
@@ -103,20 +102,9 @@ async function fixture(
   const onOpen: (() => Promise<void>)[] = []
   const onClose: (() => Promise<void>)[] = []
   const notices: string[] = []
-  const services = new Map<string, unknown>()
   const resources = new Map<string, unknown>()
   let fallback: { provider: string; modelId: string }[] = []
-  const host = {
-    implement: (api: { name: string }, implementation: unknown) =>
-      void services.set(api.name, implementation),
-    need: (api: { name: string }) =>
-      api.name === 'conversations'
-        ? { concludedIn, concludedTreeIn, resultIn }
-        : api.name === 'models'
-          ? services.get(api.name)
-          : { doc: Workspaces },
-    want: (api: { name: string }) =>
-      api.name === Pin.name ? { definition: async () => ({ fallback }) } : services.get(api.name),
+  const base = {
     resource: <T>(key: string, create: () => T) => {
       if (!resources.has(key)) resources.set(key, create())
       return resources.get(key) as T
@@ -136,6 +124,11 @@ async function fixture(
     scanSubmissions: (...args: Parameters<MemoryStorage['scanSubmissions']>) =>
       storage.scanSubmissions(...args),
   } as unknown as ExtensionHost
+  const services = testHost(base)
+  // The watchdog reads only the lander queue from workspaces, which these tests leave empty.
+  services('workspaces').implement(WorkspacesApi, noWorkspaces)
+  services('subagents').implement(Pin, { definition: async () => ({ fallback }) })
+  const host = { ...base, ...services('watchdog') }
   const original = watchdog(host)
   const backend = {
     ...original,
@@ -268,8 +261,7 @@ async function fixture(
     root,
     registry,
     host,
-    failures: (since: number) =>
-      (services.get(WatchdogApi.name) as WatchdogService).failures(since),
+    failures: (since: number) => services('test').need(WatchdogApi).failures(since),
     ultimate,
     notices,
     conversation,
@@ -288,13 +280,15 @@ async function fixture(
       registry.install(backupExtension(host))
     },
     stop: async (id: ConversationId, parent: ConversationId) => {
+      // Its own registry: this subagents must not replace the fixture's Pin.
+      const stopServices = testHost(base)
+      stopServices('workspaces').implement(WorkspacesApi, noWorkspaces)
       const backendForStop = subagents({
         ...host,
-        implement: () => {},
+        ...stopServices('subagents'),
         onOpen: () => {},
         onClose: () => {},
-        need: () => ({ get: async () => undefined }),
-      } as unknown as Parameters<typeof subagents>[0])
+      })
       const tool = backendForStop.tools!.find((candidate) => candidate.name === 'subagent')!
       const memos = new Map<string, unknown>()
       return tool.execute(

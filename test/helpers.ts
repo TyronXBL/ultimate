@@ -14,6 +14,14 @@ import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { Tally } from '../extensions/lineage/server.ts'
 import { ModelsApi } from '../extensions/models/api.ts'
 import { modelsService } from '../extensions/models/set-model.ts'
+import { ConversationsApi } from '../extensions/conversations/api.ts'
+import { conversationsService } from '../extensions/conversations/server.ts'
+import type { WorkspaceService } from '../extensions/workspaces/api.ts'
+import { lastLanded, released } from '../extensions/workspaces/state.ts'
+import { Workspaces } from '../extensions/workspaces/workspaces.ts'
+import { git } from '../lib/git.ts'
+import { extensionApis } from '../server/extension-apis.ts'
+import type { ExtensionHost } from '../server/extensions.ts'
 import { context } from '../server/harness.ts'
 import { createServer, prepareServer } from '../server/main.ts'
 import type { ServerOptions } from '../server/main.ts'
@@ -33,14 +41,74 @@ vi.mock('@earendil-works/pi-ai/providers/faux', async (importOriginal) => {
 })
 
 /**
- * `implement`, `need` and `want` over a plain map, for extension hosts built by hand. `need` resolves the provider on
- * each member access like the real handle, so a fixture may implement an API after its consumer took the handle.
+ * The service registry of a hand-built extension host, the real one (`server/extension-apis.ts`), with the real
+ * `ModelsApi` and `ConversationsApi` over `host`. Call it with an extension's name for that extension's `implement`,
+ * `need` and `want`; a fixture provides any other API it needs through `implement`. As on the real host, `need` throws
+ * `<extension> needs <api>, which no enabled extension provides` while nothing provides it.
  */
+export function testHost(
+  host: Omit<Parameters<typeof conversationsService>[0], 'want'> &
+    Parameters<typeof modelsService>[0],
+) {
+  const providers = new Map<string, { extension: string; value: unknown }>()
+  const registry = extensionApis(
+    (name) => providers.get(name),
+    () => [...providers].map(([name, { extension }]): [string, string] => [name, extension]),
+    () => true,
+    (_call, work) => work(),
+  )
+  const facet = (extension: string) => {
+    const owner = {}
+    return {
+      implement: (api, value) => void providers.set(api.name, { extension, value }),
+      need: (api) => registry.need(owner, extension, api, false),
+      want: (api) => registry.want(owner, extension, api),
+    } satisfies Pick<ExtensionHost, 'implement' | 'need' | 'want'>
+  }
+  facet('models').implement(ModelsApi, modelsService(host))
+  facet('conversations').implement(
+    ConversationsApi,
+    conversationsService({ ...host, ...facet('conversations') }),
+  )
+  return facet
+}
+
+/**
+ * `WorkspacesApi` for a test host without the workspaces extension: no conversation has a worktree, so each call
+ * answers as the real service does for one without (`extensions/workspaces/workspaces.ts`), and creating one fails as
+ * it does while workspaces is disabled.
+ */
+export const noWorkspaces: WorkspaceService = {
+  released,
+  lastLanded,
+  get: async () => undefined,
+  ready: async () => undefined,
+  unavailable: async () => undefined,
+  create: async () => {
+    throw new Error('Enable workspaces to create an isolated conversation')
+  },
+  land: async () => {
+    throw new Error('Conversation has no workspace')
+  },
+  discard: async () => {
+    throw new Error('Conversation has no workspace')
+  },
+  release: async () => [],
+  git,
+  failing: async () => [],
+  recentLandings: async () => [],
+  github: async () => undefined,
+  doc: Workspaces,
+  setupGit: async () => {
+    throw new Error('Enable workspaces to set up Git')
+  },
+}
+
 /**
  * `need` for a hand-built host whose core services stay out of the test: every method resolves undefined, as a worktree
  * lookup for a conversation without one does.
  */
-export const idleNeed = <S>(_api: Api<string, S>) =>
+const idleNeed = <S>(_api: Api<string, S>) =>
   new Proxy({}, { get: (_, key) => (key === 'then' ? undefined : async () => undefined) }) as S
 
 /**
@@ -52,6 +120,10 @@ export const ownerNeed =
   <S>(api: Api<string, S>): S =>
     api.name === ModelsApi.name ? (modelsService({ modelRuntime }) as S) : idleNeed(api)
 
+/**
+ * `implement`, `need` and `want` over a plain map, for extension hosts built by hand. `need` resolves the provider on
+ * each member access like the real handle, so a fixture may implement an API after its consumer took the handle.
+ */
 export function apis(provided = new Map<string, unknown>()) {
   return {
     provided,

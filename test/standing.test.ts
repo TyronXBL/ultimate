@@ -1,6 +1,6 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 // Harness tests use the faux provider without token pacing.
-import { eventHost, ownerNeed, temp, removeTemp } from './helpers.ts'
+import { eventHost, noWorkspaces, testHost, temp, removeTemp } from './helpers.ts'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -18,8 +18,8 @@ import { prepareHarness } from '../server/harness.ts'
 import { emit } from '../server/events.ts'
 import type { OpenHost } from '../server/harness.ts'
 import subagents from '../extensions/subagents/server.ts'
-import { Profile, Standing, Started } from '../extensions/subagents/api.ts'
-import type { SubagentsService } from '../extensions/subagents/api.ts'
+import { Profile, Standing, Started, SubagentsApi } from '../extensions/subagents/api.ts'
+import { WorkspacesApi } from '../extensions/workspaces/api.ts'
 import { Metadata } from '../server/metadata.ts'
 import { modelsService } from '../extensions/models/set-model.ts'
 import { Marks } from '../extensions/conversations/api.ts'
@@ -58,17 +58,23 @@ async function fixture() {
   prepared.registry.install(CodingTools)
   prepared.registry.install(defineExtension({ name: 'owned', tools: [tool] }))
   let host!: OpenHost
-  let service!: SubagentsService
   const openers: (() => Promise<void>)[] = []
+  const services = testHost({
+    ...prepared,
+    harness: () => host.harness,
+    metadata: Metadata,
+    projectSettings: async () => ({}),
+    notice: () => {},
+    doc: () => undefined,
+  })
+  // Subagents needs workspaces, but standing conversations get no worktree from it.
+  services('workspaces').implement(WorkspacesApi, noWorkspaces)
   const backend = subagents({
     ...prepared,
     harness: () => host.harness,
     metadata: Metadata,
     projectSettings: async () => ({}),
-    implement: (_api, value) => {
-      service = value as SubagentsService
-    },
-    need: ownerNeed(prepared.modelRuntime),
+    ...services('subagents'),
     resource: (_key, create) => create(),
     extensions: () => [],
     notice: () => {},
@@ -76,6 +82,7 @@ async function fixture() {
     onClose: () => {},
     emit,
   })
+  const service = services('test').need(SubagentsApi)
   prepared.registry.install(backend)
   host = await prepared.open()
   opened.push(host)

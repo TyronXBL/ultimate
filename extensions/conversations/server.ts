@@ -35,6 +35,7 @@ import {
   summaryBehavior,
   summaryHistory,
 } from './summary.ts'
+import type { SummaryHost } from './summary.ts'
 import { summaryModel, summaryModelSetting, summaryModelStatus } from './summary-model.ts'
 import { parseSummaryModel } from './summary-model-ref.ts'
 import { implementAction } from '../../lib/actions.ts'
@@ -45,6 +46,7 @@ import { activityBehavior } from './activity.ts'
 import { compactionEvents } from './compactions.ts'
 import { contextBehavior } from './context.ts'
 import { ContextUsageDoc, ConversationsApi, Marks, Previews, Release, Trees } from './api.ts'
+import type { ConversationsService } from './api.ts'
 import {
   ConcludeAction,
   RenameAction,
@@ -346,34 +348,39 @@ export async function concludedIn(tx: Tx): Promise<Set<ConversationId>> {
   return new Set(concludedIds(await tx.doc(UiState, ROOT_CONVERSATION_ID)) as ConversationId[])
 }
 
+/** The `ConversationsApi` service over `host`. */
+export const conversationsService = (
+  host: SummaryHost & Pick<ExtensionHost, 'doc' | 'uiState'>,
+): ConversationsService => ({
+  subject: (id, caller) => subject(host, id, caller),
+  concludeIn: (tx, ids) => concludeIn(host, tx, ids),
+  concludedIn,
+  concludedTreeIn,
+  resultIn,
+  summaryModel: () => summaryModel(host),
+  summaryModelStatus: () => summaryModelStatus(host),
+  requestSummary: (tx, id, request, model) => requestSummary(tx, host, id, request, model),
+  setAutomaticSummaries,
+  setStanding,
+  askSummaryModel,
+  accountResponse,
+  concluded: async (caller) =>
+    new Set(concludedIds(await host.uiState(caller)) as ConversationId[]),
+  // A rename or summary since the conversation was named chose the title; it stays.
+  generatedTitle: async (tx, id, title) => {
+    const state = await tx.doc(Summaries, id)
+    if (state.generatedTitle === undefined && (await tx.doc(host.metadata, id)).title === title)
+      state.generatedTitle = title
+  },
+})
+
 /** Tells each top-level conversation which other conversations work in this project. */
 export default (host: ExtensionHost) => {
   // Extension points this extension declares, resolved where they are called; declared here for the catalogue.
   host.want(Trees)
   host.want(Release)
   host.want(Previews)
-  host.implement(ConversationsApi, {
-    subject: (id, caller) => subject(host, id, caller),
-    concludeIn: (tx, ids) => concludeIn(host, tx, ids),
-    concludedIn,
-    concludedTreeIn,
-    resultIn,
-    summaryModel: () => summaryModel(host),
-    summaryModelStatus: () => summaryModelStatus(host),
-    requestSummary: (tx, id, request, model) => requestSummary(tx, host, id, request, model),
-    setAutomaticSummaries,
-    setStanding,
-    askSummaryModel,
-    accountResponse,
-    concluded: async (caller) =>
-      new Set(concludedIds(await host.uiState(caller)) as ConversationId[]),
-    // A rename or summary since the conversation was named chose the title; it stays.
-    generatedTitle: async (tx, id, title) => {
-      const state = await tx.doc(Summaries, id)
-      if (state.generatedTitle === undefined && (await tx.doc(host.metadata, id)).title === title)
-        state.generatedTitle = title
-    },
-  })
+  host.implement(ConversationsApi, conversationsService(host))
   activityBehavior(host)
   overviewBehavior(host)
   compactionEvents(host)

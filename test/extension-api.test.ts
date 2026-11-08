@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
-import { fauxServer, removeTemp, temp, until } from './helpers.ts'
+import { fauxServer, removeTemp, temp, testHost, until } from './helpers.ts'
 import { extensionApis } from '../server/extension-apis.ts'
 import { defineApi } from '../shared/extension-api.ts'
 
@@ -148,6 +148,14 @@ it('types handles by their token and groups cycles into components', () => {
   expect(apis.catalogue().cycles).toEqual([['a', 'b', 'c']])
   apis.dispose(c)
   expect(apis.catalogue().cycles).toEqual([])
+})
+
+it('fails a test host need nobody provides by name, as the real host does', () => {
+  // The providers read the host only when called.
+  const services = testHost({} as Parameters<typeof testHost>[0])
+  expect(() => services('subagents').need(defineApi<object>()('made-up'))).toThrow(
+    'subagents needs made-up, which no enabled extension provides',
+  )
 })
 
 it('points the edges of an extension point at its owner, so a lower extension calls up without a cycle', () => {

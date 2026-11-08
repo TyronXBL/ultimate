@@ -1,9 +1,8 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 // First: helpers mocks the faux provider's token pacing, which must apply before the server modules load.
-import { eventHost, idleNeed, ownerNeed, until, temp, removeTemp } from './helpers.ts'
+import { eventHost, noWorkspaces, testHost, until, temp, removeTemp } from './helpers.ts'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import { projectSettings } from '../server/project-setup.ts'
-import { concludedTreeIn, resultIn } from '../extensions/conversations/server.ts'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -34,6 +33,8 @@ import type { OpenHost } from '../server/harness.ts'
 import subagents, { actions, docs } from '../extensions/subagents/server.ts'
 import watchdog from '../extensions/watchdog/server.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
+import { ConversationsApi } from '../extensions/conversations/api.ts'
+import { WorkspacesApi } from '../extensions/workspaces/api.ts'
 import { BranchSetup, Started, Subagents } from '../extensions/subagents/api.ts'
 import type { ActionContext } from '../server/actions.ts'
 import codemode from '../extensions/codemode/server.ts'
@@ -89,19 +90,22 @@ async function fixture(
   let opened: OpenHost | undefined
   const onOpen: (() => Promise<void>)[] = []
   const onClose: (() => Promise<void>)[] = []
-  const provided = new Map<string, unknown>()
-  // Methods a test gives the APIs subagents needs; every other one does nothing.
-  const stubs = new Map<string, Record<string, unknown>>()
+  const services = testHost({
+    ...prepared,
+    projectSettings: () => projectSettings(prepared.projectRoot, prepared.userHome),
+    harness: () => opened!.harness,
+    metadata: Metadata,
+    notice: () => {},
+    doc: () => undefined,
+  })
+  // The tests isolate no child, so workspaces stays off.
+  services('workspaces').implement(WorkspacesApi, noWorkspaces)
   const backend = subagents({
     projectSettings: () => projectSettings(prepared.projectRoot, prepared.userHome),
     ...prepared,
     harness: () => opened!.harness,
     metadata: Metadata,
-    implement: (api, value) => void provided.set(api.name, value),
-    need: (api) =>
-      new Proxy(ownerNeed(prepared.modelRuntime)(api) as object, {
-        get: (idle, key) => stubs.get(api.name)?.[key as string] ?? Reflect.get(idle, key),
-      }) as never,
+    ...services('subagents'),
     resource: (_key, create) => create(),
     extensions: () => [],
     notice: () => {},
@@ -151,10 +155,7 @@ async function fixture(
         ...prepared,
         harness: () => opened!.harness,
         metadata: Metadata,
-        implement: () => {},
-        need: (api: Parameters<typeof idleNeed>[0]) =>
-          api.name === 'conversations' ? { concludedTreeIn, resultIn } : idleNeed(api),
-        want: (api: { name: string }) => provided.get(api.name),
+        ...services('watchdog'),
         notice: (message: string) => errors.push(message),
         onOpen: (callback: () => Promise<void>) => {
           onOpen.push(callback)
@@ -260,8 +261,7 @@ async function fixture(
     ultimateRoot,
     userHome,
     errors,
-    provided,
-    stubs,
+    services,
     reopen: open,
   }
 }
@@ -1291,9 +1291,10 @@ describe('turns without an answer', () => {
     await f.opened.harness.waitForIdle(context)
     const [child] = await children(f.opened)
     const answers = await rootAnswers(f.opened)
-    f.stubs.set('conversations', {
-      concludedTreeIn: async (_tx: unknown, id: number) => id === f.opened.root.id,
-    })
+    await f.opened.harness.commit(
+      (tx) => f.services('test').need(ConversationsApi).concludeIn(tx, [f.opened.root.id]),
+      context,
+    )
     await jobResult(f.opened, child.conversationId)
     await until(async () => (await reports(f.opened)).length === 2)
     await f.opened.harness.waitForIdle(context)
