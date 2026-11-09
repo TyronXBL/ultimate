@@ -78,6 +78,12 @@ async function fixture(
     join(ultimateRoot, 'agents/scout.md'),
     extension ? definition().replace('tools: [read, bash]\n', '') : definition(),
   )
+  // Pi retries overloaded errors with a 2/4/8 s backoff; this keeps the retry path but takes it in 1 ms.
+  await mkdir(join(ultimateRoot, '.pi'), { recursive: true })
+  await writeFile(
+    join(ultimateRoot, '.pi/settings.json'),
+    JSON.stringify({ retry: { baseDelayMs: 1 } }),
+  )
   const errors: string[] = []
   const prepared = await prepareHarness({
     report: (notice) => {
