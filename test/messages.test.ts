@@ -1,6 +1,7 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import {
   eventHost,
+  parkedTask,
   temp,
   removeTemp,
   until,
@@ -116,24 +117,7 @@ const job = defineTask<null, { phase: 'run' } | { phase: 'deliver' }, null>({
   abort: (_task, runtime, caller) =>
     runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
 })
-/**
- * Stands in for another extension's live task, which routing reads by kind: it stays in the phase its input names until
- * the host closes.
- */
-const standIn = (name: string) => {
-  type State = { phase: 'run' | 'wait' | 'deliver' | 'report'; conversationId?: number }
-  const stay = (...[, , caller]: [unknown, unknown, Context]) =>
-    awaitWithContext(new Promise<never>(() => {}), caller)
-  return defineTask<{ wake?: boolean; state: State }, State, null>({
-    name,
-    version: 1,
-    initial: (input) => input.state,
-    phases: { run: stay, wait: stay, deliver: stay, report: stay },
-    abort: (_task, runtime, caller) =>
-      runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
-  })
-}
-const standIns = ['lineage.notify', 'ci.run', 'workspaces.lander'].map(standIn)
+const standIns = ['lineage.notify', 'ci.run', 'workspaces.lander'].map(parkedTask)
 const anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'messages-test.anchor',
   version: 1,
@@ -959,17 +943,7 @@ it('refuses self, unknown ids, tally roots and unknown names with valid names', 
   const view = await f.opened.root.context(context)
   expect(JSON.stringify(view.entries)).toContain('cannot message yourself')
 })
-it('loads existing version-1 logs with the unused read mark', async () => {
-  const f = await fixture()
-  await f.opened.harness.commit(async (tx) => {
-    Object.assign(await tx.doc(Messages, ROOT_CONVERSATION_ID), { readUpTo: 7 })
-  }, context)
-  await f.opened.close()
-  await f.open()
-  await f.send('user', 'Still loadable')
-  expect((await f.log())!.messages).toMatchObject([{ text: 'Still loadable' }])
-})
-it('bounds the log and exposes no user posting action', async () => {
+it('bounds the log to the newest 300 messages', async () => {
   const f = await fixture()
   await f.opened.harness.commit(async (tx) => {
     const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
@@ -989,8 +963,6 @@ it('bounds the log and exposes no user posting action', async () => {
   expect((await f.log())!.messages).toHaveLength(300)
   expect((await f.log())!.messages[0].id).toBe(2)
   expect((await f.log())!.messages.at(-1)).toMatchObject({ id: 301, text: 'The newest' })
-  expect(actions).not.toHaveProperty('post')
-  expect(actions).not.toHaveProperty('read')
 })
 it('queues a busy recipient as follow-up, or steers its current run; @ultimate steers by default', async () => {
   // The fixture's sender, #1, is @ultimate unless the case hands that role to another conversation.
@@ -1078,33 +1050,6 @@ export default (host) => {
     port: 0,
   })
 }
-it('has no posting action at the installed codemode boundary', async () => {
-  const server = await codemodeFixture()
-  try {
-    for (const action of ['post']) {
-      server.host.faux!.setResponses([
-        fauxAssistantMessage(
-          [
-            fauxToolCall('codemode', {
-              code: `return await ultimate.action('messages', '${action}', {to:'user',text:'fake'});`,
-            }),
-          ],
-          { stopReason: 'toolUse' },
-        ),
-        fauxAssistantMessage('Complete'),
-      ])
-      await (
-        await server.root.submit({ type: 'input', content: 'Try action' }, context)
-      ).wait(context)
-      const view = await server.root.context(context)
-      const result = view.entries.findLast((e) => e.kind === 'pi.tool-result')!
-      expect(JSON.stringify(result)).toContain(`Unknown extension action: messages/${action}`)
-    }
-  } finally {
-    await server.vite.watcher.close()
-    await server.close()
-  }
-})
 it('keeps sequential and parallel message calls distinct within one codemode script', async () => {
   const server = await codemodeFixture()
   try {

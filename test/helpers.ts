@@ -5,6 +5,9 @@ import { setImmediate as yieldIO } from 'node:timers/promises'
 import { join, resolve, sep } from 'node:path'
 import { applyImmutable } from '@earendil-works/chord/delta'
 import type { Op } from '@earendil-works/chord/delta'
+import { awaitWithContext } from '@earendil-works/chord/context'
+import type { Context } from '@earendil-works/chord'
+import { defineTask } from '@earendil-works/pi-durable'
 import type { ConversationId, ConversationView, Harness } from '@earendil-works/pi-durable'
 import { afterAll, vi } from 'vitest'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
@@ -456,4 +459,22 @@ export async function attach(
       await task
     },
   }
+}
+
+/**
+ * Stands in for another extension's live task, which routing reads by kind: it stays in the phase its input names until
+ * the host closes.
+ */
+export const parkedTask = (name: string) => {
+  type State = { phase: 'run' | 'wait' | 'deliver' | 'report'; conversationId?: number }
+  const stay = (...[, , caller]: [unknown, unknown, Context]) =>
+    awaitWithContext(new Promise<never>(() => {}), caller)
+  return defineTask<{ wake?: boolean; state: State }, State, null>({
+    name,
+    version: 1,
+    initial: (input) => input.state,
+    phases: { run: stay, wait: stay, deliver: stay, report: stay },
+    abort: (_task, runtime, caller) =>
+      runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
+  })
 }

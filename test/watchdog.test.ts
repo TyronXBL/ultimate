@@ -1,4 +1,4 @@
-import { noWorkspaces, testHost, until } from './helpers.ts'
+import { noWorkspaces, parkedTask, testHost, until } from './helpers.ts'
 import { BACKGROUND_CONTEXT as context, awaitWithContext } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
 import { obj } from '@earendil-works/pi-schema'
@@ -1000,18 +1000,6 @@ it('includes only idle open branches, does not repeat unchanged IDs, clears the 
 
 it('reports an idle branch even while work it does not read is under way', async () => {
   // idleNote reads runs only: what else will wake a branch (E1.3 gathers it in one place) does not hide a stalled one.
-  type State = { phase: 'run' | 'wait' | 'report'; conversationId?: number }
-  const stay = (...[, , ctx]: [unknown, unknown, typeof context]) =>
-    awaitWithContext(new Promise<never>(() => {}), ctx)
-  const live = (name: string) =>
-    defineTask<{ wake?: boolean; state: State }, State, null>({
-      name,
-      version: 1,
-      initial: (input) => input.state,
-      phases: { run: stay, wait: stay, report: stay },
-      abort: (_task, runtime, ctx) =>
-        runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
-    })
   const f = await fixture()
   const kinds = {
     job: ['background.run', { phase: 'run' }],
@@ -1019,7 +1007,7 @@ it('reports an idle branch even while work it does not read is under way', async
     report: ['ultimate.subagent-reporter', { phase: 'run' }],
     landing: ['workspaces.lander', { phase: 'report' }],
   } as const
-  const tasks = Object.fromEntries(Object.values(kinds).map(([name]) => [name, live(name)]))
+  const tasks = Object.fromEntries(Object.values(kinds).map(([name]) => [name, parkedTask(name)]))
   f.registry.install(defineExtension({ name: 'live', tasks: Object.values(tasks) }))
   const ids: ConversationId[] = []
   for (const [name, [kind, input]] of Object.entries(kinds)) {
