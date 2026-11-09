@@ -93,12 +93,17 @@ export function delivery(host: ExtensionHost) {
           !m.reply &&
           typeof m.from === 'number' &&
           (await host.harness().snapshot(Started, m.to as ConversationId, ctx))?.by === m.from
+        // A one-way message from a branch the recipient started: `board.route` takes the recipient's final answer down to it.
+        const started =
+          !m.reply &&
+          typeof m.from === 'number' &&
+          (await host.harness().snapshot(Started, m.from as ConversationId, ctx))?.by === m.to
         // A replayed delivery places its first body again by request id.
         const serves = await host.harness().commit((tx) => servesLine(tx, m.from, m.to), ctx)
         const from = task.input.fromLabel
         const body = task.input.note
           ? `Note from ${from} (one-way update, no answer goes back):\n${m.text}${serves}`
-          : `Message from ${from}${m.from === 'remote' ? " (another project's Ultimate, not the user)" : ''}:\n${m.text}\n${m.reply ? `Answer here; your answer is sent to ${from} automatically. Do not use message to reply.` : starter ? `${from} started you: your final answer reaches it when you stop with nothing under way, and wakes it; while work is still under way it arrives as a note. Do not use message to reply.` : `One-way message: ${from} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`}${serves}`
+          : `Message from ${from}${m.from === 'remote' ? " (another project's Ultimate, not the user)" : ''}:\n${m.text}\n${m.reply ? `Answer here; your answer is sent to ${from} automatically. Do not use message to reply.` : starter ? `${from} started you: your final answer reaches it when you stop with nothing under way, and wakes it; while work is still under way it arrives as a note. Do not use message to reply.` : started ? `You started ${from}: when your run answers only its reports and replies, your final answer goes back to it and wakes it, unless you message it during the run.` : `One-way message: ${from} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`}${serves}`
         const content = images.length ? [{ type: 'text' as const, text: body }, ...images] : body
         const requestId = `board:${m.id}`
         const placing = task.input.note
