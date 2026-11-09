@@ -41,6 +41,8 @@ export interface AgentDefinition {
   /** Tools overlays added to a definition without a `tools` list: it has every tool already, and deferred ones load. */
   addTools?: string[]
   denyTools?: string[]
+  /** The skills its prompt lists, by name; without it, every skill. An unlisted skill stays readable by its path. */
+  skills?: string[]
   isolate?: 'none' | 'worktree'
   /** A standing agent: one conversation per project, started on first use. */
   resident?: boolean
@@ -214,6 +216,7 @@ const fields = new Set([
   'family',
   'tools',
   'denyTools',
+  'skills',
   'isolate',
   'resident',
   'fast',
@@ -235,6 +238,7 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     | 'fast'
     | 'summaries'
     | 'denyTools'
+    | 'skills'
     | 'title'
     | 'icon'
     | 'tint'
@@ -254,6 +258,7 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     fast,
     summaries,
     denyTools,
+    skills,
     title,
     icon,
     tint,
@@ -262,6 +267,8 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     throw new Error('family must be a family name: lowercase letters, digits and -')
   if (denyTools !== undefined && !isTools(denyTools))
     throw new Error('denyTools must be a list of tool names')
+  if (skills !== undefined && !isTools(skills))
+    throw new Error('skills must be a list of skill names')
   if (fallback !== undefined && !isFallback(fallback))
     throw new Error('fallback must be a model or a list of models')
   if (description !== undefined && (typeof description !== 'string' || !description.trim()))
@@ -296,6 +303,7 @@ function parseSettings(frontmatter: Record<string, unknown>): Partial<
     ...(fast !== undefined ? { fast } : {}),
     ...(summaries !== undefined ? { summaries } : {}),
     ...(denyTools !== undefined ? { denyTools } : {}),
+    ...(skills !== undefined ? { skills } : {}),
     ...(title !== undefined ? { title: title.trim() } : {}),
     ...(icon !== undefined ? { icon } : {}),
     ...(tint !== undefined ? { tint } : {}),
@@ -621,6 +629,7 @@ export interface DefinitionFields {
   family?: string
   tools?: string[]
   denyTools?: string[]
+  skills?: string[]
   isolate?: 'none' | 'worktree'
   resident?: boolean
   fast?: boolean
@@ -663,6 +672,7 @@ export function serializeDefinition(
     ...(frontmatter.family ? [`family: ${scalar(frontmatter.family)}`] : []),
     ...(frontmatter.tools ? [`tools: ${flowList(frontmatter.tools)}`] : []),
     ...(frontmatter.denyTools?.length ? [`denyTools: ${flowList(frontmatter.denyTools)}`] : []),
+    ...(frontmatter.skills ? [`skills: ${flowList(frontmatter.skills)}`] : []),
     ...(frontmatter.isolate === 'worktree' ? ['isolate: worktree'] : []),
     ...(frontmatter.resident !== undefined ? [`resident: ${frontmatter.resident}`] : []),
     ...(frontmatter.fast ? ['fast: true'] : []),
@@ -767,6 +777,8 @@ export async function saveOverlay(
   if (form.title && form.title !== base.title) settings.push(`title: ${scalar(form.title)}`)
   if (form.icon && form.icon !== base.icon) settings.push(`icon: ${scalar(form.icon)}`)
   if (form.tint && form.tint !== base.tint) settings.push(`tint: ${form.tint}`)
+  if (form.skills && form.skills.join(', ') !== base.skills?.join(', '))
+    settings.push(`skills: ${flowList(form.skills)}`)
 
   if (!base.tools && form.tools) throw cannot('limit the tools of a definition that inherits all')
   if (base.tools && !form.tools) throw cannot('make it inherit every tool')

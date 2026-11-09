@@ -38,7 +38,7 @@ import { jobs } from '../extensions/background/server.ts'
 import { runs } from '../.ultimate/extensions/ci/server.ts'
 import { notifies } from '../extensions/lineage/server.ts'
 import { WorkspacesApi } from '../extensions/workspaces/api.ts'
-import { BranchSetup, Started, Subagents } from '../extensions/subagents/api.ts'
+import { BranchSetup, Profile, Started, Subagents } from '../extensions/subagents/api.ts'
 import type { ActionContext } from '../server/actions.ts'
 import codemode from '../extensions/codemode/server.ts'
 import { Metadata } from '../server/metadata.ts'
@@ -2223,6 +2223,10 @@ describe('subagents', () => {
   })
   it('foreground returns the answer, exposes child details, inherits the parent and rereads scout on next start', async () => {
     const { opened, ultimateRoot } = await fixture()
+    await writeFile(
+      join(ultimateRoot, 'agents/scout.md'),
+      definition().replace('tools: [read, bash]', 'tools: [read, bash]\nskills: [read-me]'),
+    )
     const result = await call(opened, { action: 'start', agent: 'scout', task: 'facts' })
     expect(result.text).toBe('Returned model: faux/faux-1\nChild: facts')
     const [first] = await children(opened)
@@ -2239,6 +2243,11 @@ describe('subagents', () => {
     expect(agent.tools.map((tool) => tool.name)).toEqual(['read', 'bash'])
     expect(agent.model).toEqual((await opened.root.agent(context)).model)
     expect(agent.instructions).toBe('Original instructions')
+    // The prompt's skills section lists what the profile keeps from the definition.
+    expect(await opened.harness.snapshot(Profile, first.conversationId, context)).toEqual({
+      definition: 'scout',
+      skills: ['read-me'],
+    })
     await writeFile(join(ultimateRoot, 'agents/scout.md'), definition('Updated instructions'))
     await call(opened, { action: 'start', agent: 'scout', task: 'more facts' })
     const second = (await children(opened))[1]

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { context } from '../server/harness.ts'
+import { Profile } from '../extensions/subagents/api.ts'
 import { fauxServer, temp, removeTemp, until } from './helpers.ts'
 
 it('renders only enabled guidance, lists off building blocks, and adds self guidance live', async () => {
@@ -42,7 +43,8 @@ it('renders only enabled guidance, lists off building blocks, and adds self guid
               conversationId: server.root.id,
               agent: { ...agent, cwd },
               env: useEnv ? { cwd } : undefined,
-            } as Parameters<typeof section.render>[0],
+              read: server.harness,
+            } as unknown as Parameters<typeof section.render>[0],
             context,
           )
           if (value) sections[section.key] = value
@@ -78,6 +80,21 @@ it('renders only enabled guidance, lists off building blocks, and adds self guid
       expect(skills).toHaveBeenLastCalledWith(checkout)
     }
     skills.mockRestore()
+
+    // The `skills` list a definition configured scopes the section; without one it lists every skill.
+    const other = join(home, '.ultimate/skills/other-skill')
+    await mkdir(other, { recursive: true })
+    await writeFile(join(other, 'SKILL.md'), '---\nname: other-skill\ndescription: Other\n---\n')
+    expect((await render()).skills).toContain('<name>ultimate-only</name>')
+    await server.harness.commit(async (tx) => {
+      Object.assign(await tx.doc(Profile, server.root.id), {
+        definition: 'scoped',
+        skills: ['other-skill'],
+      })
+    }, context)
+    const scoped = (await render()).skills
+    expect(scoped).toContain('<name>other-skill</name>')
+    expect(scoped).not.toContain('<name>ultimate-only</name>')
   } finally {
     await server.close()
     await removeTemp(home)
