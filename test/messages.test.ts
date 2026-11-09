@@ -343,7 +343,7 @@ async function fixture(
       last.role === 'user' &&
       fromBranch &&
       fromBranch[2] !== '1' &&
-      (fromBranch[1] === 'Reply' || text.includes('\nOne-way message:')) &&
+      (fromBranch[1] === 'Reply' || text.includes(`\nYou started #${fromBranch[2]}:`)) &&
       !text.includes('WEIGH')
     )
       return fauxAssistantMessage([])
@@ -1535,7 +1535,7 @@ it("routes a branch's later final answer to its starter once, waking it when the
     true,
   ])
   expect(f.observed).toContain(
-    `Message from #${b.id}:\nAnswer: Landed abc123\nOne-way message: #${b.id} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`,
+    `Message from #${b.id}:\nAnswer: Landed abc123\nYou started #${b.id}: when your run answers only its reports and replies, your final answer goes back to it and wakes it, unless you message it during the run.`,
   )
   // A reopen replays nothing: the answer was routed exactly once.
   await f.opened.close()

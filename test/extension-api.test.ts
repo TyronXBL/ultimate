@@ -125,6 +125,7 @@ it('runs the openers of a reload once its providers are installed, so an opener 
   const home = await temp()
   homes.push(home)
   const projectRoot = join(home, 'project')
+  await mkdir(projectRoot)
   const server = await fauxServer({
     ultimateRoot: resolve('.'),
     projectRoot,
@@ -139,20 +140,21 @@ const Registry = defineApi()('test-registry')`
   const registry = (register: boolean) => `${token}
 export default (host) => {
   const names = host.resource('api-registry:names', () => [])
-  host.implement(Registry, ${register ? '{ register: (name) => names.push(name) }' : '{}'})
+  host.implement(Registry, ${register ? '{ register: (name) => names.includes(name) || names.push(name) }' : '{}'})
   return defineExtension({ name: 'api-registry' })
 }
 export const actions = { names: async (_args, { host }) => host.resource('api-registry:names', () => []) }`
   const owner = (register: boolean) => `${token}
 export default (host) => {
-  ${register ? "host.onOpen(async () => host.need(Registry).register('api-owner'))" : ''}
+  ${register ? "host.onOpen(async () => { try { host.need(Registry).register('api-owner') } catch { host.resource('api-registry:names', () => []).push('failed') } })" : ''}
   return defineExtension({ name: 'api-owner' })
 }`
   const files = {
     owner: join(projectRoot, '.ultimate/extensions/api-owner/server.ts'),
     registry: join(projectRoot, '.ultimate/extensions/api-registry/server.ts'),
   }
-  // Both files change before either change event, so they reload in one batch, the owner first by name.
+  // Both files change before either change event, so they reload in one batch, the owner first by name. The file
+  // watcher may reload them again later, which registers either way: a failed opener leaves its mark.
   const land = async (register: boolean) => {
     for (const file of Object.values(files)) await mkdir(join(file, '..'), { recursive: true })
     await writeFile(files.owner, owner(register))
@@ -165,7 +167,7 @@ export default (host) => {
   await until(() => !!server.extensions.action('api-registry', 'names'))
 
   await land(true)
-  await until(async () => ((await names()) as string[]).length > 0)
+  await until(async () => ((await names()) as string[]).includes('api-owner'))
   expect(await names()).toEqual(['api-owner'])
 })
 
