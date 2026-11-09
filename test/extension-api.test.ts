@@ -119,6 +119,56 @@ it('serves typed APIs through held handles across provider reloads, failures and
   await until(() => server.system.current().extensionDiagnostics.includes(missing))
 })
 
+it('runs the openers of a reload once its providers are installed, so an opener reaches their new code', async () => {
+  // #187031: one landing reloaded an owner before the provider it registers with; its opener met the old provider,
+  // which had no `register` yet, and the owner never registered.
+  const home = await temp()
+  homes.push(home)
+  const projectRoot = join(home, 'project')
+  const server = await fauxServer({
+    ultimateRoot: resolve('.'),
+    projectRoot,
+    userHome: home,
+    home: join(home, 'state'),
+  })
+  servers.push(server)
+  const token = `
+import { defineExtension } from '@earendil-works/pi-durable'
+import { defineApi } from '${resolve('shared/extension-api.ts')}'
+const Registry = defineApi()('test-registry')`
+  const registry = (register: boolean) => `${token}
+export default (host) => {
+  const names = host.resource('api-registry:names', () => [])
+  host.implement(Registry, ${register ? '{ register: (name) => names.push(name) }' : '{}'})
+  return defineExtension({ name: 'api-registry' })
+}
+export const actions = { names: async (_args, { host }) => host.resource('api-registry:names', () => []) }`
+  const owner = (register: boolean) => `${token}
+export default (host) => {
+  ${register ? "host.onOpen(async () => host.need(Registry).register('api-owner'))" : ''}
+  return defineExtension({ name: 'api-owner' })
+}`
+  const files = {
+    owner: join(projectRoot, '.ultimate/extensions/api-owner/server.ts'),
+    registry: join(projectRoot, '.ultimate/extensions/api-registry/server.ts'),
+  }
+  // Both files change before either change event, so they reload in one batch, the owner first by name.
+  const land = async (register: boolean) => {
+    for (const file of Object.values(files)) await mkdir(join(file, '..'), { recursive: true })
+    await writeFile(files.owner, owner(register))
+    await writeFile(files.registry, registry(register))
+    for (const file of Object.values(files)) server.vite.watcher.emit('change', file)
+  }
+  const names = () =>
+    server.extensions.invoke('api-registry', 'names', {}, new AbortController().signal)
+  await land(false)
+  await until(() => !!server.extensions.action('api-registry', 'names'))
+
+  await land(true)
+  await until(async () => ((await names()) as string[]).length > 0)
+  expect(await names()).toEqual(['api-owner'])
+})
+
 const untraced = <T>(_call: unknown, work: () => T) => work()
 
 it('types handles by their token and groups cycles into components', () => {

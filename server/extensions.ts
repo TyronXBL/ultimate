@@ -504,6 +504,10 @@ export async function loadExtensions(
         .filter((winner) => winner.core && settings.overrides.get(winner.name) === false)
         .map((winner) => `${winner.name} is core and stays enabled; extensions.disable ignores it`),
     ]
+    // Like boot, a batch runs its new facets' openers once every facet in it is installed: an opener calling a provider
+    // that reloads later in the batch would otherwise reach its old code. #187031: background reloaded before
+    // conversations in one landing, its opener met a provider without `registerUnderway`, and it never registered.
+    const deferred: (() => Promise<void>)[] = []
     const signature = JSON.stringify([settings.contents, folders, diagnostics])
     if (signature !== previousSettings) {
       for (const message of diagnostics) notice(message)
@@ -602,7 +606,7 @@ export async function loadExtensions(
           for (const [key, value] of provided.get(facetHost)!)
             providers.set(key, { owner: facetHost, value })
           await dispose(previousHost)
-          if (open) await Promise.all([...facetOpeners.get(facetHost)!].map(runOpener))
+          deferred.push(...facetOpeners.get(facetHost)!)
           actions.set(name, exportedActions)
           userActions.set(name, exportedUserActions)
           pollActions.set(name, exportedPollActions)
@@ -643,6 +647,7 @@ export async function loadExtensions(
       records.set(name, record)
       targets.set(name, target)
     }
+    if (open) await Promise.all(deferred.map(runOpener))
     for (const name of records.keys()) {
       if (!folders.includes(name)) {
         await unload(name)
