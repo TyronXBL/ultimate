@@ -72,7 +72,10 @@ function digest(root: string) {
         hash.update(`d ${path}\0`)
         walk(path)
       } else if (stat.isFile()) {
-        hash.update(`f ${path} ${stat.mode & 0o111 ? 'x' : '-'}\0`).update(readFileSync(full))
+        const content = readFileSync(full)
+        hash
+          .update(`f ${path} ${stat.mode & 0o111 ? 'x' : '-'} ${content.length}\0`)
+          .update(content)
       } else if (stat.isSymbolicLink() && symlinkInside(path, readlinkSync(full))) {
         hash.update(`l ${path} ${readlinkSync(full)}\0`)
       } else refuse(`${full} is neither a file, a folder nor a symlink inside the snapshot`)
@@ -261,7 +264,8 @@ function parseRun(args: string[]): RunOptions {
 
 /**
  * The host's toolchain, read-only at the same paths: `/usr` (system files every local user can read), the root links
- * into it, and Node's binary alone when it lives elsewhere, never the folder around it.
+ * into it, and Node's binary alone when it lives elsewhere (an nvm install in the home folder), at `/toolchain/bin`
+ * so none of its host folders appear in the sandbox.
  */
 function toolchain() {
   const args = ['--ro-bind', '/usr', '/usr']
@@ -275,8 +279,8 @@ function toolchain() {
   const path = ['/usr/bin', '/bin']
   const node = realpathSync(process.execPath)
   if (!node.startsWith('/usr/')) {
-    args.push('--ro-bind', node, node)
-    path.unshift(dirname(node))
+    args.push('--ro-bind', node, '/toolchain/bin/node')
+    path.unshift('/toolchain/bin')
   }
   return { args, path: path.join(':') }
 }
@@ -589,7 +593,8 @@ async function selftest() {
         true,
       )
 
-    const node = realpathSync(process.execPath)
+    // Found on the sandbox's PATH, wherever the host keeps it.
+    const node = 'node'
     const probe = await run('probe', {
       command: [node, '-e', PROBE, String(port), realpathSync(homedir()), canary, '16'],
     })
@@ -627,7 +632,11 @@ async function selftest() {
       memoryMiB: 64,
       command: [node, '-e', 'const a = []; for (;;) a.push(Buffer.alloc(16 << 20, 1))'],
     })
-    check('the memory limit stops it', hog.exit !== 0 && !hog.timedOut, `exit ${hog.exit}`)
+    check(
+      'the memory limit stops it',
+      hog.started && hog.exit !== 0 && !hog.timedOut,
+      `exit ${hog.exit}`,
+    )
     const forks = await run('tasks', {
       tasks: 24,
       command: [

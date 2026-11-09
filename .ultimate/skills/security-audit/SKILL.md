@@ -112,13 +112,14 @@ Execution evidence (replaces artifact promotion):
 Run target code only with `node <skill-dir>/sandbox.ts run --target <run>/target
 --artifact <run>/agents/<your-agent-id>/artifacts/<check>.json [...] -- <command>`.
 It enforces no network, an empty environment, a read-only target and toolchain,
-scratch-only writes and resource limits, or exits 125 without running anything.
+scratch-only writes and resource limits, or refuses without running anything.
 Scratch is discarded at exit; nothing in it is evidence. The artifact transcript
 the helper writes is your evidence: cite it as the check's artifact as
 agents/<your-agent-id>/artifacts/<check>.json, never in a record's trace or
-evidence, whose paths are repository-relative. If the helper
-refuses or exits 125, do not run the command another way: return needs_validation
-with the helper's message as the blocker. Use only dummy values in --env.
+evidence, whose paths are repository-relative. If the helper refuses, or the
+transcript says "started": false, do not run the command another way: return
+needs_validation with the helper's message as the blocker. Use only dummy values
+in --env.
 ```
 
 Limits to state plainly in the report: only the target process is isolated (the agents, their tools and model calls
