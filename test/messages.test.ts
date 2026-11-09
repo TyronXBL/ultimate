@@ -1,6 +1,7 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import {
   eventHost,
+  parkedTask,
   temp,
   removeTemp,
   until,
@@ -116,24 +117,7 @@ const job = defineTask<null, { phase: 'run' } | { phase: 'deliver' }, null>({
   abort: (_task, runtime, caller) =>
     runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
 })
-/**
- * Stands in for another extension's live task, which routing reads by kind: it stays in the phase its input names until
- * the host closes.
- */
-const standIn = (name: string) => {
-  type State = { phase: 'run' | 'wait' | 'deliver' | 'report'; conversationId?: number }
-  const stay = (...[, , caller]: [unknown, unknown, Context]) =>
-    awaitWithContext(new Promise<never>(() => {}), caller)
-  return defineTask<{ wake?: boolean; state: State }, State, null>({
-    name,
-    version: 1,
-    initial: (input) => input.state,
-    phases: { run: stay, wait: stay, deliver: stay, report: stay },
-    abort: (_task, runtime, caller) =>
-      runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), caller),
-  })
-}
-const standIns = ['lineage.notify', 'ci.run', 'workspaces.lander'].map(standIn)
+const standIns = ['lineage.notify', 'ci.run', 'workspaces.lander'].map(parkedTask)
 const anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'messages-test.anchor',
   version: 1,

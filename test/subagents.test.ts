@@ -1,6 +1,14 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 // First: helpers mocks the faux provider's token pacing, which must apply before the server modules load.
-import { eventHost, noWorkspaces, testHost, until, temp, removeTemp } from './helpers.ts'
+import {
+  eventHost,
+  noWorkspaces,
+  parkedTask,
+  testHost,
+  until,
+  temp,
+  removeTemp,
+} from './helpers.ts'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import { projectSettings } from '../server/project-setup.ts'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
@@ -1316,18 +1324,7 @@ describe('turns without an answer', () => {
     ],
     ['a notify that leaves a note waits', false, 'lineage.notify', { wake: false, phase: 'wait' }],
   ] as const)('notes a child’s answer while %s as waiting: %s', async (_, waiting, kind, live) => {
-    type State = { phase: 'run' | 'wait' | 'deliver' }
-    const stay = (...[, , ctx]: [unknown, unknown, Context]) =>
-      awaitWithContext(new Promise<never>(() => {}), ctx)
-    // Stands in for another extension's live task, read by kind: it stays in the phase its input names.
-    const Live = defineTask<{ wake?: boolean; state: State }, State, null>({
-      name: kind,
-      version: 1,
-      initial: (input) => input.state,
-      phases: { run: stay, wait: stay, deliver: stay },
-      abort: (_task, runtime, ctx) =>
-        runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
-    })
+    const Live = parkedTask(kind)
     const f = await fixture(defineExtension({ name: 'jobs', tasks: [Live] }))
     await call(f.opened, { action: 'start', agent: 'scout', task: 'Start', background: true })
     await until(async () => (await reports(f.opened)).length === 1)
