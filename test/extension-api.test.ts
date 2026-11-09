@@ -153,8 +153,8 @@ export default (host) => {
     owner: join(projectRoot, '.ultimate/extensions/api-owner/server.ts'),
     registry: join(projectRoot, '.ultimate/extensions/api-registry/server.ts'),
   }
-  // Both files change before either change event, so they reload in one batch, the owner first by name. The file
-  // watcher may reload them again later, which registers either way: a failed opener leaves its mark.
+  // Both files change before either change event, so they reload in one batch, the owner first by name. A later reload
+  // registers either way: a failed opener leaves its mark.
   const land = async (register: boolean) => {
     for (const file of Object.values(files)) await mkdir(join(file, '..'), { recursive: true })
     await writeFile(files.owner, owner(register))
@@ -166,6 +166,10 @@ export default (host) => {
   await land(false)
   await until(() => !!server.extensions.action('api-registry', 'names'))
 
+  // Only the emitted batch may see the landing: the fixture's real watcher could otherwise reload the owner alone, before
+  // the registry changed, and fail its opener with or without the fix (CI on c39b09e, #185943). A reload that imports
+  // a file watches it again, so a late event of the watcher's comes after the batch, when either order registers.
+  server.vite.watcher.unwatch(Object.values(files))
   await land(true)
   await until(async () => ((await names()) as string[]).includes('api-owner'))
   expect(await names()).toEqual(['api-owner'])
