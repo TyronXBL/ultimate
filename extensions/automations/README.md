@@ -34,7 +34,10 @@ Each automation has one or both:
   nonempty FIRE text is appended as `\n\nFired: <text>`. Runs record status and the first answer line; the ledger keeps
   the last 50 per automation.
 - `subscribers` wakes existing conversations with an `automations.fired` input `{id, name, text}`. A subscriber is
-  `#12` or a standing agent's `@name`, resolved at delivery, so `@ultimate` follows it across chapters.
+  `#12` or a standing agent's `@name`, resolved at delivery, so `@ultimate` follows it across chapters. A subscriber
+  that is concluded, or under a concluded conversation, gets fires and `automations.escalated` notices as notes that
+  start no run (the conversations service's `resultIn`); the watcher's own `writing` and `failed` deliveries always
+  wake it.
 
 Without either, create subscribes the caller; nothing may leave an automation with neither. To be reminded, subscribe:
 a prompt run costs a whole agent turn per fire. The seventh fire within an hour pauses the automation instead,

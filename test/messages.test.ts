@@ -1741,7 +1741,7 @@ it("sends @ultimate's answer to a branch it concluded to the agent whose request
     (await f.opened.root.context(context)).entries.findLast(
       (e) => e.kind === 'board.message' && (e.data as { from?: unknown }).from === id,
     )
-  await until(fromBranch)
+  await until(async () => (await fromBranch()) !== undefined)
   const report = (await fromBranch())!
   expect(report.model![0].content).toContain(
     `#${id} works on #${f.recipient.id}'s message ${asked.id}.`,
