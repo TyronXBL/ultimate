@@ -722,6 +722,7 @@ function backend(host: ExtensionHost) {
     } else if (args.action === 'pause') setEnabled(a, false)
     else if (args.action === 'resume') setEnabled(a, true)
     else throw new Error(`Unknown action: ${args.action}`)
+    // An event trigger sees only events after the transaction that creates or resumes it.
     if (args.action === 'resume' && a.event) a.event.sinceEvent = await newestEvent(tx)
     if (args.action === 'create' || args.action === 'resume')
       await trigger.evaluate(tx, a, prepared.target)

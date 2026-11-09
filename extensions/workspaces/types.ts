@@ -52,7 +52,7 @@ export type Unchecked =
   | { reason: 'untrusted'; declared?: number; decision: 'declined' | 'undecided' }
 /**
  * A submission's landing: the target moved from `base` to `sha`, which brought `commits` and `paths`; `unchecked` when no
- * check ran on it.
+ * check ran on it; `weight` what it added and removed.
  */
 export type Landed = {
   sha: string
@@ -61,7 +61,10 @@ export type Landed = {
   paths: string[]
   flaky: string[]
   unchecked?: Unchecked
+  weight?: Weight
 }
+/** Lines and estimated tokens a landing added and removed over the files `lib/token-weight.ts` counts. */
+type Weight = { added: number; removed: number; tokens: number }
 /** A check's result; a passed or flaky one carries its last output line as `summary`. */
 type LanderCheck = {
   command: string
@@ -72,6 +75,8 @@ type LanderCheck = {
 export type LanderStep = {
   step: string
   at: number
+  /** The check command this step starts running; its `check` result row ends it. */
+  runs?: string
   check?: LanderCheck
   /** A step the user must not miss, such as checks skipped. */
   warning?: true
@@ -87,6 +92,7 @@ export type LanderOutcome = {
   paths?: string[]
   flaky?: string[]
   unchecked?: Unchecked
+  weight?: Weight
   /** `<remote>/<target>` it was pushed to. */
   pushed?: string
   needsRestart?: boolean
@@ -125,6 +131,7 @@ export type LanderEntry = {
   /** Submitting conversation breadcrumb, not the log timestamp. */
   sourceEntry?: number
   step?: string
+  runs?: string
   check?: LanderCheck
   warning?: true
   /** On the submission's first line and its outcome. */
