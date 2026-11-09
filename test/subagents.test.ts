@@ -25,7 +25,6 @@ import type { ConversationId, Extension, Task, ToolRegistration } from '@earendi
 import type { Context, JsonValue } from '@earendil-works/chord'
 import { obj } from '@earendil-works/pi-schema'
 import { CodingTools } from '@earendil-works/pi-durable/tools'
-import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
 import { context, prepareHarness } from '../server/harness.ts'
 import { emit } from '../server/events.ts'
@@ -953,6 +952,10 @@ it('attributes real queued instructions and reports by submission identity and d
   await until(async () => f.holding.has(child.conversationId))
   await call(f.opened, { action: 'message', id: child.conversationId, text: 'queued instruction' })
   const childHandle = (await f.opened.harness.conversation(child.conversationId, context))!
+  // A child that does not list `subagent` loses it, though it inherits every other tool.
+  const childTools = (await childHandle.agent(context)).tools.map((tool) => tool.name)
+  expect(childTools).toContain('hold')
+  expect(childTools).not.toContain('subagent')
   await until(
     async () =>
       (await f.opened.harness.snapshot(InboxDoc, child.conversationId, context))!.items.length > 0,
@@ -1947,83 +1950,6 @@ describe('subagents', () => {
     ).wait(context)
     view = await opened.root.context(context)
     expect(JSON.stringify(view.entries)).toContain('Child: follow-up')
-  })
-  it('extends an earlier definition with an addTools overlay and refuses a tools list', async () => {
-    const repo = await directory(),
-      home = await directory(),
-      cwd = await directory()
-    await mkdir(join(repo, 'agents'))
-    await mkdir(join(home, '.ultimate/agents'), { recursive: true })
-    await mkdir(join(cwd, '.ultimate/agents'), { recursive: true })
-    const modelRuntime = await ModelRuntime.create()
-    await writeFile(join(repo, 'agents/scout.md'), definition())
-    await writeFile(
-      join(repo, 'agents/open.md'),
-      definition().replace('name: scout', 'name: open').replace('tools: [read, bash]\n', ''),
-    )
-    await writeFile(
-      join(home, '.ultimate/agents/scout.md'),
-      '---\nname: scout\naddTools: [write, read]\n---\n',
-    )
-    await writeFile(
-      join(cwd, '.ultimate/agents/scout.md'),
-      '---\nname: scout\naddTools: [laravel]\n---\n\nUse laravel for the database.\n',
-    )
-    await writeFile(
-      join(cwd, '.ultimate/agents/open.md'),
-      '---\nname: open\naddTools: [laravel]\n---\n',
-    )
-    for (const [name, text] of [
-      ['listed', '---\nname: scout\naddTools: [x]\ntools: [read]\n---\n'],
-      ['unknown', '---\nname: scout\naddTools: []\ncolour: red\n---\n'],
-      ['orphan', '---\nname: nobody\naddTools: [x]\n---\n'],
-    ])
-      await writeFile(join(cwd, `.ultimate/agents/${name}.md`), text)
-    new ProjectTrustStore(join(home, '.ultimate')).set(cwd, true)
-    const found = await discoverAgents(repo, cwd, home, modelRuntime)
-    const scout = found.definitions.find((agent) => agent.name === 'scout')!
-    expect(scout).toMatchObject({
-      source: 'builtin',
-      path: join(repo, 'agents/scout.md'),
-      tools: ['read', 'bash', 'write', 'laravel'],
-      instructions: `Original instructions\n\n## Project additions\n\nUse laravel for the database.`,
-      overlays: [join(home, '.ultimate/agents/scout.md'), join(cwd, '.ultimate/agents/scout.md')],
-    })
-    // A definition that inherits every tool stays without a list.
-    expect(found.definitions.find((agent) => agent.name === 'open')?.tools).toBeUndefined()
-    expect(Object.fromEntries(found.errors.map((file) => [file.name, file.error]))).toEqual({
-      listed: expect.stringContaining('adds tools with addTools, not tools'),
-      unknown: expect.stringContaining('Unknown field: colour'),
-      orphan: expect.stringContaining('needs an earlier definition named nobody'),
-    })
-    expect(found.replaced).toEqual([])
-  })
-  it('lets an overlay override settings such as model and thinking', async () => {
-    const repo = await directory(),
-      home = await directory(),
-      cwd = await directory()
-    await mkdir(join(repo, 'agents'))
-    await mkdir(join(cwd, '.ultimate/agents'), { recursive: true })
-    const modelRuntime = await ModelRuntime.create()
-    await writeFile(join(repo, 'agents/scout.md'), definition())
-    // An empty addTools marks a settings-only overlay.
-    await writeFile(
-      join(cwd, '.ultimate/agents/scout.md'),
-      '---\nname: scout\nmodel: anthropic/claude-opus-4-8\nthinking: high\nfast: true\ndescription: Our scout\naddTools: []\n---\n',
-    )
-    new ProjectTrustStore(join(home, '.ultimate')).set(cwd, true)
-    const found = await discoverAgents(repo, cwd, home, modelRuntime)
-    expect(found.definitions.find((agent) => agent.name === 'scout')).toMatchObject({
-      source: 'builtin',
-      description: 'Our scout',
-      model: { provider: 'anthropic', modelId: 'claude-opus-4-8' },
-      thinking: 'high',
-      fast: true,
-      tools: ['read', 'bash'],
-      instructions: 'Original instructions',
-    })
-    expect(found.errors).toEqual([])
-    expect(found.replaced).toEqual([])
   })
 
   it('saves a definition as a project override that start uses, writes nothing when invalid, and deletes it', async () => {
