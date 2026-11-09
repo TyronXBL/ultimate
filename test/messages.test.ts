@@ -299,11 +299,11 @@ async function fixture(
         ? last.content
         : last.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('')
     observed.push(text)
-    if (last.role === 'user' && text.startsWith('BRANCH '))
-      return fauxAssistantMessage([fauxToolCall('branch', JSON.parse(text.slice(7)))], {
+    const command = text.startsWith('Message from') ? text.split('\n')[1] : text
+    if (last.role === 'user' && command.startsWith('BRANCH '))
+      return fauxAssistantMessage([fauxToolCall('branch', JSON.parse(command.slice(7)))], {
         stopReason: 'toolUse',
       })
-    const command = text.startsWith('Message from') ? text.split('\n')[1] : text
     if (last.role === 'user' && command.startsWith('SEND '))
       return fauxAssistantMessage([fauxToolCall('message', JSON.parse(command.slice(5)))], {
         stopReason: 'toolUse',
@@ -313,7 +313,13 @@ async function fixture(
     if (last.role === 'user' && text.startsWith('Message from') && text.includes('NOANSWER'))
       return fauxAssistantMessage([])
     // A branch's reply that keeps @ultimate busy, so another branch's reply steers into the same run.
-    if (last.role === 'user' && text.startsWith('Reply from #') && text.includes('STALL'))
+    // A one-way branch's report too, once it names the request it serves (only its starter reads that line).
+    if (
+      last.role === 'user' &&
+      text.includes('STALL') &&
+      (text.startsWith('Reply from #') ||
+        (text.startsWith('Message from #') && text.includes(' works on ')))
+    )
       return fauxAssistantMessage([fauxToolCall('hold', {})], { stopReason: 'toolUse' })
     // @ultimate (#1) answers a branch's reply or report only to weigh in: any other final answer would go down to it.
     const fromBranch = /^(Reply|Message) from #(\d+)/.exec(text)
@@ -1798,6 +1804,48 @@ it("routes @ultimate's final answer to a branch's reply back to the branch, once
     [undefined, true, undefined],
     [asked, undefined, undefined],
     [undefined, true, true],
+  ])
+})
+it("sends @ultimate's answer to a branch it concluded to the agent whose request the branch worked on", async () => {
+  // danielgriesser.com: @writer asked @ultimate for a briefing, got "I've started branch #14919", and the briefing,
+  // @ultimate's answer to the branch's reply after concluding it (#13859/15161), reached no one.
+  const f = await fixture()
+  const tool = (await f.opened.root.agent(context)).deferred.find((t) => t.name === 'branch')!
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(Roots, ROOT_CONVERSATION_ID)).roots = [1]
+    await configure(tx, f.opened.root.id, { modelTools: { add: [tool] } })
+  }, context)
+  const branch = 'BRANCH ' + JSON.stringify({ prompt: 'Research STALL', isolated: false })
+  await f.send('@scout', 'SEND ' + JSON.stringify({ to: '#1', text: branch }), { reply: false })
+  await until(f.holding)
+  const log = (await f.log())!.messages
+  const asked = log.find((m) => m.from === f.recipient.id && m.to === 1)!
+  const id = log.find((m) => m.from === 1 && m.text.startsWith('Research'))!.to as number
+  // @ultimate's early answer settled the request already.
+  expect(log.find((m) => m.re === asked.id)).toMatchObject({ from: 1, to: f.recipient.id })
+  // The branch was started one-way: its answer reaches @ultimate as its report, not a reply.
+  const fromBranch = async () =>
+    (await f.opened.root.context(context)).entries.findLast(
+      (e) => e.kind === 'board.message' && (e.data as { from?: unknown }).from === id,
+    )
+  await until(async () => (await fromBranch()) !== undefined)
+  const report = (await fromBranch())!
+  expect(report.model![0].content).toContain(
+    `#${id} works on #${f.recipient.id}'s message ${asked.id}.`,
+  )
+  await f.opened.harness.commit(async (tx) => {
+    ;(await tx.doc(UiState, ROOT_CONVERSATION_ID))['ext.conversations.concluded'] = [id]
+  }, context)
+  f.hold.release()
+  await until(async () =>
+    (await f.log())!.messages.some((m) => m.from === 1 && m.to === f.recipient.id && m.routed),
+  )
+  expect((await f.log())!.messages.filter((m) => m.from === 1 && m.routed)).toEqual([
+    expect.objectContaining({
+      to: f.recipient.id,
+      reply: false,
+      text: `Result of #${id}, which worked on your message ${asked.id}:\n\nDone`,
+    }),
   ])
 })
 it("routes @ultimate's final answer to every branch whose reply shared its run", async () => {

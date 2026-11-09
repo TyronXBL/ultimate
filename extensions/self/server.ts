@@ -21,7 +21,7 @@ export default function self(host: ExtensionHost) {
           ...(itself ? ['The host project is Ultimate itself.'] : []),
           `When someone is new to Ultimate or asks how it works, guide them from ${sourceRoot}/README.md (what it is, how to start, what to try) and ${sourceRoot}/docs/work.md (roots, branches, notes, landing): explain briefly, in their terms, and point at the UI they will use (@ultimate's row at the top of the sidebar, or the top-bar @ultimate button on phones, and its conversation, Ctrl+K or ⌘K commands, the right panel).`,
           // Ultimate's AGENTS.md is the project context when the project is Ultimate.
-          `Before changing Ultimate, read ${itself ? '' : `${sourceRoot}/AGENTS.md (layers, reloads, durability) and `}${sourceRoot}/extensions/README.md (new UI is a new extension folder).`,
+          `Before changing Ultimate, read ${itself ? '' : `${sourceRoot}/AGENTS.md (layers, reloads, durability) and `}${sourceRoot}/extensions/README.md (new UI is a new extension folder; it indexes the topic files in docs/extensions/).`,
           ...(input.agent.tools.some((tool) => tool.name === 'restart')
             ? [
                 'UI and extension changes in the running host reload live. Call restart only after editing server/ or shared/, never for web/, extensions/, or agents/.',

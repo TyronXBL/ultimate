@@ -4,7 +4,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { Branch } from '../lineage/api.ts'
 import { Messages } from '../messages/api.ts'
-import { isOpen } from '../../lib/messages.ts'
+import { isOpen } from '../../lib/message-state.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
 
 const Seen = defineDoc<{ key?: string }>({

@@ -7,7 +7,7 @@ import { Standing } from '../subagents/api.ts'
 import { Messages, MessageSent } from './api.ts'
 import type { Question } from './api.ts'
 import type { Via } from './refs.ts'
-import { openQuestion } from '../../lib/messages.ts'
+import { isOwed, openQuestion } from '../../lib/message-state.ts'
 import { checkQuestions, gist } from './questions.ts'
 import { UserInputEvent } from '../../shared/events.ts'
 import type { Device } from '../../shared/events.ts'
@@ -156,16 +156,15 @@ export async function send(
     if (from !== 'user' && input.reply !== false) {
       const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
       // Only a message the agent has read is owed; one still queued is unread and gets its own turn.
-      const pending = log.messages.find(
-        (m) => m.to === from && m.from === to && m.reply && m.state === 'delivered',
-      )
+      const pending = log.messages.find((m) => m.to === from && m.from === to && isOwed(m))
       // A message to the user who is owed an answer is that answer, with its questions and images.
       if (pending && to === 'user') {
         pending.state = 'answered'
         re = pending.id
       }
       // An agent messaging a sender whose message it has read and owes an answer is answering: this becomes the reply,
-      // and that message's delivery, seeing it answered, keeps the final answer local.
+      // and that message's delivery, seeing it answered, keeps the final answer local. The call's own `steer` and
+      // `reply` do not apply: an answer is one-way and returns in the reply phase.
       else if (pending) {
         pending.state = 'answered'
         const response = await append(tx, {

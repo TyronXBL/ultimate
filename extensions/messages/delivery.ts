@@ -1,4 +1,10 @@
-/** The `board.delivery` task: it places a message in its recipient, then returns the answer as a reply. */
+/**
+ * The `board.delivery` task: it places a message in its recipient, then returns the answer as a reply. A background
+ * task of the root conversation. Request ids `board:<id>` and `board-reply:<id>` deduplicate placement across reopen;
+ * recording the answer, appending its reply and advancing the checkpoint commit together, so a placed input awaiting
+ * its answer and a recorded answer awaiting delivery both survive a restart without a duplicate reply. One-way inputs
+ * also wait for their answer (kept in `answer`, the state stays `delivered`); notes complete once placed.
+ */
 import type { Context } from '@earendil-works/chord'
 import { awaitWithContext } from '@earendil-works/chord/context'
 import {
@@ -16,9 +22,10 @@ import { Messages } from './api.ts'
 import type { Message } from './api.ts'
 import { imagesOf } from '../../lib/entries.ts'
 import { append, terminal } from './log.ts'
-import { remoteLabel, Started } from './addresses.ts'
+import { remoteLabel, servesLine, Started } from './addresses.ts'
 
 export function delivery(host: ExtensionHost) {
+  // A standing recipient is reconfigured from its current definition before each delivery, by name or by number.
   const refresh = async (id: number, ctx: Context) => {
     const index = await host.harness().snapshot(Standing, ROOT_CONVERSATION_ID, ctx)
     const name = Object.keys(index ?? {}).find((candidate) => index![candidate] === id)
@@ -40,7 +47,14 @@ export function delivery(host: ExtensionHost) {
     },
     | { phase: 'deliver' }
     /** `stopped`: the recipient's run was stopped before it answered; `failed` is set too, as for any non-answer. */
-    | { phase: 'reply'; message: Message; failed: boolean; stopped?: boolean },
+    | {
+        phase: 'reply'
+        message: Message
+        failed: boolean
+        stopped?: boolean
+        /** `servesLine` for the starter reading a branch's reply, decided with the reply. */
+        serves?: string
+      },
     null
   >({
     name: 'board.delivery',
@@ -79,10 +93,12 @@ export function delivery(host: ExtensionHost) {
           !m.reply &&
           typeof m.from === 'number' &&
           (await host.harness().snapshot(Started, m.to as ConversationId, ctx))?.by === m.from
+        // A replayed delivery places its first body again by request id.
+        const serves = await host.harness().commit((tx) => servesLine(tx, m.from, m.to), ctx)
         const from = task.input.fromLabel
         const body = task.input.note
-          ? `Note from ${from} (one-way update, no answer goes back):\n${m.text}`
-          : `Message from ${from}${m.from === 'remote' ? " (another project's Ultimate, not the user)" : ''}:\n${m.text}\n${m.reply ? `Answer here; your answer is sent to ${from} automatically. Do not use message to reply.` : starter ? `${from} started you: your final answer reaches it when you stop with nothing under way, and wakes it; while work is still under way it arrives as a note. Do not use message to reply.` : `One-way message: ${from} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`}`
+          ? `Note from ${from} (one-way update, no answer goes back):\n${m.text}${serves}`
+          : `Message from ${from}${m.from === 'remote' ? " (another project's Ultimate, not the user)" : ''}:\n${m.text}\n${m.reply ? `Answer here; your answer is sent to ${from} automatically. Do not use message to reply.` : starter ? `${from} started you: your final answer reaches it when you stop with nothing under way, and wakes it; while work is still under way it arrives as a note. Do not use message to reply.` : `One-way message: ${from} expects no answer, and your answer here is not sent to it. If it needs to hear from you, message it.`}${serves}`
         const content = images.length ? [{ type: 'text' as const, text: body }, ...images] : body
         const requestId = `board:${m.id}`
         const placing = task.input.note
@@ -215,6 +231,7 @@ export function delivery(host: ExtensionHost) {
             ...(error ? { error } : {}),
             ...(m.remote ? { remote: m.remote } : {}),
           })
+          const line = await servesLine(tx, response.from, response.to)
           return {
             status: 'running',
             checkpoint: {
@@ -222,6 +239,7 @@ export function delivery(host: ExtensionHost) {
               message: response,
               failed,
               ...(stopped ? { stopped } : {}),
+              ...(line ? { serves: line } : {}),
             },
           }
         }, ctx)
@@ -288,7 +306,7 @@ export function delivery(host: ExtensionHost) {
               ...(m.remote ? { remote: m.remote } : {}),
             },
           }
-          const body = `Reply from ${task.input.toLabel} to your message ${m.re}${stopped ? ' (stopped)' : failed ? ' (failed)' : ''}:\n${m.text}`
+          const body = `Reply from ${task.input.toLabel} to your message ${m.re}${stopped ? ' (stopped)' : failed ? ' (failed)' : ''}:\n${m.text}${task.state.checkpoint.serves ?? ''}`
           const content = images.length ? [{ type: 'text' as const, text: body }, ...images] : body
           // A reply answers the sender's own question: a sender concluded meanwhile gets it as a note.
           if (sender)

@@ -39,7 +39,7 @@ picture, the UI included, for explaining Ultimate to a user; `extensions/lineage
   save: running tool calls finish on the old code, the next call uses the new code.
 - `extensions/<name>/api.ts`: its contract for other extensions; `export const tier = 'core'` puts it in the
   always-on core tier, which depends only on the core tier, one way
-  ([docs/extensions.md](docs/extensions.md#core-tier)). Goes live with the facets that import it.
+  ([the core tier docs](docs/extensions/core-tier.md)). Goes live with the facets that import it.
 - `lib/`: pure helpers extensions share (exec, git, JSON and settings files, secret reads); no state, no extension
   imports. Goes live like the extensions that import it: rebuilt or reinstalled on save.
 - `web/`: the web core (surface host with primitives, SDK in `web/src/sdk`, transcript, composer, palette). Rebuilt
@@ -55,20 +55,20 @@ production bundle (`server/web.ts`): a change to `web/` or a `web.tsx` rebuilds 
 every open page reloads onto the new bundle, resuming the view and drafts it left; with no page open the next page load
 builds it.
 A surface is a full-screen app the user switches to (header, ⌘K, `mod+1…9`); the conversation itself is the built-in
-`agent` surface, and a project's apps go in `<project>/.ultimate/extensions/` (see "Surfaces" in the guide).
+`agent` surface, and a project's apps go in `<project>/.ultimate/extensions/` (see [surfaces](docs/extensions/surfaces.md)).
 New UI is a new extension folder, not a change to `web/`: follow the `write-extension` skill, which points into
 [extensions/README.md](extensions/README.md), and copy the closest existing one (`status-line`, `coding-tools`).
 
 ## Developer reference — read when needed
 
-- [Architecture diagrams](docs/architecture/index.html): five pictures of how the browser, server, Pi Durable, extensions, events and agents fit together.
 - [Running the server](docs/running.md): before starting, debugging or testing a server or core swap.
 - [Worktrees and integration](docs/worktrees.md): before previewing an isolate, landing or recovering a rejected push.
 - [Discovery and settings](docs/settings.md): before changing configuration, trust, resources or `summaryModel` (titles, summaries, reply summaries and tree abstracts).
 - [Durability](docs/durability.md): before changing persistence, replay or durable UI state.
-- [Extension mechanics and introspection](docs/extensions.md): before wiring facets, documents, events or runtime inspection.
+- [Extension topics](extensions/README.md#topics): before wiring facets, contracts, documents, events or runtime inspection.
 - [Subagents](docs/subagents.md): before delegating, changing definitions or configuring the review team.
 - [Borrowed from Pi](docs/pi-upstream.md): on Pi upgrades or changes to upstream couplings; includes upstream references.
+- [Searching Pi's code](docs/pi-upstream.md#searching-pis-code): before reading Pi internals; where each package's types live and the `rg` command that finds them.
 
 ## Push permission
 

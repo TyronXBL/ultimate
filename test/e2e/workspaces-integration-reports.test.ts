@@ -12,7 +12,7 @@ import workspaceExtension from '../../extensions/workspaces/server.ts'
 import { Workspaces } from '../../extensions/workspaces/workspaces.ts'
 import { git } from '../../lib/git.ts'
 import { createLander } from '../../extensions/workspaces/lander.ts'
-import { SubmissionLanded } from '../../extensions/workspaces/api.ts'
+import { SubmissionFailed, SubmissionLanded } from '../../extensions/workspaces/api.ts'
 import lineage, { leaveNote } from '../../extensions/lineage/server.ts'
 import { LineageApi, Roots } from '../../extensions/lineage/api.ts'
 import {
@@ -422,6 +422,12 @@ it.concurrent('wakes only the submitter on a failed landing and leaves it open',
   const { id: submission } = await f.service.submit(id, 'None', context)
   const [report] = await submitted(f, id)
   expect(report).toContain('was not landed: check failed twice: exit 1')
+  expect(await f.host.eventLog.recent({ events: [SubmissionFailed] })).toMatchObject([
+    {
+      fails: 'workspaces.landed',
+      data: { submission, conversationId: id, reason: 'check failed twice: exit 1' },
+    },
+  ])
   expect(await concludedIds(f)).not.toContain(id)
   expect((await f.service.get(id, context))!.state).toBe('ready')
   const requests = await f.opened.harness.commit(

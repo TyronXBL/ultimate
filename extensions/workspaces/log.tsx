@@ -15,6 +15,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import {
   formatDuration,
   formatTime,
+  formatTokens,
   useConversation,
   useNow,
   useToolDuration,
@@ -49,11 +50,28 @@ function headline(outcome: LanderOutcome, target?: string) {
   return outcome.reason ? `${landed} · ${outcome.reason}` : `${landed} · not pushed`
 }
 
-/** What the outcome holds beyond its headline: commits, flaky or skipped checks, the output tail. */
+/** "+106 −75 lines · +420 tokens": what a landing weighs, estimated (`lib/token-weight.ts`). */
+function Weight({ weight }: { weight: NonNullable<LanderOutcome['weight']> }) {
+  const { added, removed, tokens } = weight
+  return (
+    <p className="text-muted-foreground tabular-nums" title="Estimated as bytes ÷ 4">
+      <span className="text-diff-add">+{added}</span>{' '}
+      <span className="text-diff-del">−{removed}</span> lines ·{' '}
+      <span className={tokens > 0 ? 'text-diff-add' : tokens < 0 ? 'text-diff-del' : ''}>
+        {tokens > 0 ? '+' : tokens < 0 ? '−' : '±'}
+        {formatTokens(Math.abs(tokens))}
+      </span>{' '}
+      tokens
+    </p>
+  )
+}
+
+/** What the outcome holds beyond its headline: weight, commits, flaky or skipped checks, the output tail. */
 function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
   const { switchConversation } = useUltimate()
   return (
     <>
+      {outcome.weight && outcome.commits?.length ? <Weight weight={outcome.weight} /> : null}
       {outcome.commits && outcome.commits.length > 0 && (
         <ul className="space-y-0.5">
           {outcome.commits.map((commit) => (

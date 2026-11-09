@@ -4,7 +4,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { Messages, MessagesApi } from '../messages/api.ts'
 import type { Question } from '../messages/api.ts'
 import { implementAction } from '../../lib/actions.ts'
-import { openQuestion } from '../../lib/messages.ts'
+import { openQuestion } from '../../lib/message-state.ts'
 import { AnswerAction, DismissAction } from './refs.ts'
 
 const NOT_OPEN = 'These questions are no longer open'

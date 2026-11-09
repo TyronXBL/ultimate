@@ -172,7 +172,7 @@ export function Transcript({ dock }: { dock?: boolean }) {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <Conversation className="min-h-0" contextRef={stick} key={id} resize="instant">
-        <ConversationContent className={cn(column(dock), 'gap-3 pt-6 pb-10')}>
+        <ConversationContent className={cn(column(dock), 'gap-3 pt-6 pb-10')} data-ui="transcript">
           <TranscriptEntries pinned={pinned} />
         </ConversationContent>
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
@@ -650,7 +650,10 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           {item.steps} step{item.steps === 1 ? '' : 's'} set aside · {shown ? 'hide' : 'show'}
           <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]/aside:rotate-90" />
         </CollapsibleTrigger>
-        <CollapsibleContent className="mt-3 flex flex-col gap-3 border-l border-dashed border-border/70 pl-3 opacity-70">
+        <CollapsibleContent
+          className="mt-3 flex flex-col gap-3 border-l border-dashed border-border/70 pl-3 opacity-70"
+          data-ui="transcript-steps"
+        >
           {item.aside.map((inner) => render(inner, false))}
         </CollapsibleContent>
       </Collapsible>
@@ -804,7 +807,10 @@ function WorkRow({
           slots={slots}
         />
       )}
-      <CollapsibleContent className="mt-3 flex flex-col gap-3 border-l border-border/70 pl-3">
+      <CollapsibleContent
+        className="mt-3 flex flex-col gap-3 border-l border-border/70 pl-3"
+        data-ui="transcript-steps"
+      >
         {run.work.map((part) => (
           <div className="empty:hidden" data-entry-id={part.entry.id} key={partKey(part)}>
             <EntryView

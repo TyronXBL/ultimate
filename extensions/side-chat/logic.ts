@@ -12,6 +12,8 @@ export type EndEvent =
   | { type: 'begin'; mode: EndMode }
   | { type: 'complete' }
   | { type: 'rollback' }
+  /** The ending's task faulted or was aborted: no ending, so Inject and Discard can run again (PR #103). */
+  | { type: 'faulted' }
 
 /** The only way a side chat's lifecycle moves; anything else throws. */
 export function transition(state: SideLifecycle, event: EndEvent): SideLifecycle {
@@ -25,6 +27,9 @@ export function transition(state: SideLifecycle, event: EndEvent): SideLifecycle
     case 'rollback':
       if (state.state !== 'ending' || state.mode !== 'injected')
         throw new Error('Only an inject can roll back')
+      return { state: 'open' }
+    case 'faulted':
+      if (state.state !== 'ending') throw new Error('Side chat is not ending')
       return { state: 'open' }
     default:
       return event satisfies never
