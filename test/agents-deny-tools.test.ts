@@ -1,4 +1,3 @@
-// Load the faux provider's token-pacing mock before server modules.
 import { temp } from './helpers.ts'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
