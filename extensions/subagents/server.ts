@@ -842,7 +842,10 @@ export default function subagents(
         // A standing agent keeps its `@name`: no automatic title, summary or reply activity.
         await conversations.setAutomaticSummaries(tx, id, false)
         await conversations.setStanding(tx, id, true)
-        ;(await tx.doc(Profile, id)).definition = name
+        const profile = await tx.doc(Profile, id)
+        profile.definition = name
+        if (definition.skills) profile.skills = [...definition.skills]
+        else delete profile.skills
         setMark(await tx.doc(Marks, ROOT_CONVERSATION_ID), definition)
         // Only a new conversation starts: a refresh reconfigures one that already runs.
         if (created) await started(host, tx, created, name, 'standing')

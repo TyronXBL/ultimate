@@ -330,23 +330,9 @@ export default function prompt(host: ExtensionHost) {
       ),
       section('skills', async (input, context) => {
         const all = listedSkills(host, input.env?.cwd ?? input.agent.cwd ?? host.projectRoot)
-        // The definition the conversation runs as, as Pin.definition finds it; one with a `skills` list sees only those
-        // (#185880: the full list was 35–42% of a reviewer's system prompt, and reviewers read almost none of it).
-        const profile = await input.read.snapshot(Profile, input.conversationId, context)
-        const definition = profile?.adhoc
-          ? undefined
-          : (profile?.definition ??
-            (await input.read.snapshot(host.metadata, input.conversationId, context))?.label)
-        const scope = definition
-          ? (
-              await discoverAgents(
-                host.ultimateRoot,
-                host.projectRoot,
-                host.userHome,
-                host.modelRuntime,
-              )
-            ).definitions.find((candidate) => candidate.name === definition)?.skills
-          : undefined
+        // A definition with a `skills` list sees only those (#185880: the full list was 35–42% of a reviewer's system
+        // prompt, and reviewers read almost none of it). Its profile keeps the list from configuration.
+        const scope = (await input.read.snapshot(Profile, input.conversationId, context))?.skills
         const skills = scope ? all.filter((skill) => scope.includes(skill.name)) : all
         // As Pi's buildSystemPromptSections: name the tool the agent can load a skill with, and list none without one.
         const names = new Set((input.agent.tools ?? []).map((tool) => tool.name))

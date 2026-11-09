@@ -91,6 +91,7 @@ Fields (others are errors):
   select tools; they are not a shell sandbox.
 - `denyTools`: tool names removed from `tools` or the inherited ones; unknown names are ignored.
 - `skills`: a YAML list of skill names its prompt lists; omitted, it lists every skill. An overlay replaces the list.
+  A conversation keeps the list it was started with (a standing agent's refresh updates it), so its prompt stays cached.
   An unlisted skill stays readable: reading `<name>/SKILL.md` answers with its location; `[]` drops the skills section
   (and that hint) entirely. Use it for roles that
   need few skills (the project's reviewers), where the full list is a large share of the prompt.

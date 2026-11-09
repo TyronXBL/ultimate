@@ -81,18 +81,16 @@ it('renders only enabled guidance, lists off building blocks, and adds self guid
     }
     skills.mockRestore()
 
-    // A definition's `skills` list scopes the section; one without it lists every skill.
+    // The `skills` list a definition configured scopes the section; without one it lists every skill.
     const other = join(home, '.ultimate/skills/other-skill')
     await mkdir(other, { recursive: true })
     await writeFile(join(other, 'SKILL.md'), '---\nname: other-skill\ndescription: Other\n---\n')
-    await mkdir(join(home, '.ultimate/agents'), { recursive: true })
-    await writeFile(
-      join(home, '.ultimate/agents/scoped.md'),
-      '---\nname: scoped\ndescription: Scoped\nskills: [other-skill]\n---\n\nWork.\n',
-    )
     expect((await render()).skills).toContain('<name>ultimate-only</name>')
     await server.harness.commit(async (tx) => {
-      ;(await tx.doc(Profile, server.root.id)).definition = 'scoped'
+      Object.assign(await tx.doc(Profile, server.root.id), {
+        definition: 'scoped',
+        skills: ['other-skill'],
+      })
     }, context)
     const scoped = (await render()).skills
     expect(scoped).toContain('<name>other-skill</name>')
