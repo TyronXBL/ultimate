@@ -614,6 +614,7 @@ export const actions = {
       ...(existing?.title ? { title: existing.title } : {}),
       ...(existing?.icon ? { icon: existing.icon } : {}),
       ...(existing?.tint ? { tint: existing.tint } : {}),
+      ...(existing?.skills ? { skills: existing.skills } : {}),
     }
     // The form shows the merged definition; a whole copy would freeze the overlays' additions and the base's
     // instructions, so the save becomes an overlay holding only what differs from the base. `overlay` asks for one

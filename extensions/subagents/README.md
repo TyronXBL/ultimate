@@ -90,6 +90,9 @@ Fields (others are errors):
   subagent]` opts into bounded delegation. A deferred tool named here is loaded for that conversation. Tool lists
   select tools; they are not a shell sandbox.
 - `denyTools`: tool names removed from `tools` or the inherited ones; unknown names are ignored.
+- `skills`: a YAML list of skill names its prompt lists; omitted, it lists every skill. An overlay replaces the list.
+  An unlisted skill stays readable: reading `<name>/SKILL.md` answers with its location. Use it for roles that
+  need few skills (the project's reviewers), where the full list is a large share of the prompt.
 - `isolate`: `none` or `worktree`. `resident: true` makes it a standing agent.
 - `fast`: the priority tier for `openai-codex/` and `openai/` models (see the fast README).
 - `summaries: false` turns off automatic titles, summaries, reply activity lines and tree abstracts for its

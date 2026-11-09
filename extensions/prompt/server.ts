@@ -19,7 +19,7 @@ import { discoverAgents } from '../../lib/agents.ts'
 import { git } from '../../lib/git.ts'
 import { listedSkills } from '../../lib/skills.ts'
 import { shortTitle } from '../../lib/title.ts'
-import { Standing } from '../subagents/api.ts'
+import { Profile, Standing } from '../subagents/api.ts'
 import type { BuildNote, Landing } from './refs.ts'
 
 export const order = -100
@@ -328,14 +328,35 @@ export default function prompt(host: ExtensionHost) {
           )
           .join('\n\n'),
       ),
-      section('skills', (input) => {
-        const skills = listedSkills(host, input.env?.cwd ?? input.agent.cwd ?? host.projectRoot)
+      section('skills', async (input, context) => {
+        const all = listedSkills(host, input.env?.cwd ?? input.agent.cwd ?? host.projectRoot)
+        // The definition the conversation runs as, as Pin.definition finds it; one with a `skills` list sees only those
+        // (#185880: the full list was 35–42% of a reviewer's system prompt, and reviewers read almost none of it).
+        const profile = await input.read.snapshot(Profile, input.conversationId, context)
+        const definition = profile?.adhoc
+          ? undefined
+          : (profile?.definition ??
+            (await input.read.snapshot(host.metadata, input.conversationId, context))?.label)
+        const scope = definition
+          ? (
+              await discoverAgents(
+                host.ultimateRoot,
+                host.projectRoot,
+                host.userHome,
+                host.modelRuntime,
+              )
+            ).definitions.find((candidate) => candidate.name === definition)?.skills
+          : undefined
+        const skills = scope ? all.filter((skill) => scope.includes(skill.name)) : all
         // As Pi's buildSystemPromptSections: name the tool the agent can load a skill with, and list none without one.
         const names = new Set((input.agent.tools ?? []).map((tool) => tool.name))
         const reader = (['read', 'bash'] as const).find((name) => names.has(name))
         const listed = reader ? formatSkillsForPrompt(skills, reader).trim() : ''
+        const rest = scope
+          ? ` Your role lists only these; a skill your task names is still yours to read: read \`<name>/SKILL.md\` and the read tool answers with its location.`
+          : ''
         return listed
-          ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name.`
+          ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name.${rest}`
           : undefined
       }),
       section('building_blocks', (input) => {

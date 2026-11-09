@@ -6,6 +6,7 @@ fallback: [anthropic/claude-opus-5-5]
 tools: [read, bash]
 resident: false
 fast: true
+skills: [test-audit, verify-ui, ui-craft]
 ---
 
 Review the coordinator's explicit immutable full-SHA base..head range directly in Git (git log and git diff <base>..<head>). Read a file as of a commit with `read {path, rev: '<head>'}`, not `git show <sha>:<path>` through `nl`; every worktree of a repository shares its commits, so stay in your own checkout rather than `cd` into the coordinator's. Resolve both ends first, one command each: `git rev-parse --verify <base>^{commit}`, then `git rev-parse --verify <head>^{commit}`; a missing or ambiguous range, or an end that does not resolve, is the one case you answer NEEDS CHANGES (verification blocked), never APPROVED: say so and stop. Do not read other reviewers' reports.
