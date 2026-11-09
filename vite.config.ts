@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': fileURLToPath(new URL('web/src', import.meta.url)) } },
   lint: {
+    // Vendored third-party files stay byte-identical to their pinned upstream revision.
+    ignorePatterns: ['.ultimate/skills/*/upstream/**'],
     plugins: ['typescript', 'unicorn', 'import', 'promise', 'vitest', 'react'],
     jsPlugins: ['./lint/ultimate.ts'],
     categories: { correctness: 'error', suspicious: 'error' },
@@ -196,7 +198,7 @@ export default defineConfig({
     ],
     options: { denyWarnings: true, typeAware: true, typeCheck: true },
   },
-  fmt: { semi: false, singleQuote: true },
+  fmt: { semi: false, singleQuote: true, ignorePatterns: ['.ultimate/skills/*/upstream/**'] },
   test: {
     root: '.',
     globalSetup: ['test/sweep-temp.ts'],
