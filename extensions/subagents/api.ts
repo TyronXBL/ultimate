@@ -62,9 +62,11 @@ export const Standing = defineDoc<Record<string, ConversationId>>({
 
 /**
  * The definition a conversation was configured from: children (including automation runs) and standing agents. An agent
- * made on the fly has none: `adhoc`, so nothing looks a definition up by its label.
+ * made on the fly has none: `adhoc`, so nothing looks a definition up by its label. `skills` is the definition's skills
+ * list as it was configured, which the prompt's skills section lists alone: read here, not discovered before each
+ * request (discovery took about 100 ms per render, #185880).
  */
-export const Profile = defineDoc<{ definition?: string; adhoc?: true }>({
+export const Profile = defineDoc<{ definition?: string; adhoc?: true; skills?: string[] }>({
   kind: 'ultimate.agent-profile',
   checkpointWhen: () => false,
   version: 1,
