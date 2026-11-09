@@ -71,8 +71,10 @@ When a request could be either, ask one question before creating any file.
   fly with `tools: ["read", "bash"]` when it needs a stronger model.
 - **`general` agents** (hunters): made on the fly, `family: "review"`, `thinking: "high"`,
   `tools: ["read", "bash", "background"]`. `bash` is for `rg` and `git`; `background` is for `sandbox.ts run`.
-- **Verifiers**: one per candidate, made on the fly, `tools: ["read", "bash", "background"]`, on a different model family from the
-  hunter that found it (`family: "critic"` when hunters run on `review`). The task carries only what
+- **Verifiers**: one per candidate, made on the fly, `tools: ["read", "bash", "background"]`, on a different model
+  from the hunter that found it: read the families' models with codemode `ultimate.models()` or the Agents panel and
+  pass that `family`, or a `model`. When only one model is available, the report says the verifiers were independent
+  by context only. The task carries only what
   `upstream/VALIDATION-AND-REPORTING.md` Phase 3 lists, never the hunter's conversation or another verifier's
   conclusion. Its answer is one JSON object; a prose-wrapped answer is discarded and re-run, never repaired.
 
@@ -87,18 +89,20 @@ node <skill-dir>/sandbox.ts run --target <run>/target \
 ```
 
 Start it with the `background` tool, which waits for free RAM, and keep one sandbox run per agent at a time. The
-command runs in a bubblewrap sandbox inside a systemd user
-scope: its own network namespace (loopback only, the host's loopback services unreachable), an empty environment
+command runs in a bubblewrap sandbox inside a systemd user scope: its own network namespace (loopback only, the host's loopback services unreachable), an empty environment
 plus the `--env` values, the snapshot and the toolchain read-only, no home folder, `/run` or `/sys`, and writes only
 to a scratch tmpfs (`HOME`, `TMPDIR` and `/tmp` point into it) that is discarded at exit. The scope enforces memory
-(no swap), process, CPU and wall-clock limits, and the helper checks them from inside before anything starts. Any
-failure exits 125 without running the command; there is no unsandboxed fallback.
+(no swap), process, CPU and wall-clock limits, and the helper checks them from inside before anything starts. A
+snapshot whose files changed since `snapshot` made it is refused. Any failure exits 125 without running the command,
+and there is no unsandboxed fallback; the transcript's `started` field tells that apart from a command that itself
+exits 124 or 125.
 
 `--deps` mounts an existing `node_modules` read-only; the sandbox cannot install anything. A tool that writes beside
 the source (a cache, a build output) fails on the read-only target: point it at `$TMPDIR` with its own option.
 
 The helper, outside the sandbox, writes the transcript to `--artifact` (created exclusively): the command, the
-commit, the limits, the `--env` values, the exit and the bounded output, with no host path or ambient variable.
+commit, the limits, the `--env` values, the exit and the bounded output, with home-folder paths written as `~` and no
+ambient variable.
 Nothing in scratch is ever promoted, so `upstream/`'s artifact promotion procedure does not apply; that transcript is
 the `local` check's `artifact` in the ledger. Wherever an upstream prompt says to copy the promotion procedure
 verbatim, copy this block instead:

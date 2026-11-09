@@ -5,6 +5,7 @@
 //   node sandbox.ts run --target <snapshot> --artifact <file.json> [options] -- <command> [args...]
 // It fails closed: when a control cannot be set up or verified, the command does not run and the exit code is 125.
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   closeSync,
   constants,
@@ -13,6 +14,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -50,6 +52,34 @@ type Manifest = {
   files: number
   symlinks: number
   skipped: { path: string; reason: string }[]
+  digest: string
+}
+
+/**
+ * A digest of everything in a snapshot (paths, types, executable bits, contents, symlink targets), so a run can check
+ * that its target is still exactly the snapshot that was made: unchanged bytes, nothing added, no symlink leaving it.
+ * The empty `node_modules` folder `run --deps` makes as its mount point is not part of it.
+ */
+function digest(root: string) {
+  const hash = createHash('sha256')
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(root, dir)).toSorted()) {
+      const path = dir ? `${dir}/${name}` : name
+      const full = join(root, path)
+      const stat = lstatSync(full)
+      if (stat.isDirectory()) {
+        if (path === 'node_modules' && !readdirSync(full).length) continue
+        hash.update(`d ${path}\0`)
+        walk(path)
+      } else if (stat.isFile()) {
+        hash.update(`f ${path} ${stat.mode & 0o111 ? 'x' : '-'}\0`).update(readFileSync(full))
+      } else if (stat.isSymbolicLink() && symlinkInside(path, readlinkSync(full))) {
+        hash.update(`l ${path} ${readlinkSync(full)}\0`)
+      } else refuse(`${full} is neither a file, a folder nor a symlink inside the snapshot`)
+    }
+  }
+  walk('')
+  return hash.digest('hex')
 }
 
 function git(repo: string, args: string[], input?: string) {
@@ -151,6 +181,7 @@ function snapshot(repo: string, rev: string, out: string): Manifest {
     files: files.length,
     symlinks,
     skipped,
+    digest: digest(root),
   }
   writeFileSync(manifestPath(root), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' })
   return manifest
@@ -228,7 +259,10 @@ function parseRun(args: string[]): RunOptions {
   }
 }
 
-/** The host's toolchain, read-only at the same paths: `/usr`, the root links into it, and Node's prefix. */
+/**
+ * The host's toolchain, read-only at the same paths: `/usr` (system files every local user can read), the root links
+ * into it, and Node's binary alone when it lives elsewhere, never the folder around it.
+ */
 function toolchain() {
   const args = ['--ro-bind', '/usr', '/usr']
   for (const dir of ['/bin', '/sbin', '/lib', '/lib32', '/lib64']) {
@@ -241,14 +275,20 @@ function toolchain() {
   const path = ['/usr/bin', '/bin']
   const node = realpathSync(process.execPath)
   if (!node.startsWith('/usr/')) {
-    const prefix = dirname(dirname(node))
-    if (within(realpathSync(homedir()), prefix))
-      refuse(`Node's prefix ${prefix} contains the home folder`)
-    args.push('--ro-bind', prefix, prefix)
-    path.unshift(join(prefix, 'bin'))
+    args.push('--ro-bind', node, node)
+    path.unshift(dirname(node))
   }
   return { args, path: path.join(':') }
 }
+
+/**
+ * The last step inside the sandbox, after every mount, limit and chdir is in place: it reports the start on fd 3,
+ * closes it so the target cannot write there, and becomes the command (through `env`, since bash exports SHLVL even
+ * after an unset). Without that report the run did not start.
+ */
+const START = `printf started >&3 || exit ${SETUP_FAILED}
+exec 3>&-
+exec /usr/bin/env -u SHLVL -- "$@"`
 
 /** Run inside the scope before the sandbox starts: the cgroup limits must be the ones asked for, or nothing runs. */
 const PREFLIGHT = `cg=/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)
@@ -291,8 +331,12 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
     refuse(
       `${target} is not a snapshot; make one with: node sandbox.ts snapshot <repo> <rev> <out>`,
     )
-  if (!safeRepoPath(options.cwd) && options.cwd !== '.')
+  if (digest(target) !== manifest.digest)
+    refuse(`${target} differs from the snapshot of ${manifest.commit}; make a new one`)
+  if (options.cwd !== '.' && !safeRepoPath(options.cwd))
     refuse(`--cwd ${options.cwd} leaves the target`)
+  if (!statSync(join(target, options.cwd), { throwIfNoEntry: false })?.isDirectory())
+    refuse(`--cwd ${options.cwd} is not a folder in the target`)
   const exposed = [target]
   let deps: string | undefined
   if (options.deps) {
@@ -306,8 +350,10 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
     if (!existsSync(mount)) mkdirSync(mount)
   }
   const artifact = resolve(options.artifact)
-  mkdirSync(dirname(artifact), { recursive: true })
-  const artifactDir = realpathSync(dirname(artifact))
+  // Checked on the real path of its nearest existing folder, before any folder is made.
+  let existing = dirname(artifact)
+  while (!existsSync(existing)) existing = dirname(existing)
+  const artifactDir = join(realpathSync(existing), relative(existing, dirname(artifact)))
   if (exposed.some((root) => within(artifactDir, root)))
     refuse('the artifact must be outside everything the sandbox sees')
   if (options.scratchMiB >= options.memoryMiB)
@@ -315,6 +361,8 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
   const bwrap = which('bwrap')
   const systemdRun = which('systemd-run')
   if (!existsSync('/usr/bin/prlimit')) refuse('/usr/bin/prlimit is not installed')
+  const tools = toolchain()
+  mkdirSync(artifactDir, { recursive: true })
   // Reserved before the run: an existing file, or a symlink in its place, refuses instead of being overwritten.
   let fd: number
   try {
@@ -329,7 +377,6 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
 
   const memory = options.memoryMiB * MiB
   const scratch = options.scratchMiB * MiB
-  const tools = toolchain()
   const cwd = options.cwd === '.' ? '/target' : `/target/${options.cwd}`
   const env: [string, string][] = [
     ['PATH', tools.path],
@@ -349,8 +396,8 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
     ['--symlink', '/scratch/tmp', '/tmp', '--ro-bind', target, '/target'],
     deps ? ['--ro-bind', deps, '/target/node_modules'] : [],
     ['--chdir', cwd, ...env.flatMap(([key, value]) => ['--setenv', key, value])],
-    ['--json-status-fd', '3', '--', '/usr/bin/prlimit', `--fsize=${scratch}`],
-    ['--nofile=1024', '--core=0', '--', ...options.command],
+    ['--', '/usr/bin/prlimit', `--fsize=${scratch}`, '--nofile=1024', '--core=0'],
+    ['--', '/bin/sh', '-c', START, 'start', ...options.command],
   ])
   const scope = flags([
     ['--user', '--scope', '--quiet', '--collect'],
@@ -363,6 +410,7 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
   const cap = options.outputKiB * 1024
   const started = Date.now()
   const child = spawn(systemdRun, scope, { stdio: ['ignore', 'pipe', 'pipe', 'pipe'] })
+
   const capture = (stream: NodeJS.ReadableStream, echo: NodeJS.WriteStream) => {
     const kept: Buffer[] = []
     let size = 0
@@ -385,12 +433,18 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
   child.stdio[3]!.on('data', (chunk: Buffer) => (status += chunk.toString()))
   // systemd stops the scope at RuntimeMaxSec; this kill is the backstop if it does not.
   const backstop = setTimeout(() => child.kill('SIGKILL'), (options.timeoutSeconds + 5) * 1000)
-  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((done) =>
-    child.on('close', (exitCode, exitSignal) => done([exitCode, exitSignal])),
-  )
+  let spawnError = ''
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((done) => {
+    child.on('close', (exitCode, exitSignal) => done([exitCode, exitSignal]))
+    // A spawn failure (EAGAIN, a missing binary) means nothing started.
+    child.on('error', (error) => {
+      spawnError = error.message
+      done([null, null])
+    })
+  })
   clearTimeout(backstop)
   const durationMs = Date.now() - started
-  const ran = status.includes('"child-pid"')
+  const ran = status === 'started'
   const timedOut = ran && durationMs >= options.timeoutSeconds * 1000
   const exit = !ran
     ? SETUP_FAILED
@@ -406,7 +460,7 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
     timedOut,
     durationMs,
     stdout: stdout(),
-    stderr: stderr(),
+    stderr: stderr() + (spawnError && `sandbox: ${spawnError}\n`),
     exit,
   }
   // The transcript records the reproduction and only the variables set for it: no host paths, no ambient environment.
@@ -428,7 +482,8 @@ async function runSandbox(options: RunOptions, quiet = false): Promise<RunResult
       'bubblewrap: no network (own loopback), empty environment, read-only target and toolchain, writes only to a scratch tmpfs discarded at exit',
     ...result,
   }
-  writeSync(fd, JSON.stringify(transcript, null, 2) + '\n')
+  // Paths the caller passed in arguments or output mentions are written relative to the home folder.
+  writeSync(fd, JSON.stringify(transcript, null, 2).replaceAll(home, '~') + '\n')
   closeSync(fd)
   return result
 }
@@ -598,6 +653,10 @@ async function selftest() {
     await refused('an artifact inside the target is refused', () =>
       run('inside', { artifact: join(target, 'out.json') }),
     )
+    await refused('a --cwd that is not a folder is refused', () => run('cwd', { cwd: 'missing' }))
+    writeFileSync(join(target, 'added.txt'), 'not in the commit\n')
+    await refused('a changed snapshot is refused', () => run('changed', {}))
+    rmSync(join(target, 'added.txt'))
     await refused('an existing artifact is not overwritten', () =>
       run('again', { artifact: join(work, 'agents', 'selftest', 'artifacts', 'probe.json') }),
     )
