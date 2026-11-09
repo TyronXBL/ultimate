@@ -9,9 +9,9 @@ import { gunzipSync, gzipSync } from 'node:zlib'
 import type { WireCall, WireSummary } from './refs.ts'
 
 export const PER_CONVERSATION = 20
-export const TOTAL_BYTES = 300 * 1024 * 1024
+const TOTAL_BYTES = 300 * 1024 * 1024
 
-export const folder = (home: string) => join(home, 'wire')
+const folder = (home: string) => join(home, 'wire')
 const name = (n: number) => `${String(n).padStart(8, '0')}.json.gz`
 const summaryName = (n: number) => `${String(n).padStart(8, '0')}.summary.json`
 /** A call's file goes first: a call is listed by its file, so the summary left a moment longer is never missed. */
@@ -98,7 +98,7 @@ export async function list(home: string, conversationId: number): Promise<WireSu
   return summaries.filter((summary) => summary !== undefined)
 }
 
-export function summarize(call: WireCall): WireSummary {
+function summarize(call: WireCall): WireSummary {
   const {
     request,
     response,
@@ -115,7 +115,7 @@ export function summarize(call: WireCall): WireSummary {
 }
 
 /** Delete the oldest calls across conversations until the folder holds at most `limit` bytes; returns bytes kept. */
-export async function prune(home: string, limit = TOTAL_BYTES): Promise<number> {
+async function prune(home: string, limit = TOTAL_BYTES): Promise<number> {
   const root = folder(home)
   const kept: { dir: string; n: number; size: number; at: number }[] = []
   for (const conversation of await readdir(root).catch(missingAsEmpty)) {

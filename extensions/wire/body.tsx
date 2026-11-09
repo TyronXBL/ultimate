@@ -246,7 +246,7 @@ function Run({ name, list }: { name: string; list: Event[] }) {
   )
 }
 
-export function Usage({ usage }: { usage: WireUsage }) {
+function Usage({ usage }: { usage: WireUsage }) {
   const prompt = usage.input + usage.cacheRead + usage.cacheWrite
   const cells: [string, number, string][] = [
     ['cache read', usage.cacheRead, 'bg-brand/60'],

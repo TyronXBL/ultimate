@@ -35,7 +35,7 @@ const NEAR = 60_000
  * The kept call behind a response: by its provider id; only a response without one goes by the call that started
  * nearest to it. A response whose id no kept call has left the window, and must not point at a neighbour.
  */
-export function callFor(
+function callFor(
   calls: readonly WireSummary[],
   responseId: string | undefined,
   at: number,

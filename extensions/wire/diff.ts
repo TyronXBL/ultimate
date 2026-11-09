@@ -44,7 +44,7 @@ const entries = (key: string, value: unknown): Segment[] =>
       : [{ path: key, json: JSON.stringify(value) }]
 
 /** The cacheable prefix of `body` as segments in cache order, and the remaining settings by key. */
-export function segments(body: Body): { prefix: Segment[]; settings: Body } {
+function segments(body: Body): { prefix: Segment[]; settings: Body } {
   const { tools, system, messages, instructions, input, ...settings } = body
   if (messages !== undefined)
     return {

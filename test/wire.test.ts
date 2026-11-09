@@ -13,11 +13,12 @@ import { list, load, PER_CONVERSATION, save } from '../extensions/wire/store.ts'
 // for useExchangeTap (Wire). Drop with the patch when upstream exposes the relay's exchanges.
 it('keeps the relayed request as sent and the raw stream, never the credentials', async () => {
   const stream = 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
-  const upstream = createServer(async (request, response) => {
-    for await (const chunk of request) void chunk
-    response
-      .writeHead(200, { 'content-type': 'text/event-stream', 'set-cookie': 'a=b' })
-      .end(stream)
+  const upstream = createServer((request, response) => {
+    request.resume().on('end', () => {
+      response
+        .writeHead(200, { 'content-type': 'text/event-stream', 'set-cookie': 'a=b' })
+        .end(stream)
+    })
   })
   await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
   const relay = new TurnRelay(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, 1_000)
@@ -54,10 +55,11 @@ it('keeps the relayed request as sent and the raw stream, never the credentials'
 it('hands over an aborted request once its handler ends', async () => {
   let reached: () => void
   const started = new Promise<void>((resolve) => (reached = resolve))
-  const upstream = createServer(async (request, response) => {
-    for await (const chunk of request) void chunk
-    response.writeHead(200, { 'content-type': 'text/event-stream' }).write('event: ping\n\n')
-    reached()
+  const upstream = createServer((request, response) => {
+    request.resume().on('end', () => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' }).write('event: ping\n\n')
+      reached()
+    })
   })
   await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
   const relay = new TurnRelay(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, 1_000)

@@ -25,13 +25,15 @@ const completed = [
 it('retries a request whose connection broke before the response', async () => {
   TurnRelay.transportRetryDelaysMs = [0]
   const bodies: string[] = []
-  const upstream = createServer(async (request, response) => {
+  const upstream = createServer((request, response) => {
     let body = ''
-    for await (const chunk of request) body += chunk
-    bodies.push(body)
-    // The first connection dies the way a corrupted TLS record kills it: no status, no bytes.
-    if (bodies.length === 1) request.socket.destroy()
-    else response.writeHead(200, { 'content-type': 'text/event-stream' }).end(completed)
+    request.setEncoding('utf8').on('data', (chunk: string) => (body += chunk))
+    request.on('end', () => {
+      bodies.push(body)
+      // The first connection dies the way a corrupted TLS record kills it: no status, no bytes.
+      if (bodies.length === 1) request.socket.destroy()
+      else response.writeHead(200, { 'content-type': 'text/event-stream' }).end(completed)
+    })
   })
   await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
   const relay = new TurnRelay(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, 1_000)
