@@ -20,14 +20,15 @@ import type {
 } from '@earendil-works/pi-durable'
 import { actions, allCommands, ownDefault, regionKeys, shellKeys, shownSurface } from './actions.ts'
 import type { Region } from './actions.ts'
-import { actionMessage, ROOT } from './api.ts'
+import { ROOT } from './api.ts'
 import { EVENT_FEED } from '../../../shared/events.ts'
 import type { StreamedView } from '../../../shared/protocol.ts'
 import type { EventData, EventRecord, EventToken } from '../../../shared/events.ts'
-import type { ActionArgs, ActionError, ActionOptions } from './api.ts'
-import { actionRef, docRef } from '../../../shared/extension-api.ts'
+import type { ActionArgs, ActionError } from './api.ts'
+import { docRef } from '../../../shared/extension-api.ts'
 import type { ActionRef, DocRef } from '../../../shared/extension-api.ts'
-import { api, registry, store, uiState } from './client.ts'
+import { api, reads, registry, store, uiState } from './client.ts'
+import type { Reader } from './reads.ts'
 import { shownConversation } from './store.ts'
 import {
   HOME,
@@ -487,150 +488,55 @@ export interface ActionState<T> {
   refetch: () => Promise<T | undefined>
 }
 
-/**
- * `useAction` calls in flight by key: components that mount together, and StrictMode's second mount, share one
- * request instead of each sending its own. It is aborted once every caller has left.
- */
-const inFlight = new Map<
-  string,
-  { result: Promise<unknown>; controller: AbortController; callers: number }
->()
-/** The conversation an unscoped action acts on, as `api.action` resolves it. */
-function shownId() {
-  return shownConversation(store.getState()) ?? ROOT
-}
-function joinCall<T>(
-  key: string,
-  signal: AbortSignal,
-  start: (signal: AbortSignal) => Promise<T>,
-): Promise<T> {
-  let call = inFlight.get(key)
-  if (!call) {
-    const controller = new AbortController()
-    const created = { result: start(controller.signal), controller, callers: 0 }
-    const settle = () => {
-      if (inFlight.get(key) === created) inFlight.delete(key)
-    }
-    created.result.then(settle, settle)
-    inFlight.set(key, created)
-    call = created
-  }
-  const joined = call
-  joined.callers++
-  return new Promise<T>((resolve, reject) => {
-    const leave = () => {
-      joined.callers--
-      reject(signal.reason)
-      // A caller joining in the same task, as StrictMode's remount does, keeps the request going.
-      queueMicrotask(() => {
-        if (joined.callers > 0) return
-        if (inFlight.get(key) === joined) inFlight.delete(key)
-        joined.controller.abort()
-      })
-    }
-    signal.addEventListener('abort', leave, { once: true })
-    ;(joined.result as Promise<T>).then(
-      (value) => {
-        signal.removeEventListener('abort', leave)
-        resolve(value)
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', leave)
-        reject(error)
-      },
-    )
-  })
-}
-
 /** Options of `useAction`. */
-export type UseActionOptions = { enabled?: boolean; onError?: (error: ActionError) => void }
+export type UseActionOptions = {
+  enabled?: boolean
+  onError?: (error: ActionError) => void
+  /** Call again whenever this value changes (compared as JSON), such as a document, an event id or a busy flag. */
+  on?: unknown
+  /** Call again this many ms after the last answer, while enabled. */
+  every?: number
+  /** Call again when the window regains focus. */
+  focus?: boolean
+}
 
 /**
- * Call the server action `ref` names and keep its result: on mount and whenever the action or `args` (compared as
- * JSON) change, unless `enabled` is false. A newer call, new args, or an unmount abort the call in flight, also one
- * `refetch` started; its late result is ignored. Hooks that call the same action with the same args at the same time
- * share one request; `refetch` always sends its own. Calls act on the nearest conversation scope, or the shown
- * conversation outside one. A failure shows as a notice unless you pass `onError`.
+ * Call the server action `ref` names and keep its result: on mount, whenever the action or `args` (compared as JSON)
+ * change, when `on` changes, every `every` ms, on focus with `focus`, and after the server restarts; never while
+ * `enabled` is false. Components reading the same action and args share one call and one result, so a remount shows
+ * the last answer at once while it asks again. A newer call aborts the older one. Calls act on the nearest conversation scope, or the shown conversation outside one. A failure
+ * shows as a notice unless a reader passes `onError`.
  */
 export function useAction<Args, T>(
   ref: ActionRef<Args, T>,
   ...[args, options = {}]: ActionArgs<Args, UseActionOptions>
 ): ActionState<T> {
-  const { extension, name } = ref
-  const conversationId = useContext(ConversationIdContext)
-  const key = JSON.stringify([extension, name, args ?? null, conversationId ?? null])
-  const [state, setState] = useState<{
-    key: string
-    data?: T
-    error?: ActionError
-    loading: boolean
-  }>({ key, loading: options.enabled !== false })
-  const latest = useRef({
-    args,
-    onError: options.onError,
-    controller: undefined as AbortController | undefined,
-  })
-  latest.current.args = args
-  latest.current.onError = options.onError
-  const run = useCallback(
-    async (share: boolean) => {
-      latest.current.controller?.abort()
-      const controller = new AbortController()
-      latest.current.controller = controller
-      setState((previous) => ({ ...(previous.key === key ? previous : { key }), loading: true }))
-      try {
-        // Rebuilt from its strings, so a ref made during render does not refetch on every render.
-        const start = (signal: AbortSignal, target: number | undefined) =>
-          api.action(
-            actionRef<Args, T>(extension, name),
-            ...([latest.current.args, { signal, conversationId: target }] as ActionArgs<
-              Args,
-              ActionOptions
-            >),
-          )
-        // Outside a scope the call acts on the shown conversation: shared calls key on it, so a hook mounted after a
-        // switch never joins the previous conversation's request.
-        const target = conversationId ?? shownId()
-        const data = await (share
-          ? joinCall(
-              JSON.stringify([extension, name, latest.current.args ?? null, target]),
-              controller.signal,
-              (signal) => start(signal, target),
-            )
-          : start(controller.signal, conversationId))
-        if (controller.signal.aborted) return undefined
-        setState({ key, data, loading: false })
-        return data
-      } catch (error) {
-        if (controller.signal.aborted) {
-          // Disabled or unmounted rather than replaced by a newer call: nothing is in flight anymore.
-          if (latest.current.controller === controller)
-            setState((previous) => ({ ...previous, loading: false }))
-          return undefined
-        }
-        const failure = error as ActionError
-        setState((previous) => ({ ...previous, key, error: failure, loading: false }))
-        const { onError } = latest.current
-        if (onError) onError(failure)
-        else store.notify({ level: 'error', message: actionMessage(failure) })
-        return undefined
-      }
-    },
-    // `key` stands for args too, which are read through `latest`.
-    [key, extension, name, conversationId],
-  )
-  // A refetch asks anew: a call already in flight may have started before the change it should see.
-  const call = useCallback(() => run(false), [run])
+  // The conversation the call acts on, scoped or shown, keys the read: answers of another conversation never serve it.
+  const scoped = useContext(ConversationIdContext)
+  const shown = useStore((state) => shownConversation(state) ?? ROOT)
+  const read = reads.get(ref.extension, ref.name, args, scoped ?? shown)
+  const state = useSyncExternalStore(read.subscribe, read.get)
   const enabled = options.enabled !== false
+  const reader = useRef<Reader>({}).current
+  reader.onError = options.onError
+  reader.focus = options.focus
+  reader.every = options.every
+  useEffect(() => (enabled ? read.use(reader) : undefined), [read, reader, enabled])
+  useEffect(() => read.repoll(), [read, options.every])
+  const on = JSON.stringify(options.on ?? null)
+  const seen = useRef(on)
   useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    if (enabled) void run(true)
-    // Disabled too: a `refetch` in flight must not outlive the component or its args.
-    // oxlint-disable-next-line react/exhaustive-deps -- abort the call in flight at cleanup, possibly a later refetch
-    return () => latest.current.controller?.abort()
-  }, [run, enabled])
-  const current = state.key === key ? state : { key, loading: enabled }
-  return { data: current.data, error: current.error, loading: current.loading, refetch: call }
+    if (seen.current === on) return
+    seen.current = on
+    // oxlint-disable-next-line typescript/no-floating-promises -- a read reports failures and resolves undefined rather than rejecting.
+    if (enabled) void read.refetch()
+  }, [read, on, enabled])
+  return {
+    data: state.data as T | undefined,
+    error: state.error,
+    loading: state.loading || (enabled && !state.settled),
+    refetch: read.refetch as () => Promise<T | undefined>,
+  }
 }
 
 /** `copy(text)` puts text on the clipboard; `copied` is true for 1.2 s after, and a failure becomes an error notice. */

@@ -161,6 +161,15 @@ export async function fixture(
       name: 'test-writing',
       tools: [
         defineTool({
+          // Stands in for the messages extension's tool: the gate lets `message` through by name.
+          name: 'message',
+          description: 'Tell another conversation something; never touches the checkout',
+          parameters: obj({}),
+          async execute() {
+            return { output: [{ type: 'text', text: 'Message 1 sent.' }] }
+          },
+        }),
+        defineTool({
           name: 'write_commit',
           description: 'Write and commit a change',
           parameters: obj({}),

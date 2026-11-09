@@ -41,9 +41,12 @@ vi.mock('../../web/src/sdk/client.ts', async () => {
     fetch: harness.fetch,
     retryMs: 5,
   })
+  const { createReads } = await import('../../web/src/sdk/reads.ts')
+  const api = createApi(store, { fetch: harness.fetch })
   return {
     store,
-    api: createApi(store, { fetch: harness.fetch }),
+    api,
+    reads: createReads(api, store),
     registry: createRegistry(),
     setThemeMode() {},
   }
@@ -404,22 +407,6 @@ function Action() {
   useAction(actionRef<null, unknown>('test', 'scoped'))
   return null
 }
-it('sends one useAction request for hooks that mount together, StrictMode remounts included', async () => {
-  renderToStaticMarkup(h(Fragment, null, scoped(21, h(Action)), scoped(21, h(Action))))
-  const mounted = harness.effects.splice(0)
-  // StrictMode runs every effect, its cleanup and the effect again before the browser gets back to the page.
-  for (const effect of mounted) effect()?.()
-  for (const effect of mounted) {
-    const release = effect()
-    if (release) effects.push(release)
-  }
-  await tick()
-  const calls = harness.fetch.mock.calls.filter(
-    ([path]) => path === '/api/extensions/test/actions/scoped',
-  )
-  expect(calls).toHaveLength(1)
-  expect(calls[0][1]?.signal?.aborted).toBe(false)
-})
 it('never shares an unscoped useAction request across a switch of the shown conversation', async () => {
   renderToStaticMarkup(h(Action))
   commitEffects()

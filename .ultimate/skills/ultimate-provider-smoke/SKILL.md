@@ -98,7 +98,7 @@ unproven.
 
 ## Clean up
 
-- Preview: `instance stop`, and check `~/.ultimate/settings.json` no longer has your `instance` key.
+- Preview: `instance stop`, and check `~/.ultimate/settings.json` is back as it was (step 3).
 - Scratch server: `kill <supervisor pid>` (not `pkill -f`: the pattern matches your own shell), then
   `rm -rf $H $H.log`.
 

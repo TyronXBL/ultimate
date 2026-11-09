@@ -26,6 +26,7 @@ const statusOf: Record<BranchTone, string> = {
   failed: 'failed',
   success: 'done',
   brand: 'working',
+  awaiting: 'awaiting',
   waiting: 'waiting',
   paused: 'paused',
   quiet: 'idle',
@@ -138,13 +139,15 @@ function PhasedFlightRow({
                   'size-1.5 shrink-0 rounded-full',
                   state.tone === 'brand'
                     ? 'animate-pulse-dot bg-brand'
-                    : state.tone === 'waiting' || state.tone === 'paused'
-                      ? 'bg-warning'
-                      : state.tone === 'success'
-                        ? 'bg-success'
-                        : state.tone === 'failed'
-                          ? 'bg-error'
-                          : 'bg-muted-foreground/40',
+                    : state.tone === 'awaiting'
+                      ? 'bg-brand'
+                      : state.tone === 'waiting' || state.tone === 'paused'
+                        ? 'bg-warning'
+                        : state.tone === 'success'
+                          ? 'bg-success'
+                          : state.tone === 'failed'
+                            ? 'bg-error'
+                            : 'bg-muted-foreground/40',
                 )}
                 data-status={statusOf[state.tone]}
               />

@@ -1,5 +1,5 @@
 /** Where a branch stands, as its sidebar row shows it: in flight or landed, its state word, and its work so far. */
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useAction, useDocOf, useEvents } from '@/sdk'
 import { isBusy } from '../../lib/activity.ts'
 import type { Activity } from '../../lib/activity.ts'
@@ -24,17 +24,12 @@ export function useStandings(
   parked?: ReadonlySet<number>,
 ) {
   const index = useWorkspaceIndex()
-  const recent = useAction(RecentLandingsAction, null)
-  const landingEvents = recent.data ?? []
   const outcomeKey = Object.entries(index.results)
     .map(([id, result]) => `${id}:${result.outcome}:${result.sha ?? ''}`)
     .join(',')
-  useEffect(() => {
-    // A new lander result may have aged out of the index's retained results; refresh the durable event fallback.
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void recent.refetch()
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- outcomeKey captures the index changes that matter.
-  }, [outcomeKey, recent.refetch])
+  // A new lander result may have aged out of the index's retained results; refresh the durable event fallback.
+  const recent = useAction(RecentLandingsAction, null, { on: outcomeKey })
+  const landingEvents = recent.data ?? []
   const log = useDocOf(1, MessagesDoc) ?? emptyMessages
   const concludedSince = useConcludedSince()
   const activity = useActivity(parked)
@@ -65,7 +60,14 @@ export function useStandings(
 }
 
 /** A branch state's tone. */
-export type BranchTone = 'failed' | 'success' | 'brand' | 'waiting' | 'paused' | 'quiet'
+export type BranchTone =
+  | 'failed'
+  | 'success'
+  | 'brand'
+  | 'awaiting'
+  | 'waiting'
+  | 'paused'
+  | 'quiet'
 
 /**
  * Where an open branch stands, in a word or two, and how loud to say it: its `standing` while the lander has it, else
@@ -95,7 +97,7 @@ export function useBranchState(
       tone: 'brand',
     } as const
   if (state === 'waits') return { label: 'waits on you', tone: 'waiting' } as const
-  if (state === 'awaiting') return { label: 'awaiting @ultimate', tone: 'waiting' } as const
+  if (state === 'awaiting') return { label: 'awaiting @ultimate', tone: 'awaiting' } as const
   if (state === 'failed') return { label: 'failed', tone: 'failed' } as const
   return { label: 'idle', tone: 'quiet' } as const
 }
@@ -105,6 +107,7 @@ export const tones: Record<BranchTone, string> = {
   failed: 'text-error',
   success: 'text-success',
   brand: 'text-brand',
+  awaiting: 'text-brand',
   waiting: 'text-warning',
   paused: 'text-warning',
   quiet: 'text-muted-foreground/70',
@@ -117,12 +120,6 @@ export const tones: Record<BranchTone, string> = {
  */
 export function useFlightWork(branches: ConversationSummary[]) {
   const ids = branches.filter((branch) => branch.workspace?.state === 'ready').map((b) => b.id)
-  const progress = useAction(
-    ProgressAction,
-    { ids },
-    { enabled: ids.length > 0, onError: () => {} },
-  )
-  const { refetch } = progress
   // A worktree becoming ready or going changes `ids`, which refetches by itself.
   const commit = useEvents({ events: [Committed], limit: 1 })?.[0]?.id
   const busy = branches.filter((branch) => branch.busy).map((branch) => branch.id)
@@ -133,17 +130,11 @@ export function useFlightWork(branches: ConversationSummary[]) {
       busy,
       ended: runs.ended + (runs.busy.some((id) => !busy.includes(id)) ? 1 : 0),
     })
-  const { ended } = runs
-  const first = useRef(true)
-  useEffect(() => {
-    if (first.current) {
-      first.current = false
-      return
-    }
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    if (ids.length > 0) void refetch()
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- a changed id set refetches in useAction itself
-  }, [commit, ended, refetch])
+  const progress = useAction(
+    ProgressAction,
+    { ids },
+    { enabled: ids.length > 0, onError: () => {}, on: [commit, runs.ended] },
+  )
   const byId = new Map((progress.data ?? []).map((item) => [item.id, item]))
   return new Map(
     branches.map((branch) => [

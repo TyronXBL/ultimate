@@ -704,3 +704,32 @@ it.concurrent('the tool gate blocks a checkout removed after the provider reques
   expect(JSON.stringify(result)).toContain('Workspace checkout is missing or unregistered:')
   expect(f.writes).toBe(0)
 })
+
+it.concurrent('a conversation whose checkout is gone can still message', async () => {
+  const f = await fixture()
+  const id = await f.create()
+  await f.service.ready(id, context)
+  const workspace = (await f.service.get(id, context))!
+  f.prepared.faux!.setResponses([
+    async () => {
+      await git(workspace.source, 'worktree', 'remove', workspace.path)
+      return fauxAssistantMessage(fauxToolCall('write_commit', {}), { stopReason: 'toolUse' })
+    },
+    fauxAssistantMessage(fauxToolCall('message', {}), { stopReason: 'toolUse' }),
+    fauxAssistantMessage('reported'),
+  ])
+  await f.call(id, 'write_commit')
+  const conversation = (await f.opened.harness.conversation(id, context))!
+  const results = (await conversation.context(context)).entries
+    .filter((entry) => entry.kind === 'pi.tool-result')
+    .map((entry) => entry.model?.[0])
+  expect(results).toHaveLength(2)
+  const [blocked, sent] = results
+  // Every tool is blocked, with a reason that names the way out; `message` goes through.
+  expect(blocked?.role === 'toolResult' && blocked.isError).toBe(true)
+  expect(JSON.stringify(blocked)).toContain('Workspace checkout is missing or unregistered:')
+  expect(JSON.stringify(blocked)).toContain('`message` still works')
+  expect(sent?.role === 'toolResult' && sent.isError).toBe(false)
+  expect(JSON.stringify(sent)).toContain('Message 1 sent.')
+  expect(f.writes).toBe(0)
+})

@@ -50,7 +50,7 @@ const settled = {
   awaiting: {
     label: 'Awaiting @ultimate',
     word: 'Awaiting @ultimate',
-    tone: 'text-warning',
+    tone: 'text-brand',
   },
   done: { label: 'Done: its answer went to its parent', word: 'Done', tone: 'text-success' },
   failed: { label: 'Its latest run failed', word: 'Failed', tone: 'text-error' },

@@ -54,7 +54,16 @@ link: ({ href, children, core }) =>
   href.startsWith('https://docs.example.com/') ? <a href={href}>{children}</a> : core
 ```
 
-`inlineCode` similarly composes over Markdown's inline code and receives `{ code, core }`; return `core` to leave it unchanged.
+## Inline code renderers
+
+`inlineCode` renders the inline code spans in Markdown that `MessageResponse` shows; fenced blocks never reach it. It
+receives `{ code, core }`, where `code` is the span's text and `core` starts as the default `<code>`. They compose like
+link renderers: return `core` for spans you leave alone. For example, an extension can make file paths clickable:
+
+```tsx
+inlineCode: ({ code, core }) =>
+  code.startsWith('src/') ? <button onClick={() => open(code)}>{core}</button> : core
+```
 
 ## Code block renderers
 

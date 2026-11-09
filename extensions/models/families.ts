@@ -18,8 +18,8 @@ import {
   parseFamilies,
   refName,
 } from '../../lib/families.ts'
-import type { Feature, FamilySpec } from '../../lib/families.ts'
-import { readFamilyLayers, writeFamilies } from '../../lib/families-settings.ts'
+import type { Families, Feature, FamilySpec } from '../../lib/families.ts'
+import { mergeLayers, readFamilyLayers, writeFamilies } from '../../lib/families-settings.ts'
 import { readSettings, updateSettings, userSettingsPath } from '../../lib/settings.ts'
 import type { FamiliesView, FamilyUser, SaveFamilies } from './refs.ts'
 
@@ -64,13 +64,20 @@ async function read(host: ExtensionHost) {
     discoverAgents(host.ultimateRoot, host.projectRoot, host.userHome, host.modelRuntime),
     readSettings(userSettingsPath(host.userHome)).catch((): JsonObject => ({})),
   ])
-  const config = mergeFamilies(layers.base, layers.project)
+  const config = mergeLayers(layers)
   return { project, layers, config, definitions, user }
 }
 
 export async function familiesView(host: ExtensionHost): Promise<FamiliesView> {
   const { project, layers, config, definitions, user } = await read(host)
   const pi = piDefault(host)
+  // The project's settings change a family where one of its fields is in effect, not overridden by the person's own.
+  const own = layers.from === 'project' ? layers.base.families : {}
+  const projectApplies = (name: string) =>
+    Object.entries(layers.project.families[name] ?? {}).some(
+      ([field, value]) =>
+        value !== undefined && own[name]?.[field as keyof FamilySpec] === undefined,
+    )
   const families = Object.entries(config.families).map(([name, spec]) => {
     const follows = name === DEFAULT_FAMILY && !spec.model && pi.model
     return {
@@ -80,7 +87,7 @@ export async function familiesView(host: ExtensionHost): Promise<FamiliesView> {
       ...(spec.thinking ? { thinking: spec.thinking } : {}),
       ...(follows ? { follows: refName(pi.model!), followsThinking: pi.thinking } : {}),
       builtin: Object.hasOwn(BUILTIN_FAMILIES, name),
-      ...(Object.hasOwn(layers.project.families, name) ? { project: true as const } : {}),
+      ...(projectApplies(name) ? { project: true as const } : {}),
     }
   })
   const agents: FamilyUser[] = definitions.map((definition) => {
@@ -131,11 +138,11 @@ export async function familiesView(host: ExtensionHost): Promise<FamiliesView> {
   }
 }
 
-/** Only what differs from the built-in families, so a later change of a built-in default still applies. */
-function userFamilies(families: SaveFamilies['families']) {
+/** Only what differs from the defaults (built-ins and team settings), so a later change of a default still applies. */
+function userFamilies(families: SaveFamilies['families'], defaults: Families['families']) {
   const saved: Record<string, FamilySpec> = {}
   for (const [name, spec] of Object.entries(families)) {
-    const builtin = Object.hasOwn(BUILTIN_FAMILIES, name) ? BUILTIN_FAMILIES[name] : undefined
+    const builtin = Object.hasOwn(defaults, name) ? defaults[name] : undefined
     const own: FamilySpec = { model: spec.model, thinking: spec.thinking, color: spec.color }
     const changed = Object.fromEntries(
       Object.entries(own).filter(
@@ -156,7 +163,12 @@ function compact(value: { families: object; assign: object }): JsonObject {
 }
 
 export async function saveFamilies(host: ExtensionHost, args: SaveFamilies) {
-  const families = userFamilies(args.families)
+  const { project } = await readFamilyLayers(
+    host.userHome,
+    host.projectRoot,
+    await host.projectSettings(),
+  )
+  const families = userFamilies(args.families, mergeFamilies(project).families)
   const value = { families, assign: args.assign }
   // Throws on an invalid name or model before anything is written.
   parseFamilies(value)

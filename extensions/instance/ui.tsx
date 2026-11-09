@@ -48,11 +48,10 @@ export function Poll() {
   const { data, refetch: again } = useAction(ListAction, null, {
     // A failed poll leaves the last list; the next one tries again.
     onError: () => {},
+    every: 5000,
   })
   useEffect(() => {
     refetch = () => void again()
-    const timer = setInterval(refetch, 5000)
-    return () => clearInterval(timer)
   }, [again])
   useEffect(() => {
     if (!data) return
