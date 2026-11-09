@@ -2,7 +2,7 @@
  * `board.route`: a branch's final answers reach the conversation that started it, and that conversation's final answer
  * to a branch's report or reply reaches the branch.
  */
-import { defineTask, InboxDoc, LiveDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
+import { defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type {
   ConversationId,
   EntryId,
@@ -13,9 +13,8 @@ import type {
 } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi } from '../conversations/api.ts'
-import { Subagents } from '../subagents/api.ts'
+import type { Underway, UnderwaySource } from '../conversations/api.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
-import { awaitsJob, awaitsNotify, liveTasks as live } from '../../lib/jobs.ts'
 import { Messages } from './api.ts'
 import { isOpen } from '../../lib/message-state.ts'
 import { terminal } from './log.ts'
@@ -29,54 +28,49 @@ import type { Serves } from './addresses.ts'
 /** The lander's card in the starter, an input only when the landing concluded the branch (workspaces' lander.ts). */
 const LANDED = 'workspaces.lander-report'
 
-/**
- * Whether `id` runs or has input queued, or one of its tasks will wake it: a subagent's report until its input is
- * admitted, or a waking `notify` on another conversation. Matched by kind, so messages needs neither extension.
- */
-async function busy(tx: Tx, id: ConversationId) {
-  if ((await tx.doc(LiveDoc, id)).run || (await tx.doc(InboxDoc, id)).items.length) return true
-  if ((await live(tx, 'ultimate.subagent-reporter', id)).length) return true
-  return awaitsNotify(tx, id)
+/** A conversation's reply-enabled messages still waiting on their answers, each a `reply`. */
+export const replies: UnderwaySource = {
+  name: 'messages',
+  underway: async (tx, id) =>
+    (await tx.doc(Messages, ROOT_CONVERSATION_ID)).messages.some((m) => m.from === id && isOpen(m))
+      ? [{ kind: 'reply' }]
+      : [],
 }
+/** Busy: a run or queued input, a subagent's report until its input is admitted, or a waking `notify` in any phase. */
+const busy = (reason: Underway) =>
+  reason.kind === 'run' ||
+  reason.kind === 'input' ||
+  reason.kind === 'report' ||
+  reason.kind === 'notify'
 /**
- * Whether branch `id` still has work under way that will wake it again: a run or queued input, a waking task, a
- * subagent at any depth that is busy, a background command or CI run of its own, a submission the lander has not
- * reported yet, or a reply-enabled message still waiting on its answer. While the lander reports a landing it decides,
- * once, whether the branch is done: it concludes it and wakes the starter, or leaves it open to report when it stops.
- * Until then a report waits as a note.
+ * Work of its own that will wake a conversation: it is busy, a subagent at any depth is busy, or a reply-enabled message
+ * it sent still waits on its answer.
+ */
+const isWorking = (reason: Underway) =>
+  busy(reason) || reason.kind === 'reply' || reason.kind === 'child'
+/**
+ * Whether branch `id` still has work under way that will wake it again: work of its own (`working`), a background
+ * command or CI run of its own, or a submission the lander has not reported yet. While the lander reports a landing it
+ * decides, once, whether the branch is done: it concludes it and wakes the starter, or leaves it open to report when it
+ * stops. Until then a report waits as a note.
  */
 async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promise<boolean> {
   // A landing concludes the branch in the commit that ends its report and wakes the starter itself; an answer routed
   // after that, or for a branch concluded by hand, is not a report. Any input that runs the branch resumes it first.
-  if ((await host.need(ConversationsApi).concludedIn(tx)).has(id)) return true
-  const queue = (await tx.doc(host.need(WorkspacesApi).doc, ROOT_CONVERSATION_ID)).queue
-  if (queue.some((item) => item.conversationId === id)) return true
-  // A submission leaves the queue in the commit that moves the lander to reporting it.
-  for (const task of await live(tx, 'workspaces.lander')) {
-    const checkpoint = (task.state as { checkpoint?: { phase?: string; conversationId?: number } })
-      .checkpoint
-    if (checkpoint?.phase === 'report' && checkpoint.conversationId === id) return true
-  }
-  // Not part of `working`: a landing still concludes a branch that waits on a job, whose result then arrives as a note
-  // (`resultIn`). A job in its `deliver` phase no longer counts: an answer in between still reports.
-  if (await awaitsJob(tx, id)) return true
-  return working(tx, id)
+  const conversations = host.need(ConversationsApi)
+  if ((await conversations.concludedIn(tx)).has(id)) return true
+  // A job is not part of `working`: a landing still concludes a branch that waits on a job, whose result then arrives as
+  // a note (`resultIn`). A job in its `deliver` phase no longer counts: an answer in between still reports.
+  return (await conversations.underway(tx, id)).some(
+    (reason) =>
+      reason.kind === 'landing' ||
+      (reason.kind === 'job' && !reason.delivering) ||
+      isWorking(reason),
+  )
 }
-/**
- * Whether `id` has work of its own that will wake it: a run or queued input, a waking task, a busy subagent at any
- * depth, or a reply-enabled message it sent still waiting on its answer. The lander asks it before concluding.
- */
-export async function working(tx: Tx, id: ConversationId): Promise<boolean> {
-  if (await busy(tx, id)) return true
-  const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
-  if (log.messages.some((m) => m.from === id && isOpen(m))) return true
-  return children(tx, id)
-}
-async function children(tx: Tx, id: ConversationId): Promise<boolean> {
-  for (const child of Object.values((await tx.doc(Subagents, id)).agents))
-    if ((await busy(tx, child.conversationId)) || (await children(tx, child.conversationId)))
-      return true
-  return false
+/** Whether `id` has work of its own that will wake it (`isWorking`). The lander asks it before concluding. */
+export async function working(host: ExtensionHost, tx: Tx, id: ConversationId): Promise<boolean> {
+  return (await host.need(ConversationsApi).underway(tx, id)).some(isWorking)
 }
 
 /**

@@ -146,6 +146,8 @@ it('runs CI on the fork in the background and wakes the caller once with the fai
               ]
             : [],
       })) as never,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.faux!.setResponses([
@@ -219,6 +221,8 @@ it('refuses an uncommitted checkout instead of testing the HEAD before it', asyn
       projectRoot: checkout,
       harness: () => opened.harness,
       need: (() => ({ get: async () => undefined })) as never,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.faux!.setResponses([
@@ -376,6 +380,8 @@ it('runs CI on the PC runner first and delivers its failing tests without GitHub
       projectRoot: checkout,
       harness: () => opened.harness,
       need: (() => ({ get: async () => undefined, failing: async () => [], resultIn })) as never,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.faux!.setResponses([

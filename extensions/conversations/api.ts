@@ -23,7 +23,44 @@ import type {
 } from './summary.ts'
 import type { SummaryModel, SummaryModelStatus } from './summary-model.ts'
 
+/**
+ * One reason conversation `id` will be woken again. Core reads its own `run` and queued `input`; every other reason comes
+ * from the extension that owns the work, through a registered `UnderwaySource`, and each consumer picks the reasons it
+ * counts. `delivering`: the job or notify submitted its result and has not ended yet.
+ */
+export type Underway =
+  | { kind: 'run' }
+  | { kind: 'input' }
+  /** A background command or CI run of `id`'s, which wakes it with its result. */
+  | { kind: 'job'; delivering: boolean }
+  /** A waking `notify` of `id`'s, which wakes it when another conversation finishes. */
+  | { kind: 'notify'; delivering: boolean }
+  /** A subagent's report on its way to `id`, until its input is admitted. */
+  | { kind: 'report' }
+  /** A subagent of `id`'s, at any depth, that runs, has input queued, or awaits a report or a waking notify. */
+  | { kind: 'child' }
+  /** A reply-enabled message `id` sent, still waiting on its answer. */
+  | { kind: 'reply' }
+  /** A submission of `id`'s that the lander has queued or is reporting. */
+  | { kind: 'landing' }
+/** An extension's own work that will wake a conversation, registered with `registerUnderway`. */
+export type UnderwaySource = {
+  /** Who reports it; registering the same name again replaces the earlier source. */
+  name: string
+  /** Inside `tx`, the reasons this extension's work will wake `id` again; empty when none. */
+  underway(tx: Tx, id: ConversationId): Promise<Underway[]>
+}
 export type ConversationsService = {
+  /**
+   * Inside `tx`, every reason `id` will be woken again: its run, its queued input and each registered source's reasons.
+   * Ask it to decide whether an answer of `id`'s is final; filter the kinds that matter to you.
+   */
+  underway(tx: Tx, id: ConversationId): Promise<Underway[]>
+  /**
+   * Report an extension's waking work to `underway`; returns its removal, which leaves a newer source of the same name in
+   * place. Register in `onOpen` and pass the removal to `onClose`.
+   */
+  registerUnderway(source: UnderwaySource): () => void
   /** What conversation `id` is about now: its title, summary and feature, for a record that outlives a retitle. */
   subject: (id: ConversationId, caller: Context) => Promise<ConversationSubject>
   /** The conversations the user concluded; use it to leave their resources (worktrees) alone or free them. */

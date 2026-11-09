@@ -23,7 +23,7 @@ import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { ConversationsService } from '../../extensions/conversations/api.ts'
 import { setAutomaticSummaries } from '../../extensions/conversations/summary.ts'
-import { setStanding } from '../../extensions/conversations/server.ts'
+import { setStanding, underwayService } from '../../extensions/conversations/server.ts'
 import { apis, attach, post, temp, removeTemp, until } from '../helpers.ts'
 import { ModelsApi } from '../../extensions/models/api.ts'
 import { modelsService } from '../../extensions/models/set-model.ts'
@@ -124,6 +124,7 @@ async function fixture({ foreign = false } = {}) {
   services.set(ModelsApi.name, modelsService(prepared))
   // The core's conversations: nothing concluded, no summaries.
   services.set('conversations', {
+    ...underwayService(host),
     concluded: async () => new Set(),
     concludedTreeIn: async () => false,
     resultIn: async (_tx, _id, input) => input,

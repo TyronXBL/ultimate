@@ -19,7 +19,7 @@ import { git } from '../../lib/git.ts'
 import type { LanderEntry, WorkspaceIndex } from '../../extensions/workspaces/types.ts'
 import type { ConversationsService } from '../../extensions/conversations/api.ts'
 import { setAutomaticSummaries } from '../../extensions/conversations/summary.ts'
-import { setStanding } from '../../extensions/conversations/server.ts'
+import { setStanding, underwayService } from '../../extensions/conversations/server.ts'
 import self from '../../extensions/self/server.ts'
 import messagesExtension from '../../extensions/messages/server.ts'
 import { Messages } from '../../extensions/messages/api.ts'
@@ -32,8 +32,13 @@ import { temp, until } from '../helpers.ts'
  * The part of the conversations service a test stands in for; standing a lander turns its summaries off and marks it
  * standing, and no conversation tree is concluded unless a test says so.
  */
-export const conversations = (service: Partial<ConversationsService>) =>
+/** The core's conversations with `service` in place; `underway` keeps the sources registered on `host`'s resources. */
+export const conversations = (
+  host: Pick<ExtensionHost, 'resource'>,
+  service: Partial<ConversationsService>,
+) =>
   ({
+    ...underwayService(host),
     setAutomaticSummaries,
     setStanding,
     concludedTreeIn: async () => false,
@@ -135,7 +140,7 @@ export async function fixture(
   // The core's conversations, until a test implements its own: nothing concluded, no titles or summaries.
   services.set(
     'conversations',
-    conversations({
+    conversations(host, {
       concluded: async () => new Set<ConversationId>(),
       subject: async () => ({}),
       summaryModel: async () => undefined,

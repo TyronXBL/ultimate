@@ -22,8 +22,10 @@ import {
 } from '../../lib/memory.ts'
 import { groupAlive, readPidFile, spawnGroup, stopGroup } from '../../lib/process-group.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import { liveTasks } from '../../lib/tasks.ts'
 import type { BackgroundResult } from './refs.ts'
 import { ConversationsApi } from '../conversations/api.ts'
+import type { UnderwaySource } from '../conversations/api.ts'
 
 type Input = { to: number; cwd: string; command: string; timeout: number; home: string }
 type Checkpoint =
@@ -86,6 +88,18 @@ async function tail(log: string) {
   } finally {
     await handle.close()
   }
+}
+/**
+ * A conversation's commands under way, each a `job` until it ends: it submits its result in its `deliver` phase, so from
+ * then on the result counts (as input or a run), not the job.
+ */
+export const jobs: UnderwaySource = {
+  name: 'background',
+  underway: async (tx, id) =>
+    (await liveTasks(tx, 'background.run', id)).map((task) => ({
+      kind: 'job',
+      delivering: (task.state as { checkpoint?: Checkpoint }).checkpoint?.phase === 'deliver',
+    })),
 }
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
@@ -249,9 +263,15 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
 }
 
 export default function backgroundExtension(
-  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome' | 'need'>,
+  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome' | 'need' | 'onOpen' | 'onClose'>,
 ) {
   const Run = createRun(host)
+  // On open, not at setup: on boot this facet loads before conversations provides the registry.
+  let unregister: (() => void) | undefined
+  host.onOpen(async () => {
+    unregister = host.need(ConversationsApi).registerUnderway(jobs)
+  })
+  host.onClose(async () => unregister?.())
   return defineExtension({
     name: 'background',
     tasks: [Run],

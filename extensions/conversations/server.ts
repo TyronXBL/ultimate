@@ -6,6 +6,8 @@ import {
   defineExtension,
   GenerationTask,
   hook,
+  InboxDoc,
+  LiveDoc,
   ROOT_CONVERSATION_ID,
   section,
 } from '@earendil-works/pi-durable'
@@ -46,7 +48,7 @@ import { activityBehavior } from './activity.ts'
 import { compactionEvents } from './compactions.ts'
 import { contextBehavior } from './context.ts'
 import { ContextUsageDoc, ConversationsApi, Marks, Previews, Release, Trees } from './api.ts'
-import type { ConversationsService } from './api.ts'
+import type { ConversationsService, Underway, UnderwaySource } from './api.ts'
 import {
   ConcludeAction,
   RenameAction,
@@ -348,10 +350,36 @@ export async function concludedIn(tx: Tx): Promise<Set<ConversationId>> {
   return new Set(concludedIds(await tx.doc(UiState, ROOT_CONVERSATION_ID)) as ConversationId[])
 }
 
+/**
+ * `underway` and `registerUnderway` over the sources kept in `host`'s resources, like quota's registered sources, so
+ * a reload of this facet keeps them.
+ */
+export function underwayService(
+  host: Pick<ExtensionHost, 'resource'>,
+): Pick<ConversationsService, 'underway' | 'registerUnderway'> {
+  const sources = host.resource('conversations.underway', () => new Map<string, UnderwaySource>())
+  return {
+    async underway(tx, id) {
+      const reasons: Underway[] = []
+      if ((await tx.doc(LiveDoc, id)).run) reasons.push({ kind: 'run' })
+      if ((await tx.doc(InboxDoc, id)).items.length) reasons.push({ kind: 'input' })
+      for (const source of sources.values()) reasons.push(...(await source.underway(tx, id)))
+      return reasons
+    },
+    registerUnderway(source) {
+      sources.set(source.name, source)
+      return () => {
+        if (sources.get(source.name) === source) sources.delete(source.name)
+      }
+    },
+  }
+}
+
 /** The `ConversationsApi` service over `host`. */
 export const conversationsService = (
-  host: SummaryHost & Pick<ExtensionHost, 'doc' | 'uiState'>,
+  host: SummaryHost & Pick<ExtensionHost, 'doc' | 'uiState' | 'resource'>,
 ): ConversationsService => ({
+  ...underwayService(host),
   subject: (id, caller) => subject(host, id, caller),
   concludeIn: (tx, ids) => concludeIn(host, tx, ids),
   concludedIn,

@@ -51,6 +51,8 @@ it('runs in the background and delivers one result; concluding its owner kills t
       home: `${root}/home`,
       userHome: `${root}/user`,
       need,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.faux!.setResponses([
@@ -105,6 +107,8 @@ it('leaves a note for a conversation concluded while its command ran, starting n
       home: `${root}/home`,
       userHome: `${root}/user`,
       need,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.faux!.setResponses([
@@ -159,6 +163,8 @@ it('waits for RAM below the floor and starts once the floor allows it', async ()
       home: `${root}/home`,
       userHome: `${root}/user`,
       need,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.faux!.setResponses([
@@ -196,6 +202,8 @@ it('steers the calling run and wakes an interruptible wait when the command fini
       home: `${root}/home`,
       userHome: `${root}/user`,
       need,
+      onOpen: () => {},
+      onClose: () => {},
     }),
   )
   prepared.registry.install(

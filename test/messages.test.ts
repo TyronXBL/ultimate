@@ -1,7 +1,13 @@
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
-import { eventHost, temp, removeTemp, until, fauxServer, linkDependencies } from './helpers.ts'
-import { ModelsApi } from '../extensions/models/api.ts'
-import { modelsService } from '../extensions/models/set-model.ts'
+import {
+  eventHost,
+  temp,
+  removeTemp,
+  until,
+  fauxServer,
+  linkDependencies,
+  testHost,
+} from './helpers.ts'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -32,16 +38,29 @@ import { Metadata } from '../server/metadata.ts'
 import { emit } from '../server/events.ts'
 import messagesExtension, { actions } from '../extensions/messages/server.ts'
 import pauseExtension, { actions as pauseActions } from '../extensions/pause/server.ts'
-import { Messages, MessageSent } from '../extensions/messages/api.ts'
+import { Messages, MessagesApi, MessageSent } from '../extensions/messages/api.ts'
 import { send as sendMessage } from '../extensions/messages/send.ts'
 import { UserInputEvent } from '../shared/events.ts'
-import type { MessagesService } from '../extensions/messages/api.ts'
-import { BranchReceipts, Tally, rootOf, startBranch } from '../extensions/lineage/server.ts'
+import {
+  BranchReceipts,
+  notifies,
+  Tally,
+  rootOf,
+  startBranch,
+} from '../extensions/lineage/server.ts'
 import type { BranchInput } from '../extensions/lineage/server.ts'
-import { Branch, Roots } from '../extensions/lineage/api.ts'
-import { BranchSetup, Standing, Subagents } from '../extensions/subagents/api.ts'
+import { Branch, LineageApi, Roots } from '../extensions/lineage/api.ts'
+import type { LineageService } from '../extensions/lineage/api.ts'
+import { BranchSetup, Standing, Subagents, SubagentsApi } from '../extensions/subagents/api.ts'
+import type { SubagentsService } from '../extensions/subagents/api.ts'
+import { subagentWork } from '../extensions/subagents/server.ts'
+import { WorkspacesApi } from '../extensions/workspaces/api.ts'
+import type { WorkspaceService } from '../extensions/workspaces/api.ts'
+import { landings } from '../extensions/workspaces/server.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
-import { concludedIn, resultIn } from '../extensions/conversations/server.ts'
+import { ConversationsApi } from '../extensions/conversations/api.ts'
+import { jobs } from '../extensions/background/server.ts'
+import { runs } from '../.ultimate/extensions/ci/server.ts'
 import { UiState } from '../server/ui-state.ts'
 
 const homes: string[] = []
@@ -149,8 +168,6 @@ async function fixture(
     conversation?: () => number
   },
 ) {
-  /** Services other extensions implement here, by API name, such as pause's `messages.gate`. */
-  const provided = new Map<string, unknown>()
   const home = await temp('ultimate-messages-')
   homes.push(home)
   await mkdir(join(home, 'agents'), { recursive: true })
@@ -165,54 +182,53 @@ async function fixture(
     faux: fauxProvider({ models: [{ id: 'faux-1' }, { id: 'faux-think', reasoning: true }] }),
   })
   let opened: OpenHost
-  let service!: MessagesService
   const hold = gate()
   let holding = false
   const openers: (() => Promise<void>)[] = []
   const closers: (() => Promise<void>)[] = []
-  const provider = ({ name }: { name: string }) =>
-    provided.has(name)
-      ? provided.get(name)
-      : name === 'subagents'
-        ? {
-            residents: async () => [{ name: 'scout', description: 'Search' }],
-            // Like the real service: only resident names resolve.
-            standing: async (agent: string) => {
-              if (agent !== 'scout') throw new Error(`Unknown standing agent @${agent}`)
-              return recipient.id
-            },
-          }
-        : name === 'workspaces'
-          ? { doc: Workspaces, git: async () => '' }
-          : name === 'conversations'
-            ? { concludedIn, resultIn }
-            : name === 'lineage'
-              ? {
-                  rootOf: (id: number, ctx: Context) => rootOf(host, id, ctx),
-                  branch: (input: BranchInput, ctx: Context) => startBranch(host, input, ctx),
-                }
-              : name === ModelsApi.name
-                ? modelsService(prepared)
-                : undefined
+  const doc = (kind: string) =>
+    kind === 'lineage.roots' ? Roots : kind === 'lineage.tally' ? Tally : undefined
+  const services = testHost({
+    ...prepared,
+    projectSettings: async () => ({}),
+    harness: () => opened.harness,
+    metadata: Metadata,
+    notice: () => {},
+    doc,
+  })
+  services('subagents').implement(SubagentsApi, {
+    residents: async () => [{ name: 'scout', description: 'Search' }],
+    // Like the real service: only resident names resolve.
+    standing: async (agent: string) => {
+      if (agent !== 'scout') throw new Error(`Unknown standing agent @${agent}`)
+      return recipient.id
+    },
+  } as Partial<SubagentsService> as SubagentsService)
+  services('workspaces').implement(WorkspacesApi, {
+    doc: Workspaces,
+    git: async () => '',
+  } as Partial<WorkspaceService> as WorkspaceService)
+  services('lineage').implement(LineageApi, {
+    rootOf: (id: number, ctx: Context) => rootOf(host, id, ctx),
+    branch: (input: BranchInput, ctx: Context) => startBranch(host, input, ctx),
+  } as Partial<LineageService> as LineageService)
+  // The extensions whose tasks the tests stand in for report them as the real ones do.
+  const conversations = services('test').need(ConversationsApi)
+  for (const source of [jobs, runs, notifies, landings, subagentWork(conversations)])
+    conversations.registerUnderway(source)
   const host = {
     ...prepared,
     metadata: Metadata,
     emit,
     harness: () => opened.harness,
-    // Messages also implements workspaces' branches point; the tests call its own service.
-    implement: (api: { name: string }, value: MessagesService) => {
-      if (api.name === 'messages') service = value
-    },
-    want: provider,
-    need: provider,
+    ...services('messages'),
     onOpen: (callback: () => Promise<void>) => openers.push(callback),
     onClose: (cleanup: () => Promise<void>) => closers.push(cleanup),
     notice: (message: string) => {
       throw new Error(message)
     },
     conversations: () => [],
-    doc: (kind: string) =>
-      kind === 'lineage.roots' ? Roots : kind === 'lineage.tally' ? Tally : undefined,
+    doc,
   } as unknown as ExtensionHost
   let backend = messagesExtension(host)
   if (sendGate)
@@ -374,7 +390,7 @@ async function fixture(
   }
   return {
     host,
-    provided,
+    services,
     get opened() {
       return opened
     },
@@ -382,7 +398,7 @@ async function fixture(
     send,
     log,
     action,
-    service: () => service,
+    service: () => services('test').need(MessagesApi),
     open,
     hold,
     holding: () => holding,
@@ -2065,10 +2081,10 @@ afterEach(() => {
 /** A fixture whose @ultimate is conversation 1 and whose machine also runs `poe2-rust` at `url`. */
 async function remoteFixture(url?: string) {
   const f = await fixture()
-  f.provided.set('subagents', {
+  f.services('subagents').implement(SubagentsApi, {
     residents: async () => [{ name: 'ultimate', description: 'Ultimate' }],
     standing: async () => ROOT_CONVERSATION_ID,
-  })
+  } as Partial<SubagentsService> as SubagentsService)
   Object.assign(f.host, {
     projects: async () => [
       { name: 'ultimate', current: true },

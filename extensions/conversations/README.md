@@ -193,6 +193,25 @@ it; lineage calls it from its `named` reactor. This extension declares two exten
 `conversations.trees` (`rootOf`, `branchOf`, `abstract`; lineage provides it) and `conversations.release`
 (workspaces provides it), so it depends on neither.
 
+## Underway
+
+`underway(tx, id)` answers "will `id` be woken again?" as a list of typed reasons (`Underway` in `api.ts`). It reads
+`run` and queued `input` itself; every other reason comes from the extension that owns the work, through a source it
+registers with `registerUnderway({ name, underway })`, so no one else matches its task kinds or reads its phases:
+
+- background and ci: `job` per live command or CI run, `delivering` once its `deliver` phase submitted the result;
+- lineage: `notify` per waking `notify` (not `wake: false`), `delivering` likewise;
+- subagents: `report` while a reporter is live, `child` while a subagent at any depth runs, has input queued, or has a
+  `report` or `notify` (its jobs and open replies do not count);
+- messages: `reply` while a reply-enabled message from `id` waits on its answer;
+- workspaces: `landing` while `id`'s submission is queued or the lander reports it.
+
+Each consumer filters what matters to it: messages' routing (`route.ts`: `busy`, `isWorking`, which `Branches.working`
+also answers for the lander, and `underway`) and subagents' `deliveryOf`. Sources live in `host.resource`, as quota's
+registered sources do, so a reload of this facet keeps them. Owners register in `onOpen` (on boot background loads
+before conversations, so a call at setup would find no provider; the harness resumes tasks only after every opener ran)
+and pass the removal to `onClose`; the same name replaces the earlier source, and a removal leaves a newer one in place.
+
 ## How status and summaries flow
 
 Every displayed status traces back to committed Pi Durable records. Hooks and tasks write records; documents are

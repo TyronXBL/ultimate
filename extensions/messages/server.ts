@@ -15,6 +15,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { Branches, WorkspacesApi } from '../workspaces/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { LineageApi } from '../lineage/api.ts'
+import { ConversationsApi } from '../conversations/api.ts'
 import { Messages, MessagesApi } from './api.ts'
 import { isOwed, openQuestion } from '../../lib/message-state.ts'
 import { gist, openQuestionsNote, questionsParameter } from './questions.ts'
@@ -30,7 +31,7 @@ import { notice } from './notice.ts'
 import { send } from './send.ts'
 import type { Device } from '../../shared/events.ts'
 import type { Context } from '@earendil-works/chord'
-import { route, working } from './route.ts'
+import { replies, route, working } from './route.ts'
 import { projectsSection, remoteAction, remoteReplyAction, tell } from './remote.ts'
 import { branchTool } from './branch.ts'
 export { gist, openQuestionsNote } from './questions.ts'
@@ -180,8 +181,13 @@ export default function messages(host: ExtensionHost) {
   // What a landing asks about its branch, through workspaces' extension point, so workspaces does not depend on messages.
   host.implement(Branches, {
     starter: (id, ctx) => starterOf(host, id, ctx),
-    working: (tx, id) => working(tx, id),
+    working: (tx, id) => working(host, tx, id),
   })
+  let unregister: (() => void) | undefined
+  host.onOpen(async () => {
+    unregister = host.need(ConversationsApi).registerUnderway(replies)
+  })
+  host.onClose(async () => unregister?.())
   host.implement(MessagesApi, {
     answer: (messageId, text, ctx, device) => answer(host, messageId, text, ctx, { device }),
     openQuestions: async (ctx) =>

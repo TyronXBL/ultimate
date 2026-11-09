@@ -10,6 +10,7 @@ import { withAbortSignal } from '@earendil-works/chord/context'
 import { defineEntry, defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/pi-durable'
 import { git } from '../../lib/git.ts'
+import { liveTasks } from '../../lib/tasks.ts'
 import {
   admitRam,
   commandNeedMiB,
@@ -422,6 +423,15 @@ type State =
     }
   /** A landed branch concluded in the report's last commit: free its checkout. */
   | { phase: 'release'; conversationId: number }
+
+/** Whether a lander reports a landing of `id`'s: the submission left the queue in the commit that moved it here. */
+export async function reporting(tx: Tx, id: ConversationId) {
+  for (const task of await liveTasks(tx, 'workspaces.lander')) {
+    const { checkpoint } = task.state as { checkpoint?: State }
+    if (checkpoint?.phase === 'report' && checkpoint.conversationId === id) return true
+  }
+  return false
+}
 
 export function createLander(
   host: Host,

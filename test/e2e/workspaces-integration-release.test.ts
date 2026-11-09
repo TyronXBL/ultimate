@@ -244,7 +244,7 @@ it.concurrent('open reconciles concluded checkouts in the background', async () 
   }, context)
   f.host.implement(
     ConversationsApi,
-    conversations({
+    conversations(f.host, {
       concluded: async () => new Set([concluded]),
     }),
   )
@@ -394,7 +394,7 @@ it.concurrent.each([false, true])(
     }, context)
     f.host.implement(
       ConversationsApi,
-      conversations({
+      conversations(f.host, {
         concluded: async () => new Set([id]),
       }),
     )

@@ -25,6 +25,7 @@ import questionsExtension, {
 import { Standing } from '../extensions/subagents/api.ts'
 import type { SubagentsService } from '../extensions/subagents/api.ts'
 import { Workspaces } from '../extensions/workspaces/workspaces.ts'
+import { underwayService } from '../extensions/conversations/server.ts'
 
 const hosts: OpenHost[] = []
 afterEach(async () => {
@@ -89,6 +90,8 @@ async function fixture() {
   // Messages’ core dependencies: no standing agents to list, no worktrees.
   services.set('subagents', { residents: async () => [] } satisfies Partial<SubagentsService>)
   services.set('workspaces', { doc: Workspaces })
+  // Messages registers its open replies with the core's `underway` when it opens.
+  services.set('conversations', underwayService({ resource: (_key, create) => create() }))
   prepared.registry.install(messagesExtension(host))
   prepared.registry.install(questionsExtension(host))
   const observed: string[] = []

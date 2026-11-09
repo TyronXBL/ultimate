@@ -44,10 +44,11 @@ vi.mock('@earendil-works/pi-ai/providers/faux', async (importOriginal) => {
  * The service registry of a hand-built extension host, the real one (`server/extension-apis.ts`), with the real
  * `ModelsApi` and `ConversationsApi` over `host`. Call it with an extension's name for that extension's `implement`,
  * `need` and `want`; a fixture provides any other API it needs through `implement`. As on the real host, `need` throws
- * `<extension> needs <api>, which no enabled extension provides` while nothing provides it.
+ * `<extension> needs <api>, which no enabled extension provides` while nothing provides it. Conversations keeps its
+ * `underway` sources itself; a fixture registers the sources of the extensions whose tasks it stands in for.
  */
 export function testHost(
-  host: Omit<Parameters<typeof conversationsService>[0], 'want'> &
+  host: Omit<Parameters<typeof conversationsService>[0], 'want' | 'resource'> &
     Parameters<typeof modelsService>[0],
 ) {
   const providers = new Map<string, { extension: string; value: unknown }>()
@@ -68,7 +69,12 @@ export function testHost(
   facet('models').implement(ModelsApi, modelsService(host))
   facet('conversations').implement(
     ConversationsApi,
-    conversationsService({ ...host, ...facet('conversations') }),
+    // Built once here, so each resource is created once, as on a host that never reloads conversations.
+    conversationsService({
+      ...host,
+      ...facet('conversations'),
+      resource: (_key, create) => create(),
+    }),
   )
   return facet
 }

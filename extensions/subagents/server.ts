@@ -52,10 +52,11 @@ import type { AgentDefinition, DefinitionFields } from '../../lib/agents.ts'
 import { createChild, setupFor, started } from './children.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { exec } from '../../lib/exec.ts'
-import { awaitsResult } from '../../lib/jobs.ts'
+import { liveTasks } from '../../lib/tasks.ts'
 import { shortTitle } from '../../lib/title.ts'
 import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
+import type { ConversationsService, Underway, UnderwaySource } from '../conversations/api.ts'
 import type { AgentMarkStyle } from '../conversations/refs.ts'
 import { ModelsApi, Pin } from '../models/api.ts'
 import { BranchSetup, Profile, Standing, Subagents, SubagentsApi } from './api.ts'
@@ -638,6 +639,39 @@ export const actions = {
   }),
 }
 
+/**
+ * What makes a subagent count as a busy `child` of its parent: a run or queued input, a report or waking notify (the
+ * reasons messages' routing calls busy), or a busy subagent of its own.
+ */
+const busy = (reason: Underway) =>
+  reason.kind === 'run' ||
+  reason.kind === 'input' ||
+  reason.kind === 'report' ||
+  reason.kind === 'notify' ||
+  reason.kind === 'child'
+/**
+ * A conversation's subagent work: a `report` while a reporter of a child's answer is live, and a `child` while a
+ * subagent of it at any depth is busy. A subagent's own jobs and open replies make no `child`.
+ */
+export const subagentWork = (
+  conversations: Pick<ConversationsService, 'underway'>,
+): UnderwaySource => ({
+  name: 'subagents',
+  async underway(tx, id) {
+    const reasons: Underway[] = []
+    if ((await liveTasks(tx, 'ultimate.subagent-reporter', id)).length)
+      reasons.push({ kind: 'report' })
+    // Reading the document creates it: one that owns no conversation has no subagents, and gets no document either.
+    if (!(await tx.scanConversations({ ownerConversationId: id }, 1)).items.length) return reasons
+    for (const child of Object.values((await tx.doc(Subagents, id)).agents))
+      if ((await conversations.underway(tx, child.conversationId)).some(busy)) {
+        reasons.push({ kind: 'child' })
+        break
+      }
+    return reasons
+  },
+})
+
 export default function subagents(
   host: Pick<
     ExtensionHost,
@@ -890,7 +924,15 @@ export default function subagents(
     host.need(ConversationsApi).concludedTreeIn(tx, id)
   const deliveryOf: DeliveryOf = async (tx, parent, child, answer) => {
     if (await concludedTree(tx, parent)) return 'concluded'
-    return answer && (await awaitsResult(tx, child)) ? 'waiting' : 'report'
+    if (!answer) return 'report'
+    // The child still waits for a result of its own: a job, or a waking notify before its `deliver` phase. Once a
+    // result is submitted, the run it wakes may already be answering, and that answer is no longer interim. A task
+    // commits `deliver` just before it submits; an answer in that gap counts as final, the safe side: it wakes the
+    // parent once more rather than never.
+    const awaits = (await conversations.underway(tx, child)).some(
+      (reason) => (reason.kind === 'job' || reason.kind === 'notify') && !reason.delivering,
+    )
+    return awaits ? 'waiting' : 'report'
   }
   const Reporter = createReporter(deliveryOf, concludedTree)
   let unsubscribe: (() => void) | undefined
@@ -985,6 +1027,13 @@ export default function subagents(
     unsubscribe = undefined
     await recovery
   })
+  // Removed after the recovery above settles, whose reports still ask `underway`.
+  const work = subagentWork(conversations)
+  let unregister: (() => void) | undefined
+  host.onOpen(async () => {
+    unregister = conversations.registerUnderway(work)
+  })
+  host.onClose(async () => unregister?.())
   host.onOpen(async () => {
     await pruneRetired(BACKGROUND_CONTEXT)
     unsubscribe?.()

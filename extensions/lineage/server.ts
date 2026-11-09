@@ -41,6 +41,8 @@ import { SubmissionLanded, WorkspacesApi } from '../workspaces/api.ts'
 import type { LandedData } from '../workspaces/api.ts'
 import { Branch, Branched, LineageApi, Rooted, Roots } from './api.ts'
 import { ConversationsApi, Trees } from '../conversations/api.ts'
+import type { UnderwaySource } from '../conversations/api.ts'
+import { liveTasks } from '../../lib/tasks.ts'
 import { Standing, Started } from '../subagents/api.ts'
 import { spawn } from 'node:child_process'
 import { CompactAction, ForgetAction, OpenEditorAction, RecentAction, TallyDoc } from './refs.ts'
@@ -448,6 +450,27 @@ function watchTally(host: ExtensionHost, ctx: Context) {
     unsubscribe?.()
     await pending
   })
+}
+
+/**
+ * A conversation's waking `notify` tasks, each a `notify` until it ends, `delivering` once it submitted its result; one
+ * with `wake: false` leaves a note, which wakes nobody.
+ */
+export const notifies: UnderwaySource = {
+  name: 'lineage',
+  underway: async (tx, id) =>
+    (await liveTasks(tx, 'lineage.notify', id)).flatMap((task) =>
+      (task.input as { wake?: boolean }).wake === false
+        ? []
+        : [
+            {
+              kind: 'notify' as const,
+              delivering:
+                (task.state as { checkpoint?: { phase: 'wait' | 'deliver' } }).checkpoint?.phase ===
+                'deliver',
+            },
+          ],
+    ),
 }
 
 function lineage(host: ExtensionHost) {
@@ -1404,6 +1427,11 @@ export default function lineageExtension(host: ExtensionHost) {
     abstract,
   })
   const conversations = host.need(ConversationsApi)
+  let unregister: (() => void) | undefined
+  host.onOpen(async () => {
+    unregister = conversations.registerUnderway(notifies)
+  })
+  host.onClose(async () => unregister?.())
   // A new branch or root is called by its given title or its intent until its summary names it: lineage titled it so,
   // and marking that title generated lets the summary replace it.
   host.react('named', [Branched, Rooted], async (tx, { data }) => {

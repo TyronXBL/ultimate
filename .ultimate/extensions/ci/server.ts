@@ -10,7 +10,9 @@ import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-dura
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { Context } from '@earendil-works/chord'
 import { ConversationsApi } from '../../../extensions/conversations/api.ts'
+import type { UnderwaySource } from '../../../extensions/conversations/api.ts'
 import { WorkspacesApi } from '../../../extensions/workspaces/api.ts'
+import { liveTasks } from '../../../lib/tasks.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import {
   failuresOf,
@@ -43,6 +45,18 @@ type Checkpoint =
   | { phase: 'poll'; ref: string; pushed: number; failing?: number; pc?: string }
   | { phase: 'deliver'; result: CiResult }
 
+/**
+ * A conversation's CI runs under way, each a `job` until it ends: it submits its result in its `deliver` phase, so from
+ * then on the result counts (as input or a run), not the run.
+ */
+export const runs: UnderwaySource = {
+  name: 'ci',
+  underway: async (tx, id) =>
+    (await liveTasks(tx, 'ci.run', id)).map((task) => ({
+      kind: 'job',
+      delivering: (task.state as { checkpoint?: Checkpoint }).checkpoint?.phase === 'deliver',
+    })),
+}
 /** The note a GitHub result carries when the PC was tried first. */
 const handedOver = (pc: string | undefined) =>
   pc && `PC runner: ${pc}; handed over to GitHub Actions`
@@ -345,8 +359,15 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
   })
 }
 
-export default function ciExtension(host: Pick<ExtensionHost, 'need' | 'harness' | 'projectRoot'>) {
+export default function ciExtension(
+  host: Pick<ExtensionHost, 'need' | 'harness' | 'projectRoot' | 'onOpen' | 'onClose'>,
+) {
   const CiRun = createCiRun(host)
+  let unregister: (() => void) | undefined
+  host.onOpen(async () => {
+    unregister = host.need(ConversationsApi).registerUnderway(runs)
+  })
+  host.onClose(async () => unregister?.())
   /** The checkout a conversation works in: its own worktree, else its nearest owner's, else the project. */
   async function checkout(id: ConversationId, ctx: Context) {
     const workspaces = host.need(WorkspacesApi)

@@ -34,6 +34,9 @@ import subagents, { actions, docs } from '../extensions/subagents/server.ts'
 import watchdog from '../extensions/watchdog/server.ts'
 import type { ExtensionHost } from '../server/extensions.ts'
 import { ConversationsApi } from '../extensions/conversations/api.ts'
+import { jobs } from '../extensions/background/server.ts'
+import { runs } from '../.ultimate/extensions/ci/server.ts'
+import { notifies } from '../extensions/lineage/server.ts'
 import { WorkspacesApi } from '../extensions/workspaces/api.ts'
 import { BranchSetup, Started, Subagents } from '../extensions/subagents/api.ts'
 import type { ActionContext } from '../server/actions.ts'
@@ -100,6 +103,9 @@ async function fixture(
   })
   // The tests isolate no child, so workspaces stays off.
   services('workspaces').implement(WorkspacesApi, noWorkspaces)
+  // The extensions whose tasks the tests stand in for report them as the real ones do.
+  for (const source of [jobs, runs, notifies])
+    services('test').need(ConversationsApi).registerUnderway(source)
   const backend = subagents({
     projectSettings: () => projectSettings(prepared.projectRoot, prepared.userHome),
     ...prepared,

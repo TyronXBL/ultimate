@@ -19,6 +19,7 @@ import { empty, git, isolatable, noCommit, noRepository } from '../../lib/git.ts
 import type { ActionContext } from '../../server/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi, Release } from '../conversations/api.ts'
+import type { UnderwaySource } from '../conversations/api.ts'
 import { ModelsApi } from '../models/api.ts'
 import { Branches, WorkspacesApi } from './api.ts'
 import {
@@ -34,7 +35,7 @@ import {
   SubmissionLanded,
 } from './refs.ts'
 import { githubRepo } from '../../lib/project-identity.ts'
-import { landerSettings, sweepChecks } from './lander.ts'
+import { landerSettings, reporting, sweepChecks } from './lander.ts'
 import { Workspaces, workspaces } from './workspaces.ts'
 import { failingTests } from './failing.ts'
 export const order = -200
@@ -198,10 +199,25 @@ const failing = async (
   const index = await host.harness().snapshot(Workspaces, ROOT_CONVERSATION_ID, ctx)
   return failingTests(host.harness(), Object.values(index?.landerConversations ?? {}), options, ctx)
 }
+/** A conversation's submission the lander has queued or is reporting, a `landing` until it reported it. */
+export const landings: UnderwaySource = {
+  name: 'workspaces',
+  underway: async (tx, id) =>
+    (await tx.doc(Workspaces, ROOT_CONVERSATION_ID)).queue.some(
+      (item) => item.conversationId === id,
+    ) || (await reporting(tx, id))
+      ? [{ kind: 'landing' }]
+      : [],
+}
 export default function workspaceExtension(host: ExtensionHost) {
   // What a landing asks about its branch is an extension point, wanted where the lander calls it.
   host.want(Branches)
   const conversations = host.need(ConversationsApi)
+  let unregister: (() => void) | undefined
+  host.onOpen(async () => {
+    unregister = conversations.registerUnderway(landings)
+  })
+  host.onClose(async () => unregister?.())
   const service = workspaces(host)
   host.implement(WorkspacesApi, {
     ...service,

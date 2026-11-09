@@ -49,7 +49,7 @@ async function concluding() {
   const f = await lander({}, undefined, true)
   f.host.implement(
     ConversationsApi,
-    conversations({
+    conversations(f.host, {
       concluded: async () => new Set<ConversationId>(),
       subject: async () => ({}),
       concludeIn: (tx, ids) => concludeIn(f.host, tx, ids),
@@ -117,7 +117,7 @@ it.concurrent('emits one landed event and notes the root once, across a replayed
   const sha = await commit((await f.service.get(id, context))!.path, 'landed.txt')
   f.host.implement(
     ConversationsApi,
-    conversations({
+    conversations(f.host, {
       concluded: async () => new Set<ConversationId>(),
       subject: (conversation, ctx) => subject(f.host, conversation, ctx),
     }),
