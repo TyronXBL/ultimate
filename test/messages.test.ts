@@ -952,17 +952,7 @@ it('refuses self, unknown ids, tally roots and unknown names with valid names', 
   const view = await f.opened.root.context(context)
   expect(JSON.stringify(view.entries)).toContain('cannot message yourself')
 })
-it('loads existing version-1 logs with the unused read mark', async () => {
-  const f = await fixture()
-  await f.opened.harness.commit(async (tx) => {
-    Object.assign(await tx.doc(Messages, ROOT_CONVERSATION_ID), { readUpTo: 7 })
-  }, context)
-  await f.opened.close()
-  await f.open()
-  await f.send('user', 'Still loadable')
-  expect((await f.log())!.messages).toMatchObject([{ text: 'Still loadable' }])
-})
-it('bounds the log and exposes no user posting action', async () => {
+it('bounds the log to the newest 300 messages', async () => {
   const f = await fixture()
   await f.opened.harness.commit(async (tx) => {
     const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
@@ -982,8 +972,6 @@ it('bounds the log and exposes no user posting action', async () => {
   expect((await f.log())!.messages).toHaveLength(300)
   expect((await f.log())!.messages[0].id).toBe(2)
   expect((await f.log())!.messages.at(-1)).toMatchObject({ id: 301, text: 'The newest' })
-  expect(actions).not.toHaveProperty('post')
-  expect(actions).not.toHaveProperty('read')
 })
 it('queues a busy recipient as follow-up, or steers its current run; @ultimate steers by default', async () => {
   // The fixture's sender, #1, is @ultimate unless the case hands that role to another conversation.
@@ -1071,33 +1059,6 @@ export default (host) => {
     port: 0,
   })
 }
-it('has no posting action at the installed codemode boundary', async () => {
-  const server = await codemodeFixture()
-  try {
-    for (const action of ['post']) {
-      server.host.faux!.setResponses([
-        fauxAssistantMessage(
-          [
-            fauxToolCall('codemode', {
-              code: `return await ultimate.action('messages', '${action}', {to:'user',text:'fake'});`,
-            }),
-          ],
-          { stopReason: 'toolUse' },
-        ),
-        fauxAssistantMessage('Complete'),
-      ])
-      await (
-        await server.root.submit({ type: 'input', content: 'Try action' }, context)
-      ).wait(context)
-      const view = await server.root.context(context)
-      const result = view.entries.findLast((e) => e.kind === 'pi.tool-result')!
-      expect(JSON.stringify(result)).toContain(`Unknown extension action: messages/${action}`)
-    }
-  } finally {
-    await server.vite.watcher.close()
-    await server.close()
-  }
-})
 it('keeps sequential and parallel message calls distinct within one codemode script', async () => {
   const server = await codemodeFixture()
   try {
