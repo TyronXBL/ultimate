@@ -29,10 +29,10 @@ import { modelsService } from '../../extensions/models/set-model.ts'
 import { temp, until } from '../helpers.ts'
 
 /**
- * The part of the conversations service a test stands in for; standing a lander turns its summaries off and marks it
- * standing, and no conversation tree is concluded unless a test says so.
+ * The core's conversations with the part `service` stands in for: standing a lander turns its summaries off and marks
+ * it standing, and no conversation tree is concluded unless a test says so. `underway` keeps the sources registered on
+ * `host`'s resources.
  */
-/** The core's conversations with `service` in place; `underway` keeps the sources registered on `host`'s resources. */
 export const conversations = (
   host: Pick<ExtensionHost, 'resource'>,
   service: Partial<ConversationsService>,

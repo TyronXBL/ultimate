@@ -357,19 +357,25 @@ export async function concludedIn(tx: Tx): Promise<Set<ConversationId>> {
 export function underwayService(
   host: Pick<ExtensionHost, 'resource'>,
 ): Pick<ConversationsService, 'underway' | 'registerUnderway'> {
-  const sources = host.resource('conversations.underway', () => new Map<string, UnderwaySource>())
+  // Each registration gets an entry of its own, so an earlier removal never takes out a later registration, even of
+  // the same source object (owners register an exported constant on every open).
+  const sources = host.resource(
+    'conversations.underway',
+    () => new Map<string, { source: UnderwaySource }>(),
+  )
   return {
     async underway(tx, id) {
       const reasons: Underway[] = []
       if ((await tx.doc(LiveDoc, id)).run) reasons.push({ kind: 'run' })
       if ((await tx.doc(InboxDoc, id)).items.length) reasons.push({ kind: 'input' })
-      for (const source of sources.values()) reasons.push(...(await source.underway(tx, id)))
+      for (const { source } of sources.values()) reasons.push(...(await source.underway(tx, id)))
       return reasons
     },
     registerUnderway(source) {
-      sources.set(source.name, source)
+      const entry = { source }
+      sources.set(source.name, entry)
       return () => {
-        if (sources.get(source.name) === source) sources.delete(source.name)
+        if (sources.get(source.name) === entry) sources.delete(source.name)
       }
     },
   }
