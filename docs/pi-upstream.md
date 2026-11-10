@@ -42,9 +42,52 @@
 - `.ultimate/skills/measure-switch/copy-paused.ts` — writes a pause.state version-2 base revision into a scratch database's document_revisions and advances durable_metadata.next_seq, relying on Pi Durable's SQLite schema and chord operation format. Drop when Pi exposes an offline document-update API.
 - `extensions/subagents/server.ts` — internal ToolTaskInput.assistant locates the calling assistant for history forks. Drop when ToolExecutionApi exposes the calling assistant entry ID.
 - `server/skills.ts` — copies AgentSession's unexported _expandSkillCommand block format for /skill:name invocation. Drop when Pi exports the skill command expansion.
+- `extensions/keep-warm/server.ts` — its ping sends no sessionId, so unreleased pi-ai's Anthropic message threads leave it a full request. Recheck with the 1.6 checklist below; drop the marker once the checklist is done and its results are recorded here.
 
 On a Pi upgrade, run `rg "Pi upstream:"` and recheck each marked item against the new version; `scripts/pi-upstream.ts` (part of `pnpm check`) checks that every tracked marker matches the installed package version and its path appears in this list, and the backticked path each entry starts with is tracked and contains a marker; backticks later in an entry are prose.
 Delete copies and patches that Pi now exports or fixes, then update the remaining markers and this list after verification.
+
+## On the 1.6 upgrade: message threads and cache warming
+
+Pi's unreleased changelog (read at `main` c9dd2c5, 2026-11-09, packages still 1.5.0) makes two changes that need a
+policy. The decision (#191455): **message threads stay off** until a provider smoke on 1.6 says otherwise; turning them
+on is the user's call. Idle cache warming needs no setting, because nothing in Ultimate runs it.
+
+- **Message threads** (`message-threads-2026-08-12` beta, pi-ai `src/api/anthropic-messages.ts`): a request with a
+  `sessionId` and `cacheRetention` other than `"none"` continues a server-side thread and sends only the new messages.
+  Anthropic holds the conversation, system prompt and tools in memory for up to an hour; the feature is not ZDR
+  eligible. On by default only for provider `anthropic` on `api.anthropic.com`, API key and subscription login alike;
+  `compat.supportsMessageThreads` in `~/.pi/agent/models.json` changes it. Pi Durable sends a per-conversation
+  `sessionId` on every generation, so the default threads every `anthropic` turn. Compaction summaries
+  (`cacheRetention: "none"`) and Ultimate's own calls without a `sessionId` (keep-warm, the summary model, lineage's
+  ask) are never threaded. Price and token counts do not change.
+- **Off is a machine setting:** `"anthropic": { "compat": { "supportsMessageThreads": false } }` under `providers` in
+  `~/.pi/agent/models.json`. 1.5.0 loads it and ignores it (checked through `ModelRuntime`: no load error, the flag
+  reaches built-in and custom `anthropic` models), so it can be set before the upgrade. A machine without it gets
+  Pi's default.
+- **Cache warming** (`cacheWarming`, now `"idle"` by default): read only by pi-coding-agent's `CacheWarmer`, which
+  `createAgentSession` builds. Ultimate uses neither, and Pi Durable has no warmer, so the default costs nothing here.
+  It applies to the `pi` CLI on the same machine, through `~/.pi/agent/settings.json`.
+
+The upgrade branch checks, and records the results here:
+
+1. The release kept the names and defaults above (`compat.supportsMessageThreads`, `cacheWarming`,
+   `StreamOptions.disableContinuation`); they were unreleased when this was written.
+2. The pin holds: on a machine with the setting, `getModel('anthropic', id).compat.supportsMessageThreads` is `false`
+   and a real `anthropic` turn's `betas` lack `message-threads-2026-08-12` (the `ultimate-provider-smoke` skill; Wire and
+   any payload hook see `betas`, while the `thread` field itself is added after them).
+3. Pi Durable still has no cache warmer (`rg -L --no-ignore -i cachewarm node_modules/@earendil-works/pi-durable/dist`)
+   and Ultimate still does not call `createAgentSession`. If either changed, idle warming spends money between runs:
+   decide `cacheWarming` before landing.
+4. Before anyone turns threads on, a smoke on the subscription login answers what could not be proven on 1.5.0:
+   - whether subscription OAuth accepts the threads beta (Pi turns threads off for the session after a rejection, one
+     failed request each);
+   - whether Claude Code itself sends this beta: if not, OAuth requests differ from the client they present as, which
+     is an account risk;
+   - whether a threaded turn and an unthreaded request (a keep-warm ping, a full resend) share one prompt cache,
+     since their beta lists differ: the ping's `cacheRead` must cover @ultimate's prefix;
+   - what the first request after a gap of over 5 minutes costs: the thread has expired, the continue is rejected
+     (`thread_not_found`) and Pi resends in full.
 
 ## Searching Pi's code
 

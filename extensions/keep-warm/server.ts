@@ -188,6 +188,10 @@ async function ping(
   let answer: AssistantMessage
   try {
     // No sessionId: a one-shot Claude Code process, so @ultimate's own warm process never sees this turn.
+    // Pi upstream: @earendil-works/pi-ai@1.5.0 src/api/anthropic-messages.ts — 1.5.0 has no message threads. Unreleased
+    // pi-ai threads every `anthropic` request that carries a sessionId; without one this ping stays a full, unthreaded
+    // request, which must still read the cache @ultimate's turns wrote. Before updating this marker, work through
+    // "On the 1.6 upgrade" in docs/pi-upstream.md.
     answer = await host.modelRuntime
       .streamSimple(
         model,
