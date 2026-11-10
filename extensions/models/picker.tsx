@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
-import { cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
+import { api, cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
 import { familyTitle } from '../../lib/families.ts'
 import {
   agentsPanel,
@@ -28,11 +28,13 @@ import {
   thinkingOf,
   useFamilies,
 } from './families.tsx'
+import { SetFamilyAction } from './refs.ts'
 import type { FamilyView } from './refs.ts'
 import {
   authLabel,
   dialogs,
   formatWindow,
+  notePick,
   openLogin,
   price,
   selectModel,
@@ -105,10 +107,20 @@ export function ModelRow({
 export function ModelPicker() {
   const [open, setOpen] = useDialog(dialogs.picker)
   const actions = useUltimate()
-  const { id, ref, thinking, models, loading } = useCurrentModel(usePickerTarget())
+  const {
+    id,
+    ref,
+    thinking,
+    family: recorded,
+    models,
+    loading,
+  } = useCurrentModel(usePickerTarget())
   const families = useFamilies()
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string>()
+  // The highlighted row: the reader's, once they move it; until then the current family or model, which may load after
+  // the picker opens (cmdk reads `defaultValue` only on mount and otherwise highlights the first row).
+  const [highlighted, setHighlighted] = useState<string>()
   const providers = useMemo(
     () => new Map((models?.providers ?? []).map((provider) => [provider.id, provider])),
     [models],
@@ -136,7 +148,7 @@ export function ModelPicker() {
       .slice(0, LIMIT)
     return [...Map.groupBy(found, (model) => model.provider)]
   }, [models, query])
-  const current = familyOf(families, ref, thinking)
+  const current = familyOf(families, ref, thinking, recorded)
   const shownFamilies = (families?.families ?? []).filter((family) => {
     const haystack = `${family.name} ${runsOn(family) ?? ''} ${thinkingOf(family) ?? ''}`
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
@@ -156,10 +168,15 @@ export function ModelPicker() {
       return
     }
     setError(undefined)
-    selectModel({ provider: model.provider, modelId: model.id }, id).then(
-      () => setOpen(false),
-      (failure: unknown) => setError(errorMessage(failure)),
-    )
+    selectModel({ provider: model.provider, modelId: model.id }, id)
+      .then(() => api.action(SetFamilyAction, { family: null }, { conversationId: id }))
+      .then(
+        () => {
+          notePick()
+          setOpen(false)
+        },
+        (failure: unknown) => setError(errorMessage(failure)),
+      )
   }
 
   /** A family's model and thinking level for this conversation; a model without a login opens its login first. */
@@ -170,10 +187,15 @@ export function ModelPicker() {
     if (loading) return
     if (model && !model.available) return choose(model)
     setError(undefined)
-    selectModel({ provider, modelId }, id, thinkingOf(family)).then(
-      () => setOpen(false),
-      (failure: unknown) => setError(errorMessage(failure)),
-    )
+    selectModel({ provider, modelId }, id, thinkingOf(family))
+      .then(() => api.action(SetFamilyAction, { family: family.name }, { conversationId: id }))
+      .then(
+        () => {
+          notePick()
+          setOpen(false)
+        },
+        (failure: unknown) => setError(errorMessage(failure)),
+      )
   }
 
   return (
@@ -183,6 +205,7 @@ export function ModelPicker() {
         if (!next) {
           setQuery('')
           setError(undefined)
+          setHighlighted(undefined)
         }
       }}
       open={open}
@@ -202,8 +225,16 @@ export function ModelPicker() {
         </DialogDescription>
         <Command
           className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:section-label"
-          defaultValue={ref ? `${ref.provider}/${ref.modelId}` : undefined}
+          onValueChange={setHighlighted}
           shouldFilter={false}
+          value={
+            highlighted ??
+            (current && shownFamilies.includes(current)
+              ? `family/${current.name}`
+              : ref
+                ? `${ref.provider}/${ref.modelId}`
+                : undefined)
+          }
         >
           <CommandInput
             className="text-[13px]"

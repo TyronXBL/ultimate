@@ -58,6 +58,8 @@ export {
 export { ProjectChip, projectTitle, Wordmark } from '../app/titlebar.tsx'
 /** Isolates another extension's component you render, such as a document renderer: it throws into an error card. */
 export { ExtensionBoundary } from '../app/boundary.tsx'
+/** The transcript's and composer's reading column classes, for a card that sits in that column. */
+export { column } from '../app/layout.ts'
 /** The transcript's card: a bordered section with the brand accent on its left edge. */
 export { Card } from '../app/card.tsx'
 /** A card that folds to one quiet line in compact mode, and whether one is open; the reader's choice survives reloads. */
@@ -68,8 +70,8 @@ export { setAsideIds } from '../app/compact.ts'
 export { MessageActions } from '../app/message-actions.tsx'
 /** A turn of the user's as the transcript shows a typed one; `text` gives the words a delivered message carries. */
 export { UserText, UserView } from '../app/user-turn.tsx'
-/** Renders with the value another extension provides for your point; see `definePoint`. */
-export { AllProvided, Provided } from '../app/boundary.tsx'
+/** Renders with the values other extensions provide for your point, or through them (`Rendered`); see `definePoint`. */
+export { AllProvided, Provided, Rendered } from '../app/boundary.tsx'
 export { ConversationScope } from './conversation-scope.tsx'
 /** A stored entry rendered as its transcript row would show it, outside the transcript. */
 export { TranscriptEntry } from '../app/transcript.tsx'

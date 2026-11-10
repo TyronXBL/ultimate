@@ -14,6 +14,7 @@ import {
 } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
+import { hostDefault } from '../../lib/agents.ts'
 import type { ActionInput } from '../../lib/actions.ts'
 import { empty, git, isolatable, noCommit, noRepository } from '../../lib/git.ts'
 import type { ActionContext } from '../../server/actions.ts'
@@ -120,8 +121,7 @@ export const actions = {
       throw new Error('cwd must be a string')
     if (input.title !== undefined && typeof input.title !== 'string')
       throw new Error('title must be a string')
-    const root = (await host.harness().conversation(ROOT_CONVERSATION_ID, context))!
-    const agent = await root.agent(context)
+    const agent = await hostDefault(host)
     const id = await host.harness().commit(async (tx) => {
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } })
       await host.need(ModelsApi).setModel(tx, conversation.id, {

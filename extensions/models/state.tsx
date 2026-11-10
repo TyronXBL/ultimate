@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
-import { api, getConversation, useConversation, useModels, useStore } from '@/sdk'
+import { api, getConversation, useConversation, useDocOf, useModels, useStore } from '@/sdk'
 import type { ModelsResponse, UltimateActions } from '@/sdk'
-import { PickAction } from './refs.ts'
+import { FamilyDoc, PickAction } from './refs.ts'
 
 export type ModelInfo = ModelsResponse['models'][number]
 export type ProviderInfo = ModelsResponse['providers'][number]
@@ -15,7 +15,10 @@ export const dialogs = {
 /** The thinking popover of conversation `id`'s toolbar: a side chat's has its own, apart from main's. */
 export const thinkingDialog = (id: number | undefined) => `models.thinking.${id}`
 
-/** The scoped (or shown) conversation's model and thinking, or those of `target`, and its id to configure. */
+/**
+ * The scoped (or shown) conversation's model, thinking and recorded family, or those of `target`, and its id to
+ * configure.
+ */
 export function useCurrentModel(target?: number) {
   const ownId = useConversation((c) => c.id)
   const ownAgent = useConversation((c) => c.agent)
@@ -25,6 +28,7 @@ export function useCurrentModel(target?: number) {
   const agent = other ? other.agent : ownAgent
   const loading = other ? other.loading : ownLoading
   const models = useModels()
+  const family = useDocOf(id, FamilyDoc)?.name
   const ref = agent.model
   const model = models?.models.find(
     (candidate) => candidate.provider === ref?.provider && candidate.id === ref.modelId,
@@ -34,6 +38,7 @@ export function useCurrentModel(target?: number) {
     ref,
     model,
     thinking: agent.thinkingLevel,
+    family,
     models,
     loading,
   }
@@ -49,6 +54,28 @@ export function selectModel(
     PickAction,
     { ...model, ...(thinkingLevel ? { thinkingLevel } : {}) },
     { conversationId: id },
+  )
+}
+
+/**
+ * How many models or families were picked in the picker on this page. Get ready tells the user's pick from its own
+ * suggestion by it: picking the model the conversation already runs changes nothing else.
+ */
+let picks = 0
+const pickListeners = new Set<() => void>()
+export function notePick() {
+  picks++
+  for (const listener of pickListeners) listener()
+}
+export function usePicks() {
+  return useSyncExternalStore(
+    (listener) => {
+      pickListeners.add(listener)
+      return () => {
+        pickListeners.delete(listener)
+      }
+    },
+    () => picks,
   )
 }
 

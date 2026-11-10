@@ -64,7 +64,7 @@ import { rewindActions, rewindTask } from './rewind.ts'
 import type { Tree } from './catchup.ts'
 import type { RootEvent } from './types.ts'
 import { compareUrl } from '../../lib/compare.ts'
-import { hasLogin, hostDefaultModel } from '../../lib/agents.ts'
+import { hasLogin, hostDefault } from '../../lib/agents.ts'
 import { admitCompaction } from '../../lib/compaction.ts'
 import { limitOf } from '../../lib/rate-limit.ts'
 import type { Limit } from '../../lib/rate-limit.ts'
@@ -914,7 +914,7 @@ async function forkBranch(
     input.model ??
     (hasLogin(host.modelRuntime.getAvailableSnapshot(), source)
       ? undefined
-      : await hostDefaultModel(host))
+      : (await hostDefault(host)).model)
   await configure(tx, fork.id, {
     cwd: host.projectRoot,
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),

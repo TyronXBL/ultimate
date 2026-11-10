@@ -8,7 +8,7 @@ import { AgentDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, EntryDraft, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { configuredModel, familyDefault, hasLogin } from '../../lib/agents.ts'
-import { Pin } from './api.ts'
+import { Family, Pin } from './api.ts'
 import { waitsForLogin } from './owner.ts'
 import type { Fallback, SwitchReason } from './refs.ts'
 import { Owner, setModel } from './set-model.ts'
@@ -38,9 +38,12 @@ export async function fallback(
   // Nothing has a login yet (an empty snapshot says nothing about this model), or this one still has one.
   if (!agent.model || !available.length || hasLogin(available, agent.model)) return undefined
   const from = agent.model
-  // Certain evidence only: the snapshot has no login for it and a fresh check agrees. A provider still registering,
-  // or a check that fails or times out, leaves the model as it is; its request fails with its own error.
-  if (runtime.getProvider(from.provider) && (await mayHaveLogin(host, from.provider)))
+  // Certain evidence only: its provider is registered, the snapshot has no login for it and a fresh check agrees. A
+  // provider that is not registered (still registering, or its extension failed to load), or a check that fails or
+  // times out, leaves the model as it is; its request fails with its own error. An unregistered provider's login
+  // type is unknown too, so nothing could say whether it was a subscription (#534457/543286: with claude-code not
+  // loaded during an outage, a conversation moved to the pay-per-token anthropic provider).
+  if (!runtime.getProvider(from.provider) || (await mayHaveLogin(host, from.provider)))
     return undefined
   const fresh = runtime.getAvailableSnapshot()
   const paid = wasSubscription(host, from.provider)
@@ -70,6 +73,8 @@ export async function fallback(
       ? { type: 'login-fallback', from: data.from, to: found[0]!, reason: found[1] }
       : { type: 'login-wait', from: data.from },
   )
+  // Another model than its family's: it runs as that family no more.
+  if (found) (await tx.doc(Family, conversationId)).name = null
   const content = found
     ? `Model ${data.from} has no login here; this conversation now runs on ${data.to}.`
     : `Model ${data.from} has no login here and no subscription login can replace it, so this conversation keeps it until the user logs in to ${from.provider} or picks another model.`
@@ -99,8 +104,8 @@ async function mayHaveLogin(host: ExtensionHost, provider: string) {
 }
 
 /**
- * Pi's subscription mark of a provider whose login is gone, so its login type is no longer known: its OAuth method
- * says `isSubscription`.
+ * Pi's subscription mark of a registered provider whose login is gone, so its login type is no longer known: its OAuth
+ * method says `isSubscription`.
  */
 function wasSubscription(host: ExtensionHost, provider: string) {
   return (

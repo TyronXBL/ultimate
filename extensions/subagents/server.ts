@@ -40,10 +40,11 @@ import type { Source } from '../../server/project.ts'
 import {
   agentRoots,
   definitionAgent,
+  definitionFamily,
   deleteDefinition,
   discoverAgents,
   hasLogin,
-  hostDefaultModel,
+  hostDefault,
   previewModel,
   saveDefinition,
   saveOverlay,
@@ -58,7 +59,7 @@ import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
 import type { ConversationsService, Underway, UnderwaySource } from '../conversations/api.ts'
 import type { AgentMarkStyle } from '../conversations/refs.ts'
-import { ModelsApi, Pin } from '../models/api.ts'
+import { Family, ModelsApi, Pin } from '../models/api.ts'
 import { BranchSetup, Profile, Standing, Subagents, SubagentsApi } from './api.ts'
 import { definitionRuns, refName, refOf } from '../../lib/families.ts'
 import { readFamilies } from '../../lib/families-settings.ts'
@@ -799,17 +800,17 @@ export default function subagents(
         const index = await tx.doc(Standing, ROOT_CONVERSATION_ID)
         let id = Object.hasOwn(index, name) ? index[name] : undefined
         let created: ConversationRecord | undefined
-        // A new conversation starts on the default model; an existing one keeps the model and thinking level chosen
-        // in it, so a refresh changes them only where the definition pins them.
-        let base = { ...main, model: await hostDefaultModel(host) }
+        // A new conversation starts on the default model and thinking level; an existing one keeps those chosen in
+        // it, so a refresh changes them only where the definition pins them.
+        let base = { ...main, ...(await hostDefault(host)) }
         // One running on a backup (extensions/backup) stays on it: backup returns it later.
         let backup: Parameters<typeof definitionAgent>[3]
         if (id !== undefined && (await tx.conversation(id))) {
           const own = await tx.doc(AgentDoc, id)
           base = {
-            ...main,
-            model: own.model ?? base.model,
-            thinkingLevel: own.thinkingLevel ?? main.thinkingLevel,
+            ...base,
+            ...(own.model ? { model: own.model } : {}),
+            ...(own.thinkingLevel ? { thinkingLevel: own.thinkingLevel } : {}),
           }
           const on = await models.backup(tx, id)
           if (on)
@@ -838,6 +839,7 @@ export default function subagents(
           (thinkingLevel ?? undefined) !== base.thinkingLevel
         )
           await models.setModel(tx, id, { type: 'start', model: model ?? null, thinkingLevel })
+        ;(await tx.doc(Family, id)).name = definitionFamily(definition, { model })
         Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
         // A standing agent keeps its `@name`: no automatic title, summary or reply activity.
         await conversations.setAutomaticSummaries(tx, id, false)
@@ -1136,9 +1138,7 @@ export default function subagents(
             running.push(label)
           else if (pending.has(agent.conversationId)) queued.push(label)
         }
-        // Always rendered for an agent that delegates: a section that appears mid-conversation reorders the prompt,
-        // which re-adds it whole, and the copy stays in context.
-        if (!running.length && !queued.length) return 'No subagents running.'
+        if (!running.length && !queued.length) return undefined
         return [
           ...(running.length ? [`Still running subagents: ${running.join(', ')}.`] : []),
           ...(queued.length ? [`Pending subagent inputs: ${queued.join(', ')}.`] : []),

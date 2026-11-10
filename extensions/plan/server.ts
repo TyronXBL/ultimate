@@ -178,9 +178,7 @@ export default (host: ExtensionHost) => {
                 (task.child !== undefined ? ` child:${task.child}` : ''),
             ),
           ])
-        // Always rendered with the tool: a section that appears mid-conversation reorders the prompt, which re-adds it
-        // whole, and the copy stays in context.
-        return lines.length ? lines.join('\n') : 'No open epics.'
+        return lines.length ? lines.join('\n') : undefined
       }),
     ],
     tools: [

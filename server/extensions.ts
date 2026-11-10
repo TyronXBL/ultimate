@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, watch as watchDirectory } from 'node:fs'
 import { compareExtensions, discoverExtensions } from './discovery.ts'
 import { decisionRoot, projectSetup, projectSettings, projectDiagnostics } from './project-setup.ts'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
@@ -782,6 +782,22 @@ export async function loadExtensions(
     queue(file, true)
   }
   const structure = ['add', 'unlink', 'addDir', 'unlinkDir'] as const
+  // Vite's watcher follows links and reports a linked extension as gone once its target is; discovery then keeps the
+  // dangling link as a record with its error. Removing that link later is an event only the extensions folder itself
+  // sees, so each folder is also watched directly for a recorded entry that left (#561727).
+  const watchEntries = (directory: string) => {
+    try {
+      return watchDirectory(directory, (_event, name) => {
+        if (closed || !name || records.get(name)?.path !== join(directory, name)) return
+        if (lstatSync(join(directory, name), { throwIfNoEntry: false })) return
+        enqueue(() => reload(new Set([name])))
+      })
+    } catch (error) {
+      // A missing folder has no entries; watchRoots reports it once it appears.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      return undefined
+    }
+  }
   const unwatch = watch((current) => {
     watcher = current
     current.add([...loader.files()])
@@ -791,14 +807,20 @@ export async function loadExtensions(
       ...roots.slice(1).map((root) => join(root.path, 'skills')),
     ]
     current.add(watchedRoots)
+    const entries = new Map(directories.map((directory) => [directory, watchEntries(directory)]))
     const stopRoots = watchRoots(watchedRoots, (root) => {
       current.add(root)
+      if (entries.has(root)) {
+        entries.get(root)?.close()
+        entries.set(root, watchEntries(root))
+      }
       enqueue(() => (settingsFiles.includes(root) ? reloadSettings() : reload()))
     })
     current.on('change', onChange)
     for (const event of structure) current.on(event, onStructure)
     return () => {
       stopRoots()
+      for (const entry of entries.values()) entry?.close()
       if (watcher === current) watcher = undefined
       current.off('change', onChange)
       for (const event of structure) current.off(event, onStructure)

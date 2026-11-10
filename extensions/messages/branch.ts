@@ -5,11 +5,13 @@ import type { ConversationId } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import {
   definitionAgent,
+  definitionFamily,
   discoverAgents,
-  hostDefaultModel,
+  hostDefault,
   onFamily,
   resolveSetup,
 } from '../../lib/agents.ts'
+import { Family } from '../models/api.ts'
 import { readFamilies } from '../../lib/families-settings.ts'
 import { BranchSetup } from '../subagents/api.ts'
 import { LineageApi, Roots } from '../lineage/api.ts'
@@ -73,19 +75,21 @@ export const branchTool = (host: ExtensionHost) =>
         const setup = input.agents && resolveSetup(input.agents, definitions, host.modelRuntime)
         const own = setup?.coordinator
         // The model and thinking level the definition pins when its provider has a login here, thinking clamped to
-        // what the model supports; without one, the current default model, never the one the root last stored.
+        // what the model supports; without one, the current default model and thinking level, never what the root
+        // last stored.
         const rootAgent = await (await host
           .harness()
           .conversation(root as ConversationId, ctx))!.agent(ctx)
-        const { model, thinkingLevel, modelTools } = definitionAgent(
+        const change = definitionAgent(
           coordinator,
-          { ...rootAgent, model: await hostDefaultModel(host) },
+          { ...rootAgent, ...(await hostDefault(host)) },
           host.modelRuntime,
           own && {
             model: { provider: own.provider, modelId: own.modelId },
             ...(own.thinking ? { thinking: own.thinking } : {}),
           },
         )
+        const { model, thinkingLevel, modelTools } = change
         const branch = await lineage.branch(
           {
             from: root,
@@ -108,6 +112,7 @@ export const branchTool = (host: ExtensionHost) =>
             ...(modelTools && 'add' in modelTools && modelTools.add?.length ? { modelTools } : {}),
           })
           ;(await tx.doc(host.metadata, branch.id)).label = 'coordinator'
+          ;(await tx.doc(Family, branch.id)).name = definitionFamily(coordinator, change)
           const started = await tx.doc(Started, branch.id)
           started.by = from
           if (setup) (await tx.doc(BranchSetup, branch.id)).agents = setup

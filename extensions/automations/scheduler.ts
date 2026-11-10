@@ -7,7 +7,7 @@ import {
 import type { ConversationId, Cursor, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { SubagentsApi } from '../subagents/api.ts'
-import { discoverAgents, hostDefaultModel } from '../../lib/agents.ts'
+import { discoverAgents, hostDefault } from '../../lib/agents.ts'
 import { nextAt } from './schedule.ts'
 import type { Automation } from './types.ts'
 import { hasRunningRun, runStep, setEnabled, setScript } from './state.ts'
@@ -57,8 +57,9 @@ export function scheduler(
           const a = task.input.automation
           if (!host.extensions().some((e) => e.name === 'subagents' && e.enabled))
             throw new Error('automations needs the subagents extension enabled')
-          // The root's agent for its tools, on the default model: the root's stored model may have lost its login.
-          const parent = { ...(await runtime.agent(context)), model: await hostDefaultModel(host) }
+          // The root's agent for its tools, on the default model and thinking level: the root's stored model may have
+          // lost its login.
+          const parent = { ...(await runtime.agent(context)), ...(await hostDefault(host)) }
           const profile = a.agent ? await definition(host, a.agent) : undefined
           await runtime.commit(async (tx) => {
             const child = await host.need(SubagentsApi).createChild(tx, {

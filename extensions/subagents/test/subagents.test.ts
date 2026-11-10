@@ -1526,10 +1526,9 @@ describe('subagents', () => {
             (message) =>
               message.role === 'system' && Object.hasOwn(message.sections ?? {}, 'subagent_state'),
           ),
-      ).toMatchObject({
-        sections: { subagent_state: '<subagent_state>\nNo subagents running.\n</subagent_state>' },
-      })
-      // A section appearing mid-conversation reordered the prompt, which re-added every section after removing them.
+      ).toMatchObject({ sections: { subagent_state: null } })
+      // A section appearing mid-conversation reordered the prompt, which re-added every section after removing them
+      // (fixed by the pi-durable planSections patch).
       expect(
         f.requests
           .at(-1)

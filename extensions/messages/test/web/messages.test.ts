@@ -10,6 +10,7 @@ import {
   counterparts,
   stateWord,
   messageStatus,
+  offscreen,
   openMessages,
   outgoingState,
   scriptMessaged,
@@ -33,6 +34,21 @@ const response = (id: number, calls: string[]) =>
       },
     ],
   }) as unknown as EntryRecord
+
+describe('offscreen', () => {
+  it('points each way at the nearest question out of view, counting those that way, never at those in view', () => {
+    expect(
+      offscreen([
+        { key: 1, place: 'above' },
+        { key: 2, place: 'above' },
+        { key: 3, place: 'visible' },
+        { key: 4, place: 'below' },
+        { key: 5, place: 'below' },
+      ]),
+    ).toEqual({ up: { count: 2, nearest: 2 }, down: { count: 2, nearest: 4 } })
+    expect(offscreen([{ key: 1, place: 'visible' }])).toEqual({ up: undefined, down: undefined })
+  })
+})
 
 describe('callerOf', () => {
   const entries = [response(1, ['a']), response(2, ['b', 'c'])]
@@ -372,7 +388,18 @@ describe('conversation state', () => {
   it('is paused while a pause parks its run, else working while work of it is under way', () => {
     expect(conversationState({ ...primary, activity: 'paused' }, toUser)).toBe('paused')
     for (const activity of ['working', 'queued'] as const)
-      expect(conversationState({ ...primary, activity }, toUser)).toBe('working')
+      expect(conversationState({ ...primary, activity }, messagesLog())).toBe('working')
+  })
+
+  it('waits on the user over working while any question to the user is open for the primary agent', () => {
+    // The bug: @ultimate's row and phone button said `working` and hid the questions branches had asked the user.
+    const asked = messagesLog({ from: 5, to: 'user' }, { from: 6, to: 'user' })
+    const state = conversationState({ ...primary, activity: 'working' }, asked)
+    expect(stateWord(state, waitingOnUser(asked))).toBe('2 waiting on you')
+    // A branch's question to @ultimate waits on it, not on the user.
+    expect(
+      conversationState({ ...primary, activity: 'working' }, messagesLog({ from: 5, to: 2 })),
+    ).toBe('working')
   })
 
   it('waits for the primary agent with an open question to the user', () => {
@@ -396,6 +423,14 @@ describe('conversation state', () => {
     expect(
       conversationState({ id: 3, kind: 'other', activity: 'idle', runState: 'answered' }, toUser),
     ).not.toBe('waits')
+  })
+
+  it('waits on the user over working while a branch has its own question open', () => {
+    // The bug: a branch whose worker ran showed `working` and hid the question it had asked the user.
+    const branch = { id: 2, kind: 'other' as const }
+    for (const activity of ['working', 'queued'] as const)
+      expect(conversationState({ ...branch, activity }, toUser)).toBe('waits')
+    expect(conversationState({ ...branch, activity: 'working' }, messagesLog())).toBe('working')
   })
 
   it('awaits the primary agent while its reply-expected message to it is open', () => {
