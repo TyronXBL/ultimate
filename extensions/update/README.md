@@ -21,8 +21,8 @@ While the clone is behind, the status line shows `↓ 5 new · update` (`↓ 5 n
 - what the range touches: extensions and web, server, lockfile, bin;
 - what each of those needs after an update:
   - extensions and web reload by themselves;
-  - server or a changed lockfile need a restart of every Ultimate running from the clone;
-  - a changed lockfile also needs `pnpm install`;
+  - server, a changed lockfile or a changed patch need a restart of every Ultimate running from the clone;
+  - a changed lockfile or patch also needs `pnpm install`;
   - bin needs a supervisor restart.
 
 **Update now** runs the update. After an update that needs a restart, the item reads `updated · restart`, and the popover offers **Restart now** (the core swap, as `core changed · restart` does). Every Ultimate on the clone shows it once packages were installed after it started, or once the clone's `HEAD` differs in `server/` or `shared/` from the commit it started from (a landing or another Ultimate's update), also when another one updated. While `pnpm-lock.yaml` differs from the installed packages, the item reads `install owed` and offers **Retry pnpm install**.
@@ -53,9 +53,23 @@ When the clone's only refusal is a diverged branch (commits of its own plus new 
 
 Where the clone is not the project (a project run from a separate Ultimate clone), nothing is offered: a branch lives in the project's repository and the lander lands into the project, so it cannot merge into the clone. That clone keeps the plain refusal; merge it by hand.
 
+## Before anything loads
+
+An extension reload, a web build or a restart must never read a checkout that git is still writing, or packages that `pnpm install` is still linking. The extension registers `host.onBeforeLoad` (`loadable` in `server.ts`), which the core awaits before each of the three:
+
+1. It waits until git's `index.lock` is gone (at most 60 s): a fast-forward holds it until every file is written.
+2. When `pnpm-lock.yaml` differs from the installed `node_modules/.pnpm/lock.yaml`, an install may be running (**Update now**, here or in another Ultimate, installs under the clone-wide lock): it waits up to 10 minutes for whoever holds that lock. A patch-only change counts: its hash sits in the lockfile's `patchedDependencies`.
+3. Then the reload, build or restart goes on.
+
+The state is read from disk, never from an event, so every Ultimate on the clone waits the same way, whoever moved it: the lander, **Update now**, another Ultimate or a pull by hand. Calls while one runs join it. When the wait runs out, extensions and the web bundle load as they are with one notice, and a restart is refused with the reason.
+
+It never installs. Upstream's `loadable` installs owed packages here, and at once after a landing; this fork left that out on purpose (3e61b579, decided again in #192186): the Ultimates that share the clone's `node_modules` keep running the packages they loaded until each restarts, and the supervisor installs before it boots a core.
+
+When **Update now**'s install fails, the item reads `install owed`. The failure is remembered: the item keeps offering **Retry pnpm install** even when pnpm wrote its installed lockfile before failing. Once a later install succeeds, a facet that still has a load error goes to the automatic restart (see Status line).
+
 ## After a landing
 
-The lander fast-forwards the host's checkout itself, so a landing that changes `pnpm-lock.yaml` or `patches/` (a patch's hash sits in the lockfile) leaves the old packages on disk. Nothing here installs after a landing: the supervisor installs before it boots any core (`docs/running.md`), so the automatic restart above, Restart now, the `restart` tool and crash recovery all start on the lockfile's packages. Until then the item reads `install owed`, read fresh on every poll, and offers **Retry pnpm install**, then **Restart now**. Previews never install.
+The lander fast-forwards the host's checkout itself, so a landing that changes `pnpm-lock.yaml` or `patches/` (a patch's hash sits in the lockfile) leaves the old packages on disk. Nothing here installs after a landing: the supervisor installs before it boots any core (`docs/running.md`), so the automatic restart above, Restart now, the `restart` tool and crash recovery all start on the lockfile's packages. Until then the item reads `install owed`, read fresh on every poll, and offers **Retry pnpm install**, then **Restart now**. The landing card says "Needs restart." (`needsRestart` in `lib/layers.ts`, the rule `layersOf` shares). Previews never install.
 
 ## Events
 

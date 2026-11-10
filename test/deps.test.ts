@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { extensionGraph, loosePins, problems, render } from '../scripts/deps.ts'
 import { removeTemp, temp } from './helpers.ts'
@@ -20,11 +19,6 @@ async function extensions(files: Record<string, string>) {
   return root
 }
 const core = "export const tier = 'core'\n"
-
-it('passes the built-in extensions and their pins', () => {
-  expect(problems(extensionGraph(resolve('extensions')))).toEqual([])
-  expect(loosePins(JSON.parse(readFileSync('package.json', 'utf8')))).toEqual([])
-})
 
 it('fails on an @earendil-works package without an exact version or commit', () => {
   const commit = 'a'.repeat(40)
@@ -57,6 +51,9 @@ export { Re } from '../reexported/api.ts'
 export default (host) => { host.need(BaseApi); host.want(OtherApi); return import('../lazy/server.ts') }
 `,
       'user/web/view.tsx': "import { Row } from '../../base/ui.tsx'\n",
+      // Its tests are not part of an extension: what they import is no dependency of it.
+      'user/test/user.test.ts': "import { Helper } from '../../tested/server.ts'\n",
+      'tested/server.ts': '',
       'typed/api.ts': '',
       'reexported/api.ts': '',
       'lazy/server.ts': '',
@@ -67,6 +64,7 @@ export default (host) => { host.need(BaseApi); host.want(OtherApi); return impor
     'lazy',
     'other',
     'reexported',
+    'tested',
     'typed',
     'user        → base(need) lazy other(want) reexported typed(type)',
   ])

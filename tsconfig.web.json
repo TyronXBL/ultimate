@@ -97,6 +97,7 @@
     "lib/standing.ts",
     "lib/todos.ts",
     "extensions/subagents/message-types.ts",
-    "test/web"
+    "test/web",
+    "extensions/*/test/web"
   ]
 }

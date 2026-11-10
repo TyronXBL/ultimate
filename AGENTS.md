@@ -97,12 +97,18 @@ see [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
   fields or untyped strings), one transition function as its only writer, one derivation every reader uses, and a
   table test over its transitions; other extensions change it through the owner's API.
 - Pin `@earendil-works/*` packages to exact versions; Pi Durable is experimental.
+- Tests live with what they test: one extension's in `extensions/<name>/test/` (browser-side ones in `test/web/`,
+  spawned-process ones in `test/e2e/` there), and the core's (`server/`, `shared/`, `lib/`, `web/`, scripts, lint) plus
+  those that exercise several extensions together in the top-level `test/`, which also keeps the shared helpers and
+  fixtures (`test/helpers.ts`). `pnpm test extensions/<name>/` runs one extension's fast tests, `pnpm test:e2e
+  extensions/<name>/` its e2e tests. An extension's `test/` folder is not part of the extension: saving a file there
+  reloads nothing, and its imports are free of the extension import rules and stay out of `pnpm deps`.
 - Checks: `pnpm check` (format, lint, types) and the tests covering your change must pass before a commit; the lander
   runs every suite. Run `pnpm fix` while you work: it formats with `vp fmt` (Vite+) first, so formatting never fails a
   check run. There is no prettier here: never run `pnpm exec prettier` or `npx prettier`, which downloads a prettier
-  with the wrong config. Keep `pnpm test` fast: no real-time waits, no spawned processes (those go to `test/e2e`), and
-  fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this outside `test/e2e`
-  (justified exceptions need a `fast-test-reason:` comment); poll with the real-deadline `until` from
+  with the wrong config. Keep `pnpm test` fast: no real-time waits, no spawned processes (those go to a `test/e2e` folder), and
+  fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this outside the `test/e2e`
+  folders (justified exceptions need a `fast-test-reason:` comment); poll with the real-deadline `until` from
   `test/helpers.ts`.
 - A scratch checkout of your own (a baseline, a throwaway experiment) gets `git worktree add` and its own
   `pnpm install --frozen-lockfile --offline` (seconds: packages hardlink from the store). Never symlink `node_modules`

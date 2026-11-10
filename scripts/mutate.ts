@@ -13,6 +13,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, normalize } from 'node:path'
 import { parseArgs } from 'node:util'
 import { Stryker } from '@stryker-mutator/core'
 
@@ -46,12 +47,17 @@ const allowlist = [
 const heavy =
   /fauxServer|prepareFauxServer|sourceCopy|trimmedSourceCopy|createServer|server\/harness\.ts|server\/extensions\.ts/
 
-/** The pure test files that import one of `files` directly. */
+/** The pure test files, in `test/` and each extension's `test/`, that import one of `files` directly. */
 const pureTests = (files: string[]) =>
-  lines(git(['ls-files', 'test'])).filter((test) => {
-    if (!/^test\/[^/]+\.test\.ts$/.test(test)) return false
+  lines(git(['ls-files', 'test', 'extensions'])).filter((test) => {
+    if (!/^(extensions\/[^/]+\/)?test\/[^/]+\.test\.ts$/.test(test)) return false
     const text = readFileSync(test, 'utf8')
-    return !heavy.test(text) && files.some((file) => text.includes(`'../${file}'`))
+    const imports = new Set(
+      [...text.matchAll(/'(\.\.?\/[^'\n]+)'/g)].map(([, specifier]) =>
+        normalize(join(dirname(test), specifier)),
+      ),
+    )
+    return !heavy.test(text) && files.some((file) => imports.has(file))
   })
 
 /**

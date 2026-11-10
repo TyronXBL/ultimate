@@ -7,8 +7,10 @@ import {
   definitionAgent,
   discoverAgents,
   hostDefaultModel,
+  onFamily,
   resolveSetup,
 } from '../../lib/agents.ts'
+import { readFamilies } from '../../lib/families-settings.ts'
 import { BranchSetup } from '../subagents/api.ts'
 import { LineageApi, Roots } from '../lineage/api.ts'
 import { actingAs } from '../../lib/acting-as.ts'
@@ -23,11 +25,12 @@ export const branchTool = (host: ExtensionHost) =>
     name: 'branch',
     deferred: true,
     description:
-      "Start a lineage branch. Its final answer wakes you once it stops with nothing under way; answers while its work is still under way arrive as notes. Give it a title: one short line naming the work (at most 60 characters), shown in the sidebar and the tally until its summary renames it; without one, the prompt's first 80 characters name it. `agents` gives this branch its own models, `{ coordinator: 'provider/id:thinking', worker: 'provider/id', … }`: its coordinator and every subagent under it run on them instead of their definitions'.",
+      "Start a lineage branch. Its final answer wakes you once it stops with nothing under way; answers while its work is still under way arrive as notes. Give it a title: one short line naming the work (at most 60 characters), shown in the sidebar and the tally until its summary renames it; without one, the prompt's first 80 characters name it. family names a model family the coordinator runs on instead of its own. `agents` gives this branch its own models, `{ coordinator: 'provider/id:thinking', worker: 'provider/id', … }`: its coordinator and every subagent under it run on them instead of their definitions', and its coordinator model wins over family.",
     parameters: obj({
       prompt: str({ minLength: 1 }),
       title: opt(str({ minLength: 1, maxLength: 60 })),
       root: opt(num()),
+      family: opt(str({ minLength: 1 })),
       isolated: opt(bool()),
       images: opt(imagesParameter),
       agents: opt(map(str())),
@@ -54,9 +57,19 @@ export const branchTool = (host: ExtensionHost) =>
           host.userHome,
           host.modelRuntime,
         )
-        const coordinator = definitions.find((definition) => definition.name === 'coordinator')
-        if (!coordinator) throw new Error('Missing coordinator definition')
-        // Checked before anything is created: a wrong name or a model without a login starts no branch.
+        const definition = definitions.find((candidate) => candidate.name === 'coordinator')
+        if (!definition) throw new Error('Missing coordinator definition')
+        // Both checked before anything is created: an unknown family, a wrong name or a model without a login starts
+        // no branch.
+        const coordinator =
+          input.family === undefined
+            ? definition
+            : onFamily(
+                definition,
+                input.family,
+                await readFamilies(host.userHome, host.projectRoot),
+                host.modelRuntime.getAvailableSnapshot(),
+              )
         const setup = input.agents && resolveSetup(input.agents, definitions, host.modelRuntime)
         const own = setup?.coordinator
         // The model and thinking level the definition pins when its provider has a login here, thinking clamped to

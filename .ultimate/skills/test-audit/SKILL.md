@@ -31,10 +31,14 @@ When:
 
 How:
 
-- `test/*.test.ts` is the fast suite (`pnpm test`): no real-time waits, no spawned processes, no raised timeouts
-  (lint: `ultimate/no-test-timeout`, `ultimate/no-real-wait-in-fast-tests`, `ultimate/no-local-test-polling`). Poll
-  with `until` from `test/helpers.ts`.
-- Processes, real servers, browsers and timing go in `test/e2e`.
+- A test lives with what it tests: one extension's in `extensions/<name>/test/` (browser code in `test/web/` there,
+  spawned processes in `test/e2e/` there); the core's (`server/`, `shared/`, `lib/`, `web/`, scripts, lint) and a flow
+  across several extensions, with none of them its subject, in the top-level `test/`, which keeps the shared helpers
+  and fixtures.
+- `test/*.test.ts` in either place is the fast suite (`pnpm test`; `pnpm test extensions/<name>/` for one extension):
+  no real-time waits, no spawned processes, no raised timeouts (lint: `ultimate/no-test-timeout`,
+  `ultimate/no-real-wait-in-fast-tests`, `ultimate/no-local-test-polling`). Poll with `until` from `test/helpers.ts`.
+- Processes, real servers, browsers and timing go in a `test/e2e` folder.
 - A full `fauxServer` costs seconds: reuse one per file where tests don't need fresh state, close it when done, and
   prefer a unit-level boundary when the contract allows it.
 - Fix or delete a flaky test; never skip it.

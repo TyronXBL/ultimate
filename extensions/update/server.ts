@@ -1,5 +1,7 @@
+import { existsSync } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { realpath } from 'node:fs/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { join } from 'node:path'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord'
@@ -102,6 +104,69 @@ export function restartOnStaleLoad(options: {
   }
 }
 
+/**
+ * Install the lockfile's packages when they differ from the installed ones, or when the last install failed (pnpm can
+ * write the installed lockfile and still fail after it); the install's last lines when it fails. A failure is
+ * remembered until an install succeeds. After a success, a facet that still has a load error (it loaded while an
+ * install had failed, or is held since the lockfile moved) goes to the stale-load listener: packages changed under
+ * this process, so it restarts.
+ */
+async function installNow(
+  host: ExtensionHost,
+): Promise<{ install: 'done' | 'failed' | 'skipped'; installError?: string }> {
+  const shared = state(host)
+  const root = host.ultimateRoot
+  if (!shared.failed && !(await installOwed(root))) return { install: 'skipped' }
+  const result = await installPackages(root, true)
+  shared.failed = result.install === 'failed'
+  if (shared.failed) return result
+  const broken = host.extensions().find((extension) => extension.server?.error)?.name
+  // Not awaited: its restart waits for this very install to settle.
+  if (broken) shared.recover?.(broken)
+  return result
+}
+
+/** How long a load waits for git to finish writing the checkout; a lock left by a crashed git must not block forever. */
+const CHECKOUT_WAIT = 60_000
+/** How long a load waits for another Ultimate's install on the clone: as long as an install may take. */
+const INSTALL_WAIT = 10 * 60_000
+
+/**
+ * Settle once the clone at `host.ultimateRoot` can be loaded from: git is done writing its checkout (a fast-forward
+ * holds `index.lock` until every file is written) and no Ultimate is installing packages into it (**Update now**, here
+ * or in another Ultimate, installs under the clone-wide lock). Read from disk, never from an event, so every Ultimate
+ * on the clone waits the same way whoever moved it: the lander, an update, another Ultimate, a pull by hand. Calls
+ * while one runs join it.
+ *
+ * Origin: on 2026-11-09 three landings changed a patch (c16450c, 983ad97, e609be7). Extensions hot-reloaded while
+ * `pnpm install` was still relinking the package and failed to load, which took the provider down with them.
+ *
+ * Upstream (1441b930) also installs owed packages here, and at once on `workspaces.landed`. This fork does not
+ * (decided in #192186, 2026-11-10): after 3e61b579 nothing installs into a running core after a landing. Several
+ * Ultimates share the clone's `node_modules`, a core keeps running the packages it loaded, its server facets are held
+ * once the lockfile moved (`drifted` in `server/extensions.ts`), and the supervisor installs before it boots the next
+ * core. Do not re-add the install or the reactor in a later merge.
+ */
+export function loadable(host: ExtensionHost): Promise<void> {
+  const shared = state(host)
+  const root = host.ultimateRoot
+  shared.settling ??= (async () => {
+    const index = await gitPath(gitIn(root), root, 'index.lock').catch(
+      // Not a git checkout: nothing moves its files under us.
+      () => undefined,
+    )
+    const deadline = Date.now() + CHECKOUT_WAIT
+    if (index) while (existsSync(index) && Date.now() < deadline) await sleep(50)
+    // Owed packages may be an install in progress: taking the clone-wide lock waits for whoever holds it.
+    if (!(await installOwed(root))) return
+    const free = await withLock(await lockOf(root), async () => true, INSTALL_WAIT)
+    if (!free) throw new Error('Another Ultimate is still installing packages into this clone')
+  })().finally(() => {
+    shared.settling = undefined
+  })
+  return shared.settling
+}
+
 /** A preview started by another Ultimate's `instance` tool: it shares the clone and must never touch it. */
 const preview = () => Boolean(process.env.ULTIMATE_INSTANCE_OWNER)
 
@@ -148,6 +213,9 @@ export default function update(host: ExtensionHost) {
     pending,
   })
   host.onLoadError(onLoadError)
+  shared.recover = onLoadError
+  // Every extension reload, web build and restart waits for the checkout and an install in progress.
+  host.onBeforeLoad(() => loadable(host))
   const tick = () => {
     // Paused: no fetch starts until Play; the next tick after it catches up.
     if (host.want(PauseApi)?.paused()) return
@@ -163,6 +231,8 @@ export default function update(host: ExtensionHost) {
     clearTimeout(start)
     clearInterval(timer)
     await shared.ticking
+    // Its failure was reported to whoever waited for it.
+    await shared.settling?.catch(() => {})
   })
   return defineExtension({ name: 'update' })
 }
@@ -171,6 +241,12 @@ type Shared = {
   ticking: Promise<void> | undefined
   checking: Promise<void> | undefined
   updating: Promise<UpdateResult> | undefined
+  /** The current `loadable` wait; calls while it runs join it. */
+  settling: Promise<void> | undefined
+  /** The last install here failed; until one succeeds. */
+  failed: boolean
+  /** The current facet's stale-load listener, set on each load. */
+  recover: ((name: string) => void) | undefined
   latest: UpdateState | undefined
   updated: (UpdateResult & { ok: true }) | undefined
 }
@@ -181,6 +257,9 @@ const state = (host: ExtensionHost) =>
     ticking: undefined,
     checking: undefined,
     updating: undefined,
+    settling: undefined,
+    failed: false,
+    recover: undefined,
     latest: undefined,
     updated: undefined,
   }))
@@ -262,7 +341,7 @@ async function refresh(host: ExtensionHost, check: boolean, force = false) {
     ...(diverged && !landingNow && (await isProject(host)) ? { merge: true as const } : {}),
     ...(error ? { error } : {}),
     ...(repo && remoteHead ? { compare: compareUrl(repo, head, remoteHead) } : {}),
-    install: await installOwed(root),
+    install: shared.failed || (await installOwed(root)),
     restart:
       (await installedSince(root, startedAt)) ||
       (await coreChangedSince(git, await boot(host).head)),
@@ -279,7 +358,7 @@ async function currentState(host: ExtensionHost) {
   const shared = state(host)
   if (preview()) return previewState(host.ultimateRoot)
   if (!shared.latest) await refresh(host, false)
-  shared.latest!.install = await installOwed(host.ultimateRoot)
+  shared.latest!.install = shared.failed || (await installOwed(host.ultimateRoot))
   return shared.latest!
 }
 
@@ -359,7 +438,7 @@ async function apply(
     moved.before === moved.after ? '' : await git('diff', '--name-only', moved.before, moved.after)
   const layers = layersOf(files.split('\n').filter(Boolean))
   // Owed while the lockfile differs from the installed one: a failed install is retried by the next update.
-  const { install, installError } = await installPackages(root)
+  const { install, installError } = await installNow(host)
   const result = {
     ok: true as const,
     from: moved.before.slice(0, 7),

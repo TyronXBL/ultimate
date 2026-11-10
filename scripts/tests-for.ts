@@ -3,8 +3,9 @@
  * `node scripts/tests-for.ts [files…]`, by default what this branch changed against main, committed or not.
  *
  * A test covers a file it imports, directly or through other files. Extensions are also loaded at runtime, which no
- * import shows, so a test that names an extension (its `extensions/<name>/` path, or `'<name>'` in quotes, as in a
- * `trimmedSourceCopy` list or a tool name) covers that extension's files too. A change every test depends on (server
+ * import shows, so an extension's own tests (`extensions/<name>/test/`) and a test that names it (its
+ * `extensions/<name>/` path, or `'<name>'` in quotes, as in a `trimmedSourceCopy` list or a tool name) cover that
+ * extension's files too. A change every test depends on (server
  * core, test helpers, configuration) or one covered by many tests is reported as broad: run the `ci` tool instead.
  */
 import { execFileSync } from 'node:child_process'
@@ -21,7 +22,10 @@ const files = git('ls-files', '--cached', '--others', '--exclude-standard').filt
     existsSync(file),
 )
 const known = new Set(files)
-const tests = files.filter((file) => /^test\/.*\.test\.tsx?$/.test(file))
+/** Core and integration tests in `test/`, each extension's own in `extensions/<name>/test/`. */
+const inTests = (file: string) => /^(test|extensions\/[^/]+\/test)\//.test(file)
+const isE2e = (file: string) => /^(test|extensions\/[^/]+\/test)\/e2e\//.test(file)
+const tests = files.filter((file) => inTests(file) && /\.test\.tsx?$/.test(file))
 const source = new Map(files.map((file) => [file, readFileSync(file, 'utf8')]))
 
 /** Who imports each file: the reverse of every relative `from '…'`, `import('…')` and `import '…'`. */
@@ -56,15 +60,19 @@ for (const file of changed) {
   for (const test of importingTests(file)) covering.add(test)
   const extension = /^(?:\.ultimate\/)?extensions\/([^/]+)\//.exec(file)?.[1]
   if (!extension) continue
-  // A test or a shared fixture (a `test/` file tests import) that names the extension loads it.
+  // The extension's own tests, and a test or a shared fixture (a test-folder file tests import) that names it, load it.
   const named = new RegExp(`extensions/${extension}/|['"\`]${extension}['"\`]`)
   for (const [path, text] of source)
-    if (path.startsWith('test/') && !hub(path) && named.test(text))
+    if (
+      inTests(path) &&
+      !hub(path) &&
+      (path.startsWith(`extensions/${extension}/test/`) || named.test(text))
+    )
       for (const test of importingTests(path)) covering.add(test)
 }
 
-const unit = [...covering].filter((file) => !file.startsWith('test/e2e/')).toSorted()
-const e2e = [...covering].filter((file) => file.startsWith('test/e2e/')).toSorted()
+const unit = [...covering].filter((file) => !isE2e(file)).toSorted()
+const e2e = [...covering].filter(isE2e).toSorted()
 /** Changes the graph cannot place: core, helpers, configuration and anything else outside the mapped folders. */
 const core = changed.filter(
   (file) =>

@@ -31,12 +31,14 @@ export async function assertInstalled(root: string) {
 
 /**
  * Install the lockfile's packages when they differ from the installed ones, from pnpm's store first and the registry
- * only when that fails; the install's last lines when it fails.
+ * only when that fails; the install's last lines when it fails. `always` installs even when they match: pnpm can
+ * write the installed lockfile and still fail after it.
  */
 export async function installPackages(
   root: string,
+  always = false,
 ): Promise<{ install: 'done' | 'failed' | 'skipped'; installError?: string }> {
-  if (!(await installOwed(root))) return { install: 'skipped' }
+  if (!always && !(await installOwed(root))) return { install: 'skipped' }
   const install = (offline: string[]) =>
     exec('pnpm', ['install', '--frozen-lockfile', ...offline], {
       cwd: root,
