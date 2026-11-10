@@ -63,7 +63,7 @@ An extension reload, a web build or a restart must never read a checkout that gi
 
 The state is read from disk, never from an event, so every Ultimate on the clone waits the same way, whoever moved it: the lander, **Update now**, another Ultimate or a pull by hand. Calls while one runs join it. When the wait runs out, extensions and the web bundle load as they are with one notice, and a restart is refused with the reason.
 
-It never installs. Upstream's `loadable` installs owed packages here, and at once after a landing; this fork left that out on purpose (3e61b579, decided again in #192186): the Ultimates that share the clone's `node_modules` keep running the packages they loaded until each restarts, and the supervisor installs before it boots a core.
+It never installs: the Ultimates that share the clone's `node_modules` keep running the packages they loaded until each restarts, and the supervisor installs before it boots a core.
 
 When **Update now**'s install fails, the item reads `install owed`. The failure is remembered: the item keeps offering **Retry pnpm install** even when pnpm wrote its installed lockfile before failing. Once a later install succeeds, a facet that still has a load error goes to the automatic restart (see Status line).
 

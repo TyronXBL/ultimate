@@ -1,10 +1,11 @@
-import { mkdir, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { beforeEach, expect, it } from 'vitest'
 import { git } from '../../../../lib/git.ts'
 import { fastForward, Refusal } from '../../../../lib/fast-forward.ts'
 import { cloneState, fetchIfDue, layersOf, withLock } from '../../clone.ts'
-import { gitIn } from '../../server.ts'
+import { gitIn, loadable } from '../../server.ts'
+import type { ExtensionHost } from '../../../../server/extensions.ts'
 import { installOwed } from '../../../../lib/packages.ts'
 import { temp } from '../../../../test/helpers.ts'
 
@@ -171,4 +172,28 @@ it('owes an install while the lockfile differs from the installed one', async ()
   await mkdir(join(clone, 'node_modules/.pnpm'), { recursive: true })
   await writeFile(join(clone, 'node_modules/.pnpm/lock.yaml'), 'lockfileVersion: 9\n')
   expect(await installOwed(clone)).toBe(false)
+})
+
+// 3e61b579, decided again in #192186: a load waits for git and for a running install but never installs itself; the
+// supervisor does, before it boots a core.
+it('holds a load while git writes the checkout, then lets it go on without installing owed packages', async () => {
+  const resources = new Map<string, unknown>()
+  const host = {
+    ultimateRoot: clone,
+    resource: (key: string, create: () => unknown) => {
+      if (!resources.has(key)) resources.set(key, create())
+      return resources.get(key)
+    },
+  } as unknown as ExtensionHost
+  const index = join(clone, '.git/index.lock')
+  await writeFile(index, '')
+  let settled = false
+  const ready = loadable(host).then(() => {
+    settled = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  expect(settled).toBe(false)
+  await rm(index)
+  await ready
+  expect(await installOwed(clone)).toBe(true)
 })

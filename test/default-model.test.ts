@@ -63,6 +63,13 @@ it('starts a branch on the configured default whose login is gone, never on the 
     model: { provider: 'anthropic', modelId: 'claude-fable-5' },
     thinkingLevel: 'xhigh',
   })
+  // The branch tool's `agents.coordinator` is an explicit model: it wins over `family`.
+  const sol = { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }
+  expect(
+    definitionAgent(onFamily(coordinator, 'lead', families, available), parent, runtime, {
+      model: sol,
+    }).model,
+  ).toEqual(sol)
   expect(() => onFamily(coordinator, 'huge', families, available)).toThrow(
     'Unknown family: huge. Families: default, review, fast, tiny, design, lead',
   )

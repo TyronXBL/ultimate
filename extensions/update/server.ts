@@ -104,24 +104,26 @@ export function restartOnStaleLoad(options: {
   }
 }
 
+/** Whether an install is due: the lockfile differs from the installed packages, or the last install here failed. */
+const installDue = async (host: ExtensionHost) =>
+  state(host).failed || (await installOwed(host.ultimateRoot))
+
 /**
- * Install the lockfile's packages when they differ from the installed ones, or when the last install failed (pnpm can
- * write the installed lockfile and still fail after it); the install's last lines when it fails. A failure is
- * remembered until an install succeeds. After a success, a facet that still has a load error (it loaded while an
- * install had failed, or is held since the lockfile moved) goes to the stale-load listener: packages changed under
- * this process, so it restarts.
+ * Install the lockfile's packages when an install is due (pnpm can write the installed lockfile and still fail after
+ * it); the install's last lines when it fails. A failure is remembered until an install succeeds. After a success, a
+ * facet that still has a load error (it loaded while an install had failed, or is held since the lockfile moved) goes
+ * to the stale-load listener: packages changed under this process, so it restarts.
  */
 async function installNow(
   host: ExtensionHost,
 ): Promise<{ install: 'done' | 'failed' | 'skipped'; installError?: string }> {
   const shared = state(host)
-  const root = host.ultimateRoot
-  if (!shared.failed && !(await installOwed(root))) return { install: 'skipped' }
-  const result = await installPackages(root, true)
+  if (!(await installDue(host))) return { install: 'skipped' }
+  const result = await installPackages(host.ultimateRoot, true)
   shared.failed = result.install === 'failed'
   if (shared.failed) return result
   const broken = host.extensions().find((extension) => extension.server?.error)?.name
-  // Not awaited: its restart waits for this very install to settle.
+  // Not awaited: its restart waits in `loadable` for the clone lock, which this install's update still holds.
   if (broken) shared.recover?.(broken)
   return result
 }
@@ -341,7 +343,7 @@ async function refresh(host: ExtensionHost, check: boolean, force = false) {
     ...(diverged && !landingNow && (await isProject(host)) ? { merge: true as const } : {}),
     ...(error ? { error } : {}),
     ...(repo && remoteHead ? { compare: compareUrl(repo, head, remoteHead) } : {}),
-    install: shared.failed || (await installOwed(root)),
+    install: await installDue(host),
     restart:
       (await installedSince(root, startedAt)) ||
       (await coreChangedSince(git, await boot(host).head)),
@@ -358,7 +360,7 @@ async function currentState(host: ExtensionHost) {
   const shared = state(host)
   if (preview()) return previewState(host.ultimateRoot)
   if (!shared.latest) await refresh(host, false)
-  shared.latest!.install = shared.failed || (await installOwed(host.ultimateRoot))
+  shared.latest!.install = await installDue(host)
   return shared.latest!
 }
 
