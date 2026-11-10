@@ -280,6 +280,16 @@ function Card({
       flush()
     }
   }, [])
+  // pagehide alone lost about a third of these sends (#194520): its listeners run in the order they were added, the
+  // card's after the resume snapshot (web/src/sdk/resume.ts), and Chromium dropped a request the leaving page started
+  // that late. beforeunload fires before the page starts to go away; pagehide still covers phones, where it may not.
+  // Listened for only while Undo shows, as MDN advises for beforeunload.
+  useEffect(() => {
+    if (phase !== 'undo') return undefined
+    const leave = () => flushPending(pending, true)
+    window.addEventListener('beforeunload', leave)
+    return () => window.removeEventListener('beforeunload', leave)
+  }, [phase])
 
   const focusField = (index: number) =>
     requestAnimationFrame(() =>
