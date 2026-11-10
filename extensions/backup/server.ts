@@ -195,7 +195,12 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
         limit === 'quota'
           ? await exhaust(
               tx,
-              { type: 'quota', model: failed, ...(reset ? { reset } : {}), error: short(message.errorMessage ?? '') },
+              {
+                type: 'quota',
+                model: failed,
+                ...(reset ? { reset } : {}),
+                error: short(message.errorMessage ?? ''),
+              },
               now,
             )
           : await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
@@ -431,15 +436,18 @@ export default function extension(host: Host) {
       const legacy = await tx.doc(State, id)
       const now = Date.now()
       const exhausted = await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
-      const order = backupOrder(legacyHolds(legacy, owner, agent.model) ? legacy : backupOf(owner), {
-        current: agent.model,
-        currentThinking: agent.thinkingLevel,
-        candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
-        // A summary reads the whole conversation: a model without room for it cannot write one either; nor can one out
-        // of quota.
-        skip: await skipper(host, tx, id, exhausted, now),
-        now,
-      })
+      const order = backupOrder(
+        legacyHolds(legacy, owner, agent.model) ? legacy : backupOf(owner),
+        {
+          current: agent.model,
+          currentThinking: agent.thinkingLevel,
+          candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
+          // A summary reads the whole conversation: a model without room for it cannot write one either; nor can one out
+          // of quota.
+          skip: await skipper(host, tx, id, exhausted, now),
+          now,
+        },
+      )
       return order.map(({ thinking, ...ref }) => {
         const level = clamped(host, ref, thinking)
         return level ? { ...ref, thinking: level } : ref

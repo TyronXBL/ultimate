@@ -88,7 +88,8 @@ export async function setModel(
   }
   const agent = await tx.doc(AgentDoc, id)
   // A wait runs on the primary already, so its end changes no model.
-  const primary = event.type === 'wait' ? event.record : event.type === 'return' ? backup : undefined
+  const primary =
+    event.type === 'wait' ? event.record : event.type === 'return' ? backup : undefined
   if (event.type === 'return' || event.type === 'wait') {
     if (!primary) return
     agent.model = { provider: primary.primary.provider, modelId: primary.primary.modelId }

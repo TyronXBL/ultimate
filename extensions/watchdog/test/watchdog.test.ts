@@ -566,11 +566,11 @@ async function incident() {
   vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 })
   const limited = { primary: true }
   const answered: { model: string; inputs: string[] }[] = []
-  const f = await fixture((transcript, _options, _state, model) => {
-    if (model.id === 'faux-2') return error(quota)
-    if (model.id === 'faux-1' && limited.primary) return error(rateLimit)
+  const f = await fixture((transcript, _options, _state, by) => {
+    if (by.id === 'faux-2') return error(quota)
+    if (by.id === 'faux-1' && limited.primary) return error(rateLimit)
     answered.push({
-      model: model.id,
+      model: by.id,
       inputs: transcript.messages.flatMap((message) =>
         message.role === 'user' && typeof message.content === 'string' ? [message.content] : [],
       ),
@@ -597,11 +597,12 @@ async function incident() {
   await until(async () => (await f.tasks()).length === 2)
   await f.sleeping()
   tick(5_000)
+  // Sleeping for the wait, not for the watchdog's first 5 seconds, which also wake into `retry`.
   const retrying = async () =>
     (await f.tasks()).filter(
       (task) =>
         task.state.status === 'sleeping' &&
-        (task.state.checkpoint as { phase: string }).phase === 'retry',
+        (task.state.checkpoint as { wait?: number }).wait !== undefined,
     )
   await until(async () => (await retrying()).length === 1)
   const wait = (await owner()) as ModelOwner & { by: 'limit-wait' }
@@ -651,11 +652,17 @@ it('waits on the primary when no backup can take a limit, and continues @ultimat
   // One continuation for the two failures, on the primary, with the report in its context.
   expect(answered[0].model).toBe('faux-1')
   expect(answered[0].inputs).toContain('a branch failed')
-  expect((await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:'))).toHaveLength(1)
+  expect(
+    (await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:')),
+  ).toHaveLength(1)
   expect(await owner()).toEqual({ by: 'default' })
   expect(
-    (await f.harness.commit((tx) => tx.scanTasks({ kind: CompactionTask.definition.name }, 10), context))
-      .items,
+    (
+      await f.harness.commit(
+        (tx) => tx.scanTasks({ kind: CompactionTask.definition.name }, 10),
+        context,
+      )
+    ).items,
   ).toEqual([])
   expect(await f.entries()).toEqual([])
   expect(f.notices).toEqual([])
@@ -673,7 +680,9 @@ it('keeps a wait across a restart: it neither fires at once nor is lost', async 
   expect(answered).toEqual([])
   tick(1)
   await until(async () => answered.length === 1)
-  expect((await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:'))).toHaveLength(1)
+  expect(
+    (await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:')),
+  ).toHaveLength(1)
 })
 
 it.each(['retry', 'report'] as const)(

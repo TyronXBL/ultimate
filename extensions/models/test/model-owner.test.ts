@@ -25,7 +25,7 @@ const record = {
   reason: 'rate limit',
 }
 const backup: ModelOwner = { by: 'backup', ...record, under: { by: 'default' } }
-const wait = {
+const limitRecord = {
   primary: { provider: 'faux', modelId: 'faux-1' },
   since: 20,
   until: 80,
@@ -33,7 +33,7 @@ const wait = {
   tried: ['faux/faux-1', 'faux/faux-2'],
   reason: 'quota',
 }
-const limitWait: ModelOwner = { by: 'limit-wait', ...wait, under: { by: 'user' } }
+const limitWait: ModelOwner = { by: 'limit-wait', ...limitRecord, under: { by: 'user' } }
 
 it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; asked?: string }>([
   { row: 'a pick is the user’s', from: { by: 'default' }, event: pick, after: { by: 'user' } },
@@ -151,13 +151,13 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
   {
     row: 'a wait for the primary after the last backup keeps the owner under the backup',
     from: { ...backup, under: { by: 'user' } },
-    event: { type: 'wait', record: wait },
+    event: { type: 'wait', record: limitRecord },
     after: limitWait,
   },
   {
     row: 'a longer wait keeps the first owner',
     from: limitWait,
-    event: { type: 'wait', record: { ...wait, until: 200, attempt: 2 } },
+    event: { type: 'wait', record: { ...limitRecord, until: 200, attempt: 2 } },
     after: { ...limitWait, until: 200, attempt: 2 },
   },
   {
@@ -174,7 +174,7 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
   },
   {
     row: 'a pick during a wait is the user’s, and nothing restores the wait',
-    from: { ...limitWait, under: { by: 'default' } },
+    from: { by: 'limit-wait', ...limitRecord, under: { by: 'default' } },
     event: pick,
     after: { by: 'user' },
   },

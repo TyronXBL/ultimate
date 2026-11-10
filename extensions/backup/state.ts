@@ -43,7 +43,7 @@ export const COOLDOWN_MINUTES = 30
 const COOLDOWN = COOLDOWN_MINUTES * 60_000
 const MINUTE = 60_000
 /** The longest a conversation waits for its primary; a limit that resets later fails as before. */
-export const WAIT_LIMIT = 24 * 60 * MINUTE
+const WAIT_LIMIT = 24 * 60 * MINUTE
 
 /**
  * The minutes before the primary is tried again, at the `attempt`th wait in a row: 1, 2, 4, 8, 16, then every 30.
@@ -68,7 +68,7 @@ export function waitUntil(now: number, attempt: number, jitter: number, reset?: 
 export const jitterOf = (id: number) => ((id * 2654435761) % 2 ** 32) / 2 ** 32
 
 /** How long a quota whose provider gave no reset time (a 402 out of credit) counts as exhausted. */
-export const EXHAUSTED_FOR = 60 * MINUTE
+const EXHAUSTED_FOR = 60 * MINUTE
 
 /**
  * `backup.exhausted`, on the root: the models (`provider/modelId`) this machine saw answer with an exhausted quota, and
