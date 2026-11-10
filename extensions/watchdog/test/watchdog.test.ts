@@ -562,7 +562,10 @@ it('continues on a backup model after a quota limit, and reports nothing', async
  * with an exhausted quota, and the last backup has a window smaller than the conversation. @ultimate fails itself, so
  * nothing would resume it. Brought to the point where it waits on its primary, past its watchdog's 5 seconds.
  */
-async function incident(fallback = ['faux/faux-2', 'faux/faux-3']) {
+async function incident(
+  fallback = ['faux/faux-2', 'faux/faux-3'],
+  who: 'ultimate' | 'branch' = 'ultimate',
+) {
   vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 })
   const limited = { primary: true }
   const answered: { model: string; inputs: string[] }[] = []
@@ -584,7 +587,7 @@ async function incident(fallback = ['faux/faux-2', 'faux/faux-3']) {
     vi.setSystemTime(Date.now() + ms)
     f.advance(ms)
   }
-  const id = f.ultimate
+  const id = who === 'ultimate' ? f.ultimate : await f.conversation('Branch')
   await f.harness.commit(async (tx) => {
     ;(await tx.doc(ContextUsageDoc, id)).tokens = 200_000
   }, context)
@@ -683,6 +686,31 @@ it('waits on the primary when no backup can take a limit, and continues @ultimat
   ).toEqual([])
   expect(await f.entries()).toEqual([])
   expect(f.notices).toEqual([])
+})
+
+// Review of #195155: a branch's answer reaches its starter only as the answer to an input, so each try asks again.
+it('asks a branch to continue at each try of its wait', async () => {
+  const { f, tick, limited, answered, owner, wait, inputs, retrying } = await incident(
+    undefined,
+    'branch',
+  )
+  tick(wait.until - Date.now())
+  await until(async () => {
+    const now = await owner()
+    return now?.by === 'limit-wait' && now.until > wait.until
+  })
+  const second = (await owner()) as ModelOwner & { by: 'limit-wait' }
+  await until(async () => (await f.tasks()).length === 3)
+  await f.sleeping()
+  tick(5_000)
+  await until(async () =>
+    (await retrying()).some((task) => (task.state as { until: number }).until === second.until),
+  )
+  limited.primary = false
+  tick(second.until - Date.now())
+  await until(async () => answered.length === 1)
+  const tries = (await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:'))
+  expect(tries.map((input) => input.type)).toEqual(['input', 'input'])
 })
 
 // Review of #195155: with one backup, the watchdog saw no other backup to continue on and reported a wait as a failure.

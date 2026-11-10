@@ -160,8 +160,8 @@ type Answered = { type: 'answered'; model: string }
  * at all, a reset past `WAIT_LIMIT`, no record, or a backup kept for the cooldown or until the primary has a login);
  * `earlier` is a limit of a model already switched away from; `held` a limit of the primary during its wait, which
  * changes nothing; `switched` runs on `to` at `level`; `returned` puts `primary` back; `waiting` waits for the primary
- * as the new state says, every backup `skipped` and why; `gave-up` ends a wait that would outlast `WAIT_LIMIT`; `resumed` ends a wait
- * the primary answered.
+ * as the new state says, every backup `skipped` and why; `gave-up` ends a wait that would outlast `WAIT_LIMIT`;
+ * `resumed` ends a wait the primary answered.
  */
 export type BackupOutcome =
   | { kind: 'none' | 'earlier' | 'held' | 'gave-up' | 'resumed' }

@@ -314,6 +314,7 @@ export default function keepWarm(host: ExtensionHost) {
   // Resolved where they are called; declared here so the catalogue lists them.
   host.need(ConversationsApi)
   host.want(PauseApi)
+  host.want(ModelsApi)
   // The user's latest input to @ultimate: typed, or an answer to its question.
   host.react(
     'user-input',
