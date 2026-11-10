@@ -191,6 +191,6 @@ it('keeps a model whose login check is pending or failed, and never trades a sub
   expect(await f.server.harness.snapshot(Owner, dice, context)).toEqual({
     by: 'login-wait',
     from: 'openai-codex/gpt-6.1-luna',
-    under: { by: 'default' },
+    under: { by: 'default', family: 'default' },
   })
 })

@@ -11,7 +11,8 @@ const state = vi.hoisted(() => ({
   entries: [] as EntryRecord[],
 }))
 // The real client and hooks connect to a server; the line needs only the loaded transcript and the installed facets.
-vi.mock('../../../../web/src/sdk/client.ts', () => ({}))
+// `setThemeMode` is read when the SDK's actions module loads (this fork's theme picker).
+vi.mock('../../../../web/src/sdk/client.ts', () => ({ setThemeMode: () => {} }))
 vi.mock('../../../../web/src/sdk/resume.ts', () => ({ resumed: false, covered: () => false }))
 vi.mock('../../../../web/src/sdk/hooks.ts', async (original) => ({
   ...(await original<typeof import('../../../../web/src/sdk/hooks.ts')>()),
