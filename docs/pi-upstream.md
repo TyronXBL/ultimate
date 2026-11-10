@@ -86,6 +86,9 @@ The upgrade branch checks, and records the results here:
      is an account risk;
    - whether a threaded turn and an unthreaded request (a keep-warm ping, a full resend) share one prompt cache,
      since their beta lists differ: the ping's `cacheRead` must cover @ultimate's prefix;
+   - whether a threaded turn keeps the one-hour cache keep-warm gives @ultimate (`hourCache` in
+     `extensions/keep-warm/server.ts` sets `ttl: "1h"` on the breakpoints of the body pi-ai built): its usage must
+     still show `cacheWrite1h`;
    - what the first request after a gap of over 5 minutes costs: the thread has expired, the continue is rejected
      (`thread_not_found`) and Pi resends in full.
 
