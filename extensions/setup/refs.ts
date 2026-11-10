@@ -18,4 +18,4 @@ export type SetupIssue = {
 }
 
 /** No arguments → every area of this machine's setup, warnings first. */
-export const CheckAction = actionRef<null, SetupIssue[]>('setup', 'check')
+export const CheckAction = actionRef<null, SetupIssue[]>('setup', 'check', { global: true })

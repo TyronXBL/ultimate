@@ -68,7 +68,7 @@ export type UpdateResult =
   | { ok: false; refused: string }
 
 /** No arguments → the clone's update state, from the last fetch (fetched hourly in the background). */
-export const StateAction = actionRef<null, UpdateState>('update', 'state')
+export const StateAction = actionRef<null, UpdateState>('update', 'state', { global: true })
 /** No arguments → fetch origin now (bypassing the hourly gate, under the clone's lock), then the refreshed state. */
 export const CheckAction = actionRef<null, UpdateState>('update', 'check')
 /**

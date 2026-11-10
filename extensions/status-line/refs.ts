@@ -10,7 +10,9 @@ export type Tokens = { input: number; output: number; cacheRead: number; cacheWr
 export type RateSample = { rates: Tokens; elapsed: number; totals: Tokens & { cost: number } }
 
 /** No arguments → the latest rate sample, or null until two samples within 5 seconds of each other exist. */
-export const RatesAction = actionRef<null, RateSample | null>('status-line', 'rates')
+export const RatesAction = actionRef<null, RateSample | null>('status-line', 'rates', {
+  global: true,
+})
 
 /** What one model used, with its cost in dollars at the model's API price (0 when it has none). */
 export type Spend = Tokens & { cost: number }

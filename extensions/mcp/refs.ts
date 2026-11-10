@@ -18,6 +18,6 @@ export type McpServerStatus = {
 }
 
 /** No arguments → every configured server's state, in settings order. */
-export const StatusAction = actionRef<null, McpServerStatus[]>('mcp', 'status')
+export const StatusAction = actionRef<null, McpServerStatus[]>('mcp', 'status', { global: true })
 /** `{ name }` → connects that server again now, and returns every server's state once it is connected or failed. */
 export const ReconnectAction = actionRef<{ name: string }, McpServerStatus[]>('mcp', 'reconnect')

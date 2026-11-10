@@ -116,7 +116,9 @@ export const StandingDoc = docRef<Record<string, number>>('ultimate.standing-age
 /** `{ name }` → the conversation id of standing agent `name`, created or refreshed from its definition. */
 export const StandingAction = actionRef<{ name: string }, number>('subagents', 'standing')
 /** No arguments → every definition, the files that failed to parse, and the main agent's model and tools. */
-export const DefinitionsAction = actionRef<null, Discovery>('subagents', 'definitions')
+export const DefinitionsAction = actionRef<null, Discovery>('subagents', 'definitions', {
+  global: true,
+})
 /** `{ name }` → the definition that applies to `name`, its source and path, the raw file, and the scopes with one. */
 export const DefinitionAction = actionRef<{ name: string }, Shown>('subagents', 'definition')
 /**

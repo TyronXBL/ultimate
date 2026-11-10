@@ -86,7 +86,7 @@ export const ChaptersAction = actionRef<
     newest: string
     chapters: { name: string; number: number; createdAt?: number }[]
   }
->('dream', 'chapters')
+>('dream', 'chapters', { global: true })
 /** `{ chapter }`: restart into an existing, idle chapter. User-only; a returned error means restart failed. */
 export const SwitchAction = actionRef<{ chapter: string }, never>('dream', 'switch')
 

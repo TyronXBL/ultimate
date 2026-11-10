@@ -38,4 +38,6 @@ export type QuotaState = { providers: QuotaProvider[] }
  * `{ fresh? }` → the subscription logins on this machine with their limits. Numbers older than a few minutes (one
  * after a response from that provider) are read again first; `fresh` reads anything older than 30 seconds.
  */
-export const StateAction = actionRef<{ fresh?: boolean }, QuotaState>('quota', 'state')
+export const StateAction = actionRef<{ fresh?: boolean }, QuotaState>('quota', 'state', {
+  global: true,
+})

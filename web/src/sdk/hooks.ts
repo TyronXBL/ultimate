@@ -512,9 +512,11 @@ export function useAction<Args, T>(
   ...[args, options = {}]: ActionArgs<Args, UseActionOptions>
 ): ActionState<T> {
   // The conversation the call acts on, scoped or shown, keys the read: answers of another conversation never serve it.
+  // A global ref's answer is the same everywhere: one read serves every conversation. #199487: keyed per conversation,
+  // each switch asked again (about 16 actions, 0.33 s of server CPU); this can go if upstream adds its own opt-out.
   const scoped = useContext(ConversationIdContext)
-  const shown = useStore((state) => shownConversation(state) ?? ROOT)
-  const read = reads.get(ref.extension, ref.name, args, scoped ?? shown)
+  const shown = useStore((state) => (ref.global ? undefined : (shownConversation(state) ?? ROOT)))
+  const read = reads.get(ref.extension, ref.name, args, ref.global ? undefined : (scoped ?? shown))
   const state = useSyncExternalStore(read.subscribe, read.get)
   const enabled = options.enabled !== false
   const reader = useRef<Reader>({}).current

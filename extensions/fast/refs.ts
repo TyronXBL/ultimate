@@ -5,7 +5,7 @@ import { actionRef } from '../../shared/extension-api.ts'
 export type FastStatus = { models: string[]; project: boolean }
 
 /** No arguments → the fast models and whether the project's settings decide them. */
-export const StatusAction = actionRef<null, FastStatus>('fast', 'status')
+export const StatusAction = actionRef<null, FastStatus>('fast', 'status', { global: true })
 /**
  * `{ model, on }` → the new status: add `model` to the user's `fastModels` or remove it. Refuses while the project's
  * settings decide the list.
