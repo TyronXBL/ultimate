@@ -43,7 +43,10 @@ export type ActionRef<Args, Result> = {
 
 /** `actionRef<{ id: number }, WorkspaceInfo | null>('workspaces', 'info')`; actions without arguments take `null`. */
 export function actionRef<Args, Result>(extension: string, name: string): ActionRef<Args, Result>
-/** `{ global: true }`: its answer is the same in every conversation, so one `useAction` read serves them all and its handler cannot read the conversation. */
+/**
+ * `{ global: true }`: its answer is the same in every conversation, so one `useAction` read serves them all and its
+ * handler cannot read the conversation.
+ */
 export function actionRef<Args, Result>(
   extension: string,
   name: string,

@@ -419,6 +419,7 @@ it('never shares an unscoped useAction request across a switch of the shown conv
     .map(([, init]) => JSON.parse(init!.body as string).conversationId)
   expect(bodies).toEqual([1, 5])
 })
+
 function GlobalAction() {
   useAction(actionRef<null, unknown>('test', 'global', { global: true }))
   return null
