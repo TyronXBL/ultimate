@@ -57,6 +57,7 @@ function Switched({ entry }: { entry: EntryRecord }) {
 function Waiting({ entry }: { entry: EntryRecord }) {
   const data = (entry.data ?? {}) as Partial<BackupWait>
   const owner = useDocOf(entry.conversationId, ModelOwnerDoc)
+  // As `limitWaitIn` (models/owner.ts), which the browser build does not include.
   const found = owner?.by === 'login-wait' ? owner.under : owner
   const wait = found?.by === 'limit-wait' && found.since === data.since ? found : undefined
   const now = useNow(1000, !!wait)
@@ -72,10 +73,9 @@ function Waiting({ entry }: { entry: EntryRecord }) {
       </header>
       <div className="space-y-2 px-3 py-3 text-[13px] leading-relaxed">
         <p className="text-muted-foreground">
-          {from === primary ? primary : from} answered with a {reason} error and no backup model
-          could take it, so this conversation is back on{' '}
-          <span className="text-foreground">{primary}</span> and continues by itself once the wait
-          is over.
+          {from} answered with a {reason} error and no backup model could take it, so this
+          conversation is back on <span className="text-foreground">{primary}</span> and continues
+          by itself once the wait is over.
         </p>
         {skipped.length > 0 && (
           <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
@@ -96,7 +96,8 @@ function Waiting({ entry }: { entry: EntryRecord }) {
       <footer className="flex items-center justify-between gap-2 border-t border-border/60 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
         {wait ? (
           <span className="text-warning">
-            next try {clock(wait.until)} · in {formatDuration(Math.max(0, wait.until - now))}
+            next try {clock(wait.until)}
+            {wait.until > now && ` · in ${formatDuration(wait.until - now)}`}
             {wait.attempt > 1 && ` · try ${wait.attempt}`}
           </span>
         ) : (

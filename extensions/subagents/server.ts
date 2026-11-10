@@ -981,8 +981,13 @@ export default function subagents(
         )
         if (sibling?.status === 'done' && sibling.answer === submission.answer) messaged = false
       }
-      // Watchdog continuations also answer failed one-way messages, which have no reporter action.
-      if (!messaged && !submission.requestId?.startsWith('watchdog-retry:')) {
+      // Watchdog continuations, also those after a wait for the primary, answer failed one-way messages, which have no
+      // reporter action.
+      if (
+        !messaged &&
+        !submission.requestId?.startsWith('watchdog-retry:') &&
+        !submission.requestId?.startsWith('watchdog-wait:')
+      ) {
         const action = childActions.at(-1)
         const interrupted = action?.status === 'interrupted'
         if (
@@ -1473,9 +1478,12 @@ export default function subagents(
                 )
                 cursor = page.next
               } while (cursor)
+              // A continuation after a wait for the primary is keyed by the wait (extensions/watchdog), not the task.
+              const wait = await host.need(ModelsApi).limitWait(tx, id)
               return tasks.map((task) => ({
                 task: task.id,
                 request: `watchdog-retry:${(task.input as { failedTask: number }).failedTask}`,
+                ...(wait ? { wait: `watchdog-wait:${id}:${wait.since}:${wait.attempt}` } : {}),
               }))
             }, context)
             const target = await api.memo(
@@ -1503,7 +1511,9 @@ export default function subagents(
               return Promise.all(
                 [
                   ...target.reporters.map((reporter) => `subagent:${reporter}`),
-                  ...target.watchdogs.map((task) => task.request),
+                  ...target.watchdogs.flatMap((task) =>
+                    task.wait ? [task.request, task.wait] : [task.request],
+                  ),
                 ].map((request) => tx.submissionByRequest(id, request)),
               )
             }, context)

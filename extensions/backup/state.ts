@@ -160,7 +160,7 @@ type Answered = { type: 'answered'; model: string }
  * at all, a reset past `WAIT_LIMIT`, no record, or a backup kept for the cooldown or until the primary has a login);
  * `earlier` is a limit of a model already switched away from; `held` a limit of the primary during its wait, which
  * changes nothing; `switched` runs on `to` at `level`; `returned` puts `primary` back; `waiting` waits for the primary
- * until `until`, every backup `skipped`; `gave-up` ends a wait that would outlast `WAIT_LIMIT`; `resumed` ends a wait
+ * as the new state says, every backup `skipped` and why; `gave-up` ends a wait that would outlast `WAIT_LIMIT`; `resumed` ends a wait
  * the primary answered.
  */
 export type BackupOutcome =
@@ -173,16 +173,7 @@ export type BackupOutcome =
       from: string
       to: string
     }
-  | {
-      kind: 'waiting'
-      from: string
-      primary: ModelRef
-      reason: string
-      since: number
-      until: number
-      attempt: number
-      skipped: Skipped[]
-    }
+  | { kind: 'waiting'; from: string; skipped: Skipped[] }
 
 /**
  * The models a conversation on `current` would move to, in order, were it and each model after it to answer with a
@@ -314,15 +305,6 @@ export function backupStep(
       reason: event.reason,
       ...(thinking ? { thinking } : {}),
     },
-    outcome: {
-      kind: 'waiting',
-      from: failed,
-      primary,
-      reason: event.reason,
-      since,
-      until,
-      attempt,
-      skipped,
-    },
+    outcome: { kind: 'waiting', from: failed, skipped },
   }
 }

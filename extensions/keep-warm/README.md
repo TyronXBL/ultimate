@@ -12,7 +12,7 @@ Claude Code caches @ultimate's prompt for an hour after each request (`ttl: "1h"
 - Right before sending, after the context is prepared, it checks again: not paused, still on, @ultimate's `LiveDoc` has no run, and the cache is still within its hour. It then records the attempt as `interrupted` and sends; the outcome and its usage are committed together. A crash mid-request therefore counts as a failure.
 - The ping replays @ultimate's committed context as its next request would send it (the `You are conversation #N.` identity first, as `conversations` adds it), plus one user line asking for `ok`. The provider reads the prefix up to @ultimate's last input from the cache; that renews it, and @ultimate's next real request reads it again.
 - It sends no `sessionId`, so pi-claude-code runs it in a one-shot Claude Code process and @ultimate's own warm process is untouched. Nothing is written to any transcript; the response's usage is added to @ultimate's usage (`accountResponse`), so the status line's spend includes the pings.
-- Skips while Ultimate is paused (`PauseApi`, which a rate limit also sets). A failed ping is recorded and blocks further pings until @ultimate's next request, so an outage or a limit is never retried in a loop.
+- Skips while Ultimate is paused (`PauseApi`, which a rate limit also sets), and while @ultimate waits on its primary after a limit no backup model could take (`ModelsApi.limitWait`, extensions/backup). A failed ping is recorded and blocks further pings until @ultimate's next request, so an outage or a limit is never retried in a loop.
 - Not warmed: a system-prompt change (new instructions, sections, tools) still rewrites the cache on the next request. Pings only help idle gaps.
 
 ## State and actions

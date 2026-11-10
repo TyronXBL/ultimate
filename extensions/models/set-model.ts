@@ -87,7 +87,7 @@ export async function setModel(
     return
   }
   const agent = await tx.doc(AgentDoc, id)
-  // A wait runs on the primary already, so its end changes no model.
+  // A wait puts the primary back when it starts, so its end (a return with no backup) changes no model.
   const primary =
     event.type === 'wait' ? event.record : event.type === 'return' ? backup : undefined
   if (event.type === 'return' || event.type === 'wait') {

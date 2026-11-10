@@ -562,7 +562,7 @@ it('continues on a backup model after a quota limit, and reports nothing', async
  * with an exhausted quota, and the last backup has a window smaller than the conversation. @ultimate fails itself, so
  * nothing would resume it. Brought to the point where it waits on its primary, past its watchdog's 5 seconds.
  */
-async function incident() {
+async function incident(fallback = ['faux/faux-2', 'faux/faux-3']) {
   vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 })
   const limited = { primary: true }
   const answered: { model: string; inputs: string[] }[] = []
@@ -577,7 +577,7 @@ async function incident() {
     })
     return fauxAssistantMessage('recovered')
   }, false)
-  f.backup(['faux/faux-2', 'faux/faux-3'])
+  f.backup(fallback)
   await f.install()
   // Watchdog sleeps on the harness clock, backup times its wait with Date: one clock for both.
   const tick = (ms: number) => {
@@ -683,6 +683,21 @@ it('waits on the primary when no backup can take a limit, and continues @ultimat
   ).toEqual([])
   expect(await f.entries()).toEqual([])
   expect(f.notices).toEqual([])
+})
+
+// Review of #195155: with one backup, the watchdog saw no other backup to continue on and reported a wait as a failure.
+it('continues a wait when its only backup is limited too', async () => {
+  const { f, tick, limited, answered, owner, wait } = await incident(['faux/faux-2'])
+  expect(wait).toMatchObject({
+    by: 'limit-wait',
+    attempt: 1,
+    tried: ['faux/faux-1', 'faux/faux-2'],
+  })
+  limited.primary = false
+  tick(wait.until - Date.now())
+  await until(async () => answered.length === 1)
+  expect(await owner()).toEqual({ by: 'default' })
+  expect(await f.entries()).toEqual([])
 })
 
 it('keeps a wait across a restart: it neither fires at once nor is lost', async () => {

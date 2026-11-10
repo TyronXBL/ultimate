@@ -375,9 +375,8 @@ export default function watchdog(host: ExtensionHost) {
         refused &&
         limited(error) &&
         !temporary &&
-        (await host.want(Pin)?.definition(tx, child.id))?.fallback?.some(
-          (entry) => `${entry.provider}/${entry.modelId}` !== refused,
-        )
+        // Any backup list will do: one whose only backup refused too puts the conversation in a wait on its primary.
+        !!(await host.want(Pin)?.definition(tx, child.id))?.fallback?.length
           ? { model: refused }
           : undefined
       await tx.createTask(

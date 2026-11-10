@@ -9,8 +9,9 @@ import { defineApi } from '../../shared/extension-api.ts'
 export type BackupService = {
   /**
    * Move conversation `id` off the model that answered `message` with a rate limit, capacity or quota error into the
-   * next backup model of its agent definition. Once per failed entry, so a failure reported twice leaves one switch;
-   * true when the conversation runs on a backup because of that failure, now or by an earlier switch.
+   * next backup model of its agent definition, or, when none can take it, back to its primary to wait. Once per failed
+   * entry, so a failure reported twice leaves one switch; true when that failure is taken care of: the conversation
+   * runs on a backup or waits on its primary because of it, now or by an earlier switch, so nothing need pause.
    */
   fallBack(id: ConversationId, message: AssistantMessage, entry: EntryId): Promise<boolean>
 }

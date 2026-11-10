@@ -102,8 +102,9 @@ async function backupFor(host: Host, tx: Tx, id: ConversationId) {
 
 /**
  * Tokens a backup's window keeps free beyond the conversation: a model with less room would start a blocking compaction
- * at once (Pi compacts above `contextWindow - reserveTokens`; Ultimate reserves up to 32k, server/harness.ts), whose
- * summary needs a model the limit may have left none of (#189897, #191380).
+ * at once (Pi compacts above `contextWindow - reserveTokens`), whose summary needs a model the limit may have left none
+ * of (#189897, #191380). Deliberately the largest reserve server/harness.ts gives any window (32k from 500k up; Pi's
+ * 16k below), so a backup that fits also has room for the answer this run owes.
  */
 const RESERVE = 32_768
 
@@ -161,6 +162,11 @@ function serial<T>(host: Pick<ExtensionHost, 'resource'>, work: () => Promise<T>
   return next
 }
 
+/** How long a switch waits for the provider's reset time before it decides without it. */
+const RESET_WAIT = 1_500
+const delay = (ms: number) =>
+  new Promise<undefined>((done) => setTimeout(done, ms, undefined).unref())
+
 type Switched = Pick<BackupSwitch, 'from' | 'to' | 'reason'>
 type Waiting = { from: string; primary: string; reason: string; since: number; until: number }
 
@@ -173,15 +179,32 @@ type Waiting = { from: string; primary: string; reason: string; since: number; u
 async function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
   const failed = `${message.provider}/${message.model}`
   const limit = limitOf(message.errorMessage ?? '') ?? 'rate limit'
-  // An exhausted quota resets when its provider says. Read before the commit, as it asks the provider; failing to read
-  // it leaves the default.
-  const reset =
+  // An exhausted quota resets when its provider says. The reading asks the provider (up to 15 s), and the watchdog reads
+  // this switch or wait 5 s after the failure: the commit waits for it only briefly, and a later reading only corrects
+  // the exhausted model's time, which no watchdog reads.
+  const reading =
     limit === 'quota'
-      ? await host
+      ? host
           .want(Resets)
           ?.resetsAt(message.provider)
           .catch(() => undefined)
       : undefined
+  const reset = reading && (await Promise.race([reading, delay(RESET_WAIT)]))
+  if (reading && reset === undefined)
+    reading
+      .then(async (late) => {
+        if (late === undefined) return
+        await serial(host, () =>
+          host.harness().commit(async (tx) => {
+            const error = short(message.errorMessage ?? '')
+            await exhaust(tx, { type: 'quota', model: failed, reset: late, error }, Date.now())
+          }, context),
+        )
+      })
+      .catch((error: unknown) => {
+        // The model stays exhausted until the default time instead.
+        console.error('backup: recording a quota reset failed:', error)
+      })
   return serial(host, () =>
     host.harness().commit(async (tx) => {
       const agent = await tx.doc(AgentDoc, id)
@@ -227,11 +250,18 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
         await models.setModel(tx, id, { type: 'return' })
         return undefined
       }
+      // The outcome says why; the state, which the owner keeps, says what.
       if (step.kind === 'waiting' && state.kind === 'waiting') {
         await models.setModel(tx, id, { type: 'wait', record: state })
-        const { from, reason, since, until, attempt, skipped } = step
-        const data: Waiting = { from, primary: name(step.primary), reason, since, until }
-        return { kind: 'waiting' as const, ...data, attempt, skipped }
+        const { reason, since, until, attempt } = state
+        const data: Waiting = {
+          from: step.from,
+          primary: name(state.primary),
+          reason,
+          since,
+          until,
+        }
+        return { kind: 'waiting' as const, ...data, attempt, skipped: step.skipped }
       }
       if (step.kind !== 'switched' || state.kind !== 'backup') return undefined
       const level = clamped(host, step.to, step.level)
@@ -405,18 +435,18 @@ async function returned(
  */
 function resume(host: Host, id: ConversationId, message: AssistantMessage) {
   const model = `${message.provider}/${message.model}`
-  return serial(host, () =>
-    host.harness().commit(async (tx) => {
-      const now = Date.now()
-      if (exhaustedUntil(await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID), model, now))
-        await exhaust(tx, { type: 'answered', model }, now)
-      const models = host.need(ModelsApi)
-      const wait = await models.limitWait(tx, id)
-      if (!wait) return
-      const { outcome } = backupStep({ kind: 'waiting', ...wait }, { type: 'answered', model })
-      if (outcome.kind === 'resumed') await models.setModel(tx, id, { type: 'return' })
-    }, context),
-  )
+  // Not in the switches' queue: a read for each answer must not hold up a switch the watchdog waits for. A switch and an
+  // answer of one conversation never race, as its run makes one request at a time.
+  return host.harness().commit(async (tx) => {
+    const now = Date.now()
+    if (exhaustedUntil(await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID), model, now))
+      await exhaust(tx, { type: 'answered', model }, now)
+    const models = host.need(ModelsApi)
+    const wait = await models.limitWait(tx, id)
+    if (!wait) return
+    const { outcome } = backupStep({ kind: 'waiting', ...wait }, { type: 'answered', model })
+    if (outcome.kind === 'resumed') await models.setModel(tx, id, { type: 'return' })
+  }, context)
 }
 
 export default function extension(host: Host) {

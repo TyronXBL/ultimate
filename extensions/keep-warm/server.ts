@@ -23,6 +23,7 @@ import { UserInputEvent } from '../../shared/events.ts'
 import { implementAction } from '../../lib/actions.ts'
 import type { ResponseReceipt } from '../conversations/summary.ts'
 import { ConversationsApi } from '../conversations/api.ts'
+import { ModelsApi } from '../models/api.ts'
 import { PauseApi } from '../pause/api.ts'
 import { Standing } from '../subagents/api.ts'
 import { due, isOn, LEAD, outcome, TTL, warmStep } from './due.ts'
@@ -162,6 +163,8 @@ async function claim(host: ExtensionHost, id: ConversationId, attempt: Attempt) 
   return host.harness().commit(async (tx) => {
     const doc = await tx.doc(State, ROOT_CONVERSATION_ID)
     if ((await tx.doc(LiveDoc, id)).run) return false
+    // Waiting on its primary after a limit (extensions/backup): a ping would only ask the limited model once more.
+    if (await host.want(ModelsApi)?.limitWait(tx, id)) return false
     return warmStep(doc, { type: 'claim', ...attempt })
   }, context)
 }
