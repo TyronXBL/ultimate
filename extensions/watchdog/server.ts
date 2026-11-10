@@ -253,12 +253,16 @@ export default function watchdog(host: ExtensionHost) {
           // Concluded since it failed: a retry would resume its tree, so the failure is reported (as a note) instead.
           if (!switched || (await host.need(ConversationsApi).concludedTreeIn(tx, child.id)))
             return { status: 'running', checkpoint: { phase: 'report' } } as const
-          await child.submit(tx, {
-            type: 'input',
-            content: `Your previous run stopped with a provider error (${error}). Continue from where you left off; check what you already did and do not redo it.`,
-            requestId,
-            whenBusy: 'followUp',
-          })
+          // A wait says so once: its later tries run on the context as it is, so a day of tries adds no message to it.
+          // The failed answers are left out of the context (Pi excludes `error`), so it still ends in what is owed.
+          if (wait && wait.attempt > 1) await child.submit(tx, { type: 'continue', requestId })
+          else
+            await child.submit(tx, {
+              type: 'input',
+              content: `Your previous run stopped with a provider error (${error}). Continue from where you left off; check what you already did and do not redo it.`,
+              requestId,
+              whenBusy: 'followUp',
+            })
           return terminal
         }, ctx)
       },

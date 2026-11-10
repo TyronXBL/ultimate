@@ -645,16 +645,33 @@ it('waits on the primary when no backup can take a limit, and continues @ultimat
   expect(await owner()).toEqual(wait)
   expect(answered).toEqual([])
 
-  limited.primary = false
+  // The first try meets the limit still there: one continuation for the two failures, and a longer wait.
   tick(wait.until - Date.now())
+  await until(async () => {
+    const now = await owner()
+    return now?.by === 'limit-wait' && now.until > wait.until
+  })
+  const second = (await owner()) as ModelOwner & { by: 'limit-wait' }
+  expect(second).toMatchObject({ since: wait.since, attempt: 2 })
+  await until(async () => (await f.tasks()).length === 4)
+  await f.sleeping()
+  tick(5_000)
+  await until(async () =>
+    (await retrying()).some((task) => (task.state as { until: number }).until === second.until),
+  )
+
+  limited.primary = false
+  tick(second.until - Date.now())
   await until(async () => answered.length === 1)
   await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
-  // One continuation for the two failures, on the primary, with the report in its context.
   expect(answered[0].model).toBe('faux-1')
   expect(answered[0].inputs).toContain('a branch failed')
+  // The second try runs on the context as it is: the wait asked to continue once.
+  const tries = (await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:'))
+  expect(tries.map((input) => input.type)).toEqual(['input', 'continue'])
   expect(
-    (await inputs()).filter((input) => input.requestId?.startsWith('watchdog-wait:')),
-  ).toHaveLength(1)
+    answered[0].inputs.filter((text) => text.startsWith('Your previous run stopped')),
+  ).toHaveLength(2)
   expect(await owner()).toEqual({ by: 'default' })
   expect(
     (
