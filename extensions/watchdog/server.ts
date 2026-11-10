@@ -25,7 +25,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { concurrencyCapped, limited, rateLimited } from '../../lib/rate-limit.ts'
 import { Messages } from '../messages/api.ts'
 import { ConversationsApi } from '../conversations/api.ts'
-import { Pin } from '../models/api.ts'
+import { ModelsApi, Pin } from '../models/api.ts'
 import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { idleNote } from './idle.ts'
 import { WatchdogApi } from './api.ts'
@@ -206,7 +206,8 @@ export default function watchdog(host: ExtensionHost) {
       /** The model the failed run answered on, when the error is a limit a backup model may take. */
       backup?: { model: string }
     },
-    { phase: 'wait' } | { phase: 'retry' } | { phase: 'report' },
+    // `wait`: the start of the conversation's wait on its primary (`ModelsApi.limitWait`) this retry sleeps for.
+    { phase: 'wait' } | { phase: 'retry'; wait?: number } | { phase: 'report' },
     null
   >({
     name: 'watchdog.failure',
@@ -220,24 +221,42 @@ export default function watchdog(host: ExtensionHost) {
       retry: async (task, runtime, ctx) => {
         const { conversation, failedTask, error, backup } = task.input
         const child = (await runtime.conversation(conversation as ConversationId, ctx))!
+        const seen = task.state.status === 'running' ? task.state.checkpoint : undefined
+        const waited = seen?.phase === 'retry' ? seen.wait : undefined
         // Decided and submitted in one commit, so a conclusion cannot slip in between.
         await runtime.commit(async (tx) => {
           // A replay after submit must finish, not mistake its own retry for someone else's recovery.
           if (await tx.submissionByRequest(child.id, `watchdog-retry:${failedTask}`))
             return terminal
+          // No backup could take the limit, so the conversation waits on its primary (extensions/backup): continue it
+          // there once the wait is over, not before. A wait that ended meanwhile (the primary answered, a pick, a
+          // failure that gave up) leaves nothing to continue.
+          const wait = await host.want(ModelsApi)?.limitWait(tx, child.id)
+          if (waited !== undefined && wait?.since !== waited) return terminal
+          if (wait && runtime.now() < wait.until)
+            return {
+              status: 'sleeping',
+              until: wait.until,
+              checkpoint: { phase: 'retry', wait: wait.since },
+            } as const
+          // Every failure during a wait sleeps until its end: one of them continues the conversation per try.
+          const requestId = wait
+            ? `watchdog-wait:${child.id}:${wait.since}:${wait.attempt}`
+            : `watchdog-retry:${failedTask}`
+          if (wait && (await tx.submissionByRequest(child.id, requestId))) return terminal
           if ((await tx.doc(LiveDoc, child.id)).run !== undefined) return terminal
           // A backup model takes the failed model's place only if the definition has one for this limit; without that
           // switch the conversation still runs on the model that refused, so there is nothing to continue on.
           const model = backup && (await tx.doc(AgentDoc, child.id)).model
           const switched =
-            !backup || (!!model && `${model.provider}/${model.modelId}` !== backup.model)
+            !backup || !!wait || (!!model && `${model.provider}/${model.modelId}` !== backup.model)
           // Concluded since it failed: a retry would resume its tree, so the failure is reported (as a note) instead.
           if (!switched || (await host.need(ConversationsApi).concludedTreeIn(tx, child.id)))
             return { status: 'running', checkpoint: { phase: 'report' } } as const
           await child.submit(tx, {
             type: 'input',
             content: `Your previous run stopped with a provider error (${error}). Continue from where you left off; check what you already did and do not redo it.`,
-            requestId: `watchdog-retry:${failedTask}`,
+            requestId,
             whenBusy: 'followUp',
           })
           return terminal

@@ -6,7 +6,7 @@ import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
 import type { FallbackModel } from '../../lib/agents.ts'
 import type { ModelEvent } from './owner.ts'
-import type { BackupRecord, ModelOwner } from './refs.ts'
+import type { BackupRecord, ModelOwner, WaitRecord } from './refs.ts'
 export { LoginChanged } from './refs.ts'
 
 export type ModelsService = {
@@ -14,6 +14,8 @@ export type ModelsService = {
   owner(tx: Tx, id: ConversationId): Promise<ModelOwner>
   /** The backup conversation `id` runs on, also while it waits for that backup's login, read inside `tx`; else none. */
   backup(tx: Tx, id: ConversationId): Promise<BackupRecord | undefined>
+  /** The wait on its primary conversation `id` keeps after a limit no backup could take, read inside `tx`; else none. */
+  limitWait(tx: Tx, id: ConversationId): Promise<WaitRecord | undefined>
   /**
    * Inside `tx`, set conversation `id`'s model as `event` says and record who set it (`models.owner`): the one writer
    * of both, so another extension sends an event instead of assigning `agent.model`.

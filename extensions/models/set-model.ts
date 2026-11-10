@@ -5,7 +5,7 @@ import type { ConversationId, JsonObject, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { BackupsDoc, ModelOwnerDoc } from './refs.ts'
 import type { BackupShown, ModelOwner } from './refs.ts'
-import { backupIn, ownerStep } from './owner.ts'
+import { backupIn, limitWaitIn, ownerStep } from './owner.ts'
 import type { ModelEvent } from './owner.ts'
 import type { ModelsService } from './api.ts'
 
@@ -43,6 +43,7 @@ export const modelsService = (host: Pick<ExtensionHost, 'modelRuntime'>): Models
   setModel: (tx, id, event) => setModel(host, tx, id, event),
   owner: (tx, id) => tx.doc(Owner, id),
   backup: async (tx, id) => backupIn(await tx.doc(Owner, id)),
+  limitWait: async (tx, id) => limitWaitIn(await tx.doc(Owner, id)),
 })
 
 /** Set conversation `id`'s model as `event` says, inside `tx`, and record the owner `ownerStep` returns. */
@@ -86,10 +87,12 @@ export async function setModel(
     return
   }
   const agent = await tx.doc(AgentDoc, id)
-  if (event.type === 'return') {
-    if (!backup) return
-    agent.model = backup.primary
-    if (backup.thinking) agent.thinkingLevel = backup.thinking
+  // A wait runs on the primary already, so its end changes no model.
+  const primary = event.type === 'wait' ? event.record : event.type === 'return' ? backup : undefined
+  if (event.type === 'return' || event.type === 'wait') {
+    if (!primary) return
+    agent.model = { provider: primary.primary.provider, modelId: primary.primary.modelId }
+    if (primary.thinking) agent.thinkingLevel = primary.thinking
     else delete agent.thinkingLevel
     return
   }

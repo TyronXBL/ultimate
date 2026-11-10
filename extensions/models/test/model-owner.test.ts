@@ -25,6 +25,15 @@ const record = {
   reason: 'rate limit',
 }
 const backup: ModelOwner = { by: 'backup', ...record, under: { by: 'default' } }
+const wait = {
+  primary: { provider: 'faux', modelId: 'faux-1' },
+  since: 20,
+  until: 80,
+  attempt: 1,
+  tried: ['faux/faux-1', 'faux/faux-2'],
+  reason: 'quota',
+}
+const limitWait: ModelOwner = { by: 'limit-wait', ...wait, under: { by: 'user' } }
 
 it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; asked?: string }>([
   { row: 'a pick is the user’s', from: { by: 'default' }, event: pick, after: { by: 'user' } },
@@ -138,6 +147,42 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
     from: waiting,
     event: switched('default'),
     after: { by: 'login-fallback', from: 'openrouter/gone', reason: 'default' },
+  },
+  {
+    row: 'a wait for the primary after the last backup keeps the owner under the backup',
+    from: { ...backup, under: { by: 'user' } },
+    event: { type: 'wait', record: wait },
+    after: limitWait,
+  },
+  {
+    row: 'a longer wait keeps the first owner',
+    from: limitWait,
+    event: { type: 'wait', record: { ...wait, until: 200, attempt: 2 } },
+    after: { ...limitWait, until: 200, attempt: 2 },
+  },
+  {
+    row: 'a backup taken after a wait keeps the first owner',
+    from: limitWait,
+    event: { type: 'backup', record },
+    after: { by: 'backup', ...record, under: { by: 'user' } },
+  },
+  {
+    row: 'the primary’s answer, or giving up, returns to the owner under the wait',
+    from: limitWait,
+    event: { type: 'return' },
+    after: { by: 'user' },
+  },
+  {
+    row: 'a pick during a wait is the user’s, and nothing restores the wait',
+    from: { ...limitWait, under: { by: 'default' } },
+    event: pick,
+    after: { by: 'user' },
+  },
+  {
+    row: 'a creator’s model replaces a wait',
+    from: limitWait,
+    event: { type: 'start', model: { provider: 'faux', modelId: 'faux-3' } },
+    after: { by: 'default' },
   },
 ])('model owner: $row', ({ from, event, after, asked }) => {
   const next = ownerStep(structuredClone(from), event)

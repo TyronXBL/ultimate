@@ -51,7 +51,8 @@ export type SwitchReason = 'same' | 'pin' | 'default'
  * before this record), `user` picked it, `login-fallback` switched off `from` (`provider/modelId`), which had no login
  * here, for `reason`; `login-wait` kept `from` without a login and asked the user once, over the owner it found
  * (`under`), so the way back to it survives the wait; `backup` temporarily runs on a backup model and keeps the
- * original owner underneath. Only `ownerStep` (owner.ts) decides it. `default` also covers a model its creator set:
+ * original owner underneath; `limit-wait` is back on its primary after a limit found no backup to take, waiting to try it
+ * again, over the original owner. Only `ownerStep` (owner.ts) decides it. `default` also covers a model its creator set:
  * a subagent's definition or caller, a standing agent's pin, a branch's given model.
  */
 export type ModelOwner =
@@ -60,6 +61,7 @@ export type ModelOwner =
 type OwnerBeforeWait =
   | OwnerBeforeBackup
   | ({ by: 'backup' } & BackupRecord & { under: OwnerBeforeBackup })
+  | ({ by: 'limit-wait' } & WaitRecord & { under: OwnerBeforeBackup })
 type OwnerBeforeBackup =
   | { by: 'default' }
   | { by: 'user' }
@@ -75,6 +77,20 @@ export type BackupRecord = {
   thinking?: ModelThinkingLevel
   to: { provider: string; modelId: string }
   since: number
+  tried: string[]
+  reason: string
+}
+/**
+ * A wait on the primary after a limit that no backup could take (each tried, limited or too small for the conversation):
+ * the model and thinking level it runs on, when the wait began (ms), when the primary is tried again (`until`), how many
+ * waits this is (`attempt`, from 1), the models the chain already left (`provider/modelId`), and the last limit.
+ */
+export type WaitRecord = {
+  primary: { provider: string; modelId: string }
+  thinking?: ModelThinkingLevel
+  since: number
+  until: number
+  attempt: number
   tried: string[]
   reason: string
 }

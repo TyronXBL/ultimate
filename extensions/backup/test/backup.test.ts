@@ -16,10 +16,11 @@ import { PauseApi } from '../../pause/api.ts'
 import { ModelsApi, Pin } from '../../models/api.ts'
 import modelsExtension from '../../models/server.ts'
 import { Backups, Owner } from '../../models/set-model.ts'
-import { backupOrder, backupStep } from '../state.ts'
+import { backupOrder, backupStep, jitterOf, waitUntil } from '../state.ts'
 import type { BackupRecord } from '../../models/refs.ts'
-import type { BackupState } from '../refs.ts'
+import type { BackupState, ModelRef } from '../refs.ts'
 import { Standing } from '../../subagents/api.ts'
+import { ContextUsageDoc } from '../../conversations/api.ts'
 import { apis, removeTemps, temp, until } from '../../../test/helpers.ts'
 
 const hosts: OpenHost[] = []
@@ -234,6 +235,26 @@ it('leaves the host running for a rate limit a backup model takes', async () => 
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-2' })
 })
 
+it('waits on its primary instead of pausing the host when no backup fits, and the primary’s answer ends the wait', async () => {
+  const f = await fixture(['faux/faux-2'])
+  f.prepared.faux!.setResponses([
+    (_context, _options, _state, model) => limitedBy(model.id, rateLimit),
+    (_context, _options, _state, model) => fauxAssistantMessage([fauxText(`done on ${model.id}`)]),
+  ])
+  const { root, harness } = await f.open()
+  // The backup's 128k window has no room for 100k and the answer's reserve.
+  await harness.commit(async (tx) => {
+    ;(await tx.doc(ContextUsageDoc, root.id)).tokens = 100_000
+  }, context)
+  const submission = await root.submit({ type: 'input', content: 'go' }, context)
+  await until(async () => (await dividers(harness, root.id, 'backup.wait')).length === 1)
+  expect((await submission.wait(context)).status).toBe('done')
+  expect(f.paused()).toBe(false)
+  await until(async () => (await state(harness, root.id))?.by === 'default')
+  expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-1' })
+  expect(await cards(harness, root.id)).toEqual([])
+})
+
 it('stays on its model when the answer failed for another reason', async () => {
   const f = await fixture()
   f.prepared.faux!.setResponses([
@@ -378,16 +399,40 @@ const onBackup: BackupState = {
   tried: ['faux/a'],
   reason: 'rate limit',
 }
-const limit = (current: string, failed: string, from: BackupState) =>
+const waiting: BackupState = {
+  kind: 'waiting',
+  primary: ref('a'),
+  thinking: 'high',
+  since: SINCE,
+  until: SINCE + 60_000,
+  attempt: 1,
+  tried: ['faux/a', 'faux/b'],
+  reason: 'quota',
+}
+const tooSmall = (model: ModelRef) => (model.modelId === 'b' ? 'too small' : undefined)
+const none = () => 'no login'
+const limit = (
+  current: string,
+  failed: string,
+  from: BackupState,
+  options: {
+    now?: number
+    skip?: (model: ModelRef) => string | undefined
+    reset?: number
+    candidates?: ModelRef[]
+  } = {},
+) =>
   backupStep(from, {
     type: 'limit',
     current: ref(current),
     currentThinking: 'medium',
     failed: `faux/${failed}`,
     reason: 'rate limit',
-    candidates: [ref('b'), ref('c')],
-    hasLogin: () => true,
-    now: SINCE,
+    candidates: options.candidates ?? [ref('b'), ref('c')],
+    skip: options.skip ?? (() => undefined),
+    ...(options.reset === undefined ? {} : { reset: options.reset }),
+    jitter: 0,
+    now: options.now ?? SINCE,
   })
 const run = (now: number, login: boolean, from: BackupState) =>
   backupStep(from, { type: 'run', now, hasPrimaryLogin: () => login })
@@ -412,17 +457,175 @@ it.each([
     after: onBackup,
   },
   {
-    row: 'with no backup left the record stays and nothing switches',
-    from: { ...onBackup, tried: ['faux/a', 'faux/b', 'faux/c'] },
-    current: 'b',
-    failed: 'b',
-    kind: 'none',
-    after: { ...onBackup, tried: ['faux/a', 'faux/b', 'faux/c'] },
+    row: 'a backup too small for the conversation is passed over for the next',
+    from: primary,
+    current: 'a',
+    failed: 'a',
+    options: { skip: tooSmall },
+    kind: 'switched',
+    after: {
+      kind: 'backup',
+      primary: ref('a'),
+      thinking: 'medium',
+      to: ref('c'),
+      since: SINCE,
+      tried: ['faux/a'],
+      reason: 'rate limit',
+    },
   },
-])('limit: $row', ({ from, current, failed, kind, after }) => {
-  const { state: next, outcome } = limit(current, failed, structuredClone(from))
+  {
+    row: 'with no backup left it goes back to the primary and waits a minute',
+    from: { ...onBackup, to: ref('c'), tried: ['faux/a', 'faux/b'] },
+    current: 'c',
+    failed: 'c',
+    kind: 'waiting',
+    after: {
+      kind: 'waiting',
+      primary: ref('a'),
+      thinking: 'high',
+      since: SINCE,
+      until: SINCE + 60_000,
+      attempt: 1,
+      tried: ['faux/a', 'faux/b', 'faux/c'],
+      reason: 'rate limit',
+    },
+  },
+  {
+    row: 'a limit on the primary that no backup can take waits for the primary’s reset',
+    from: primary,
+    current: 'a',
+    failed: 'a',
+    options: { skip: none, reset: SINCE + 3 * 3600_000 },
+    kind: 'waiting',
+    after: {
+      kind: 'waiting',
+      primary: ref('a'),
+      thinking: 'medium',
+      since: SINCE,
+      until: SINCE + 3 * 3600_000,
+      attempt: 1,
+      tried: ['faux/a'],
+      reason: 'rate limit',
+    },
+  },
+  {
+    row: 'a reset more than a day away starts no wait that could only time out',
+    from: primary,
+    current: 'a',
+    failed: 'a',
+    options: { skip: none, reset: SINCE + 25 * 3600_000 },
+    kind: 'none',
+    after: primary,
+  },
+  {
+    row: 'without backup models nothing waits: the host pauses or the run fails, as before',
+    from: primary,
+    current: 'a',
+    failed: 'a',
+    options: { candidates: [] },
+    kind: 'none',
+    after: primary,
+  },
+  {
+    row: 'the primary limited again before the wait is over changes nothing',
+    from: waiting,
+    current: 'a',
+    failed: 'a',
+    options: { now: SINCE + 59_999 },
+    kind: 'held',
+    after: waiting,
+  },
+  {
+    row: 'a late answer of a backup the wait left is earlier',
+    from: waiting,
+    current: 'a',
+    failed: 'b',
+    kind: 'earlier',
+    after: waiting,
+  },
+  {
+    row: 'once the wait is over a backup takes the next limit afresh',
+    from: waiting,
+    current: 'a',
+    failed: 'a',
+    options: { now: SINCE + 60_000 },
+    kind: 'switched',
+    after: {
+      kind: 'backup',
+      primary: ref('a'),
+      thinking: 'high',
+      to: ref('b'),
+      since: SINCE + 60_000,
+      tried: ['faux/a'],
+      reason: 'rate limit',
+    },
+  },
+  {
+    row: 'once the wait is over with still no backup it waits twice as long, from the same start',
+    from: waiting,
+    current: 'a',
+    failed: 'a',
+    options: { now: SINCE + 60_000, skip: none },
+    kind: 'waiting',
+    after: {
+      ...waiting,
+      until: SINCE + 60_000 + 120_000,
+      attempt: 2,
+      tried: ['faux/a'],
+      reason: 'rate limit',
+    },
+  },
+  {
+    row: 'a wait that would outlast a day gives up and leaves the primary',
+    from: { ...waiting, attempt: 40, until: SINCE + 23.75 * 3600_000 },
+    current: 'a',
+    failed: 'a',
+    options: { now: SINCE + 23.75 * 3600_000, skip: none },
+    kind: 'gave-up',
+    after: primary,
+  },
+])('limit: $row', ({ from, current, failed, options, kind, after }) => {
+  const { state: next, outcome } = limit(current, failed, structuredClone(from), options)
   expect(outcome.kind).toBe(kind)
   expect(next).toEqual(after)
+})
+
+it('says why each backup was skipped when it waits', () => {
+  const { outcome } = limit('a', 'a', primary, { skip: tooSmall, candidates: [ref('b')] })
+  expect(outcome).toMatchObject({
+    kind: 'waiting',
+    from: 'faux/a',
+    skipped: [{ model: 'faux/b', why: 'too small' }],
+  })
+})
+
+// Conversations waiting on one account's limit must not all try it again in the same second.
+it('spreads the retries of conversations waiting on one limit', () => {
+  const ids = Array.from({ length: 20 }, (_, index) => 100 + index)
+  for (const [attempt, delay] of [
+    [1, 60_000],
+    [6, 30 * 60_000],
+  ]) {
+    const times = ids.map((id) => waitUntil(SINCE, attempt, jitterOf(id)) - SINCE)
+    expect(new Set(times).size).toBe(ids.length)
+    for (const time of times) {
+      expect(time).toBeGreaterThanOrEqual(delay)
+      expect(time).toBeLessThan(delay * 1.25)
+    }
+  }
+  const resets = ids.map((id) => waitUntil(SINCE, 1, jitterOf(id), SINCE + 3600_000))
+  expect(new Set(resets).size).toBe(ids.length)
+  for (const at of resets) expect(at - (SINCE + 3600_000)).toBeLessThan(60_000)
+})
+
+it.each([
+  { row: 'the primary’s answer ends the wait', from: waiting, model: 'faux/a', kind: 'resumed' },
+  { row: 'another model’s answer leaves it', from: waiting, model: 'faux/z', kind: 'none' },
+  { row: 'on a backup an answer changes nothing', from: onBackup, model: 'faux/b', kind: 'none' },
+])('answer: $row', ({ from, model, kind }) => {
+  const { state: next, outcome } = backupStep(structuredClone(from), { type: 'answered', model })
+  expect(outcome.kind).toBe(kind)
+  expect(next).toEqual(kind === 'resumed' ? primary : from)
 })
 
 it.each([
@@ -432,6 +635,13 @@ it.each([
     login: true,
     outcome: { kind: 'none' },
     after: primary,
+  },
+  {
+    row: 'a wait already runs on its primary',
+    from: waiting,
+    login: true,
+    outcome: { kind: 'none' },
+    after: waiting,
   },
   {
     row: 'without a login for the primary the backup stays',
@@ -481,11 +691,27 @@ it.each([
     now: SINCE + COOLDOWN_MS,
     order: ['c', 'a'],
   },
-])('order: $row', ({ from, current, now, order }) => {
+  {
+    row: 'waiting on the primary: the backups, as on the primary',
+    from: waiting,
+    current: 'a',
+    now: SINCE,
+    order: ['b', 'c'],
+  },
+  // #189897: the summary went to backups too small to read the conversation.
+  {
+    row: 'never a backup too small for the conversation',
+    from: primary,
+    current: 'a',
+    now: SINCE,
+    skip: tooSmall,
+    order: ['c'],
+  },
+])('order: $row', ({ from, current, now, order, skip }) => {
   const models = backupOrder(from, {
     current: ref(current),
     candidates: [ref('b'), ref('c')],
-    hasLogin: () => true,
+    skip: skip ?? (() => undefined),
     now,
   })
   expect(models.map((model) => model.modelId)).toEqual(order)

@@ -1,8 +1,9 @@
 /**
  * A conversation whose model answers with a rate limit, a capacity or a quota error switches to the next backup model of
- * its agent definition, and a run that starts `COOLDOWN_MINUTES` later puts the primary back. A model set meanwhile
- * (a pick, a login fallback, a creator's start) replaces the owner's record: the return is no longer this extension's to
- * make.
+ * its agent definition, and a run that starts `COOLDOWN_MINUTES` later puts the primary back. When no backup can take the
+ * limit, it goes back to its primary and waits to try it again; the watchdog continues its run then, and the primary's
+ * first answer ends the wait. A model set meanwhile (a pick, a login fallback, a creator's start) replaces the owner's
+ * record: the return is no longer this extension's to make.
  */
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { clampThinkingLevel } from '@earendil-works/pi-ai'
@@ -20,7 +21,8 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
-import { BackupOrder, ModelsApi, Pin } from '../models/api.ts'
+import { BackupOrder, ModelsApi, Pin, Resets } from '../models/api.ts'
+import { ContextUsageDoc } from '../conversations/api.ts'
 import { Standing } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
 import { BackupDoc } from './refs.ts'
@@ -30,10 +32,19 @@ import {
   backupStep,
   COOLDOWN_MINUTES,
   fromLegacy,
+  jitterOf,
   legacyHolds,
   name,
 } from './state.ts'
-import type { BackupNotice, BackupReturned, BackupState, BackupSwitch, ModelRef } from './refs.ts'
+import type {
+  BackupNotice,
+  BackupReturned,
+  BackupState,
+  BackupSwitch,
+  BackupWait,
+  ModelRef,
+  Skipped,
+} from './refs.ts'
 
 const State = defineDoc<BackupState>({
   kind: BackupDoc.kind,
@@ -61,7 +72,32 @@ async function backupFor(host: Host, tx: Tx, id: ConversationId) {
     for (const key of Object.keys(legacy)) Reflect.deleteProperty(legacy, key)
     Object.assign(legacy, { kind: 'primary' } satisfies BackupState)
   }
-  return backupOf(await models.backup(tx, id))
+  return backupOf(await models.owner(tx, id))
+}
+
+/**
+ * Tokens a backup's window keeps free beyond the conversation: a model with less room would start a blocking compaction
+ * at once (Pi compacts above `contextWindow - reserveTokens`; Ultimate reserves up to 32k, server/harness.ts), whose
+ * summary needs a model the limit may have left none of (#189897, #191380).
+ */
+const RESERVE = 32_768
+
+const thousands = (tokens: number) => `${Math.round(tokens / 1000)}k`
+
+/**
+ * Why backup `ref` cannot take conversation `id` now, inside `tx`: no login here, or a window too small for its context.
+ * Undefined when it can.
+ */
+async function skipper(host: Host, tx: Tx, id: ConversationId) {
+  const available = host.modelRuntime.getAvailableSnapshot()
+  const tokens = (await tx.doc(ContextUsageDoc, id)).tokens ?? 0
+  return (ref: ModelRef) => {
+    if (!hasLogin(available, ref)) return 'no login'
+    const window = host.modelRuntime.getModel(ref.provider, ref.modelId)?.contextWindow
+    if (window && tokens + RESERVE > window)
+      return `${thousands(window)} window, ${thousands(tokens)} context`
+    return undefined
+  }
 }
 
 type Host = Pick<
@@ -98,43 +134,147 @@ function serial<T>(host: Pick<ExtensionHost, 'resource'>, work: () => Promise<T>
 }
 
 type Switched = Pick<BackupSwitch, 'from' | 'to' | 'reason'>
+type Waiting = { from: string; primary: string; reason: string; since: number; until: number }
 
 /**
  * Switch conversation `id` off the model that answered `message` with a limit: to the first of its definition's backup
- * models that has a login here and was not tried yet, recording the primary to return to. One commit, so a conversation
- * either runs on the backup with the record or on neither. False when there is no backup left to take.
+ * models that has a login here, room for its context and was not tried yet, recording the primary to return to; or,
+ * when none can take it, back to the primary to wait. One commit, so a conversation runs on the backup or the primary
+ * with the record, or on neither. Undefined when nothing changed.
  */
-function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
+async function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
+  const failed = `${message.provider}/${message.model}`
+  const limit = limitOf(message.errorMessage ?? '') ?? 'rate limit'
+  // An exhausted quota resets when its provider says; a wait on that model waits that long. Read before the commit, as it
+  // asks the provider; failing to read it leaves the backoff.
+  const reset =
+    limit === 'quota'
+      ? await host
+          .want(Resets)
+          ?.resetsAt(message.provider)
+          .catch(() => undefined)
+      : undefined
   return serial(host, () =>
     host.harness().commit(async (tx) => {
       const agent = await tx.doc(AgentDoc, id)
-      const available = host.modelRuntime.getAvailableSnapshot()
       // Every conversation runs on a model of its own: Pi answers a run without one `no_model`, never with a limit.
       const current = agent.model
       if (!current) return undefined
       const backup = await backupFor(host, tx, id)
       const definition = await host.want(Pin)?.definition(tx, id)
+      const primary = backup.kind === 'primary' ? current : backup.primary
       const { state, outcome: step } = backupStep(backup, {
         type: 'limit',
         current,
         currentThinking: agent.thinkingLevel,
-        failed: `${message.provider}/${message.model}`,
-        reason: limitOf(message.errorMessage ?? '') ?? 'rate limit',
+        failed,
+        reason: limit,
         candidates: definition?.fallback ?? [],
-        hasLogin: (ref) => hasLogin(available, ref),
+        skip: await skipper(host, tx, id),
+        // Only the primary's own reset says when to try it again.
+        ...(reset !== undefined && failed === name(primary) ? { reset } : {}),
+        jitter: jitterOf(id),
         now: Date.now(),
       })
-      if (step.kind === 'earlier') return { earlier: true as const }
+      const models = host.need(ModelsApi)
+      if (step.kind === 'earlier' || step.kind === 'held') return { kind: 'handled' as const }
+      if (step.kind === 'gave-up') {
+        await models.setModel(tx, id, { type: 'return' })
+        return undefined
+      }
+      if (step.kind === 'waiting' && state.kind === 'waiting') {
+        await models.setModel(tx, id, { type: 'wait', record: state })
+        const { from, reason, since, until, attempt, skipped } = step
+        const data: Waiting = { from, primary: name(step.primary), reason, since, until }
+        return { kind: 'waiting' as const, ...data, attempt, skipped }
+      }
       if (step.kind !== 'switched' || state.kind !== 'backup') return undefined
       const level = clamped(host, step.to, step.level)
-      await host.need(ModelsApi).setModel(tx, id, {
+      await models.setModel(tx, id, {
         type: 'backup',
         record: state,
         ...(level ? { level } : {}),
       })
-      return { from: step.from, to: name(step.to), reason: step.reason } satisfies Switched
+      return {
+        kind: 'switched' as const,
+        from: step.from,
+        to: name(step.to),
+        reason: step.reason,
+      } satisfies Switched & { kind: 'switched' }
     }, context),
   )
+}
+
+/**
+ * One line in @ultimate's transcript about conversation `id`. @ultimate reads the same card in its own conversation;
+ * only another conversation's switch or wait needs a line there.
+ */
+async function notify(host: Host, id: ConversationId, entry: EntryId, notice: BackupNotice) {
+  const harness = host.harness()
+  const ultimate = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
+  if (ultimate === undefined || ultimate === id) return
+  const content =
+    notice.until === undefined
+      ? `Its model ${notice.from} answered with a ${notice.reason} error, so it runs on ${notice.to} until a run starts ${COOLDOWN_MINUTES} minutes from now.`
+      : `Its model ${notice.from} answered with a ${notice.reason} error and no backup model can take it, so it waits and continues on its primary ${notice.to} by itself at ${utc(notice.until)}.`
+  await (
+    await harness.conversation(ultimate, context)
+  )?.submit(
+    {
+      type: 'write',
+      requestId: `backup.notice:${entry}`,
+      entry: {
+        kind: 'backup.notice',
+        data: notice,
+        model: [{ role: 'user', content, timestamp: Date.now() }],
+      },
+    },
+    context,
+  )
+}
+
+const utc = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+
+/** The card where a wait began, and @ultimate's line about it. */
+async function waitCard(
+  host: Host,
+  id: ConversationId,
+  message: AssistantMessage,
+  entry: EntryId,
+  waiting: Waiting & { skipped: Skipped[] },
+) {
+  const { from, primary, reason, since, until, skipped } = waiting
+  const data: BackupWait = {
+    from,
+    primary,
+    reason,
+    since,
+    until,
+    skipped,
+    error: short(message.errorMessage ?? ''),
+  }
+  const content = `No backup model could take ${waiting.from}'s ${waiting.reason} (${waiting.skipped.map(({ model, why }) => `${model}: ${why}`).join('; ')}), so this conversation is back on ${waiting.primary} and continues by itself at ${utc(waiting.until)}.`
+  await (
+    await host.harness().conversation(id, context)
+  )?.submit(
+    {
+      type: 'write',
+      requestId: `backup.wait:${entry}`,
+      entry: {
+        kind: 'backup.wait',
+        data,
+        model: [{ role: 'user', content, timestamp: Date.now() }],
+      },
+    },
+    context,
+  )
+  await notify(host, id, entry, {
+    conversation: id,
+    from: waiting.from,
+    to: waiting.primary,
+    reason: waiting.reason,
+    until: waiting.until,
+  })
 }
 
 /**
@@ -151,10 +291,16 @@ export async function fallBack(
   if (previewModel()) return false
   const result = await switchNow(host, id, message)
   if (!result) return false
-  if ('earlier' in result) return true
+  if (result.kind === 'handled') return true
+  if (result.kind === 'waiting') {
+    // A wait that goes on after a try of the primary keeps the first card, which reads the wait live.
+    if (result.attempt === 1) await waitCard(host, id, message, entry, result)
+    return true
+  }
+  const { kind: _, ...switched } = result
   const harness = host.harness()
   const data: BackupSwitch = {
-    ...result,
+    ...switched,
     error: short(message.errorMessage ?? ''),
     cooldown: COOLDOWN_MINUTES,
   }
@@ -164,36 +310,12 @@ export async function fallBack(
   await (
     await harness.conversation(id, context)
   )?.submit({ type: 'write', requestId: `backup.switch:${entry}`, entry: switchEntry }, context)
-  const ultimate = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
-  // @ultimate reads the same card in its own conversation; only another conversation's switch needs a line there.
-  if (ultimate !== undefined && ultimate !== id) {
-    const notice: BackupNotice = {
-      conversation: id,
-      from: data.from,
-      to: data.to,
-      reason: data.reason,
-    }
-    await (
-      await harness.conversation(ultimate, context)
-    )?.submit(
-      {
-        type: 'write',
-        requestId: `backup.notice:${entry}`,
-        entry: {
-          kind: 'backup.notice',
-          data: notice,
-          model: [
-            {
-              role: 'user',
-              content: `Its model ${notice.from} answered with a ${notice.reason} error, so it runs on ${notice.to} until a run starts ${COOLDOWN_MINUTES} minutes from now.`,
-              timestamp: Date.now(),
-            },
-          ],
-        },
-      },
-      context,
-    )
-  }
+  await notify(host, id, entry, {
+    conversation: id,
+    from: data.from,
+    to: data.to,
+    reason: data.reason,
+  })
   return true
 }
 
@@ -232,6 +354,22 @@ async function returned(
   }
 }
 
+/** The primary of a waiting conversation answered `message`: the wait is over, and its owner is the one before it. */
+function resume(host: Host, id: ConversationId, message: AssistantMessage) {
+  return serial(host, () =>
+    host.harness().commit(async (tx) => {
+      const models = host.need(ModelsApi)
+      const wait = await models.limitWait(tx, id)
+      if (!wait) return
+      const { outcome } = backupStep(
+        { kind: 'waiting', ...wait },
+        { type: 'answered', model: `${message.provider}/${message.model}` },
+      )
+      if (outcome.kind === 'resumed') await models.setModel(tx, id, { type: 'return' })
+    }, context),
+  )
+}
+
 export default function extension(host: Host) {
   host.implement(BackupApi, {
     fallBack: (id, message, entry) => fallBack(host, id, message, entry),
@@ -240,22 +378,17 @@ export default function extension(host: Host) {
     async order(tx, id) {
       const agent = await tx.doc(AgentDoc, id)
       if (previewModel() || !agent.model) return []
-      const available = host.modelRuntime.getAvailableSnapshot()
       // Only a read: a `backup.state` record that still holds counts until a run moves it (`backupFor`).
-      const models = host.need(ModelsApi)
+      const owner = await host.need(ModelsApi).owner(tx, id)
       const legacy = await tx.doc(State, id)
-      const order = backupOrder(
-        legacyHolds(legacy, await models.owner(tx, id), agent.model)
-          ? legacy
-          : backupOf(await models.backup(tx, id)),
-        {
-          current: agent.model,
-          currentThinking: agent.thinkingLevel,
-          candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
-          hasLogin: (ref) => hasLogin(available, ref),
-          now: Date.now(),
-        },
-      )
+      const order = backupOrder(legacyHolds(legacy, owner, agent.model) ? legacy : backupOf(owner), {
+        current: agent.model,
+        currentThinking: agent.thinkingLevel,
+        candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
+        // A summary reads the whole conversation: a model without room for it cannot write one either.
+        skip: await skipper(host, tx, id),
+        now: Date.now(),
+      })
       return order.map(({ thinking, ...ref }) => {
         const level = clamped(host, ref, thinking)
         return level ? { ...ref, thinking: level } : ref
@@ -271,17 +404,20 @@ export default function extension(host: Host) {
   host.onRelease(close)
   host.onOpen(async () => {
     unsubscribe?.()
-    // Every model answer Pi records lands in a commit; the first one a limit ends switches the conversation.
+    // Every model answer Pi records lands in a commit; the first one a limit ends switches the conversation, and an
+    // answer of a waiting conversation's primary ends its wait.
     unsubscribe = onCommit(host.harness(), (publication) => {
       for (const change of publication.changes) {
         const message = change.type === 'entry' ? change.value.model?.[0] : undefined
-        if (
-          change.type !== 'entry' ||
-          message?.role !== 'assistant' ||
-          message.stopReason !== 'error' ||
-          !limited(message.errorMessage ?? '')
-        )
+        if (change.type !== 'entry' || message?.role !== 'assistant') continue
+        if (message.stopReason !== 'error' && message.stopReason !== 'aborted') {
+          resume(host, change.value.conversationId, message).catch((error: unknown) => {
+            // The wait stands; the primary's next answer ends it.
+            console.error('backup: ending a wait failed:', error)
+          })
           continue
+        }
+        if (message.stopReason !== 'error' || !limited(message.errorMessage ?? '')) continue
         fallBack(host, change.value.conversationId, message, change.value.id).catch(
           (error: unknown) => {
             // The failed response stands, and Pi's retry runs on the same model: the next answer that hits the limit
