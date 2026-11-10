@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { ownerStep, waitsForLogin } from '../owner.ts'
+import { familyIn, ownerStep, waitsForLogin } from '../owner.ts'
 import type { ModelEvent } from '../owner.ts'
 import type { ModelOwner } from '../refs.ts'
 
@@ -35,8 +35,57 @@ const limitRecord = {
 }
 const limitWait: ModelOwner = { by: 'limit-wait', ...limitRecord, under: { by: 'user' } }
 
-it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; asked?: string }>([
+it.each<{
+  row: string
+  from: ModelOwner
+  event: ModelEvent
+  after: ModelOwner
+  asked?: string
+  family?: string
+}>([
   { row: 'a pick is the user’s', from: { by: 'default' }, event: pick, after: { by: 'user' } },
+  // #550837: two families can share a model, so the one a conversation runs as is recorded, never worked out.
+  {
+    row: 'a pick by family runs as that family',
+    from: { by: 'default', family: 'lead' },
+    event: { ...pick, family: 'design' },
+    after: { by: 'user', family: 'design' },
+    family: 'design',
+  },
+  {
+    row: 'a pick by id runs as no family',
+    from: { by: 'user', family: 'lead' },
+    event: pick,
+    after: { by: 'user' },
+  },
+  {
+    row: 'a creator names the family it starts on',
+    from: { by: 'user' },
+    event: { type: 'start', model: { provider: 'faux', modelId: 'faux-1' }, family: 'lead' },
+    after: { by: 'default', family: 'lead' },
+    family: 'lead',
+  },
+  {
+    row: 'a login fallback runs as no family',
+    from: { by: 'default', family: 'lead' },
+    event: switched('pin'),
+    after: { by: 'login-fallback', from: 'openrouter/gone', reason: 'pin' },
+  },
+  {
+    row: 'a wait for a login keeps the family of the model it keeps',
+    from: { by: 'default', family: 'lead' },
+    event: wait(sol),
+    after: { by: 'login-wait', from: sol, under: { by: 'default', family: 'lead' } },
+    asked: sol,
+    family: 'lead',
+  },
+  {
+    row: 'a backup runs as no family, and its return brings the family back',
+    from: { by: 'backup', ...record, under: { by: 'default', family: 'lead' } },
+    event: { type: 'return' },
+    after: { by: 'default', family: 'lead' },
+    family: 'lead',
+  },
   {
     row: 'a pick answers the question about a lost login',
     from: waiting,
@@ -184,8 +233,9 @@ it.each<{ row: string; from: ModelOwner; event: ModelEvent; after: ModelOwner; a
     event: { type: 'start', model: { provider: 'faux', modelId: 'faux-3' } },
     after: { by: 'default' },
   },
-])('model owner: $row', ({ from, event, after, asked }) => {
+])('model owner: $row', ({ from, event, after, asked, family }) => {
   const next = ownerStep(structuredClone(from), event)
   expect(next).toEqual(after)
   expect(waitsForLogin(next)).toBe(asked)
+  expect(familyIn(next)).toBe(family)
 })

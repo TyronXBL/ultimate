@@ -179,8 +179,8 @@ export function onFamily(
 }
 
 /**
- * The family a conversation configured with `change` from `definition` runs as, for the models extension's `Family`
- * document: the definition's family (or the one `onFamily` put it on) while it runs that family's model, null for a
+ * The family a conversation configured with `change` from `definition` runs as, for the `start` event of the models
+ * extension's `setModel`, which records it with the owner: the definition's family (or the one `onFamily` put it on) while it runs that family's model, null for a
  * pinned model or when it fell back to another. In a preview, which runs every family on its one model, the family
  * stays. Recorded at the
  * start because two families can share a model: worked out from the model, a Lead coordinator on Opus showed as Design

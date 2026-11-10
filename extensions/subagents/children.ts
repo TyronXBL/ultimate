@@ -11,7 +11,6 @@ import type {
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { definitionAgent, definitionFamily } from '../../lib/agents.ts'
-import { Family } from '../models/api.ts'
 import type { AgentDefinition } from '../../lib/agents.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { ModelsApi } from '../models/api.ts'
@@ -102,16 +101,14 @@ export async function createChild(
     ...change,
     cwd: options.cwd ?? parent.cwd ?? null,
   })
-  // A fork inherits its source's owner, a backup too: the model its creator gives it replaces it.
+  // A fork inherits its source's owner, a backup too: the model its creator gives it replaces it. An explicit model is
+  // no family's.
   await host.need(ModelsApi).setModel(tx, child.id, {
     type: 'start',
     model: model ?? null,
     thinkingLevel,
+    family: options.model ? null : definitionFamily(definition, { model }),
   })
-  // An explicit model is no family's; a fork would otherwise keep its parent's.
-  ;(await tx.doc(Family, child.id)).name = options.model
-    ? null
-    : definitionFamily(definition, { model })
   Object.assign(await tx.doc(options.metadata, child.id), {
     label: options.label,
     title: options.title,

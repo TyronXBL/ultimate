@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
-import { api, cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
+import { cn, errorMessage, touchKeyboard, useDialog, useUltimate } from '@/sdk'
 import { familyTitle } from '../../lib/families.ts'
 import {
   agentsPanel,
@@ -28,13 +28,11 @@ import {
   thinkingOf,
   useFamilies,
 } from './families.tsx'
-import { SetFamilyAction } from './refs.ts'
 import type { FamilyView } from './refs.ts'
 import {
   authLabel,
   dialogs,
   formatWindow,
-  notePick,
   openLogin,
   price,
   selectModel,
@@ -168,15 +166,10 @@ export function ModelPicker() {
       return
     }
     setError(undefined)
-    selectModel({ provider: model.provider, modelId: model.id }, id)
-      .then(() => api.action(SetFamilyAction, { family: null }, { conversationId: id }))
-      .then(
-        () => {
-          notePick()
-          setOpen(false)
-        },
-        (failure: unknown) => setError(errorMessage(failure)),
-      )
+    selectModel({ provider: model.provider, modelId: model.id }, id).then(
+      () => setOpen(false),
+      (failure: unknown) => setError(errorMessage(failure)),
+    )
   }
 
   /** A family's model and thinking level for this conversation; a model without a login opens its login first. */
@@ -187,15 +180,10 @@ export function ModelPicker() {
     if (loading) return
     if (model && !model.available) return choose(model)
     setError(undefined)
-    selectModel({ provider, modelId }, id, thinkingOf(family))
-      .then(() => api.action(SetFamilyAction, { family: family.name }, { conversationId: id }))
-      .then(
-        () => {
-          notePick()
-          setOpen(false)
-        },
-        (failure: unknown) => setError(errorMessage(failure)),
-      )
+    selectModel({ provider, modelId }, id, thinkingOf(family), family.name).then(
+      () => setOpen(false),
+      (failure: unknown) => setError(errorMessage(failure)),
+    )
   }
 
   return (

@@ -2,12 +2,10 @@
  * Models: the model and thinking pickers and provider logins in the composer, and the `models.pin` point through which
  * a conversation finds the model and backup models its agent definition sets. Core tier.
  */
-import { defineDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, Tx } from '@earendil-works/pi-durable'
 import { defineApi } from '../../shared/extension-api.ts'
 import type { FallbackModel } from '../../lib/agents.ts'
 import type { ModelEvent } from './owner.ts'
-import { FamilyDoc } from './refs.ts'
 import type { BackupRecord, ModelOwner, WaitRecord } from './refs.ts'
 export { LoginChanged } from './refs.ts'
 
@@ -26,21 +24,6 @@ export type ModelsService = {
 }
 /** A conversation's model and who set it; models provides it. */
 export const ModelsApi = defineApi<ModelsService>()('models')
-
-/**
- * The family a conversation runs as (`FamilyDoc`): whoever configures a conversation from a definition writes it in the
- * same commit (`definitionFamily` in lib/agents.ts), the picker when it picks a family or a model, the fallback when it
- * switches the model. A fork starts with its source's.
- */
-export const Family = defineDoc<{ name: string | null }>({
-  kind: FamilyDoc.kind,
-  checkpointWhen: () => false,
-  version: 1,
-  scope: 'conversation',
-  history: 'latest',
-  fork: 'current',
-  initial: () => ({ name: null }),
-})
 export type PinService = {
   /**
    * The definition conversation `id` runs as, read inside `tx`: the model it pins and its ordered backup models;

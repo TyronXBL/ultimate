@@ -8,7 +8,7 @@ import { AgentDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, EntryDraft, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { configuredModel, familyDefault, hasLogin } from '../../lib/agents.ts'
-import { Family, Pin } from './api.ts'
+import { Pin } from './api.ts'
 import { waitsForLogin } from './owner.ts'
 import type { Fallback, SwitchReason } from './refs.ts'
 import { Owner, setModel } from './set-model.ts'
@@ -73,8 +73,6 @@ export async function fallback(
       ? { type: 'login-fallback', from: data.from, to: found[0]!, reason: found[1] }
       : { type: 'login-wait', from: data.from },
   )
-  // Another model than its family's: it runs as that family no more.
-  if (found) (await tx.doc(Family, conversationId)).name = null
   const content = found
     ? `Model ${data.from} has no login here; this conversation now runs on ${data.to}.`
     : `Model ${data.from} has no login here and no subscription login can replace it, so this conversation keeps it until the user logs in to ${from.provider} or picks another model.`

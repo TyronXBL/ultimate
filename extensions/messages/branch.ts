@@ -11,7 +11,6 @@ import {
   onFamily,
   resolveSetup,
 } from '../../lib/agents.ts'
-import { Family } from '../models/api.ts'
 import { readFamilies } from '../../lib/families-settings.ts'
 import { BranchSetup } from '../subagents/api.ts'
 import { LineageApi, Roots } from '../lineage/api.ts'
@@ -101,6 +100,7 @@ export const branchTool = (host: ExtensionHost) =>
             receipt: { taskId: api.taskId, callId: api.callId },
             ...(model ? { model } : {}),
             ...(thinkingLevel ? { thinkingLevel } : {}),
+            family: definitionFamily(coordinator, change),
           },
           ctx,
         )
@@ -112,7 +112,6 @@ export const branchTool = (host: ExtensionHost) =>
             ...(modelTools && 'add' in modelTools && modelTools.add?.length ? { modelTools } : {}),
           })
           ;(await tx.doc(host.metadata, branch.id)).label = 'coordinator'
-          ;(await tx.doc(Family, branch.id)).name = definitionFamily(coordinator, change)
           const started = await tx.doc(Started, branch.id)
           started.by = from
           if (setup) (await tx.doc(BranchSetup, branch.id)).agents = setup

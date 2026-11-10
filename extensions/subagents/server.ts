@@ -59,7 +59,7 @@ import { WorkspacesApi } from '../workspaces/api.ts'
 import { ConversationsApi, Marks } from '../conversations/api.ts'
 import type { ConversationsService, Underway, UnderwaySource } from '../conversations/api.ts'
 import type { AgentMarkStyle } from '../conversations/refs.ts'
-import { Family, ModelsApi, Pin } from '../models/api.ts'
+import { ModelsApi, Pin } from '../models/api.ts'
 import { BranchSetup, Profile, Standing, Subagents, SubagentsApi } from './api.ts'
 import { definitionRuns, refName, refOf } from '../../lib/families.ts'
 import { readFamilies } from '../../lib/families-settings.ts'
@@ -838,8 +838,12 @@ export default function subagents(
           model?.modelId !== base.model?.modelId ||
           (thinkingLevel ?? undefined) !== base.thinkingLevel
         )
-          await models.setModel(tx, id, { type: 'start', model: model ?? null, thinkingLevel })
-        ;(await tx.doc(Family, id)).name = definitionFamily(definition, { model })
+          await models.setModel(tx, id, {
+            type: 'start',
+            model: model ?? null,
+            thinkingLevel,
+            family: definitionFamily(definition, { model }),
+          })
         Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
         // A standing agent keeps its `@name`: no automatic title, summary or reply activity.
         await conversations.setAutomaticSummaries(tx, id, false)

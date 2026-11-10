@@ -14,7 +14,7 @@ import {
 import type { ConversationId, Cursor } from '@earendil-works/pi-durable'
 import type { ActionContext } from '../../server/actions.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { Family, LoginChanged, ModelsApi } from './api.ts'
+import { LoginChanged, ModelsApi } from './api.ts'
 import { implementAction } from '../../lib/actions.ts'
 import type { ActionInput } from '../../lib/actions.ts'
 import {
@@ -27,7 +27,6 @@ import {
   PickAction,
   SaveFamiliesAction,
   SetDefaultAction,
-  SetFamilyAction,
 } from './refs.ts'
 import type { LoginPhase, SaveFamilies } from './refs.ts'
 import { transition } from './login-state.ts'
@@ -86,7 +85,7 @@ export const Logins = defineDoc<{ flows: Record<string, LoginFlow> }>({
     return doc as unknown as { flows: Record<string, LoginFlow> }
   },
 })
-export const docs = [Logins, Owner, Backups, Family]
+export const docs = [Logins, Owner, Backups]
 
 /** A running flow: process-local, so a flow the document shows running without one here died with its process. */
 interface Flow {
@@ -125,7 +124,8 @@ function running(host: ExtensionHost, args: ActionInput<{ flowId: string }>) {
 /** Prompts and events as plain JSON: a document holds no `undefined`. */
 const json = <T>(value: T): Json<T> => JSON.parse(JSON.stringify(value))
 
-export const userActions = ['pick', 'login', 'answer', 'cancel', 'logout']
+// `setDefault` records the user's pick like `pick`, so an agent cannot call it in their name.
+export const userActions = ['pick', 'setDefault', 'login', 'answer', 'cancel', 'logout']
 
 /**
  * Record that `provider`'s login changed: its recorded health is meaningless now, and health resets it to unknown
@@ -142,13 +142,14 @@ const loginChanged = async (host: ActionContext['host'], provider: string) =>
 
 export const actions = {
   /**
-   * The picker's choice of the calling conversation's model, recorded as the user's. As Pi does it: a requested level
-   * must suit the model, and without one the current level is clamped to it.
+   * The picker's choice of the calling conversation's model, recorded as the user's, with the family it was picked as.
+   * As Pi does it: a requested level must suit the model, and without one the current level is clamped to it.
    */
   pick: implementAction(PickAction, async (args, { host, conversationId }) => {
     const provider = text(args, 'provider')
     const modelId = text(args, 'modelId')
     const level = field(args, 'thinkingLevel')
+    const family = field(args, 'family') === undefined ? undefined : text(args, 'family')
     const model = host.modelRuntime.getModel(provider, modelId)
     // As the picker lists them: chat models with a login here.
     if (
@@ -170,7 +171,12 @@ export const actions = {
         throw new Error(
           `${provider}/${modelId} does not support thinking level ${JSON.stringify(level)}`,
         )
-      await setModel(host, tx, id, { type: 'pick', model: { provider, modelId }, thinkingLevel })
+      await setModel(host, tx, id, {
+        type: 'pick',
+        model: { provider, modelId },
+        thinkingLevel,
+        family,
+      })
     }, context)
     return null
   }),
@@ -181,18 +187,6 @@ export const actions = {
     if (!args || typeof args !== 'object' || Array.isArray(args))
       throw new Error('Expected families')
     return saveFamilies(host, args as SaveFamilies)
-  }),
-  /** Record the family the calling conversation runs as after the picker configured it; null for a model by id. */
-  setFamily: implementAction(SetFamilyAction, async (args, { host, conversationId }) => {
-    const family = field(args, 'family')
-    if (family !== null && (typeof family !== 'string' || !family))
-      throw new Error('Expected family: a family name or null')
-    const id = (conversationId ?? ROOT_CONVERSATION_ID) as ConversationId
-    await host.harness().commit(async (tx) => {
-      if (!(await tx.conversation(id))) throw new Error('Unknown conversation')
-      ;(await tx.doc(Family, id)).name = family
-    }, context)
-    return null
   }),
   /** Get ready's choice: the default family's model and thinking, and the calling conversation on that family. */
   setDefault: implementAction(SetDefaultAction, async (args, { host, conversationId }) => {
@@ -205,8 +199,8 @@ export const actions = {
           type: 'pick',
           model: change.model,
           thinkingLevel: change.thinkingLevel,
+          family: DEFAULT_FAMILY,
         })
-        ;(await tx.doc(Family, id)).name = DEFAULT_FAMILY
       }, context)
     return null
   }),

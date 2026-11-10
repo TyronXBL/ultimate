@@ -11,7 +11,7 @@ import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import { expect, it } from 'vitest'
 import { Memory } from '../../lineage/memory.ts'
 import { Messages } from '../../messages/api.ts'
-import { Family } from '../../models/api.ts'
+import { Owner } from '../../models/set-model.ts'
 import { Tally } from '../../lineage/server.ts'
 import { Starts } from '../server.ts'
 import { context } from '../../../server/harness.ts'
@@ -235,7 +235,10 @@ it("starts the first branch on Get ready's model and thinking level, not on the 
     const chosen = { model: { provider, modelId: 'chosen' }, thinkingLevel: 'high' }
     const ultimate = (await server.harness.conversation(id, context))!
     expect(await ultimate.agent(context)).toMatchObject(chosen)
-    expect(await server.harness.snapshot(Family, id, context)).toEqual({ name: 'default' })
+    expect(await server.harness.snapshot(Owner, id, context)).toEqual({
+      by: 'user',
+      family: 'default',
+    })
     await ultimate.submit({ type: 'input', content: 'Build it' }, context)
     await server.harness.waitForIdle(context)
     const branch = (await server.harness.snapshot(
@@ -247,7 +250,10 @@ it("starts the first branch on Get ready's model and thinking level, not on the 
     expect(
       await (await server.harness.conversation(branch, context))!.agent(context),
     ).toMatchObject(chosen)
-    expect(await server.harness.snapshot(Family, branch, context)).toEqual({ name: 'default' })
+    expect(await server.harness.snapshot(Owner, branch, context)).toEqual({
+      by: 'default',
+      family: 'default',
+    })
     // What it ran on, from its answer rather than its configuration.
     const ran = (
       await (await server.harness.conversation(branch, context))!.context(context)

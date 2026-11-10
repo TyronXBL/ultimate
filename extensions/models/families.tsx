@@ -72,7 +72,7 @@ export const thinkingOf = (family: FamilyView) =>
   family.thinking ?? (family.model ? undefined : family.followsThinking)
 
 /**
- * The family a conversation runs as: the one recorded for it (`FamilyDoc`), whatever model it runs (a preview runs
+ * The family a conversation runs as: the one its model owner records (`familyIn`), whatever model it runs (a preview runs
  * every family on one). Without a record nothing named a family, so it is the default family while it runs that
  * family's model and thinking level. Never worked out from the model alone: two families can share one.
  */

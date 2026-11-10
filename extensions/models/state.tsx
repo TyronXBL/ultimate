@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import { api, getConversation, useConversation, useDocOf, useModels, useStore } from '@/sdk'
 import type { ModelsResponse, UltimateActions } from '@/sdk'
-import { FamilyDoc, PickAction } from './refs.ts'
+import { familyIn } from './owner.ts'
+import { ModelOwnerDoc, PickAction } from './refs.ts'
 
 export type ModelInfo = ModelsResponse['models'][number]
 export type ProviderInfo = ModelsResponse['providers'][number]
@@ -28,7 +29,8 @@ export function useCurrentModel(target?: number) {
   const agent = other ? other.agent : ownAgent
   const loading = other ? other.loading : ownLoading
   const models = useModels()
-  const family = useDocOf(id, FamilyDoc)?.name
+  const owner = useDocOf(id, ModelOwnerDoc)
+  const family = owner && familyIn(owner)
   const ref = agent.model
   const model = models?.models.find(
     (candidate) => candidate.provider === ref?.provider && candidate.id === ref.modelId,
@@ -44,17 +46,22 @@ export function useCurrentModel(target?: number) {
   }
 }
 
-/** Pick conversation `id`'s model (and thinking level) as the user's choice. */
-export function selectModel(
+/**
+ * Pick conversation `id`'s model (and thinking level) as the user's choice: as `family`, which it then runs as, or by
+ * id, as none.
+ */
+export async function selectModel(
   model: { provider: string; modelId: string },
   id: number | undefined,
   thinkingLevel?: ThinkingLevel,
+  family?: string,
 ) {
-  return api.action(
+  await api.action(
     PickAction,
-    { ...model, ...(thinkingLevel ? { thinkingLevel } : {}) },
+    { ...model, ...(thinkingLevel ? { thinkingLevel } : {}), ...(family ? { family } : {}) },
     { conversationId: id },
   )
+  notePick()
 }
 
 /**
@@ -63,7 +70,7 @@ export function selectModel(
  */
 let picks = 0
 const pickListeners = new Set<() => void>()
-export function notePick() {
+function notePick() {
   picks++
   for (const listener of pickListeners) listener()
 }

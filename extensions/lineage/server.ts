@@ -781,6 +781,8 @@ type PromptInput = {
   isolated?: boolean
   model?: ModelRef
   thinkingLevel?: ModelThinkingLevel
+  /** The family a given `model` runs as (models' `familyIn`); null or left out for none. */
+  family?: string | null
 }
 export type BranchInput = PromptInput & {
   from: number
@@ -920,7 +922,10 @@ async function forkBranch(
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
   })
   // A model given replaces the owner the fork inherited, a backup too; without one the fork keeps both.
-  if (model) await host.need(ModelsApi).setModel(tx, fork.id, { type: 'start', model })
+  if (model)
+    await host
+      .need(ModelsApi)
+      .setModel(tx, fork.id, { type: 'start', model, family: input.model ? input.family : null })
   // A branch gets ordinary tools whatever its source ran with.
   const agent = await tx.doc(AgentDoc, fork.id)
   delete agent.tools
