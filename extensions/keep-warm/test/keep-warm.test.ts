@@ -1,14 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import {
-  chipOf,
-  due,
-  failing,
-  IDLE_STOP,
-  LEAD,
-  outcome,
-  TTL,
-  warmStep,
-} from '../due.ts'
+import { chipOf, due, failing, IDLE_STOP, LEAD, outcome, TTL, warmStep } from '../due.ts'
 import type { WarmEvent } from '../due.ts'
 import type { WarmDocState, WarmState } from '../refs.ts'
 import * as keepWarm from '../server.ts'

@@ -1,13 +1,7 @@
 import type { ConversationId, GenerationHooks, Tx } from '@earendil-works/pi-durable'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { expect, it } from 'vitest'
-import todosExtension, {
-  add,
-  DONE_LIMIT,
-  mark,
-  noteFor,
-  Todos,
-} from '../server.ts'
+import todosExtension, { add, DONE_LIMIT, mark, noteFor, Todos } from '../server.ts'
 import { isDone } from '../../../lib/todos.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 

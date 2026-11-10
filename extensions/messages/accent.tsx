@@ -55,7 +55,7 @@ const remote: Accent = {
 }
 
 /** A stable palette slot for a sender other than the user. */
-export function accentIndex(id: number, size: number) {
+function accentIndex(id: number, size: number) {
   let hash = 0
   for (const char of `#${id}`) hash = (Math.imul(hash, 31) + char.codePointAt(0)!) | 0
   return (hash >>> 0) % size

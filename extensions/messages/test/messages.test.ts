@@ -42,13 +42,7 @@ import pauseExtension, { actions as pauseActions } from '../../pause/server.ts'
 import { Messages, MessagesApi, MessageSent } from '../api.ts'
 import { send as sendMessage } from '../send.ts'
 import { UserInputEvent } from '../../../shared/events.ts'
-import {
-  BranchReceipts,
-  notifies,
-  Tally,
-  rootOf,
-  startBranch,
-} from '../../lineage/server.ts'
+import { BranchReceipts, notifies, Tally, rootOf, startBranch } from '../../lineage/server.ts'
 import type { BranchInput } from '../../lineage/server.ts'
 import { Branch, LineageApi, Roots } from '../../lineage/api.ts'
 import type { LineageService } from '../../lineage/api.ts'

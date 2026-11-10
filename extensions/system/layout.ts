@@ -184,7 +184,7 @@ export type Frame = { y: ReadonlyMap<number, number>; width: number; since: numb
 const round = (value: number) => Math.round(value * 10) / 10
 
 /** From `(x1, y1)` down (or up) to `y2`, then across to `x2` round a soft corner; straight down when `x2` is left of it. */
-export function elbow(x1: number, y1: number, x2: number, y2: number) {
+function elbow(x1: number, y1: number, x2: number, y2: number) {
   const r = Math.min(6, Math.abs(y2 - y1) / 2, Math.max(0, x2 - x1))
   if (r <= 0) return `M${round(x1)} ${round(y1)}V${round(y2)}`
   const down = y2 > y1 ? 1 : -1

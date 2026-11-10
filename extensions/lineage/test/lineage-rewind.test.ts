@@ -11,7 +11,14 @@ import { Rewound } from '../refs.ts'
 import { Standing, Started } from '../../subagents/api.ts'
 import { context } from '../../../server/harness.ts'
 import { emit } from '../../../server/events.ts'
-import { eventHost, fauxServer, post, temp, trimmedSourceCopy, until } from '../../../test/helpers.ts'
+import {
+  eventHost,
+  fauxServer,
+  post,
+  temp,
+  trimmedSourceCopy,
+  until,
+} from '../../../test/helpers.ts'
 
 let ultimateRoot: string
 beforeAll(async () => {

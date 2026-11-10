@@ -2,14 +2,7 @@ import type { ConversationId, GenerationHooks, Tx } from '@earendil-works/pi-dur
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { expect, it } from 'vitest'
 import { reminderTask } from '../reminder.ts'
-import goalExtension, {
-  act,
-  actions,
-  end,
-  Goals,
-  openGoal,
-  start,
-} from '../server.ts'
+import goalExtension, { act, actions, end, Goals, openGoal, start } from '../server.ts'
 import { reminderOf, transition, TRIES } from '../state.ts'
 import type { GoalPhase } from '../refs.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
