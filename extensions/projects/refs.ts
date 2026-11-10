@@ -23,6 +23,7 @@ export type RemoteProject = { machine: string; name: string; url: string }
 export const ListAction = actionRef<null, { projects: LocalProject[]; remotes: RemoteProject[] }>(
   'projects',
   'list',
+  { global: true },
 )
 
 /**

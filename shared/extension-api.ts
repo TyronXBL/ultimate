@@ -37,16 +37,24 @@ export type ActionRef<Args, Result> = {
   readonly args?: Args
   /** Phantom: carries the result type; never set at runtime. */
   readonly result?: Result
+  /** Its answer is the same in every conversation (`actionRef`'s `{ global: true }`). */
+  readonly global?: boolean
 }
 
 /** `actionRef<{ id: number }, WorkspaceInfo | null>('workspaces', 'info')`; actions without arguments take `null`. */
-export const actionRef = <Args, Result>(
+export function actionRef<Args, Result>(extension: string, name: string): ActionRef<Args, Result>
+/**
+ * `{ global: true }`: its answer is the same in every conversation, so one `useAction` read serves them all and its
+ * handler cannot read the conversation.
+ */
+export function actionRef<Args, Result>(
   extension: string,
   name: string,
-): ActionRef<Args, Result> => ({
-  extension,
-  name,
-})
+  options: { global: true },
+): ActionRef<Args, Result> & { readonly global: true }
+export function actionRef(extension: string, name: string, options?: { global: true }) {
+  return { extension, name, ...options }
+}
 
 /**
  * How an extension joins the core tier: this exact line in its `api.ts`. Core-tier extensions are always on and depend

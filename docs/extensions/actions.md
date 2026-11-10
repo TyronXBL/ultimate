@@ -66,7 +66,10 @@ Call actions from the UI in one of two ways:
   never while `enabled` is false. Every component reading the same action and args shares one call and one result,
   so a remount shows the last answer at once while it asks again. It returns `{ data, error, loading, refetch }`:
   `data` stays while a refetch runs; `refetch()` calls again, also when not `enabled`. A failure shows as a notice
-  unless a reader passes `onError`. Pass the signal as `on` rather than calling `refetch()` from an effect.
+  unless a reader passes `onError`. Pass the signal as `on` rather than calling `refetch()` from an effect. A read
+  belongs to its scoped or shown conversation, so a switch asks again; an action whose answer is the same in every
+  conversation is declared `actionRef(extension, name, { global: true })` and keeps one read, and its handler gets
+  no `conversationId`, `exec` or `device`.
 - `api.action(ref, args?, { conversationId?, signal?, keepalive? })` acts, once: a click that saves,
   closes, or labels something; `keepalive` lets a call sent on `pagehide` outlive the page. It returns a promise of
   the result; afterwards, `refetch()` what changed. A rejection (an `ActionError` with `extension`, `action`,

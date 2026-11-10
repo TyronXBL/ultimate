@@ -24,6 +24,6 @@ export type Status =
   | { state: Problem; allow: string[]; hint: string }
 
 /** No arguments → this server's publication status. */
-export const StatusAction = actionRef<null, Status>('tailscale', 'status')
+export const StatusAction = actionRef<null, Status>('tailscale', 'status', { global: true })
 /** No arguments → the status reached after starting the publication again; a ready one stays as it is. */
 export const RetryAction = actionRef<null, Status>('tailscale', 'retry')

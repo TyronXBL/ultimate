@@ -14,4 +14,4 @@ export type Preview = {
 }
 
 /** No arguments → the previews that served their UI, running or stopped since; a failed start is not among them. */
-export const ListAction = actionRef<null, Preview[]>('instance', 'list')
+export const ListAction = actionRef<null, Preview[]>('instance', 'list', { global: true })

@@ -26,4 +26,4 @@ export type MemoryState = {
 }
 
 /** → the floor, available RAM and, close to the floor, the largest process groups this Ultimate started. */
-export const StateAction = actionRef<null, MemoryState>('memory', 'state')
+export const StateAction = actionRef<null, MemoryState>('memory', 'state', { global: true })

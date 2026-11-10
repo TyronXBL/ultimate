@@ -61,7 +61,7 @@ export type PauseState = {
 /** The pause, on conversation 1. */
 export const PauseDoc = docRef<PauseDocState>('pause.state')
 /** No arguments → the pause and the foreground tasks still running. */
-export const StateAction = actionRef<null, PauseState>('pause', 'state')
+export const StateAction = actionRef<null, PauseState>('pause', 'state', { global: true })
 /**
  * User-only: pause the whole host. Running tasks (a bash call, a model response) finish on their own; no task starts
  * after them, and inputs queue. Survives a restart. Returns the state.

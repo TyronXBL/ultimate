@@ -419,6 +419,24 @@ it('never shares an unscoped useAction request across a switch of the shown conv
     .map(([, init]) => JSON.parse(init!.body as string).conversationId)
   expect(bodies).toEqual([1, 5])
 })
+
+function GlobalAction() {
+  useAction(actionRef<null, unknown>('test', 'global', { global: true }))
+  return null
+}
+it('keeps one global useAction read across a switch of the shown conversation', async () => {
+  renderToStaticMarkup(h(GlobalAction))
+  commitEffects()
+  await tick()
+  store.show(5)
+  renderToStaticMarkup(h(GlobalAction))
+  commitEffects()
+  await tick()
+  const calls = harness.fetch.mock.calls.filter(
+    ([path]) => path === '/api/extensions/test/actions/global',
+  )
+  expect(calls).toHaveLength(1)
+})
 it('runs useAction on the scope even before its snapshot arrives', async () => {
   renderToStaticMarkup(scoped(21, h(Action)))
   commitEffects()

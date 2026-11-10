@@ -35,6 +35,6 @@ export type WarmState = {
 /** On conversation 1: off when the user turned it off, the last ping and how many ran. */
 export const WarmDoc = docRef<WarmDocState>('keep-warm.state')
 /** No arguments → whether it is on, the cache's last request, the next ping and the last one. */
-export const StateAction = actionRef<null, WarmState>('keep-warm', 'state')
+export const StateAction = actionRef<null, WarmState>('keep-warm', 'state', { global: true })
 /** User-only `{ on }`: keep @ultimate's cache warm, or stop. Returns the state. */
 export const SetAction = actionRef<{ on: boolean }, WarmState>('keep-warm', 'set')

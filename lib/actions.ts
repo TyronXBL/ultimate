@@ -21,16 +21,21 @@ export type TypedAction<Args, Result, Returned, Ctx> = ((args: JsonValue, ctx: C
 /**
  * The handler of the action `ref` names, for `export const actions = { [ref.name]: implementAction(ref, handler) }`:
  * the handler returns the ref's result and reads only the ref's argument names. `ctx` is the `ActionContext` unless
- * the handler declares a part of it.
+ * the handler declares a part of it; a global ref's handler has no `conversationId`, nor `exec` (which runs in the
+ * asking conversation's checkout) or `device`, since one read serves every conversation and browser.
  */
 export function implementAction<
   Args,
   Result,
   Returned extends NoInfer<Result> | Promise<NoInfer<Result>>,
   Ctx = ActionContext,
+  Global = boolean,
 >(
-  ref: ActionRef<Args, Result>,
-  handler: (args: ActionInput<NoInfer<Args>>, ctx: Ctx) => Returned,
+  ref: ActionRef<Args, Result> & { readonly global?: Global },
+  handler: (
+    args: ActionInput<NoInfer<Args>>,
+    ctx: [Global] extends [true] ? Omit<Ctx, 'conversationId' | 'exec' | 'device'> : Ctx,
+  ) => Returned,
 ): TypedAction<Args, Result, Returned, Ctx> {
   // Any JSON reaches a handler; ActionInput only names what it may look for, and the handler validates it.
   return Object.assign((args: JsonValue, ctx: Ctx) => handler(args as ActionInput<Args>, ctx), {

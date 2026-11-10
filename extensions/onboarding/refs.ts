@@ -43,7 +43,9 @@ export const StartsDoc = docRef<{ roots: Record<string, number>; dismissed?: boo
 )
 
 /** No arguments → the first-run flag, the project's setup and what it would add, and the user's extension lists. */
-export const StatusAction = actionRef<null, OnboardingStatus>('onboarding', 'status')
+export const StatusAction = actionRef<null, OnboardingStatus>('onboarding', 'status', {
+  global: true,
+})
 /** No arguments → `{ firstRun: false }`: record that the user finished or skipped the first run. */
 export const FirstRunDoneAction = actionRef<null, { firstRun: boolean }>(
   'onboarding',

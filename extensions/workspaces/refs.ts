@@ -37,7 +37,7 @@ export const RecentLandingsAction = actionRef<
     feature?: string
     commitCount: number
   }[]
->('workspaces', 'recentLandings')
+>('workspaces', 'recentLandings', { global: true })
 /** `{ id }` → conversation `id`'s worktree with its branch, tip and changes, or null when it has none. */
 export const InfoAction = actionRef<{ id: number }, WorkspaceInfo | null>('workspaces', 'info')
 /**
@@ -55,7 +55,9 @@ export const DiskAction = actionRef<null, WorkspaceDisk>('workspaces', 'disk')
  * No arguments → whether the project can start isolated conversations; once it can, the project's lander is stood up
  * if it has none.
  */
-export const IsolationAction = actionRef<null, Isolation>('workspaces', 'isolation')
+export const IsolationAction = actionRef<null, Isolation>('workspaces', 'isolation', {
+  global: true,
+})
 /** No arguments → `github.com/<owner>/<repo>` of the project's `origin`, or null off GitHub. */
 export const GithubAction = actionRef<null, string | null>('workspaces', 'github')
 

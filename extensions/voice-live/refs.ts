@@ -48,7 +48,7 @@ export type VoiceAnswer = {
 }
 
 /** No arguments → API key availability, or a reason explaining how to enable it. */
-export const StatusAction = actionRef<null, VoiceStatus>('voice-live', 'status')
+export const StatusAction = actionRef<null, VoiceStatus>('voice-live', 'status', { global: true })
 /** `{ sdp }` offer → `{ sdp, conversation }` answer; creates a billable WebRTC session. */
 export const StartAction = actionRef<{ sdp: string }, { sdp: string; conversation: number }>(
   'voice-live',
