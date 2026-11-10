@@ -57,7 +57,7 @@ export const hourLong = (provider: string, on: boolean) =>
 // input-equivalent cost by ~30%, while long retention for every conversation would add ~8% to all the others' writes.
 // So only @ultimate's requests, on `anthropic` with keep-warm on, get the one-hour breakpoints.
 
-/** The Anthropic Messages body with each cache breakpoint at one hour, as pi-ai builds it for `cacheRetention: 'long'`. */
+/** The Anthropic Messages body with each cache breakpoint at one hour, as pi-ai's `cacheRetention: 'long'` sets it. */
 function hourBreakpoints(payload: unknown) {
   type Block = { cache_control?: { type?: string } }
   const block = (value: Block) =>
