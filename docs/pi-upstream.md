@@ -74,8 +74,8 @@ The upgrade branch checks, and records the results here:
 1. The release kept the names and defaults above (`compat.supportsMessageThreads`, `cacheWarming`,
    `StreamOptions.disableContinuation`); they were unreleased when this was written.
 2. The pin holds: on a machine with the setting, `getModel('anthropic', id).compat.supportsMessageThreads` is `false`
-   and a real `anthropic` turn's `betas` lack `message-threads-2026-08-12` (the `ultimate-provider-smoke` skill; an
-   `onPayload` hook sees `betas`, while the `thread` field itself is added after it).
+   and a real `anthropic` turn's `betas` lack `message-threads-2026-08-12` (the `ultimate-provider-smoke` skill; Wire and
+   any payload hook see `betas`, while the `thread` field itself is added after them).
 3. Pi Durable still has no cache warmer (`rg -L --no-ignore -i cachewarm node_modules/@earendil-works/pi-durable/dist`)
    and Ultimate still does not call `createAgentSession`. If either changed, idle warming spends money between runs:
    decide `cacheWarming` before landing.
