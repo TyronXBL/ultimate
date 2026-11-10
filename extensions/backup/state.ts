@@ -67,6 +67,49 @@ export function waitUntil(now: number, attempt: number, jitter: number, reset?: 
  */
 export const jitterOf = (id: number) => ((id * 2654435761) % 2 ** 32) / 2 ** 32
 
+/** How long a quota whose provider gave no reset time (a 402 out of credit) counts as exhausted. */
+export const EXHAUSTED_FOR = 60 * MINUTE
+
+/**
+ * `backup.exhausted`, on the root: the models (`provider/modelId`) this machine saw answer with an exhausted quota, and
+ * until when, so no conversation tries them again before; `at` when it was seen, `error` as the provider said it.
+ */
+export type Exhausted = Record<string, { until: number; at: number; error: string }>
+
+/**
+ * What changes the exhausted models: a quota answer of `model`, until its provider's reset or `EXHAUSTED_FOR`; an answer
+ * of `model` that is no error, which shows it has room again; a login or logout of `provider`, whose account may differ.
+ */
+export type ExhaustedEvent =
+  | { type: 'quota'; model: string; reset?: number; error: string }
+  | { type: 'answered'; model: string }
+  | { type: 'login'; provider: string }
+
+/** The exhausted models after `event` at `now`: the only writer of `backup.exhausted`. Expired ones drop out. */
+export function exhaustedStep(doc: Exhausted, event: ExhaustedEvent, now: number): Exhausted {
+  const next = Object.fromEntries(
+    Object.entries(doc).filter(
+      ([model, { until }]) =>
+        until > now &&
+        !(event.type === 'answered' && model === event.model) &&
+        !(event.type === 'login' && model.startsWith(`${event.provider}/`)),
+    ),
+  )
+  if (event.type === 'quota')
+    next[event.model] = {
+      until: event.reset !== undefined && event.reset > now ? event.reset : now + EXHAUSTED_FOR,
+      at: now,
+      error: event.error,
+    }
+  return next
+}
+
+/** Until when `model` is exhausted at `now`; undefined when it is not. */
+export const exhaustedUntil = (doc: Exhausted, model: string, now: number) => {
+  const until = Object.hasOwn(doc, model) ? doc[model].until : undefined
+  return until !== undefined && until > now ? until : undefined
+}
+
 /**
  * A legacy document's complete record is a backup; an empty or incomplete one is on its primary.
  */

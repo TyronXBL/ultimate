@@ -21,7 +21,7 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
-import { BackupOrder, ModelsApi, Pin, Resets } from '../models/api.ts'
+import { BackupOrder, LoginChanged, ModelsApi, Pin, Resets } from '../models/api.ts'
 import { ContextUsageDoc } from '../conversations/api.ts'
 import { Standing } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
@@ -31,11 +31,14 @@ import {
   backupOrder,
   backupStep,
   COOLDOWN_MINUTES,
+  exhaustedStep,
+  exhaustedUntil,
   fromLegacy,
   jitterOf,
   legacyHolds,
   name,
 } from './state.ts'
+import type { Exhausted, ExhaustedEvent } from './state.ts'
 import type {
   BackupNotice,
   BackupReturned,
@@ -57,7 +60,29 @@ const State = defineDoc<BackupState>({
   // Version 1 held the record's fields, all optional, and `{}` while on the primary; version 2 recorded no limit.
   migrate: (value) => fromLegacy(value),
 })
-export const docs = [State]
+/** The models this machine knows to be out of quota (`Exhausted`), on the root; only `exhaust` writes it. */
+const ExhaustedState = defineDoc<Exhausted>({
+  kind: 'backup.exhausted',
+  checkpointWhen: () => false,
+  version: 1,
+  scope: 'conversation',
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({}),
+})
+export const docs = [State, ExhaustedState]
+
+/** Record `event` in the exhausted models inside `tx` (`exhaustedStep`), and return them. */
+async function exhaust(tx: Tx, event: ExhaustedEvent, now: number) {
+  const doc = await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
+  const next = exhaustedStep(doc, event, now)
+  // An event that changes nothing leaves no revision.
+  if (JSON.stringify(next) !== JSON.stringify(doc)) {
+    for (const key of Object.keys(doc)) Reflect.deleteProperty(doc, key)
+    Object.assign(doc, next)
+  }
+  return next
+}
 
 /**
  * The backup of conversation `id` inside `tx`, after moving a `backup.state` record from before backups were an owner
@@ -85,14 +110,16 @@ const RESERVE = 32_768
 const thousands = (tokens: number) => `${Math.round(tokens / 1000)}k`
 
 /**
- * Why backup `ref` cannot take conversation `id` now, inside `tx`: no login here, or a window too small for its context.
- * Undefined when it can.
+ * Why backup `ref` cannot take conversation `id` now, inside `tx`: no login here, a quota this machine saw exhausted
+ * (`exhausted`, at `now`), or a window too small for its context. Undefined when it can.
  */
-async function skipper(host: Host, tx: Tx, id: ConversationId) {
+async function skipper(host: Host, tx: Tx, id: ConversationId, exhausted: Exhausted, now: number) {
   const available = host.modelRuntime.getAvailableSnapshot()
   const tokens = (await tx.doc(ContextUsageDoc, id)).tokens ?? 0
   return (ref: ModelRef) => {
     if (!hasLogin(available, ref)) return 'no login'
+    const until = exhaustedUntil(exhausted, name(ref), now)
+    if (until !== undefined) return `quota until ${utc(until)}`
     const window = host.modelRuntime.getModel(ref.provider, ref.modelId)?.contextWindow
     if (window && tokens + RESERVE > window)
       return `${thousands(window)} window, ${thousands(tokens)} context`
@@ -111,6 +138,7 @@ type Host = Pick<
   | 'onOpen'
   | 'onClose'
   | 'onRelease'
+  | 'react'
 >
 
 /** `level` as far as model `ref` supports it; undefined without a level, or for a model this machine does not know. */
@@ -145,8 +173,8 @@ type Waiting = { from: string; primary: string; reason: string; since: number; u
 async function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
   const failed = `${message.provider}/${message.model}`
   const limit = limitOf(message.errorMessage ?? '') ?? 'rate limit'
-  // An exhausted quota resets when its provider says; a wait on that model waits that long. Read before the commit, as it
-  // asks the provider; failing to read it leaves the backoff.
+  // An exhausted quota resets when its provider says. Read before the commit, as it asks the provider; failing to read
+  // it leaves the default.
   const reset =
     limit === 'quota'
       ? await host
@@ -160,9 +188,21 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
       // Every conversation runs on a model of its own: Pi answers a run without one `no_model`, never with a limit.
       const current = agent.model
       if (!current) return undefined
+      const now = Date.now()
+      // Every conversation skips a model this one found out of quota, until it resets (#191380 and its siblings each
+      // tried the same two exhausted backups).
+      const exhausted =
+        limit === 'quota'
+          ? await exhaust(
+              tx,
+              { type: 'quota', model: failed, ...(reset ? { reset } : {}), error: short(message.errorMessage ?? '') },
+              now,
+            )
+          : await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
       const backup = await backupFor(host, tx, id)
       const definition = await host.want(Pin)?.definition(tx, id)
       const primary = backup.kind === 'primary' ? current : backup.primary
+      const primaryReset = exhaustedUntil(exhausted, name(primary), now)
       const { state, outcome: step } = backupStep(backup, {
         type: 'limit',
         current,
@@ -170,11 +210,11 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
         failed,
         reason: limit,
         candidates: definition?.fallback ?? [],
-        skip: await skipper(host, tx, id),
-        // Only the primary's own reset says when to try it again.
-        ...(reset !== undefined && failed === name(primary) ? { reset } : {}),
+        skip: await skipper(host, tx, id, exhausted, now),
+        // A wait for a primary out of quota lasts until its quota resets.
+        ...(primaryReset === undefined ? {} : { reset: primaryReset }),
         jitter: jitterOf(id),
-        now: Date.now(),
+        now,
       })
       const models = host.need(ModelsApi)
       if (step.kind === 'earlier' || step.kind === 'held') return { kind: 'handled' as const }
@@ -354,23 +394,31 @@ async function returned(
   }
 }
 
-/** The primary of a waiting conversation answered `message`: the wait is over, and its owner is the one before it. */
+/**
+ * `message` answered conversation `id`: its model has room again, so no conversation skips it as out of quota, and the
+ * primary of a waiting conversation ends the wait, which returns the owner to the one before it.
+ */
 function resume(host: Host, id: ConversationId, message: AssistantMessage) {
+  const model = `${message.provider}/${message.model}`
   return serial(host, () =>
     host.harness().commit(async (tx) => {
+      const now = Date.now()
+      if (exhaustedUntil(await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID), model, now))
+        await exhaust(tx, { type: 'answered', model }, now)
       const models = host.need(ModelsApi)
       const wait = await models.limitWait(tx, id)
       if (!wait) return
-      const { outcome } = backupStep(
-        { kind: 'waiting', ...wait },
-        { type: 'answered', model: `${message.provider}/${message.model}` },
-      )
+      const { outcome } = backupStep({ kind: 'waiting', ...wait }, { type: 'answered', model })
       if (outcome.kind === 'resumed') await models.setModel(tx, id, { type: 'return' })
     }, context),
   )
 }
 
 export default function extension(host: Host) {
+  // Another account may have room: what this machine knew of the provider's quota no longer holds.
+  host.react('exhausted-login', [LoginChanged], async (tx, { data }) => {
+    await exhaust(tx, { type: 'login', provider: data.provider }, Date.now())
+  })
   host.implement(BackupApi, {
     fallBack: (id, message, entry) => fallBack(host, id, message, entry),
   })
@@ -381,13 +429,16 @@ export default function extension(host: Host) {
       // Only a read: a `backup.state` record that still holds counts until a run moves it (`backupFor`).
       const owner = await host.need(ModelsApi).owner(tx, id)
       const legacy = await tx.doc(State, id)
+      const now = Date.now()
+      const exhausted = await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
       const order = backupOrder(legacyHolds(legacy, owner, agent.model) ? legacy : backupOf(owner), {
         current: agent.model,
         currentThinking: agent.thinkingLevel,
         candidates: (await host.want(Pin)?.definition(tx, id))?.fallback ?? [],
-        // A summary reads the whole conversation: a model without room for it cannot write one either.
-        skip: await skipper(host, tx, id),
-        now: Date.now(),
+        // A summary reads the whole conversation: a model without room for it cannot write one either; nor can one out
+        // of quota.
+        skip: await skipper(host, tx, id, exhausted, now),
+        now,
       })
       return order.map(({ thinking, ...ref }) => {
         const level = clamped(host, ref, thinking)

@@ -16,7 +16,15 @@ import { PauseApi } from '../../pause/api.ts'
 import { ModelsApi, Pin } from '../../models/api.ts'
 import modelsExtension from '../../models/server.ts'
 import { Backups, Owner } from '../../models/set-model.ts'
-import { backupOrder, backupStep, jitterOf, waitUntil } from '../state.ts'
+import {
+  backupOrder,
+  backupStep,
+  exhaustedStep,
+  exhaustedUntil,
+  jitterOf,
+  waitUntil,
+} from '../state.ts'
+import type { Exhausted, ExhaustedEvent } from '../state.ts'
 import type { BackupRecord } from '../../models/refs.ts'
 import type { BackupState, ModelRef } from '../refs.ts'
 import { Standing } from '../../subagents/api.ts'
@@ -72,6 +80,8 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
     onOpen: (callback: () => Promise<void>) => void openers.push(callback),
     onClose: () => {},
     onRelease: () => {},
+    // No login changes here: the reactor for them never runs.
+    react: () => {},
     conversations: () => [],
   } as unknown as ExtensionHost
   services.implement(Pin, {
@@ -386,6 +396,30 @@ it('switches once for a failure reported twice', async () => {
   expect((await agent(harness, root.id)).model).toEqual({ provider: 'faux', modelId: 'faux-2' })
 })
 
+// #191380, #191455 and #194520 each tried the same exhausted backup in turn.
+it('skips a backup another conversation found out of quota', async () => {
+  const f = await fixture()
+  f.prepared.faux!.setResponses([
+    () => fauxAssistantMessage([fauxText('a')]),
+    () => fauxAssistantMessage([fauxText('b')]),
+  ])
+  const { root, harness } = await f.open()
+  const other = await harness.createConversation({ ownership: { kind: 'ownerless' } }, context)
+  const answer = async (conversation: { id: ConversationId }, modelId: string) => {
+    await harness.commit(async (tx) => {
+      ;(await tx.doc(AgentDoc, conversation.id)).model = { provider: 'faux', modelId }
+    }, context)
+    const handle = (await harness.conversation(conversation.id, context))!
+    await (await handle.submit({ type: 'input', content: 'go' }, context)).wait(context)
+    return (await entries(harness, conversation.id)).at(-1)!.id
+  }
+  const first = await answer(root, 'faux-2')
+  const second = await answer(other, 'faux-1')
+  expect(await f.backup().fallBack(root.id, limitedBy('faux-2', quota), first)).toBe(true)
+  expect(await f.backup().fallBack(other.id, limitedBy('faux-1', rateLimit), second)).toBe(true)
+  expect((await agent(harness, other.id)).model).toEqual({ provider: 'faux', modelId: 'faux-3' })
+})
+
 const ref = (modelId: string) => ({ provider: 'faux', modelId })
 const SINCE = 1_000_000
 const COOLDOWN_MS = 30 * 60_000
@@ -616,6 +650,49 @@ it('spreads the retries of conversations waiting on one limit', () => {
   const resets = ids.map((id) => waitUntil(SINCE, 1, jitterOf(id), SINCE + 3600_000))
   expect(new Set(resets).size).toBe(ids.length)
   for (const at of resets) expect(at - (SINCE + 3600_000)).toBeLessThan(60_000)
+})
+
+const HOUR = 3600_000
+const seen = { until: SINCE + HOUR, at: SINCE, error: 'out of credit' }
+it.each<{ row: string; from: Exhausted; event: ExhaustedEvent; now?: number; after: Exhausted }>([
+  {
+    row: 'a quota counts until its provider’s reset',
+    from: {},
+    event: { type: 'quota', model: 'faux/a', reset: SINCE + 5 * HOUR, error: 'quota' },
+    after: { 'faux/a': { until: SINCE + 5 * HOUR, at: SINCE, error: 'quota' } },
+  },
+  {
+    row: 'a quota without a reset counts for an hour',
+    from: {},
+    event: { type: 'quota', model: 'faux/a', error: 'out of credit' },
+    after: { 'faux/a': seen },
+  },
+  {
+    row: 'an answer of the model clears it, and only it',
+    from: { 'faux/a': seen, 'faux/b': seen },
+    event: { type: 'answered', model: 'faux/a' },
+    after: { 'faux/b': seen },
+  },
+  {
+    row: 'a login clears its provider’s models',
+    from: { 'faux/a': seen, 'other/a': seen },
+    event: { type: 'login', provider: 'faux' },
+    after: { 'other/a': seen },
+  },
+  {
+    row: 'an expired one drops out at the next event',
+    from: { 'faux/a': seen },
+    event: { type: 'answered', model: 'faux/b' },
+    now: SINCE + HOUR,
+    after: {},
+  },
+])('exhausted: $row', ({ from, event, now, after }) => {
+  expect(exhaustedStep(structuredClone(from), event, now ?? SINCE)).toEqual(after)
+})
+
+it('reads an exhausted model only until it resets', () => {
+  expect(exhaustedUntil({ 'faux/a': seen }, 'faux/a', SINCE + HOUR - 1)).toBe(SINCE + HOUR)
+  expect(exhaustedUntil({ 'faux/a': seen }, 'faux/a', SINCE + HOUR)).toBeUndefined()
 })
 
 it.each([

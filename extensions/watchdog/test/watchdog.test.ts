@@ -128,6 +128,8 @@ async function fixture(
     onOpen: (callback: () => Promise<void>) => onOpen.push(callback),
     onClose: (callback: () => Promise<void>) => onClose.push(callback),
     onRelease: () => {},
+    // No login changes here: backup's reactor for them never runs.
+    react: () => {},
     scanSubmissions: (...args: Parameters<MemoryStorage['scanSubmissions']>) =>
       storage.scanSubmissions(...args),
   } as unknown as ExtensionHost
