@@ -354,8 +354,8 @@ function Tree({
   }
   /** A standing agent's or the lander's row: status and age, the lander's latest landing, @ultimate's questions. */
   const standingRow = (conversation: ConversationSummary | undefined) => {
-    const activity = conversation ? rowActivity(conversation.id) : 'idle'
-    const busy = activity === 'working'
+    const own = conversation ? rowActivity(conversation.id) : 'idle'
+    const busy = own === 'working'
     const latest = Math.max(conversation?.inputAt ?? 0, conversation?.answerAt ?? 0)
     const lander = conversation?.label === 'lander'
     const isUltimate = conversation === undefined || conversation.id === ultimateId
@@ -380,7 +380,7 @@ function Tree({
           {
             id: conversation.id,
             kind: isUltimate ? 'primary' : 'other',
-            activity,
+            activity: own,
             runState: overview[conversation.id]?.runState,
             primary: ultimateId,
           },

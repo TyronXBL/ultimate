@@ -29,7 +29,7 @@ export async function append(tx: Tx, input: Omit<Message, 'id' | 'at'>) {
  * Keeps the log at 300 items by dropping the oldest closed ones. An open message (a question waiting on the user, a
  * reply still owed) is never dropped: every view of what waits reads this log, so a dropped one would wait unseen.
  */
-export function trim(messages: Message[], cap = 300) {
+function trim(messages: Message[], cap = 300) {
   let extra = messages.length - cap
   for (let i = 0; extra > 0 && i < messages.length;)
     if (isOpen(messages[i])) i++
