@@ -144,7 +144,7 @@ export default defineWebExtension({
     'board.answered': () => null,
     // Retired: triage's wake-up pointer in older transcripts.
     'board.wake': () => null,
-    // The agent's reminder of the questions still open; the user sees them in the Inbox.
+    // The agent's reminder of the questions still open; the user sees them in the To-dos panel.
     'board.open': () => null,
     'pi.assistant': CompactAnswer,
   },

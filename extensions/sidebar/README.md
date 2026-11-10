@@ -34,8 +34,7 @@ and the age of its latest landing (what landed is its Landed section's first row
 compacts the context; they are never renamed, cleared or concluded.
 
 Beyond a phone the title bar's ULTIMATE wordmark (`titlebar.brand`) opens @ultimate too.
-@ultimate's mark and line (`waits on you`) are amber while questions wait on you; the Inbox row under it says how many
-and lists them (`extensions/inbox`). On
+@ultimate's mark is amber while questions wait on you, and its line says how many; the To-dos tab lists them. On
 phones, where the sidebar is hidden, the title bar's `@ultimate` button (`titlebar.left`) opens @ultimate from every
 surface instead, with the same mark: its dot pulses while @ultimate works and is amber while questions wait.
 

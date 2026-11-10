@@ -5,6 +5,9 @@ items are exactly the messages `waiting` (questions) returns over the Messages l
 (`items.ts`); an item leaves the moment it is answered or dismissed, wherever that happened. Browser only: no
 `server.ts`, no documents, no actions of its own.
 
+Off by default in this fork (`defaultOff`): the strip above @ultimate's composer (`extensions/questions`) and the
+To-dos panel's question rows already show what waits on the user. `extensions.enable: ["inbox"]` turns it on.
+
 ## Surface (`web.tsx`)
 
 - **List**: one row per item, the asking branch's feature chip and `#id` as the sidebar draws them, a `preview` tag
@@ -21,11 +24,13 @@ items are exactly the messages `waiting` (questions) returns over the Messages l
 - **Zero**: "Nothing waits on you", the questions answered or dismissed today, and **Back to @ultimate**.
 
 `?inbox=<message>` on load opens the surface at that item and leaves the address; the `inbox:open {message}` event
-does the same at runtime (a push notification's tap, `extensions/push`).
+does the same at runtime.
 
 ## Elsewhere
 
 - **Sidebar**: a row under @ultimate's (`sidebar.under-ultimate`), amber `Inbox · N · oldest 2h` while items wait,
-  a quiet `Inbox` at zero; a click opens the surface. @ultimate's own row then says only `waits on you`.
-- **To-dos**: the panel's "For you" keeps one `Inbox · N` row that opens it.
+  a quiet `Inbox` at zero; a click opens the surface.
 - ⌘K **Open Inbox**.
+
+Upstream's To-dos `Inbox · N` row, push taps that open the Inbox and @ultimate's row without its count are not in
+this fork while the Inbox is off: the To-dos question rows, push's `?conversation=&message=` and the count stay.

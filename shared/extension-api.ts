@@ -78,6 +78,9 @@ export const defaultOff: readonly string[] = [
   'voice-live',
   'push',
   'wire',
+  // Upstream's Inbox (merge of 42ab5da0, #202908): another home for the questions that wait on the user, beside the
+  // fork's strip above @ultimate's composer and the To-dos rows. Off until the user chooses between them.
+  'inbox',
 ]
 
 /** Who provides and who consumes each API, as `host.catalogue()` reports it. */
