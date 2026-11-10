@@ -44,7 +44,8 @@ shows beside the options for the hovered or chosen one. Recommended options (@ul
 a note field is always there: whatever it holds goes after the answer lines, or on its own (“Send note”), and never
 changes a pick. **Accept picks** chooses every pick still open; Send sends what is answered (“Send 2 of 5”). Sending
 opens a 3 s window with Undo before the answer goes out, then the card settles into the summary of what was sent, the
-note on its own line. Dismiss closes the message without an answer. A message without questions gets a one-line answer
+note on its own line. Leaving the page inside that window sends the answer at once (on `beforeunload`, else
+`pagehide`); only Undo takes it back. Dismiss closes the message without an answer. A message without questions gets a one-line answer
 field (sent as a Reply to that message) and Dismiss. On desktop, 1–9 or an option's letter (`y`/`n` for Yes/No, `o`
 for Something else) chooses, ↑/↓ moves between questions, Enter takes the open question's pick or goes to the next,
 and sends from the last one; ⇧Enter accepts every pick and sends; `/` focuses the note field, where Enter sends and

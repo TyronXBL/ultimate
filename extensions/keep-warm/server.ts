@@ -1,6 +1,6 @@
 /**
- * Keep warm: Claude Code, or the Anthropic API under `PI_CACHE_RETENTION=long`, caches @ultimate's prompt for an hour
- * after each request. Shortly before that hour ends, with @ultimate idle and the user away less than 8 hours, one
+ * Keep warm: Claude Code, or the Anthropic API with keep-warm on, caches @ultimate's prompt for an hour after each
+ * request. Shortly before that hour ends, with @ultimate idle and the user away less than 8 hours, one
  * request replays @ultimate's context as its next request would send it, plus a one-word question. It reads the whole
  * prefix from the cache, which renews the hour, and leaves nothing in any transcript; its tokens count toward
  * @ultimate's usage.
@@ -10,11 +10,14 @@ import { copyJson } from '@earendil-works/chord'
 import {
   defineDoc,
   defineExtension,
+  GenerationTask,
+  hook,
   LiveDoc,
   ROOT_CONVERSATION_ID,
 } from '@earendil-works/pi-durable'
-import type { ConversationId, Cursor, ModelRef } from '@earendil-works/pi-durable'
-import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
+import type { ConversationId, Cursor, HookApi, ModelRef } from '@earendil-works/pi-durable'
+import type { Api, AssistantMessage, Message, Model } from '@earendil-works/pi-ai'
+import type { Context } from '@earendil-works/chord'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { UserInputEvent } from '../../shared/events.ts'
 import { implementAction } from '../../lib/actions.ts'
@@ -39,10 +42,51 @@ export const docs = [State]
 
 /** How often the timer looks; a ping lands within a minute after `LEAD`, well inside the hour. */
 const TICK = 60_000
-/** Caches for an hour (`ttl: "1h"`): Claude Code always, the Anthropic API under `PI_CACHE_RETENTION=long`. */
-export const hourLong = (provider: string) =>
+/**
+ * Caches for an hour (`ttl: "1h"`): Claude Code always; the Anthropic API while keep-warm is `on` (`hourCache` sets it
+ * on @ultimate's requests), or for every request under `PI_CACHE_RETENTION=long`.
+ */
+export const hourLong = (provider: string, on: boolean) =>
   provider === 'claude-code' ||
-  (provider === 'anthropic' && process.env.PI_CACHE_RETENTION === 'long')
+  (provider === 'anthropic' && (on || process.env.PI_CACHE_RETENTION === 'long'))
+
+// --- One-hour cache for @ultimate on the Anthropic API (#195080) ---
+// pi-ai caches `anthropic` requests for 5 minutes unless PI_CACHE_RETENTION=long, which applies to every request of
+// the process (all conversations, and every project the service runs). Measured on stored usage (#195080, Nov 5–10):
+// @ultimate rewrote its whole 300–400k-token context after most 5–60 minute pauses; one hour plus pings cuts its
+// input-equivalent cost by ~30%, while long retention for every conversation would add ~8% to all the others' writes.
+// So only @ultimate's requests, on `anthropic` with keep-warm on, get the one-hour breakpoints.
+
+/** The Anthropic Messages body with each cache breakpoint at one hour, as pi-ai's `cacheRetention: 'long'` sets it. */
+function hourBreakpoints(payload: unknown) {
+  type Block = { cache_control?: { type?: string } }
+  const block = (value: Block) =>
+    value?.cache_control?.type === 'ephemeral'
+      ? { ...value, cache_control: { ...value.cache_control, ttl: '1h' } }
+      : value
+  const blocks = (list: unknown) => (Array.isArray(list) ? (list as Block[]).map(block) : list)
+  const body = payload as { system?: unknown; tools?: unknown; messages: { content: unknown }[] }
+  return {
+    ...body,
+    ...(body.system === undefined ? {} : { system: blocks(body.system) }),
+    ...(body.tools === undefined ? {} : { tools: blocks(body.tools) }),
+    messages: body.messages.map((message) => ({ ...message, content: blocks(message.content) })),
+  }
+}
+
+/** `beforeProviderRequest`: one-hour breakpoints on @ultimate's Anthropic requests while keep-warm is on. */
+export async function hourCache(
+  { model, payload }: { readonly model: Model<Api>; readonly payload: unknown },
+  api: Pick<HookApi, 'conversationId' | 'snapshot'>,
+  ctx: Context,
+) {
+  if (model.provider !== 'anthropic' || model.api !== 'anthropic-messages') return undefined
+  const standing = await api.snapshot(Standing, ROOT_CONVERSATION_ID, ctx)
+  if (standing?.ultimate !== api.conversationId) return undefined
+  if (!isOn((await api.snapshot(State, ROOT_CONVERSATION_ID, ctx)) ?? {})) return undefined
+  return { payload: hourBreakpoints(payload) }
+}
+// --- end #195080 ---
 const QUESTION = 'Cache keep-warm check from Ultimate, not from the user. Reply with just: ok'
 
 const read = async (host: ExtensionHost) =>
@@ -89,7 +133,7 @@ async function activity(host: ExtensionHost, doc: WarmDocState, now: number) {
   const conversation = id === undefined ? undefined : await host.harness().conversation(id, context)
   if (!conversation) return undefined
   const model = (await conversation.agent(context)).model
-  if (!model || !hourLong(model.provider)) return undefined
+  if (!model || !hourLong(model.provider, isOn(doc))) return undefined
   const answered = await answeredAt(host, id!, model, now)
   const last = lastOn(doc.last, model)
   const pinged = last && outcome(last) === 'succeeded' ? last.at : undefined
@@ -198,6 +242,8 @@ async function ping(
         { messages },
         {
           ...(agent.thinkingLevel === 'off' ? {} : { reasoning: agent.thinkingLevel }),
+          // The same one-hour breakpoints as @ultimate's own requests (`hourCache`); Claude Code ignores it.
+          cacheRetention: 'long',
           signal: AbortSignal.timeout(180_000),
         },
       )
@@ -289,7 +335,10 @@ export default function keepWarm(host: ExtensionHost) {
     clearInterval(timer)
     await shared.running
   })
-  return defineExtension({ name: 'keep-warm' })
+  return defineExtension({
+    name: 'keep-warm',
+    hooks: [hook(GenerationTask, { beforeProviderRequest: hourCache })],
+  })
 }
 
 export const actions = {

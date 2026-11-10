@@ -3,6 +3,7 @@ import { chipOf, due, failing, IDLE_STOP, LEAD, outcome, TTL, warmStep } from '.
 import type { WarmEvent } from '../due.ts'
 import type { WarmDocState, WarmState } from '../refs.ts'
 import * as keepWarm from '../server.ts'
+import { Standing } from '../../subagents/api.ts'
 
 const now = Date.parse('2026-10-24T12:00:00Z')
 const minutes = (count: number) => count * 60_000
@@ -38,14 +39,66 @@ it('clears a failed ping once a cached @ultimate answer follows it', () => {
   expect(failing(undefined, now)).toBe(false)
 })
 
-it('warms Claude Code, and the Anthropic API only under long cache retention', () => {
+it('warms Claude Code, and the Anthropic API while on or under long cache retention', () => {
   vi.stubEnv('PI_CACHE_RETENTION', undefined)
-  expect(keepWarm.hourLong('claude-code')).toBe(true)
-  expect(keepWarm.hourLong('anthropic')).toBe(false)
+  expect(keepWarm.hourLong('claude-code', false)).toBe(true)
+  expect(keepWarm.hourLong('anthropic', true)).toBe(true)
+  expect(keepWarm.hourLong('anthropic', false)).toBe(false)
   vi.stubEnv('PI_CACHE_RETENTION', 'long')
-  expect(keepWarm.hourLong('anthropic')).toBe(true)
-  expect(keepWarm.hourLong('openai')).toBe(false)
+  expect(keepWarm.hourLong('anthropic', false)).toBe(true)
+  expect(keepWarm.hourLong('openai', true)).toBe(false)
   vi.unstubAllEnvs()
+})
+
+it('caches only @ultimate’s Anthropic requests for an hour, and only while on (#195080)', async () => {
+  // As pi-ai 1.5.0 builds an OAuth body: one shared breakpoint object on the system, the last tool and the last block.
+  const mark = { type: 'ephemeral' }
+  const payload = {
+    model: 'claude-fable-5-2',
+    system: [
+      { type: 'text', text: 'You are Claude Code', cache_control: mark },
+      { type: 'text', text: 'prompt', cache_control: mark },
+    ],
+    tools: [{ name: 'read' }, { name: 'bash', cache_control: mark }],
+    messages: [
+      { role: 'user', content: 'You are conversation #7.' },
+      { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', content: [{ type: 'tool_result', content: 'x', cache_control: mark }] },
+    ],
+  }
+  const hour = { type: 'ephemeral', ttl: '1h' }
+  const anthropic = { provider: 'anthropic', api: 'anthropic-messages' } as never
+  const call = (
+    conversationId: number,
+    { model = anthropic, off = false }: { model?: never; off?: boolean } = {},
+  ) =>
+    keepWarm.hourCache(
+      { model, payload },
+      {
+        conversationId,
+        snapshot: (async (doc: unknown) =>
+          doc === Standing ? { ultimate: 7 } : off ? { off } : {}) as never,
+      } as never,
+      {} as never,
+    )
+  expect(await call(7)).toEqual({
+    payload: {
+      ...payload,
+      system: payload.system.map((block) => ({ ...block, cache_control: hour })),
+      tools: [{ name: 'read' }, { name: 'bash', cache_control: hour }],
+      messages: [
+        ...payload.messages.slice(0, 2),
+        { role: 'user', content: [{ type: 'tool_result', content: 'x', cache_control: hour }] },
+      ],
+    },
+  })
+  expect(mark).toEqual({ type: 'ephemeral' })
+  // Undefined: the harness sends pi-ai's body unchanged.
+  expect(await call(8)).toBeUndefined()
+  expect(await call(7, { off: true })).toBeUndefined()
+  expect(
+    await call(7, { model: { provider: 'claude-code', api: 'anthropic-messages' } as never }),
+  ).toBeUndefined()
 })
 
 it('counts only answers that read or wrote the current model’s cache', () => {
