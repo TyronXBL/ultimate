@@ -156,6 +156,10 @@ export default defineConfig({
           'react/set-state-in-effect': 'off',
           'react/refs': 'off',
           'react/purity': 'off',
+          // oxlint 1.91.0, which vite-plus 1.5.1 pins, reports every `let` an effect declares and a closure in it
+          // reassigns (https://github.com/oxc-project/oxc/issues/28401; eight correct effects here). Back to the
+          // default when vite-plus ships an oxlint with the fix (1.92 or later).
+          'react/immutability': 'off',
           'react/memo-dependencies': 'off',
           'react/exhaustive-effect-dependencies': 'off',
           'no-restricted-imports': [

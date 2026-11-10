@@ -17,15 +17,15 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-mcp@1.5.0'
   - '@earendil-works/pi-telemetry@1.5.0'
   - '@earendil-works/pi-tui@1.5.0'
-  - '@voidzero-dev/vite-plus-darwin-arm64@1.4.0'
-  - '@voidzero-dev/vite-plus-darwin-x64@1.4.0'
-  - '@voidzero-dev/vite-plus-linux-arm64-gnu@1.4.0'
-  - '@voidzero-dev/vite-plus-linux-arm64-musl@1.4.0'
-  - '@voidzero-dev/vite-plus-linux-x64-gnu@1.4.0'
-  - '@voidzero-dev/vite-plus-linux-x64-musl@1.4.0'
-  - '@voidzero-dev/vite-plus-win32-arm64-msvc@1.4.0'
-  - '@voidzero-dev/vite-plus-win32-x64-msvc@1.4.0'
-  - vite-plus@1.4.0
+  - '@voidzero-dev/vite-plus-darwin-arm64@1.5.1'
+  - '@voidzero-dev/vite-plus-darwin-x64@1.5.1'
+  - '@voidzero-dev/vite-plus-linux-arm64-gnu@1.5.1'
+  - '@voidzero-dev/vite-plus-linux-arm64-musl@1.5.1'
+  - '@voidzero-dev/vite-plus-linux-x64-gnu@1.5.1'
+  - '@voidzero-dev/vite-plus-linux-x64-musl@1.5.1'
+  - '@voidzero-dev/vite-plus-win32-arm64-msvc@1.5.1'
+  - '@voidzero-dev/vite-plus-win32-x64-msvc@1.5.1'
+  - vite-plus@1.5.1
   - '@earendil-works/pi-schema@1.5.0'
 # Pi upstream: @earendil-works/chord@1.5.0 dist/output.js — sanitizeOutput keeps numeric SGR colours, which 1.5.0 strips with the other escape sequences. Drop when Pi keeps SGR.
 # Pi upstream: @earendil-works/pi-durable@1.5.0 dist/harness/inbox.js — transactional beforeInput hook places entries before a new run’s first input. Drop when Pi ships input-placement hooks.
