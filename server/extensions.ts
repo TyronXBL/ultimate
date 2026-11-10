@@ -790,7 +790,7 @@ export async function loadExtensions(
       return watchDirectory(directory, (_event, name) => {
         if (closed || !name || records.get(name)?.path !== join(directory, name)) return
         if (lstatSync(join(directory, name), { throwIfNoEntry: false })) return
-        enqueue(() => reload(new Set([name])))
+        queue(join(directory, name), true)
       })
     } catch (error) {
       // A missing folder has no entries; watchRoots reports it once it appears.

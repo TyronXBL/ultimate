@@ -80,7 +80,7 @@ it.each<{
     family: 'lead',
   },
   {
-    row: 'a backup runs as no family, and its return brings the family back',
+    row: 'the return from a backup brings the family underneath back',
     from: { by: 'backup', ...record, under: { by: 'default', family: 'lead' } },
     event: { type: 'return' },
     after: { by: 'default', family: 'lead' },

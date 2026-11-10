@@ -100,7 +100,8 @@ export const branchTool = (host: ExtensionHost) =>
             receipt: { taskId: api.taskId, callId: api.callId },
             ...(model ? { model } : {}),
             ...(thinkingLevel ? { thinkingLevel } : {}),
-            family: definitionFamily(coordinator, change),
+            // A setup's model for the coordinator is no family's, as a subagent's explicit model is (children.ts).
+            family: own ? null : definitionFamily(coordinator, change),
           },
           ctx,
         )
