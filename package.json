@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "node server/main.ts",
     "start": "node bin/ultimate.ts",
-    "check": "vp check && node scripts/deps.ts && knip --no-progress --no-config-hints",
+    "check": "vp check && node scripts/deps.ts && node scripts/pi-upstream.ts && knip --no-progress --no-config-hints",
     "fix": "vp fmt && pnpm check",
     "deps": "node scripts/deps.ts",
     "weigh": "node scripts/weigh.ts",

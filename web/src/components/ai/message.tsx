@@ -1,6 +1,6 @@
 // Adapted from vercel/ai-elements packages/elements/src/message.tsx (Apache-2.0, see LICENSE).
 // Changes: `from` is a plain role, no branches or actions; only the code plugin; denser typography; links go through
-// the extensions' `link` renderers.
+// the extensions' `link` renderers, inline code through their `inlineCode` renderers.
 import { cn } from 'cn'
 import { WrapTextIcon } from 'lucide-react'
 import type { ComponentProps, HTMLAttributes, ReactNode } from 'react'
@@ -133,14 +133,15 @@ export function CodeWrapButton() {
 
 const CoreCode = defaultComponents.code
 /**
- * Streamdown's code; a fenced block (Streamdown's `pre` marks it `data-block`) gets the wrap button beside copy, unless
- * `codeBlocks` renderers own its language: Streamdown's code hands those to `ExtensionCodeBlock`. It renders the block's
- * actions itself, so `controls.code` below does not reach it: keep the two in step.
+ * Streamdown's code for a fenced block (Streamdown's `pre` marks it `data-block`; inline spans go to `InlineCode`): it
+ * gets the wrap button beside copy, unless `codeBlocks` renderers own its language: Streamdown's code hands those to
+ * `ExtensionCodeBlock`. It renders the block's actions itself, so `controls.code` below does not reach it: keep the two
+ * in step.
  */
 function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: string }) {
   const incomplete = useIsCodeFenceIncomplete()
   const extensions = useExtensions()
-  const { node: _node, className, children, 'data-block': block, ...rest } = props
+  const { node: _node, className, children, 'data-block': _block, ...rest } = props
   const language = /language-(\S+)/.exec(className ?? '')?.[1] ?? ''
   const code =
     typeof children === 'string'
@@ -149,22 +150,6 @@ function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: stri
           typeof children.props.children === 'string'
         ? children.props.children
         : ''
-  // Inline code, as the `inlineCode` renderers compose it, starting with Streamdown's.
-  if (!block)
-    return inlineCodeRenderers(extensions).reduce<ReactNode>(
-      (inner, { extension, version, component: Renderer }) => (
-        <ExtensionBoundary
-          extension={extension}
-          fallback={inner}
-          key={extension}
-          variant="inline"
-          version={version}
-        >
-          <Renderer code={code} core={inner} />
-        </ExtensionBoundary>
-      ),
-      <CoreCode {...props} />,
-    )
   if (codeBlockRenderers(extensions, language).length > 0) return <CoreCode {...props} />
   return (
     <CodeBlock
@@ -181,7 +166,29 @@ function Code(props: ComponentProps<'code'> & ExtraProps & { 'data-block'?: stri
   )
 }
 
-const components = { a: Link, code: Code }
+/** An inline code span as the `inlineCode` renderers compose it, starting with Streamdown's. */
+function InlineCode(props: ComponentProps<'code'> & ExtraProps) {
+  const renderers = inlineCodeRenderers(useExtensions())
+  const { children } = props
+  const core = <CoreCode {...props} />
+  if (typeof children !== 'string') return core
+  return renderers.reduce<ReactNode>(
+    (inner, { extension, version, component: Renderer }) => (
+      <ExtensionBoundary
+        extension={extension}
+        fallback={inner}
+        key={extension}
+        variant="inline"
+        version={version}
+      >
+        <Renderer code={children} core={inner} />
+      </ExtensionBoundary>
+    ),
+    core,
+  )
+}
+
+const components = { a: Link, code: Code, inlineCode: InlineCode }
 // After GFM, so autolinked URLs are links already and keep their `#fragment`.
 const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkMentions, remarkRelativeLinks]
 

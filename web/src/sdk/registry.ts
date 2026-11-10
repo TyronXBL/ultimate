@@ -15,6 +15,7 @@ import type {
   DocumentContribution,
   EntryRenderer,
   InboxRenderer,
+  InlineCodeRenderer,
   LinkRenderer,
   PanelContribution,
   SlotName,
@@ -513,8 +514,10 @@ export function linkRenderers(
   })
 }
 
-/** Every inline Markdown code renderer in discovery order: each receives the previous rendering as `core`. */
-export function inlineCodeRenderers(records: readonly ExtensionRecord[]) {
+/** Every Markdown inline code renderer in discovery order: each receives the previous rendering as `core`. */
+export function inlineCodeRenderers(
+  records: readonly ExtensionRecord[],
+): { extension: string; version: number; component: InlineCodeRenderer }[] {
   return records.flatMap((record) => {
     const component = record.extension?.inlineCode
     return component ? [{ extension: record.name, version: record.version, component }] : []

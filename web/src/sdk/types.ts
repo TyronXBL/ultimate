@@ -106,8 +106,12 @@ export type EntryRenderer = ComponentType<{
  * with the default link that asks before opening in a new tab. Return `core` for links you leave alone.
  */
 export type LinkRenderer = ComponentType<{ href: string; children: ReactNode; core: ReactNode }>
-/** Inline Markdown code: `code` is its text and `core` the default code rendering. */
-type InlineCodeRenderer = ComponentType<{ code: string; core: ReactNode }>
+
+/**
+ * An inline code span in Markdown (messages, reports): its text as `code`, and `core`, the rendering so far, starting
+ * with the default `<code>`. Return `core` for spans you leave alone.
+ */
+export type InlineCodeRenderer = ComponentType<{ code: string; core: ReactNode }>
 
 /**
  * A fenced code block in Markdown, by its language: `code`, `language`, `incomplete` while the fence still streams, and
@@ -322,7 +326,7 @@ export interface WebExtension {
   composer?: ComposerRenderer
   /** Renders links in Markdown; renderers compose in discovery order, each wrapping the one before it. */
   link?: LinkRenderer
-  /** Renders inline code in Markdown; renderers compose in discovery order, each wrapping the previous core. */
+  /** Renders inline code spans in Markdown; renderers compose in discovery order, each wrapping the one before it. */
   inlineCode?: InlineCodeRenderer
   /** Fenced code block renderers by language; they compose in discovery order, each wrapping the one before it. */
   codeBlocks?: Readonly<Record<string, CodeBlockRenderer>>

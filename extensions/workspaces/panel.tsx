@@ -1,5 +1,5 @@
 import { CopyIcon, RefreshCwIcon } from 'lucide-react'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { Row, Rows } from '@/components/ui/rows'
 import {
   cn,
@@ -56,19 +56,19 @@ export function Workspaces() {
 
 /** The shown conversation's checkout: path and branch to copy, target, commits ahead and the last landing. */
 function Checkout({ conversation }: { conversation: WorkspaceConversation }) {
-  const info = useAction(InfoAction, { id: conversation.id }, { onError: () => undefined })
-  const queued = useLanderQueue().find((item) => item.conversationId === conversation.id)
   const recorded = conversation.workspace!
   const landed = lastLanded(recorded)
+  const info = useAction(
+    InfoAction,
+    { id: conversation.id },
+    // A failure leaves the recorded workspace showing.
+    { onError: () => undefined, on: [recorded.state, landed, conversation.busy] },
+  )
+  const queued = useLanderQueue().find((item) => item.conversationId === conversation.id)
   const workspace =
     info.data && info.data.state === recorded.state && lastLanded(info.data) === landed
       ? info.data
       : recorded
-  const { refetch } = info
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [recorded.state, landed, conversation.busy, refetch])
   const ahead = info.data?.ahead
   const home = useSystem()?.machine.home
   return (
@@ -181,26 +181,11 @@ const parts = (entries: [number, string][]) =>
 /** How many checkouts there are, what their commits are, and the disk they take. */
 function Stats() {
   const records = useWorkspaces()
-  const { data, error, refetch } = useAction(StatsAction)
-  const disk = useAction(DiskAction)
-  const { refetch: refetchDisk } = disk
   const states = Object.entries(records)
     .map(([id, workspace]) => `${id}:${workspace.state}:${lastLanded(workspace) ?? ''}`)
     .join()
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [states, refetch])
-  useEffect(() => {
-    const refresh = () => {
-      // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-      void refetch()
-      // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-      void refetchDisk()
-    }
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
-  }, [refetch, refetchDisk])
+  const { data, error } = useAction(StatsAction, null, { on: states, focus: true })
+  const disk = useAction(DiskAction, null, { focus: true })
   if (error) return <p className="font-mono text-[11px] text-error">{error.message}</p>
   if (!data) return null
   return (
