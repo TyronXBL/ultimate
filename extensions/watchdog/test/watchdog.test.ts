@@ -12,6 +12,7 @@ import {
   configure,
   createRegistry,
   defineExtension,
+  hook,
   defineTask,
   defineTool,
   AgentDoc,
@@ -33,7 +34,7 @@ import watchdog, { diagnose } from '../server.ts'
 import { WatchdogApi } from '../api.ts'
 import backupExtension from '../../backup/server.ts'
 import modelsExtension from '../../models/server.ts'
-import { Pin } from '../../models/api.ts'
+import { BackupOrder, Pin } from '../../models/api.ts'
 import { Owner } from '../../models/set-model.ts'
 import type { ModelOwner } from '../../models/refs.ts'
 import { ContextUsageDoc } from '../../conversations/api.ts'
@@ -820,6 +821,88 @@ it.each([
     expect(f.notices).toEqual([])
   },
 )
+
+// #207552: the compaction's summary no model could write failed the run, and nothing continued it.
+it('continues a run whose compaction no model could summarize once its wait is over', async () => {
+  vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 })
+  const limited = { primary: true }
+  const answered: string[] = []
+  const f = await fixture((_transcript, _options, _state, by) => {
+    answered.push(by.id)
+    return fauxAssistantMessage('recovered')
+  }, false)
+  f.backup(['faux/faux-2'])
+  // Lineage's summary, as `summarize` ends when every model refuses: the refusals go to the backup order first.
+  f.registry.install(
+    defineExtension({
+      name: 'summary',
+      hooks: [
+        hook(CompactionTask, {
+          beforeCompact: async (_compaction, api) => {
+            if (!limited.primary) return { summary: 'summary' }
+            await f.host.want(BackupOrder)!.refused(
+              api.conversationId,
+              [
+                { model, error: rateLimit },
+                { model: { provider: 'faux', modelId: 'faux-2' }, error: outOfCredit },
+              ],
+              api.taskId,
+            )
+            return {
+              fail: `No model could write the summary: faux/faux-1 (rate limit: ${rateLimit})`,
+            }
+          },
+        }),
+      ],
+    }),
+  )
+  await f.install()
+  const tick = (ms: number) => {
+    vi.setSystemTime(Date.now() + ms)
+    f.advance(ms)
+  }
+  const id = await f.conversation('Branch')
+  // Over the primary's blocking threshold, with older entries for the compaction to replace.
+  const measured = fauxAssistantMessage('read')
+  measured.usage = { ...measured.usage, input: 2, cacheRead: 990_000 }
+  const old = (timestamp: number) => ({
+    role: 'user' as const,
+    content: 'x'.repeat(100_000),
+    timestamp,
+  })
+  await f.harness.commit(async (tx) => {
+    await tx.appendEntry(id, { kind: 'pi.user', model: [old(1)] })
+    await tx.appendEntry(id, { kind: 'pi.assistant', model: [fauxAssistantMessage('a')] })
+    await tx.appendEntry(id, { kind: 'pi.user', model: [old(2)] })
+    await tx.appendEntry(id, { kind: 'pi.assistant', model: [measured] })
+  }, context)
+  await until(
+    async () => (await f.harness.snapshot(ContextUsageDoc, id, context))?.tokens === 990_002,
+  )
+  // The run fails on its compaction before any answer, so the watchdog has no failed answer to go by.
+  expect((await (await f.submit(id, 'go')).wait(context)).status).toBe('unanswered')
+  const owner = () => f.harness.snapshot(Owner, id, context)
+  const wait = (await owner()) as ModelOwner & { by: 'limit-wait' }
+  expect(wait).toMatchObject({ by: 'limit-wait', primary: model, tried: ['faux/faux-1'] })
+  expect((await f.entries(id, 'backup.wait'))[0].data).toMatchObject({
+    skipped: [{ model: 'faux/faux-2', why: 'out of credit' }],
+  })
+  await f.sleeping()
+  tick(5_000)
+  await until(async () =>
+    (await f.tasks()).some(
+      (task) =>
+        task.state.status === 'sleeping' && (task.state as { until: number }).until === wait.until,
+    ),
+  )
+  limited.primary = false
+  tick(wait.until - Date.now())
+  await until(async () => answered.length === 1)
+  await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
+  expect(answered).toEqual(['faux-1'])
+  expect(await owner()).toEqual({ by: 'default' })
+  expect(await f.entries()).toEqual([])
+})
 
 it('keeps a wait across a restart: it neither fires at once nor is lost', async () => {
   const { f, tick, limited, answered, wait, inputs } = await incident()

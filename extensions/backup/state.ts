@@ -144,7 +144,7 @@ type Limit = {
   candidates: Candidate[]
   /** Why backup `ref` cannot take the conversation now (no login, too small for it), or undefined when it can. */
   skip: (ref: ModelRef) => string | undefined
-  /** When the primary's limit resets, when its provider said so. */
+  /** When the primary's limit resets, when its provider said so; `Infinity` out of credit, which starts no wait. */
   reset?: number
   /** This conversation's share of the spread between waits on one limit (`jitterOf`). */
   jitter: number
