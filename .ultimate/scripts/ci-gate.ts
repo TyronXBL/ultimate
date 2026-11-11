@@ -1,21 +1,18 @@
 // The lander's test gate. With a `pc` remote it first runs `pnpm test` and `pnpm test:e2e` on that PC
 // (`.ultimate/extensions/ci/pc.ts`); when the PC gives no verdict (unreachable, busy), it pushes the checked-out commit
 // to `<remote>:ci/<sha>`, waits for its GitHub Actions run and exits with its result. When GitHub gives no verdict
-// either (unreachable, or Actions refused to start the jobs for billing) it runs the suites here instead, each once the
-// machine's RAM floor admits it, and says so.
+// either (unreachable, or Actions refused to start the jobs for billing) it runs the suites here instead, each as a job
+// of the machine's heavy-work queue (`lib/slot.ts`) once its turn comes and the RAM floor admits it, and says so.
 // The API calls carry the remote's stored Git credential when there is one (`.ultimate/extensions/ci/github.ts`).
 //
 // Usage, in the checkout to test: node .ultimate/scripts/ci-gate.ts [remote]   (default remote: fork)
 // CI_GATE_API overrides the API base URL (default https://api.github.com).
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import {
-  admitRam,
-  commandNeedMiB,
-  describeShort,
-  memoryFloor,
-  RAM_POLL_MS,
-} from '../../lib/memory.ts'
+import { basename } from 'node:path'
+import { commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
+import { describeWait, enterSlot, keepHeld, SLOT_POLL_MS, thisProcess } from '../../lib/slot.ts'
+import type { SlotClaim } from '../../lib/slot.ts'
 import {
   failuresOf,
   git,
@@ -41,7 +38,7 @@ const LOCAL = [
 const LOCAL_TIMEOUT_MS = 600_000
 /** How long the PC may take before GitHub runs it instead, within the lander's 30 min for this check. */
 const PC_TIMEOUT_MS = 15 * 60_000
-/** How long a local suite waits for the RAM floor to admit it before the gate fails. */
+/** How long a local suite at the head of the heavy-work queue waits for the RAM floor to admit it before the gate fails. */
 const RAM_WAIT_MS = 10 * 60_000
 
 const log = (line: string) => console.log(`ci-gate: ${line}`)
@@ -142,31 +139,40 @@ async function onPc(sha: string) {
   return 1
 }
 
-/** Wait until the machine's RAM floor admits `command`; false when it still does not after `RAM_WAIT_MS`. */
+/**
+ * Wait in the heavy-work queue until `command`'s turn comes and the RAM floor admits it; then this process holds the
+ * slot, and the returned function lets it go. Undefined when RAM stayed short at the head of the line for `RAM_WAIT_MS`.
+ */
 async function admitted(command: string[]) {
   const floor = await memoryFloor(homedir())
   const need = commandNeedMiB(command.join(' '))
-  const since = Date.now()
-  let short = await admitRam(floor, need)
-  for (let polls = 0; short; polls++) {
-    if (Date.now() - since > RAM_WAIT_MS) {
+  const claim: SlotClaim = {
+    id: `ci-gate:${process.pid}:${command.join(' ')}`,
+    at: Date.now(),
+    label: command.join(' '),
+    from: `the lander's CI gate in ${basename(cwd)}`,
+  }
+  let ramSince: number | undefined
+  for (let polls = 0; ; polls++) {
+    const entered = await enterSlot(claim, { floor, need, start: thisProcess })
+    if (entered.kind === 'started') return keepHeld(claim)
+    ramSince = entered.kind === 'ram' ? (ramSince ?? Date.now()) : undefined
+    if (ramSince !== undefined && Date.now() - ramSince > RAM_WAIT_MS) {
       log(
-        `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeShort(short)}`,
+        `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeWait(entered)}`,
       )
-      return false
+      return undefined
     }
     // A line a minute: the lander stops a check after 2 min without output.
-    if (polls % (60_000 / RAM_POLL_MS) === 0)
-      log(`waiting for RAM for ${command.join(' ')}: ${describeShort(short)}`)
-    await sleep(RAM_POLL_MS)
-    short = await admitRam(floor, need)
+    if (polls % (60_000 / SLOT_POLL_MS) === 0) log(`${command.join(' ')}: ${describeWait(entered)}`)
+    await sleep(SLOT_POLL_MS)
   }
-  return true
 }
 
 /** Run `command` in its own process group, stopped with it after the time limit; resolves its exit code. */
 async function local(command: string[]) {
-  if (!(await admitted(command))) return 1
+  const release = await admitted(command)
+  if (!release) return 1
   return new Promise<number>((done) => {
     log(`running ${command.join(' ')} locally (limit ${LOCAL_TIMEOUT_MS / 1000} s)`)
     const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true })
@@ -178,7 +184,7 @@ async function local(command: string[]) {
       clearTimeout(timer)
       done(code ?? 1)
     })
-  })
+  }).finally(release)
 }
 
 async function main() {

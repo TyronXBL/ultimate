@@ -34,7 +34,8 @@ user) runs those models on the priority tier through the `fast` extension, at a 
 agent in a preview (`instance start`) runs on, fast tier included; see `extensions/instance/README.md`.
 `memory.minAvailableMiB` (user settings only, a number of MiB, off by default; Linux only) is this machine's RAM floor: background commands, lander
 checks, previews and heavy bash commands wait or are refused while they would take available RAM below it; see
-`extensions/memory/README.md`.
+`extensions/memory/README.md`, which also describes the machine's heavy-work queue (one heavy job at a time, in
+order), which runs with or without the floor.
 `theme` (user settings only, written by the `theme/set` action; `extensions/theme/README.md`) is this machine's colour
 theme and fonts, shared by every project and synced live to every browser.
 `remotes` (user settings only, `{ "<machine>": { "<project>": "<url>" } }`) names other machines' Ultimate instances,

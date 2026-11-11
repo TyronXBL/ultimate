@@ -18,9 +18,15 @@ durable `background.run` task then:
    (a landing concludes a branch without stopping its commands), the same card goes in as a note that starts no run;
    the conversations service's `resultIn` decides it in the commit that submits.
 
-Below the RAM floor (`memory.minAvailableMiB`, `extensions/memory/README.md`) a command whose estimated need does not
-fit waits before step 1: the task sleeps durably, looks again every 10 s, and after 30 min delivers a `not-started`
-card listing what uses RAM instead. The tool's answer says when it waits.
+A heavy command (tests, checks, installs, builds, a server: `commandNeedMiB` in `lib/memory.ts`) waits before step 1
+in the machine's heavy-work queue (`lib/slot.ts`, `extensions/memory/README.md`): one heavy command at a time across
+every Ultimate on the machine, in the order they asked. The task sleeps durably, looks again every 5 s and starts the
+command by itself once its turn comes and RAM above the floor (`memory.minAvailableMiB`) admits it; RAM short at the
+head of the line gives up after 30 min with a `not-started` card listing what uses RAM. The tool's answer says its
+place and what it waits for ("Queued, 2nd in line for the heavy-work slot, behind `pnpm check` from #12 in my-app
+(running 2 min); …"); while it waits the Tasks panel shows the same, and the result card how long it was queued. It
+holds the slot while its group runs and lets it go once the group is stopped, when it is concluded, or when it gives
+up. A light command starts at once, or waits for RAM the same way when the floor is already breached.
 
 The shell, not the host, writes the log and the code, so a command keeps running through a host restart and its
 result still arrives. The command keeps running across the caller's turns and its Stop button; concluding the

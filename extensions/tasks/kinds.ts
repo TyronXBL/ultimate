@@ -101,6 +101,20 @@ export function meaning(
         : { group: 'background', text: 'Telling that it finished', who: facts?.conversation }
     case 'workspaces.lander':
       return { group: 'landing', text: 'Landing', who: facts?.conversation, detail: phase }
+    case 'background.run':
+      return phase === 'wait'
+        ? {
+            group: 'background',
+            text: 'Queued command of',
+            who: facts?.conversation,
+            detail: facts?.waiting ?? facts?.command,
+          }
+        : {
+            group: 'background',
+            text: 'Command of',
+            who: facts?.conversation,
+            detail: facts?.command,
+          }
     case 'ultimate.automation-scheduler':
       return {
         group: 'scheduled',

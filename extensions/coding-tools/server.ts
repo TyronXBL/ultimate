@@ -28,14 +28,8 @@ import {
 import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
-import {
-  admitRam,
-  commandNeedMiB,
-  describeShort,
-  listUsers,
-  memoryFloor,
-  memoryUsers,
-} from '../../lib/memory.ts'
+import { commandNeedMiB, listUsers, memoryFloor, memoryUsers } from '../../lib/memory.ts'
+import { describeWait, enterSlot, keepHeld, slotLabel, thisProcess } from '../../lib/slot.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { watchSteer } from '../../lib/steer.ts'
@@ -400,13 +394,6 @@ export default function codingTools(
         throw new Error(
           `An interruptible command must only wait, but this one changes things (${change}). Run the change in its own bash call, then wait in a separate interruptible one.`,
         )
-      // A known heavy command (tests, checks, installs, a server) never starts below the RAM floor.
-      const need = commandNeedMiB(args.command)
-      const short = need ? await admitRam(await memoryFloor(host.userHome), need) : undefined
-      if (short)
-        throw new Error(
-          `Not enough RAM for this command: ${describeShort(short)}. Run it with the background tool, which waits until enough is free, or stop a job of yours first; what this Ultimate runs, by RSS:\n${listUsers(await memoryUsers())}`,
-        )
       if (api.env)
         for (const message of bashHints(args.command, api.env.cwd))
           api.diagnostic({ severity: 'info', code: 'bash_hint', message })
@@ -416,9 +403,34 @@ export default function codingTools(
         prepare: (execution) => prepareBash(execution, api, log),
       })
       const run = (command: Context) => call.execute(args, api, command)
+      // A known heavy command (tests, checks, installs, a server) runs here only while the machine's heavy-work slot is
+      // free, nobody waits for it and RAM allows, decided under the queue's lock; it holds the slot while it runs.
+      const need = commandNeedMiB(args.command)
+      let release: (() => Promise<void>) | undefined
+      if (need) {
+        const claim = {
+          id: `${host.projectRoot}:bash:${randomUUID()}`,
+          at: Date.now(),
+          label: slotLabel(args.command),
+          from: `#${api.conversationId} in ${basename(host.projectRoot)} (bash)`,
+        }
+        const entered = await enterSlot(claim, {
+          floor: await memoryFloor(host.userHome),
+          need,
+          start: thisProcess,
+          queue: false,
+        })
+        if (entered.kind !== 'started')
+          throw new Error(
+            `Not run: a heavy command runs in bash only while the heavy-work slot is free, nobody waits for it and RAM allows. It would be ${describeWait(entered)}. Queue it instead with exactly this call; it starts by itself in order and its result steers or wakes you, so never sleep, poll or retry it in bash:\nbackground ${JSON.stringify({ command: args.command })}${entered.kind === 'ram' ? `\nWhat this Ultimate runs, by RSS:\n${listUsers(await memoryUsers())}` : ''}`,
+          )
+        // Held from here: the `finally` below lets it go however the command ends.
+        release = keepHeld(claim)
+      }
       try {
         return await untilStopped(run, api, interruptible, context)
       } finally {
+        await release?.()
         // A failed or stopped command may still have committed, so record what it made either way.
         const commits = await madeCommits(log, api.conversationId)
         if (commits.length)

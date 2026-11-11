@@ -17,8 +17,8 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const color = failed ? 'text-error' : 'text-success'
   const meta =
     result.outcome === 'not-started'
-      ? `waited ${result.seconds}s for RAM`
-      : `exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s`
+      ? `waited ${result.seconds}s`
+      : `${result.queued ? `queued ${result.queued}s · ` : ''}exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s`
   return (
     <Fold
       card={entry.id}

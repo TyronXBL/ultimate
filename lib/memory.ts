@@ -84,9 +84,9 @@ const admissions = (dir: string) => join(dir, 'admissions.json')
 
 /**
  * The admission state's folder in `parent`: this user's own, mode 700, never a link, so nobody else can plant a file
- * or a symlink the admission writes through.
+ * or a symlink the admission writes through. The heavy-work queue (`lib/slot.ts`) keeps its state here too.
  */
-async function stateDir(parent: string) {
+export async function stateDir(parent: string) {
   const uid = process.getuid?.()
   const dir = join(parent, `ultimate-ram-${uid ?? 'user'}`)
   await mkdir(dir, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
@@ -114,7 +114,7 @@ async function reservations(dir: string, now: number) {
  * Run `critical` holding the machine's admission lock: a lock file, taken over once it is 10 s old. Two waiters taking
  * over the same stale lock at once may both enter; admission is best effort, and that needs a holder stuck for 10 s.
  */
-async function locked<T>(dir: string, critical: () => Promise<T>) {
+export async function locked<T>(dir: string, critical: () => Promise<T>) {
   const lock = join(dir, 'ultimate-ram.lock')
   for (;;) {
     try {
@@ -151,17 +151,20 @@ async function shortIn(dir: string, floor: number, need: number) {
 export async function admitRam(floor: number | undefined, need: number, parent = tmpdir()) {
   if (floor === undefined) return undefined
   const dir = await stateDir(parent)
-  return locked(dir, async () => {
-    const short = await shortIn(dir, floor, need)
-    if (!short && need) {
-      const now = Date.now()
-      await writeJson(admissions(dir), [
-        ...(await reservations(dir, now)),
-        { need, until: now + SETTLE_MS },
-      ])
-    }
-    return short
-  })
+  return locked(dir, () => admitIn(dir, floor, need))
+}
+/** `admitRam` for a caller that already holds the lock of the state folder `dir`. */
+export async function admitIn(dir: string, floor: number | undefined, need: number) {
+  if (floor === undefined) return undefined
+  const short = await shortIn(dir, floor, need)
+  if (!short && need) {
+    const now = Date.now()
+    await writeJson(admissions(dir), [
+      ...(await reservations(dir, now)),
+      { need, until: now + SETTLE_MS },
+    ])
+  }
+  return short
 }
 
 /** "4200 MiB available (1536 MiB of it reserved by jobs just started), needs 1536 MiB above the 3072 MiB floor". */

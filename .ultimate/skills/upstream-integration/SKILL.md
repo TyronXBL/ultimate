@@ -81,5 +81,5 @@ Check `git diff --name-only HEAD^1 HEAD` and put it in the report for @ultimate:
 
 ## RAM floor
 
-The machine keeps 3 GB free: installs, `pnpm fix` and test files go through `background`, one at a time; the full
-suites run on CI, never here.
+The machine keeps 3 GB free: installs, `pnpm fix` and test files go through `background`, whose heavy-work queue runs
+them one at a time, in order, with every other branch's; the full suites run on CI, never here.

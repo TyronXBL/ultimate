@@ -13,6 +13,7 @@ import { CheckRan } from '../../api.ts'
 import lineage, { startBranch } from '../../../lineage/server.ts'
 import { concludeIn } from '../../../conversations/server.ts'
 import { seedTally, until } from '../../../../test/helpers.ts'
+import { enterSlot, peekSlot, releaseSlot, thisProcess } from '../../../../lib/slot.ts'
 import {
   repository,
   fixture,
@@ -435,6 +436,38 @@ it.concurrent('kills the whole process group of a running check when the lander 
       return true
     }
   }, 5000)
+})
+it.concurrent('waits in the heavy-work queue for its heavy checks and lets the slot go before the light ones', async () => {
+  const f = await fixture()
+  const ran = join(f.directory, 'heavy-ran')
+  const light = heldCheck(f)
+  // The name is all that makes it heavy; it runs outside the checkout, so the checkout stays clean.
+  f.host.projectSettings = async () => ({
+    lander: { checks: [`: pnpm check; touch '${ran}'`, light.command] },
+  })
+  const other = { id: 'other-job', at: 0, label: 'pnpm test', from: '#7 in my-app' }
+  const start = { floor: undefined, need: 1536, start: thisProcess }
+  expect(await enterSlot(other, start)).toMatchObject({ kind: 'started' })
+  const id = await f.create()
+  await f.service.ready(id, context)
+  await commit((await f.service.get(id, context))!.path)
+  await f.service.submit(id, 'None', context)
+  await until(async () =>
+    (await landerLog(f)).log.some((row) =>
+      row.step?.startsWith(
+        'waiting: next in line for the heavy-work slot, behind `pnpm test` from #7 in my-app',
+      ),
+    ),
+  )
+  await expect(access(ran)).rejects.toThrow()
+  await releaseSlot(other.id)
+  await light.started()
+  // The heavy check ran, and the light one runs with the slot free for the next job in line.
+  await access(ran)
+  expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({ kind: 'next' })
+  await light.release()
+  const [report] = await submitted(f, id)
+  expect(report).toContain('landed as')
 })
 it.concurrent('runs worktree setup on the merged revision before the checks', async () => {
   const f = await fixture()

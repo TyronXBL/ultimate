@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, expect, it } from 'vitest'
@@ -10,6 +10,7 @@ import {
   fauxText,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
+import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import { context, prepareHarness } from '../../../../server/harness.ts'
 import type { OpenHost } from '../../../../server/harness.ts'
@@ -178,7 +179,7 @@ it('waits for RAM below the floor and starts once the floor allows it', async ()
   const caller = opened.root
   await caller.submit({ type: 'input', requestId: 'wait', content: 'Run tests' }, context)
   await until(async () =>
-    JSON.stringify((await caller.context(context)).entries).includes('Waiting for RAM'),
+    JSON.stringify((await caller.context(context)).entries).includes('waiting for RAM'),
   )
   expect(existsSync(join(root, 'ran'))).toBe(false)
   await writeJson(settings, {})
@@ -242,4 +243,147 @@ it('steers the calling run and wakes an interruptible wait when the command fini
   const finalIndex = entries.findLastIndex((entry) => entry.kind === 'pi.assistant')
   expect(resultIndex).toBeGreaterThan(-1)
   expect(resultIndex).toBeLessThan(finalIndex)
+})
+
+/**
+ * A project of its own, as another branch's or another project's host on the same machine: its root conversation runs
+ * each `RUN <command>` input as a background command. Every project of a test file shares the file's TMPDIR, so their
+ * heavy commands share one heavy-work queue.
+ */
+async function project(name: string) {
+  const root = await temp(`ultimate-background-${name}-`)
+  const prepared = await prepareHarness({
+    ultimateRoot: root,
+    userHome: await temp(),
+    home: `${root}/home`,
+    faux: fauxProvider(),
+  })
+  prepared.registry.install(
+    backgroundExtension({
+      projectRoot: root,
+      home: `${root}/home`,
+      userHome: `${root}/user`,
+      need,
+      onOpen: () => {},
+      onClose: () => {},
+    }),
+  )
+  const route: FauxResponseFactory = (transcript) => {
+    prepared.faux!.appendResponses([route])
+    const last = transcript.messages.findLast((message) => message.role !== 'system')!
+    const text =
+      typeof last.content === 'string'
+        ? last.content
+        : last.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
+    return last.role === 'user' && text.startsWith('RUN ')
+      ? fauxAssistantMessage([fauxToolCall('background', { command: text.slice(4) })], {
+          stopReason: 'toolUse',
+        })
+      : fauxAssistantMessage([fauxText('Noted.')])
+  }
+  prepared.faux!.setResponses([route])
+  let opened = await prepared.open()
+  hosts.push(opened)
+  let inputs = 0
+  const entries = async () => (await opened.root.context(context)).entries
+  return {
+    get caller() {
+      return opened.root
+    },
+    run: (command: string) =>
+      opened.root.submit(
+        { type: 'input', requestId: `run-${++inputs}`, content: `RUN ${command}` },
+        context,
+      ),
+    results: async () =>
+      (await entries())
+        .filter((entry) => entry.kind === 'background.result')
+        .map((entry) => entry.data as BackgroundResult),
+    /** Close the host and open it again on the same storage: a restart. */
+    async restart() {
+      await opened.close()
+      hosts.splice(hosts.indexOf(opened), 1)
+      opened = await prepared.open()
+      hosts.push(opened)
+    },
+    transcript: async () => JSON.stringify(await entries()),
+  }
+}
+
+/** A heavy command (it names `pnpm test`) that logs its start and end to `log`, holding until `hold` exists. */
+const heavy = (
+  log: string,
+  name: string,
+  { hold, exit = 0 }: { hold?: string; exit?: number } = {},
+) =>
+  [
+    ': pnpm test',
+    `echo ${name}-start >> ${log}`,
+    ...(hold ? [`until [ -f ${hold} ]; do sleep 0.05; done`] : []),
+    `echo ${name}-end >> ${log}`,
+    `exit ${exit}`,
+  ].join('; ')
+const lines = (log: string) =>
+  readFile(log, 'utf8').then(
+    (text) => text.trim().split('\n'),
+    // Nothing ran yet.
+    () => [],
+  )
+
+it('runs heavy commands of two projects one at a time, in order; a failed one lets the next start', async () => {
+  const shared = await temp('ultimate-background-queue-')
+  const log = join(shared, 'order')
+  const a = await project('a')
+  const b = await project('b')
+  await a.run(heavy(log, 'a', { hold: join(shared, 'go'), exit: 1 }))
+  await until(async () => (await lines(log)).includes('a-start'))
+  await b.run(heavy(log, 'b'))
+  // Its answer says why it waits: behind which command, from which conversation and project.
+  await until(async () =>
+    (await b.transcript()).includes('Queued, next in line for the heavy-work slot, behind'),
+  )
+  expect(await b.transcript()).toMatch(
+    /behind `: pnpm test; echo a-start[^`]*` from #\d+ in ultimate-background-a-/,
+  )
+  await writeFile(join(shared, 'go'), '')
+  await until(async () => (await b.results()).length === 1)
+  expect(await lines(log)).toEqual(['a-start', 'a-end', 'b-start', 'b-end'])
+  expect(await a.results()).toMatchObject([{ outcome: 'finished', exitCode: 1 }])
+  expect(await b.results()).toMatchObject([
+    { outcome: 'finished', exitCode: 0, queued: expect.any(Number) },
+  ])
+})
+
+it('starts the next heavy command in line once the conversation running one is concluded', async () => {
+  const shared = await temp('ultimate-background-queue-')
+  const log = join(shared, 'order')
+  const a = await project('a')
+  const b = await project('b')
+  await a.run(heavy(log, 'a', { hold: join(shared, 'never') }))
+  await until(async () => (await lines(log)).includes('a-start'))
+  await b.run(heavy(log, 'b'))
+  await until(async () => (await b.transcript()).includes('Queued, next in line'))
+  // What concluding the conversation does to its background tasks.
+  await a.caller.abort(context, { background: true })
+  await until(async () => (await b.results()).length === 1)
+  expect(await lines(log)).toEqual(['a-start', 'b-start', 'b-end'])
+  expect(await a.results()).toEqual([])
+})
+
+it('keeps a running and a waiting heavy command through a restart: each runs once, in order', async () => {
+  const shared = await temp('ultimate-background-queue-')
+  const log = join(shared, 'order')
+  const a = await project('a')
+  await a.run(heavy(log, 'first', { hold: join(shared, 'go') }))
+  await until(async () => (await lines(log)).includes('first-start'))
+  await a.run(heavy(log, 'second'))
+  await until(async () => (await a.transcript()).includes('Queued, next in line'))
+  await a.restart()
+  await writeFile(join(shared, 'go'), '')
+  await until(async () => (await a.results()).length === 2)
+  expect(await lines(log)).toEqual(['first-start', 'first-end', 'second-start', 'second-end'])
+  expect((await a.results()).map((result) => result.command)).toEqual([
+    heavy(log, 'first', { hold: join(shared, 'go') }),
+    heavy(log, 'second'),
+  ])
 })

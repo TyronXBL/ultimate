@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 import { copyJson } from '@earendil-works/chord'
 import type { Context } from '@earendil-works/chord'
@@ -13,15 +13,21 @@ import { git } from '../../lib/git.ts'
 import { needsRestart as restartNeeded } from '../../lib/layers.ts'
 import { liveTasks } from '../../lib/tasks.ts'
 import {
-  admitRam,
   commandNeedMiB,
   describeShort,
   listUsers,
   memoryFloor,
   memoryUsers,
-  RAM_POLL_MS,
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
+import {
+  describeWait,
+  enterSlot,
+  keepHeld,
+  releaseSlot,
+  SLOT_POLL_MS,
+  thisProcess,
+} from '../../lib/slot.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
 import { weightDelta } from '../../lib/token-weight.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
@@ -403,8 +409,18 @@ const landedOutcome = (landed: Landed): LanderOutcome => ({
 })
 type State =
   | { phase: 'next' }
-  /** A rejected push integrates again once. `ramSince`: since when the checks wait for RAM above the floor. */
-  | { phase: 'land'; id: string; attempt: number; pushRetried?: boolean; ramSince?: number }
+  /**
+   * A rejected push integrates again once. `slotSince`: since when its checks wait in the heavy-work queue; `ramSince`:
+   * since when they are next in line but wait for RAM above the floor.
+   */
+  | {
+      phase: 'land'
+      id: string
+      attempt: number
+      pushRetried?: boolean
+      slotSince?: number
+      ramSince?: number
+    }
   | {
       phase: 'report'
       id: string
@@ -484,7 +500,9 @@ export function createLander(
           return { status: 'running', checkpoint: { phase: 'land', id: entry.id, attempt: 1 } }
         }, context),
       land: async (task, runtime, context) => {
-        const { id, attempt, pushRetried, ramSince } = task.state.checkpoint
+        const { id, attempt, pushRetried, slotSince, ramSince } = task.state.checkpoint
+        /** Lets the heavy-work slot go, while this landing holds it. */
+        let release: (() => Promise<void>) | undefined
         const { signal } = runtime
         const index = (await runtime.snapshot(Workspaces, ROOT_CONVERSATION_ID, context))!
         const entry = index.queue.find((item) => item.id === id)!
@@ -824,43 +842,76 @@ export function createLander(
               )
             }
             const { base } = merged
-            // Below the RAM floor setup and checks wait, durably and for a bounded time, for their heaviest step.
+            // Setup and the heavy checks are one job in the machine's heavy-work queue: it holds the slot from setup
+            // through its last heavy check group and lets it go before the light rest (the CI gate waits on a remote,
+            // and queues its local fallback itself). At the head of the line it waits for RAM for its heaviest step.
             const projectSettings = await host.projectSettings()
+            const needs = settings.checks.map((group) =>
+              [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
+            )
             const need = Math.max(
               0,
               ...setupCommands(projectSettings).map(commandNeedMiB),
-              ...settings.checks.map((group) =>
-                [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
-              ),
+              ...needs,
             )
-            const short = await admitRam(await memoryFloor(host.userHome), need)
-            if (short) {
+            const lastHeavy = needs.findLastIndex((groupNeed) => groupNeed > 0)
+            if (need) {
               const now = runtime.now()
-              if (ramSince !== undefined && now - ramSince >= RAM_WAIT_MS)
-                return await fail(
-                  `not enough RAM for the checks after waiting ${RAM_WAIT_MS / 60_000} min: ${describeShort(short)}`,
-                  listUsers(await memoryUsers()),
-                  'Stop what uses RAM, then submit again.',
+              const claim = {
+                id: `${host.home}:lander:${id}:${attempt}`,
+                at: slotSince ?? now,
+                label: `lander checks: ${
+                  settings.checks
+                    .flat()
+                    .filter((check) => commandNeedMiB(check.command))
+                    .map((check) => check.command)
+                    .join(', ') || 'setup'
+                }`,
+                from: `the landing of #${entry.conversationId} in ${basename(source)}`,
+              }
+              const entered = await enterSlot(claim, {
+                floor: await memoryFloor(host.userHome),
+                need,
+                start: thisProcess,
+              })
+              if (entered.kind !== 'started') {
+                const ramFrom = entered.kind === 'ram' ? (ramSince ?? now) : undefined
+                if (entered.kind === 'ram' && now - ramFrom! >= RAM_WAIT_MS) {
+                  await releaseSlot(claim.id)
+                  return await fail(
+                    `not enough RAM for the checks after waiting ${RAM_WAIT_MS / 60_000} min at the head of the heavy-work queue: ${describeShort(entered.short)}`,
+                    listUsers(await memoryUsers()),
+                    'Stop what uses RAM, then submit again.',
+                  )
+                }
+                // Logged when it starts waiting, and again when the wait turns into one for RAM.
+                if (slotSince === undefined || (ramFrom !== undefined && ramSince === undefined))
+                  await step(`waiting: ${describeWait(entered, now)}`)
+                return await runtime.commit(
+                  () => ({
+                    status: 'sleeping',
+                    until: now + SLOT_POLL_MS,
+                    checkpoint: {
+                      phase: 'land',
+                      id,
+                      attempt,
+                      ...(pushRetried ? { pushRetried } : {}),
+                      slotSince: slotSince ?? now,
+                      ...(ramFrom !== undefined ? { ramSince: ramFrom } : {}),
+                    },
+                  }),
+                  context,
                 )
-              if (ramSince === undefined) await step(`waiting for RAM: ${describeShort(short)}`)
-              return await runtime.commit(
-                () => ({
-                  status: 'sleeping',
-                  until: now + RAM_POLL_MS,
-                  checkpoint: {
-                    phase: 'land',
-                    id,
-                    attempt,
-                    ...(pushRetried ? { pushRetried } : {}),
-                    ramSince: ramSince ?? now,
-                  },
-                }),
-                context,
-              )
+              }
+              release = keepHeld(claim)
             }
             // Setup prepares the merged revision, for example installs its lockfile.
             await step('setting up')
             await setup(source, path, projectSettings, signal)
+            if (lastHeavy < 0 && release) {
+              await release()
+              release = undefined
+            }
             const unchecked = await uncheckedReason(host, settings)
             if (unchecked?.reason === 'untrusted') await warn(uncheckedStep(unchecked))
             else if (unchecked) await step(uncheckedStep(unchecked))
@@ -946,6 +997,11 @@ export function createLander(
                   'Fix it at its cause (a flaky test too: fix or delete it), verify and submit again.',
                 )
               flaky.push(...commands.filter((_command, member) => results[member].flaky))
+              // The heavy part is done: the next job in line may start while the light checks run.
+              if (position >= lastHeavy && release) {
+                await release()
+                release = undefined
+              }
             }
             // Only the commit every check ran on lands: nothing may have moved or touched the checkout meanwhile.
             const [current, status] = await Promise.all([
@@ -1025,6 +1081,9 @@ export function createLander(
         } catch (error) {
           if (signal.aborted) throw error
           return fail('it failed', failure(error))
+        } finally {
+          // Whatever ended the checks early (a failure, an abort): the next job in line may start.
+          await release?.()
         }
       },
       /**

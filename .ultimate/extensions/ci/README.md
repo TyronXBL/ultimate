@@ -35,7 +35,8 @@ the host's error report. It never runs the suites on this machine.
 
 The lander's gate, `.ultimate/scripts/ci-gate.ts`, tries the same PC first (`test`, `test:e2e`) and uses the same
 `github.ts`. When GitHub gives no verdict (unreachable, or jobs not started for billing) it runs `pnpm test` and
-`pnpm test:e2e` on this machine instead, each once the RAM floor admits it (`lib/memory.ts`, waiting up to 10 min),
+`pnpm test:e2e` on this machine instead, each as a job of the machine's heavy-work queue once its turn comes and the
+RAM floor admits it (`lib/slot.ts`; RAM short at the head of the line fails the gate after 10 min),
 with a `CI GATE FALLBACK` banner naming why. `github.ts` holds the secret scan, the remote's repository
 and the Actions API, authenticated with the token Git's credential helper stores for the fork (`git credential fill`,
 never prompting). The token goes only into request headers and is masked in any error text.

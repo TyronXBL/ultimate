@@ -23,7 +23,13 @@ const conversationOf = (input: Input) => {
 }
 
 /** What one task's input says about it; see `TaskFacts`. */
-async function facts(host: ExtensionHost, tx: Tx, kind: string, input: Input): Promise<TaskFacts> {
+async function facts(
+  host: ExtensionHost,
+  tx: Tx,
+  kind: string,
+  input: Input,
+  state?: unknown,
+): Promise<TaskFacts> {
   switch (kind) {
     case 'board.delivery': {
       // In its `reply` phase it carries the recipient's answer back to this message's sender.
@@ -61,6 +67,16 @@ async function facts(host: ExtensionHost, tx: Tx, kind: string, input: Input): P
     // Which submission it lands changes as it works the queue; the panel reads that from the live queue.
     case 'workspaces.lander':
       return { source: input?.source as string }
+    // While it waits in the heavy-work queue, why: the panel asks again whenever it looked again.
+    case 'background.run': {
+      const waiting = (state as { checkpoint?: { waiting?: unknown } } | undefined)?.checkpoint
+        ?.waiting
+      return {
+        conversation: input?.to as number,
+        command: input?.command as string,
+        ...(typeof waiting === 'string' && { waiting }),
+      }
+    }
     default: {
       const conversation = conversationOf(input)
       return conversation === undefined ? {} : { conversation }
@@ -94,7 +110,7 @@ export const actions = {
       const described: Record<string, TaskFacts> = {}
       for (const id of ids as number[]) {
         const task = await tx.task(id as TaskId)
-        if (task) described[id] = await facts(host, tx, task.kind, task.input as Input)
+        if (task) described[id] = await facts(host, tx, task.kind, task.input as Input, task.state)
       }
       return described
     }, context)

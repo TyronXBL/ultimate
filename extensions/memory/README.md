@@ -20,14 +20,39 @@ so two starters never both pass on the same free RAM.
 ## Gates
 
 Each starter estimates its job's need with `lib/memory.ts` and starts it only when available RAM minus that need
-stays at or above the floor:
+stays at or above the floor. Heavy jobs also take turns in the machine's heavy-work queue (`lib/slot.ts`, below):
 
-| Starter                      | Need                                      | Below the floor                                                                        |
-| ---------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------- |
-| `background` tool            | by its command                            | waits durably, looking every 10 s for up to 30 min, then delivers a `not-started` card |
-| lander checks (`workspaces`) | its heaviest check group, by command      | waits durably the same way (step "waiting for RAM: …"), then fails the submission      |
-| `instance start`             | 1536 MiB                                  | refused, listing previews and other process groups with their RSS                      |
-| `bash` tool                  | by its command; only known heavy commands | refused before it runs, pointing at `background`                                       |
+| Starter                      | Need                                      | Below the floor                                                                                      |
+| ---------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `background` tool            | by its command                            | a heavy one waits at the head of the queue for up to 30 min, then delivers a `not-started` card      |
+| lander checks (`workspaces`) | its heaviest check group, by command      | waits at the head of the queue the same way (step "waiting: next in line …"), then fails the landing |
+| CI gate's local fallback     | each suite, by command                    | waits at the head of the queue for up to 10 min, then fails the gate                                 |
+| `instance start`             | 1536 MiB                                  | refused, listing previews and other process groups with their RSS                                    |
+| `bash` tool                  | by its command; only known heavy commands | refused before it runs, naming the exact `background` call to make instead                           |
+
+## Heavy-work queue
+
+A heavy command (any command with a need above, so tests, checks, installs, builds and Ultimate servers) runs one at a
+time on the whole machine, whichever Ultimate or preview starts it, in the order the jobs asked. `lib/slot.ts` keeps
+the queue in `slot.json` next to the admission's reservations, under the same lock: a job takes the slot only when
+nothing else holds it, no job that asked earlier waits, and RAM above the floor admits it, all in one locked step.
+
+- **Who queues.** A heavy `background` command waits durably in line, looking every 5 s, and starts by itself; its
+  tool answer and the Tasks panel say its place and what it waits for. The lander holds the slot for setup and its
+  heavy checks and lets it go before the light ones (the CI gate waits on a remote); the CI gate's local fallback queues
+  its suites itself. A heavy `bash` command runs only while the slot is free and nobody waits, holding it while it
+  runs; otherwise it is refused. Light commands never queue, and previews count only through RAM: a running preview's
+  memory lowers what the next job is admitted against.
+- **Who holds.** A running job holds the slot as long as its holder process lives (a background command's leader, or
+  the Ultimate or CI gate process doing the work), checked by pid and start time, so a job that dies frees the slot at
+  the next look. A stalled agent holds nothing: the slot belongs to jobs, never to a conversation. A hung command holds
+  it until its timeout.
+- **What survives.** Each waiter keeps the time it asked in its own durable state and says so again at every look, so
+  the order survives a host restart (a host down for over 2 min drops its waiters until they look again, which can let
+  a later job go first); each holder says so again at every look too. When the file disappears (the daily temp cleanup,
+  by hand), nobody gets the slot for 30 s, until every running job has put itself back.
+- **Nested work.** A slot job's processes carry `ULTIMATE_SLOT`; heavy work they start themselves (a scratch server's
+  own jobs) is part of that job and never queues behind it.
 
 A command's need comes from what it runs outside quotes: test runs (`pnpm test`, `test:e2e`, `vitest`, `playwright`)
 and Ultimate servers (`node server/main.ts`) about 1536 MiB; `pnpm check`, `fix`, `install` and builds about
@@ -35,8 +60,9 @@ and Ultimate servers (`node server/main.ts`) about 1536 MiB; `pnpm check`, `fix`
 position: an unquoted `vitest` in a path or a search pattern counts too, so quote such arguments or use `background`.
 
 The `ci` tool runs nothing on this machine and is not gated; test suites are gated where they start, not per server a
-test boots. A background command whose first attempt was interrupted by a host crash is stopped and started again at
-once, without admission: it already ran.
+test boots. A background command whose first attempt was interrupted by a host crash is stopped and started again: a
+light one at once, without admission, since it already ran; a heavy one through the queue, where the time it first
+asked puts it first once the slot is free.
 
 ## Status line
 

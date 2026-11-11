@@ -417,7 +417,23 @@ function TasksPanel() {
   const now = useNow(1000, tasks.length > 0)
   const ids = tasks.map((task) => task.id)
   const started = useOnce(StartedAction, ids)
-  const facts = useOnce<TaskFacts>(DescribeAction, ids)
+  const once = useOnce<TaskFacts>(DescribeAction, ids)
+  // A queued command's reason changes as the line moves: asked again each time it looked again (a new `until`).
+  const queued = tasks.filter(
+    (task) =>
+      task.kind === 'background.run' &&
+      task.state.status === 'sleeping' &&
+      task.state.phase === 'wait',
+  )
+  const { data: live } = useAction(
+    DescribeAction,
+    { ids: queued.map((task) => task.id) },
+    {
+      enabled: queued.length > 0,
+      on: queued.map((task) => (task.state.status === 'sleeping' ? task.state.until : 0)),
+    },
+  )
+  const facts: Record<string, TaskFacts> = { ...once, ...live }
   const states = new Map(log?.messages.map((message) => [message.id, message.state]))
   const { queue } = useWorkspaceIndex()
   // A lander works its queue one submission after another: the one it lands now names it.

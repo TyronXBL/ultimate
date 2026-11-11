@@ -31,6 +31,10 @@ export type TaskFacts = {
   tool?: string
   /** A lander's source checkout. */
   source?: string
+  /** A background command's text. */
+  command?: string
+  /** Why a background command still waits in the heavy-work queue, as of its last look; it changes, so asked again. */
+  waiting?: string
 }
 
 /** `{ ids }` → `{ [taskId]: facts }`; gone tasks are left out. */

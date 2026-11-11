@@ -2,13 +2,14 @@
  * The `background` tool: a local shell command run in the background, niced, in its own process group. The call returns
  * at once; a durable task waits for the command and wakes the calling conversation once with a `background.result`
  * card. The shell writes the output and the exit code to files, so a command outlives a host restart and its result is
- * still delivered. Below the RAM floor (`memory.minAvailableMiB`) a heavy command waits for RAM before it starts.
+ * still delivered. A heavy command (tests, checks, installs, builds) waits in the machine's heavy-work queue
+ * (`lib/slot.ts`) for its turn and for RAM above the floor (`memory.minAvailableMiB`); a light one starts at once.
  */
 import { num, obj, opt, str } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
 import type { ConversationId, PhaseHandler } from '@earendil-works/pi-durable'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   admitRam,
   checkRam,
@@ -20,7 +21,24 @@ import {
   RAM_POLL_MS,
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
-import { groupAlive, readPidFile, spawnGroup, stopGroup } from '../../lib/process-group.ts'
+import {
+  groupAlive,
+  identify,
+  readPidFile,
+  spawnGroup,
+  stopGroup,
+} from '../../lib/process-group.ts'
+import {
+  describeWait,
+  enterSlot,
+  holdSlot,
+  peekSlot,
+  releaseSlot,
+  SLOT_ENV,
+  SLOT_POLL_MS,
+  slotLabel,
+} from '../../lib/slot.ts'
+import type { SlotClaim } from '../../lib/slot.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { liveTasks } from '../../lib/tasks.ts'
 import type { BackgroundResult } from './refs.ts'
@@ -30,9 +48,13 @@ import type { UnderwaySource } from '../conversations/api.ts'
 type Input = { to: number; cwd: string; command: string; timeout: number; home: string }
 type Checkpoint =
   | { phase: 'start' }
-  /** Waits for RAM above the floor, since `since`. */
-  | { phase: 'wait'; since: number }
-  | { phase: 'poll'; pid: number; began: number }
+  /**
+   * Waits since `since`: a heavy command in line for the heavy-work slot, `ramSince` since it is next but RAM is short;
+   * a light one for RAM above the floor. `waiting` says why, for the Tasks panel.
+   */
+  | { phase: 'wait'; since: number; ramSince?: number; waiting?: string }
+  /** Runs; a heavy command holds the slot as `identity` (its leader's start time), after `queued` ms in line. */
+  | { phase: 'poll'; pid: number; began: number; slot?: { identity: string; queued: number } }
   | { phase: 'deliver'; result: BackgroundResult }
 
 /**
@@ -104,8 +126,18 @@ export const jobs: UnderwaySource = {
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
 
-function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
-  /** Start the command, or wait for RAM first; `wait` comes back here every poll. */
+/** The queue's id of a task's command: unique on the machine, the same across restarts. */
+const slotId = (task: { id: number; input: Input }) => `${task.input.home}:background:${task.id}`
+
+function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'>) {
+  const from = (to: number) => `#${to} in ${basename(host.projectRoot)}`
+  const claimOf = (task: { id: number; input: Input }, at: number): SlotClaim => ({
+    id: slotId(task),
+    at,
+    label: slotLabel(task.input.command),
+    from: from(task.input.to),
+  })
+  /** Start the command, or wait for its turn and RAM first; `wait` comes back here every look. */
   const begin: PhaseHandler<
     Input,
     Extract<Checkpoint, { phase: 'start' | 'wait' }>,
@@ -114,61 +146,115 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
     object
   > = async (task, runtime, ctx) => {
     const files = paths(task)
+    const { checkpoint } = task.state
+    const since = checkpoint.phase === 'wait' ? checkpoint.since : runtime.now()
+    const need = commandNeedMiB(task.input.command)
+    const floor = await memoryFloor(host.userHome)
     // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started and
-    // starts it again at once, as before the floor existed: that attempt already ran, so it never waits for RAM or
-    // reports that the command never started. Its own RAM was just freed.
+    // starts it again: a light command at once, as before the floor existed (that attempt already ran, and its own RAM
+    // was just freed), a heavy one through the queue, where its early `since` puts it first once the slot is free.
     const left = await readPidFile(files.pid)
     if (left) await stopGroup(left, { pidFile: files.pid })
-    const short = left
-      ? undefined
-      : await admitRam(await memoryFloor(host.userHome), commandNeedMiB(task.input.command))
-    if (short) {
-      const { checkpoint } = task.state
-      const since = checkpoint.phase === 'wait' ? checkpoint.since : runtime.now()
-      const waited = runtime.now() - since
-      const next =
-        waited < RAM_WAIT_MS
-          ? {
-              status: 'sleeping' as const,
-              until: runtime.now() + RAM_POLL_MS,
-              checkpoint: { phase: 'wait' as const, since },
-            }
-          : deliver({
-              command: task.input.command,
-              cwd: task.input.cwd,
-              outcome: 'not-started',
-              exitCode: null,
-              seconds: Math.round(waited / 1000),
-              tail: '',
-              // It never ran, so it wrote no log.
-              log: '',
-              note: `Not enough RAM: ${describeShort(short)}. Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
-            })
-      await runtime.commit(() => next, ctx)
-      return
+    const spawn = () => {
+      const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', LEADER], {
+        cwd: task.input.cwd,
+        pidFile: files.pid,
+        env: {
+          ...process.env,
+          BACKGROUND_COMMAND: task.input.command,
+          BACKGROUND_LOG: files.log,
+          BACKGROUND_STATUS: files.status,
+          // What it starts belongs to its slot: a nested heavy job never queues behind it.
+          ...(need > 0 && { [SLOT_ENV]: slotId(task) }),
+        },
+      })
+      if (!group.child.pid) throw new Error('Could not start the background command')
+      return group.child.pid
     }
     await mkdir(join(task.input.home, 'background'), { recursive: true })
     await rm(files.status, { force: true })
-    const began = runtime.now()
-    const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', LEADER], {
-      cwd: task.input.cwd,
-      pidFile: files.pid,
-      env: {
-        ...process.env,
-        BACKGROUND_COMMAND: task.input.command,
-        BACKGROUND_LOG: files.log,
-        BACKGROUND_STATUS: files.status,
+    const notStarted = async (waited: number, note: string) =>
+      deliver({
+        command: task.input.command,
+        cwd: task.input.cwd,
+        outcome: 'not-started',
+        exitCode: null,
+        seconds: Math.round(waited / 1000),
+        tail: '',
+        // It never ran, so it wrote no log.
+        log: '',
+        note: `${note} Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
+      })
+    const now = runtime.now()
+    if (!need) {
+      const short = left ? undefined : await admitRam(floor, 0)
+      const next = !short
+        ? {
+            status: 'sleeping' as const,
+            until: now + pollMs(0),
+            checkpoint: { phase: 'poll' as const, pid: spawn(), began: now },
+          }
+        : now - since < RAM_WAIT_MS
+          ? {
+              status: 'sleeping' as const,
+              until: now + RAM_POLL_MS,
+              checkpoint: { phase: 'wait' as const, since, waiting: describeShort(short) },
+            }
+          : await notStarted(now - since, `Not enough RAM: ${describeShort(short)}.`)
+      await runtime.commit(() => next, ctx)
+      return
+    }
+    const claim = claimOf(task, since)
+    const entered = await enterSlot(claim, {
+      floor,
+      need,
+      start: () => {
+        const pid = spawn()
+        const identity = identify(pid)
+        if (!identity) throw new Error(`The background command's leader ${pid} ended at once`)
+        return { pid, identity }
       },
     })
-    if (!group.child.pid) throw new Error('Could not start the background command')
-    await runtime.commit(
-      () => ({
-        status: 'sleeping',
-        until: began + pollMs(0),
-        checkpoint: { phase: 'poll', pid: group.child.pid!, began },
-      }),
-      ctx,
-    )
+    let next
+    if (entered.kind === 'started')
+      next = {
+        status: 'sleeping' as const,
+        until: now + pollMs(0),
+        checkpoint: {
+          phase: 'poll' as const,
+          pid: entered.holder.pid,
+          began: now,
+          slot: { identity: entered.holder.identity, queued: now - since },
+        },
+      }
+    else {
+      // RAM short at the head of the line gives up after `RAM_WAIT_MS`, so the line behind it moves on; the line itself
+      // has no limit.
+      const ramSince =
+        entered.kind === 'ram'
+          ? checkpoint.phase === 'wait'
+            ? (checkpoint.ramSince ?? now)
+            : now
+          : undefined
+      if (entered.kind === 'ram' && now - ramSince! >= RAM_WAIT_MS) {
+        await releaseSlot(claim.id)
+        next = await notStarted(
+          now - since,
+          `Not enough RAM after ${RAM_WAIT_MS / 60_000} min at the head of the heavy-work queue: ${describeShort(entered.short)}.`,
+        )
+      } else
+        next = {
+          status: 'sleeping' as const,
+          until: now + SLOT_POLL_MS,
+          checkpoint: {
+            phase: 'wait' as const,
+            since,
+            ...(ramSince !== undefined && { ramSince }),
+            waiting: describeWait(entered, now),
+          },
+        }
+    }
+    await runtime.commit(() => next, ctx)
   }
   return defineTask<Input, Checkpoint, null>({
     name: 'background.run',
@@ -178,7 +264,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
       start: begin,
       wait: begin,
       poll: async (task, runtime, ctx) => {
-        const { pid, began } = task.state.checkpoint
+        const { pid, began, slot } = task.state.checkpoint
         const files = paths(task)
         /**
          * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
@@ -203,6 +289,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
             outcome,
             exitCode: code,
             seconds: Math.round((runtime.now() - began) / 1000),
+            ...(slot && { queued: Math.round(slot.queued / 1000) }),
             tail: await tail(files.log),
             log: files.log,
             ...(note && { note }),
@@ -218,12 +305,18 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
           // The leader may have recorded its code between the two looks, then been stopped from outside.
           const late = await exitCode(files.status)
           next = await result(late === undefined ? 'lost' : 'finished', late ?? null, await stop())
-        } else
+        } else {
+          // Said again at every look: after the queue's file was removed, this puts the job back before anyone starts.
+          if (slot)
+            await holdSlot(claimOf(task, began - slot.queued), { pid, identity: slot.identity })
           next = {
             status: 'sleeping' as const,
             until: now + pollMs(now - began),
-            checkpoint: { phase: 'poll' as const, pid, began },
+            checkpoint: { phase: 'poll' as const, pid, began, ...(slot && { slot }) },
           }
+        }
+        // Its group is stopped: the next job in line may start.
+        if (slot && next.checkpoint.phase === 'deliver') await releaseSlot(slotId(task))
         await runtime.commit(() => next, ctx)
       },
       deliver: async (task, runtime, ctx) => {
@@ -231,8 +324,8 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
         const exit = result.exitCode === null ? '' : ` with exit code ${result.exitCode}`
         const ended =
           result.outcome === 'not-started'
-            ? `not started after waiting ${result.seconds} s for RAM`
-            : `${result.outcome}${exit} after ${result.seconds} s`
+            ? `not started after waiting ${result.seconds} s`
+            : `${result.outcome}${exit} after ${result.seconds} s${result.queued ? ` (and ${result.queued} s in line for the heavy-work slot before it)` : ''}`
         const to = task.input.to as ConversationId
         const conversation = await runtime.conversation(to, ctx)
         await runtime.commit(async (tx) => {
@@ -257,6 +350,8 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need'>) {
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
       if (recorded) await stopGroup(recorded, { pidFile: pid })
+      // Whether it waited in line or ran: the next job may start.
+      if (commandNeedMiB(task.input.command)) await releaseSlot(slotId(task))
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx)
     },
   })
@@ -279,7 +374,7 @@ export default function backgroundExtension(
       defineTool({
         name: 'background',
         description:
-          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. Returns immediately; its result card (exit code, duration, the last 40 lines of output and the full log path) steers your current run after its tool round, or wakes you when idle. Never sleep or poll for it. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
+          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. A heavy command (tests, checks, installs, builds, a server) queues machine-wide for the heavy-work slot, one at a time, and starts by itself in order once the slot is free and RAM allows; the answer says its place and what it waits for. Returns immediately; its result card (exit code, duration, the last 40 lines of output and the full log path) steers your current run after its tool round, or wakes you when idle. Never sleep or poll for it. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
         parameters: obj({
           command: str(),
           timeout: opt(
@@ -293,11 +388,13 @@ export default function backgroundExtension(
         // Not replay-safe (the default): an interrupted call is never rerun, so it starts at most one command.
         async execute(args, api, ctx) {
           const cwd = (await api.agent(ctx)).cwd ?? host.projectRoot
-          // Looked at before the task exists, so its own admission is not counted against it.
-          const short = await checkRam(
-            await memoryFloor(host.userHome),
-            commandNeedMiB(args.command),
-          )
+          const need = commandNeedMiB(args.command)
+          // Looked at before the task exists, so neither its place in line nor its admission counts against it.
+          const turn = need ? await peekSlot({ id: '', at: Date.now() }) : undefined
+          const short =
+            turn?.kind === 'next' || !need
+              ? await checkRam(await memoryFloor(host.userHome), need)
+              : undefined
           await api.commit(
             (tx) =>
               tx.createTask(
@@ -317,9 +414,16 @@ export default function backgroundExtension(
               ),
             ctx,
           )
-          const text = short
-            ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min; its result steers you or wakes you once either way. Keep working or end your turn; never sleep or poll for it.`
-            : `Started in the background in ${cwd}. Its result steers you or wakes you once; keep working or end your turn, never sleep or poll for it.`
+          const after =
+            'Its result steers you or wakes you once; keep working or end your turn, never sleep or poll for it.'
+          const text =
+            turn && turn.kind !== 'next'
+              ? `Queued, ${describeWait({ kind: 'waiting', turn })}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits. ${after}`
+              : short && need
+                ? `Queued: next in line for the heavy-work slot, waiting for RAM: ${describeShort(short)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
+                : short
+                  ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min. ${after}`
+                  : `Started in the background in ${cwd}${need ? ' (the heavy-work slot was free)' : ''}. ${after}`
           return { output: [{ type: 'text', text }] }
         },
       }),
