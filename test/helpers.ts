@@ -286,7 +286,10 @@ type FixtureOptions = ServerOptions & {
    */
   web?: boolean
 }
-/** The run's shared source copy, its built bundle copied into the fixture's home, where the server finds it fresh. */
+/**
+ * The run's shared source copy, its built bundle copied into the fixture's home, where the server finds it fresh. Every
+ * `web` server of the run runs from this copy: a test that writes sources needs a copy of its own (no `web`).
+ */
 async function prebuilt({ ultimateRoot, projectRoot, home }: FixtureOptions) {
   const bundle = inject('webBundle')
   if (!bundle)
