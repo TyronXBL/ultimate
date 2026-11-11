@@ -15,7 +15,7 @@ import type { Breakdown } from './types.ts'
 
 /** Whether the conversation's start card is in the transcript's view. */
 function useStartInView() {
-  const { scrollRef, contentRef } = useTranscriptScroll()
+  const { scrollRef, contentRef, drawnFrom } = useTranscriptScroll()
   const [inView, setInView] = useState(false)
   const entries = useTranscript()
   useEffect(() => {
@@ -29,8 +29,8 @@ function useStartInView() {
     })
     observer.observe(start)
     return () => observer.disconnect()
-    // The start card mounts once the whole history is loaded, after new entries.
-  }, [scrollRef, contentRef, entries])
+    // The start card mounts once the whole history is loaded and drawn.
+  }, [scrollRef, contentRef, entries, drawnFrom])
   return inView
 }
 

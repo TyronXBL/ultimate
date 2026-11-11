@@ -10,14 +10,17 @@ import {
   RotateCwIcon,
 } from 'lucide-react'
 import {
+  createContext,
   Fragment,
   memo,
+  use,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import type { ComponentType, ReactNode, RefObject } from 'react'
 import { flushSync } from 'react-dom'
@@ -79,12 +82,37 @@ import { ToolCallBlock } from './tool-call.tsx'
 import { TranscriptSkeleton } from './transcript-skeleton.tsx'
 
 /**
+ * The oldest entry a transcript has drawn. Its rows draw newest first and the earlier ones after a switch (#207122), so
+ * a reader of its rows looks them up again when this changes.
+ */
+function drawnStore() {
+  let value: number | undefined
+  const listeners = new Set<() => void>()
+  return {
+    get: () => value,
+    set: (next: number | undefined) => {
+      if (next === value) return
+      value = next
+      for (const listener of listeners) listener()
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => void listeners.delete(listener)
+    },
+  }
+}
+const DrawnContext = createContext(drawnStore())
+
+/**
  * The transcript around a contribution: its scroller, the element holding its rows (each top-level row carries
- * `data-entry-id`), and whether it follows its newest row. For `transcript.*` slots.
+ * `data-entry-id`), whether it follows its newest row, and the oldest entry drawn so far (`drawnFrom`): the loaded rows
+ * draw newest first, so one not drawn yet is not in `contentRef` until this reaches it. For `transcript.*` slots.
  */
 export function useTranscriptScroll() {
   const { scrollRef, contentRef, isAtBottom } = useStickToBottomContext()
-  return { scrollRef, contentRef, atBottom: isAtBottom }
+  const drawn = use(DrawnContext)
+  const drawnFrom = useSyncExternalStore(drawn.subscribe, drawn.get)
+  return { scrollRef, contentRef, atBottom: isAtBottom, drawnFrom }
 }
 
 /** The shown conversation; `dock` fits it into a narrow side region. */
@@ -100,6 +128,7 @@ export function Transcript({ dock }: { dock?: boolean }) {
     return shown?.inputAt !== undefined || shown?.answerAt !== undefined
   })
   const stick = useRef<StickToBottomContext>(null)
+  const [drawn] = useState(drawnStore)
   const skeleton = useRef<HTMLDivElement>(null)
   const pinned = useRef<HTMLDivElement>(null)
   // The placeholder outlives loading by its fade-out, which crosses over with the rows coming in.
@@ -171,20 +200,25 @@ export function Transcript({ dock }: { dock?: boolean }) {
   })
   // Keyed so a conversation never inherits the previous one's scroll position or follow state.
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <Conversation className="min-h-0" contextRef={stick} key={id} resize="instant">
-        <ConversationContent className={cn(column(dock), 'gap-3 pt-6 pb-10')} data-ui="transcript">
-          <TranscriptEntries pinned={pinned} />
-        </ConversationContent>
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
-          <div className={column(dock)} ref={pinned}>
-            <Slot name="transcript.top" />
+    <DrawnContext value={drawn}>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <Conversation className="min-h-0" contextRef={stick} key={id} resize="instant">
+          <ConversationContent
+            className={cn(column(dock), 'gap-3 pt-6 pb-10')}
+            data-ui="transcript"
+          >
+            <TranscriptEntries pinned={pinned} />
+          </ConversationContent>
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
+            <div className={column(dock)} ref={pinned}>
+              <Slot name="transcript.top" />
+            </div>
           </div>
-        </div>
-        <ConversationScrollButton />
-      </Conversation>
-      {placeholder && <TranscriptSkeleton dock={dock} ref={skeleton} />}
-    </div>
+          <ConversationScrollButton />
+        </Conversation>
+        {placeholder && <TranscriptSkeleton dock={dock} ref={skeleton} />}
+      </div>
+    </DrawnContext>
   )
 }
 
@@ -424,13 +458,22 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   // index.css); only then do they skip their work off screen. Skipped before ever rendering, a row would stand at a
   // guessed height and change it near the view: a shrink pulls the view off the bottom, and Safari, which does not
   // anchor scrolling, would move what the reader sees.
-  const [seen, setSeen] = useState(Number.POSITIVE_INFINITY)
-  const top = hidden < threaded.length ? firstId(threaded[hidden]) : undefined
+  // That holds for rows drawn above and for new rows below, which go in off screen until the view follows them.
+  const [seen, setSeen] = useState({ from: Number.POSITIVE_INFINITY, to: Number.NEGATIVE_INFINITY })
+  const fresh = (entryId: number) => entryId < seen.from || entryId > seen.to || undefined
+  const top = hidden < threaded.length ? topParts(threaded[hidden])[0].entry.id : undefined
+  const oldestDrawn = use(DrawnContext)
+  useLayoutEffect(() => oldestDrawn.set(top), [oldestDrawn, top])
+  const bottom = threaded.length ? topParts(threaded.at(-1)!).at(-1)!.entry.id : undefined
   useEffect(() => {
-    if (top === undefined || top >= seen) return
+    if (top === undefined || bottom === undefined || (top >= seen.from && bottom <= seen.to)) return
     // After the frame that laid them out; the next batch does not cancel it, or rows would stay whole until the last.
-    requestAnimationFrame(() => setTimeout(() => setSeen((value) => Math.min(value, top))))
-  }, [top, seen])
+    requestAnimationFrame(() =>
+      setTimeout(() =>
+        setSeen((range) => ({ from: Math.min(range.from, top), to: Math.max(range.to, bottom) })),
+      ),
+    )
+  }, [top, bottom, seen])
   useEffect(() => {
     if (hidden === 0 || loading) return undefined
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -596,7 +639,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         className={cn('empty:hidden', faded)}
         data-conversation-id={id}
         data-entry-id={row.work[0].entry.id}
-        data-fresh={row.work[0].entry.id < seen || undefined}
+        data-fresh={fresh(row.work[0].entry.id)}
         data-run-last={row.work.at(-1)!.entry.id}
         key={partKey(row.work[0])}
       >
@@ -615,7 +658,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         className={cn('empty:hidden', faded)}
         data-conversation-id={id}
         data-entry-id={row.entry.id}
-        data-fresh={row.entry.id < seen || undefined}
+        data-fresh={fresh(row.entry.id)}
         key={partKey(row)}
       >
         <EntryView
@@ -706,7 +749,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     return (
       <Collapsible
         className={cn('group/aside', faded)}
-        data-fresh={key < seen || undefined}
+        data-fresh={fresh(key)}
         data-set-aside={item.steps}
         key={`aside:${key}`}
         onOpenChange={(value) =>
@@ -837,10 +880,10 @@ function BetweenLine({
   )
 }
 
-/** The first entry of a top-level row. */
-const firstId = (
+/** All parts of a top-level row, a stretch between thread rows included. */
+const topParts = (
   item: CompactPart | WorkRun | AsideGroup | BetweenGroup<CompactPart | WorkRun | AsideGroup>,
-) => itemParts('between' in item ? item.between[0] : item)[0].entry.id
+) => ('between' in item ? item.between.flatMap(itemParts) : itemParts(item))
 
 /** A set-aside group is known by its first entry, so it stays open while later rows join it. */
 const asideKey = (group: AsideGroup) => partsOf(group.aside[0])[0].entry.id

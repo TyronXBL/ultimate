@@ -69,22 +69,6 @@ node .ultimate/skills/measure-switch/profile-summary.ts $TMPDIR/switch-perf/a.cp
   `unmapped <script>`, code no map covers (the bundler's runtime, Vite's preload helper), which stays unattributed. The app list is inclusive, so the app code
   behind native and dependency time shows there.
 
-### Interaction and streaming
-
-A switch that paints sooner by drawing part of the transcript later moves work to after the paint. Two more scripts
-measure what that costs and what a running answer costs, on the same preview:
-
-```bash
-node .ultimate/skills/measure-switch/scroll.ts $URL <id,id,...> [--rounds 2]
-node .ultimate/skills/measure-switch/stream.ts $URL <id,id,...> [--chunks 120] [--every 100] [--profile out.cpuprofile] [--trace]
-```
-
-- `scroll.ts` scrolls up with the wheel right after each switch and reports the main thread's frames for 2 s: the
-  longest gap, gaps over 50 ms, time lost to frames longer than one, and how far the view got (`movedPx`).
-- `stream.ts` feeds the shown conversation a synthetic answer through the page's own event stream, one chunk every
-  `--every` ms, and reports main-thread time per chunk less the same time without chunks. Compare a long and a short
-  conversation to tell what scales with the transcript from what does not.
-
 ## 4. Compare two revisions
 
 A difference is attributable only to what differs between the two identities.

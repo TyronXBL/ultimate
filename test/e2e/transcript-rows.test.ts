@@ -100,8 +100,13 @@ it('jumps to an open question whose row is not drawn yet', async () => {
   const log = page.getByRole('log')
   await log.getByText('Noted: turn 30.').waitFor()
   await show(page, ultimate)
-  await page.getByRole('log').getByText('Noted: turn 30.').waitFor({ state: 'detached' })
-  await page.clock.pauseAt(Date.now() + 60_000)
+  // Its own view in, before the pause: arriving later, it would take the place of the branch shown from its copy.
+  await page
+    .locator(`[data-ui="transcript"] [data-conversation-id="${ultimate}"]`)
+    .first()
+    .waitFor()
+  // A second ahead, not more: a long jump fires the page's own timers, such as the stream's liveness checks.
+  await page.clock.pauseAt(Date.now() + 1000)
   // Back to the branch from the tab's kept copy: its newest rows draw, the rest wait for a frame.
   await show(page, branch.id)
   await log.getByText('Noted: turn 30.').waitFor()
@@ -110,7 +115,8 @@ it('jumps to an open question whose row is not drawn yet', async () => {
   // All of it is loaded: the top marker stands only for rows not drawn yet.
   expect(await page.locator('[data-earlier-history]').count()).toBe(1)
 
-  await page.getByRole('button', { name: 'A question awaits your reply above' }).click()
+  const mark = page.getByRole('button', { name: 'A question awaits your reply above' })
+  await mark.click()
   // The mark asks for the jump in the next frame.
   await page.clock.runFor(20)
   await card.waitFor()
@@ -118,6 +124,8 @@ it('jumps to an open question whose row is not drawn yet', async () => {
   const view = await log.evaluate((node) => node.getBoundingClientRect())
   expect(top).toBeGreaterThanOrEqual(view.top)
   expect(top).toBeLessThan(view.bottom)
+  // With the card on screen, the mark that pointed up to it is gone.
+  await mark.waitFor({ state: 'detached' })
 })
 
 it('stays at the bottom while earlier rows draw and new turns arrive', async () => {
