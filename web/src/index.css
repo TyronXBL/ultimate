@@ -261,6 +261,18 @@
 }
 
 /*
+ * Transcript rows off screen skip style, layout and paint (#205147: a switch drew every loaded row). A row renders
+ * whole once first (`data-fresh`, transcript.tsx), so `auto` has its real height to keep while skipped. Find-in-page
+ * and selection still reach skipped rows.
+ */
+[data-ui='transcript'] > :is([data-entry-id], [data-set-aside]) {
+  contain-intrinsic-block-size: auto 160px;
+  &:not([data-fresh]) {
+    content-visibility: auto;
+  }
+}
+
+/*
  * Phone layout: the same building blocks, without boxes inside the page. Tool calls, cards and message cards run edge
  * to edge as rows split by hairlines, and the composer is the one raised surface, a sheet on the status line.
  * Unlayered, so it wins over the components' utility classes; it hangs on `data-ui` hooks only.
@@ -268,6 +280,12 @@
 @media (width < 48rem) {
   [data-ui='transcript'] {
     --gutter: 0.75rem;
+    padding-inline: var(--gutter);
+  }
+  /* A row's paint containment (`content-visibility` above) clips what reaches past its box: spanning the gutter keeps
+     the rows below that run to the screen's edges whole. */
+  [data-ui='transcript'] > :is([data-entry-id], [data-set-aside]) {
+    margin-inline: calc(-1 * var(--gutter));
     padding-inline: var(--gutter);
   }
   /* use-stick-to-bottom reserves a scrollbar gutter on both edges inline; a phone's scrollbar overlays the content, so

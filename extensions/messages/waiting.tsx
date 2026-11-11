@@ -70,12 +70,13 @@ export function OffscreenQuestions() {
 const gutter = 64
 
 function Pointers({ questions }: { questions: Question[] }) {
-  const { scrollRef, contentRef } = useTranscriptScroll()
+  const { scrollRef, contentRef, drawnFrom } = useTranscriptScroll()
   const anchor = useRef<HTMLDivElement>(null)
   const [places, setPlaces] = useState<ReadonlyMap<string, Place>>(new Map())
   const [frame, setFrame] = useState<{ wide: boolean; bottom: number }>()
 
-  // Each card, or the row it is folded into, against the view; a card not in the loaded rows is above them all.
+  // Each card, or the row it is folded into, against the view; a card not in the drawn rows is above them all, until
+  // the rows drawn reach it.
   useEffect(() => {
     const scroll = scrollRef.current
     const content = contentRef.current
@@ -130,7 +131,7 @@ function Pointers({ questions }: { questions: Question[] }) {
     ]
     for (const observer of observers) for (const target of targets.keys()) observer.observe(target)
     return () => observers.forEach((observer) => observer.disconnect())
-  }, [questions, scrollRef, contentRef])
+  }, [questions, scrollRef, contentRef, drawnFrom])
 
   // Whether the column leaves room on its left, and where the view's bottom is below this strip.
   useEffect(() => {
