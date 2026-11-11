@@ -33,7 +33,7 @@ import type { Api } from '../shared/extension-api.ts'
 import type { EventData, EventToken } from '../shared/events.ts'
 import { EventFeed, eventLog } from '../server/events.ts'
 import type { Reactor } from '../server/events.ts'
-import { copySource, linkDependencies } from './source-copy.ts'
+import { copySource } from './source-copy.ts'
 
 vi.mock('@earendil-works/pi-ai/providers/faux', async (importOriginal) => {
   const original = await importOriginal<typeof import('@earendil-works/pi-ai/providers/faux')>()
@@ -204,7 +204,7 @@ export async function temp(prefix = 'ultimate-test-', parent = tmpdir()) {
   temps.add(path)
   return path
 }
-export { linkDependencies }
+export { linkDependencies } from './source-copy.ts'
 /**
  * Copy `shared/`, `lib/` and every extension's `api.ts` and `refs.ts` into `root`, so partially copied extensions find
  * their contracts and helpers.
