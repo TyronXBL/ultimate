@@ -375,12 +375,16 @@ export default function watchdog(host: ExtensionHost) {
       // waits for that commit and reads the model the conversation runs on then. Without a backup to switch to, the
       // failure reports at once, as before.
       const refused = info.assistant && `${info.assistant.provider}/${info.assistant.model}`
-      const backup =
-        refused &&
-        limited(error) &&
-        !temporary &&
-        // Any backup list will do: one whose only backup refused too puts the conversation in a wait on its primary.
-        !!(await host.want(Pin)?.definition(tx, child.id))?.fallback?.length
+      // A conversation that waits on its primary continues when the wait is over, whichever limit ended this run: a
+      // compaction whose summary no model could write puts it in that wait before failing it, also on a retry (#207552).
+      const wait = limited(error) ? await host.want(ModelsApi)?.limitWait(tx, child.id) : undefined
+      const backup = wait
+        ? { model: refused ?? `${wait.primary.provider}/${wait.primary.modelId}` }
+        : refused &&
+            limited(error) &&
+            !temporary &&
+            // Any backup list will do: one whose only backup refused too puts the conversation in a wait on its primary.
+            !!(await host.want(Pin)?.definition(tx, child.id))?.fallback?.length
           ? { model: refused }
           : undefined
       await tx.createTask(

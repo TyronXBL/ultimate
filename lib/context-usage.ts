@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, Tool, Usage } from '@earendil-works/pi-ai'
-import { estimateMessageTokens } from '@earendil-works/pi-ai/utils/estimate'
+import { calculateContextTokens, estimateMessageTokens } from '@earendil-works/pi-ai/utils/estimate'
 import type { EntryRecord } from '@earendil-works/pi-durable'
 
 /** What a response's prompt took: the context it was sent with. */
@@ -92,9 +92,9 @@ export function contextUsage(
 }
 
 /**
- * The latest answer. After a compaction or reset (`marker`) the measured context size is `stale` until a newer
- * response; without either, an empty context. A compaction's view lists its marker before the kept entries, so entry
- * IDs, not positions, tell which came last.
+ * The latest answer that measured its context. After a compaction or reset (`marker`) the measured context size is
+ * `stale` until a newer response; without either, an empty context. A compaction's view lists its marker before the
+ * kept entries, so entry IDs, not positions, tell which came last.
  */
 export function lastAssistant(entries: readonly EntryRecord[]) {
   let marker: EntryRecord | undefined
@@ -105,7 +105,14 @@ export function lastAssistant(entries: readonly EntryRecord[]) {
       if (!marker || entry.id > marker.id) marker = entry
     }
     const model = entry.model?.[0]
-    if (entry.kind === 'pi.assistant' && model?.role === 'assistant' && entry.id > answered) {
+    // A provider error reports no usage. Measuring it as an empty context made a 154k conversation fit a 128k backup
+    // (#207552); like Pi's `estimateContext` (pi-durable harness/compaction.js), only an answer with tokens measures.
+    if (
+      entry.kind === 'pi.assistant' &&
+      model?.role === 'assistant' &&
+      calculateContextTokens(model.usage) > 0 &&
+      entry.id > answered
+    ) {
       message = model
       answered = entry.id
     }
