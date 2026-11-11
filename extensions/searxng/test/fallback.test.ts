@@ -18,6 +18,24 @@ it.each([
   { primary: 'results', key: false, cap: false, tavily: 'error', outcome: 'good', calls: 0 },
   { primary: 'empty', key: false, cap: false, tavily: 'error', outcome: 'unknown-empty', calls: 0 },
   { primary: 'empty', key: true, cap: false, tavily: 'ok', outcome: 'fallback', calls: 1 },
+  {
+    primary: 'empty',
+    key: true,
+    cap: false,
+    tavily: 'ok',
+    outcome: 'fallback',
+    calls: 1,
+    count: 15,
+  },
+  {
+    primary: 'empty',
+    key: true,
+    cap: false,
+    tavily: 'ok',
+    outcome: 'fallback',
+    calls: 1,
+    count: 25,
+  },
   { primary: 'empty', key: true, cap: false, tavily: 'error', outcome: 'unknown-empty', calls: 1 },
   { primary: 'down', key: false, cap: false, tavily: 'ok', outcome: 'outage', calls: 0 },
   { primary: 'down', key: true, cap: true, tavily: 'ok', outcome: 'outage', calls: 0 },
@@ -65,12 +83,16 @@ it.each([
         query: 'test',
         search_depth: 'basic',
         auto_parameters: false,
-        max_results: 10,
+        max_results: 20,
       })
       calls++
       return scenario.tavily === 'ok'
         ? Response.json({
-            results: [{ url: 'https://example.org', title: 'Fallback', content: 'result' }],
+            results: Array.from({ length: 20 }, (_, index) => ({
+              url: `https://example.org/${index}`,
+              title: 'Fallback',
+              content: 'result',
+            })),
           })
         : new Response('', { status: 503 })
     }),
@@ -83,13 +105,29 @@ it.each([
   } as unknown as ExtensionHost
   const tool = searxng(host).tools![0]
   const details = vi.fn<(value: unknown) => Promise<void>>(async () => {})
-  const result = (await tool.execute({ query: 'test' }, { details } as never, {} as never)) as {
+  const count = 'count' in scenario ? scenario.count : undefined
+  const result = (await tool.execute(
+    { query: 'test', count },
+    { details } as never,
+    {} as never,
+  )) as {
     isError?: boolean
     output: { text: string }[]
   }
   expect((details.mock.calls[0][0] as { outcome: string }).outcome).toBe(scenario.outcome)
   expect(Boolean(result.isError)).toBe(scenario.outcome === 'outage')
   expect(calls).toBe(scenario.calls)
+  const stored = details.mock.calls[0][0] as { results?: unknown[] }
+  expect(stored.results?.length ?? 0).toBe(
+    scenario.outcome === 'fallback'
+      ? Math.min(count ?? 10, 20)
+      : scenario.primary === 'results'
+        ? 1
+        : 0,
+  )
+  expect(result.output[0].text.includes('Tavily returns at most 20 results.')).toBe(
+    scenario.outcome === 'fallback' && (count ?? 10) > 20,
+  )
   expect(result.output[0].text.includes('Results from Tavily')).toBe(
     scenario.outcome === 'fallback',
   )

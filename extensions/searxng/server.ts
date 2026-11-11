@@ -474,7 +474,7 @@ export default function searxng(host: ExtensionHost) {
         query,
         search_depth: 'basic',
         auto_parameters: false,
-        max_results: 10,
+        max_results: 20,
       }),
     })
     if (!response.ok) throw new Error(`Tavily answered HTTP ${response.status}.`)
@@ -688,7 +688,7 @@ export default function searxng(host: ExtensionHost) {
                     if (found.length) {
                       results = found
                       outcome = 'fallback'
-                      fallbackNote = `\n\nResults from Tavily (fallback ${reservation}/1,000 this month); SearXNG category and time filters do not apply.`
+                      fallbackNote = `\n\nResults from Tavily (fallback ${reservation}/1,000 this month); SearXNG category and time filters do not apply.${(args.count ?? 10) > 20 ? ' Tavily returns at most 20 results.' : ''}`
                     } else reason = 'Tavily returned no results.'
                   } catch {
                     reason = 'Tavily request failed.'

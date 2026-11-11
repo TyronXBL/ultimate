@@ -31,6 +31,8 @@ export async function reserveSearch(
   }
   const db = new DatabaseSync(path)
   try {
+    // Another host can see the empty file before initialization commits. It fails closed rather
+    // than treating it as a fresh budget; a crash here likewise requires manual repair (#229140).
     if (created) {
       for (;;) {
         try {
