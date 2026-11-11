@@ -20,6 +20,7 @@ import {
   useState,
 } from 'react'
 import type { ComponentType, ReactNode, RefObject } from 'react'
+import { flushSync } from 'react-dom'
 import { useStickToBottomContext } from 'use-stick-to-bottom'
 import type { StickToBottomContext } from 'use-stick-to-bottom'
 import { useEvent } from '../sdk/events.ts'
@@ -256,7 +257,8 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     })
     return () => scroll.removeEventListener('scroll', onScroll, { capture: true })
   }, [scrollRef, stopScroll])
-  useLayoutEffect(() => {
+  // Put the anchored row back where it was, once rows went in above it.
+  const restoreAnchor = useEffectEvent(() => {
     if (anchor.current && scrollRef.current) {
       const { toolCallId: callId, top } = anchor.current
       const entry = contentRef.current?.querySelector(anchorSelector(anchor.current))
@@ -268,7 +270,8 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
       if (element) scrollRef.current.scrollTop += element.getBoundingClientRect().top - top
       anchor.current = null
     }
-  }, [history, scrollRef, contentRef])
+  })
+  useLayoutEffect(() => restoreAnchor(), [history])
   useEffect(() => {
     const scroll = scrollRef.current
     if (!scroll || tailSpace === 0) return undefined
@@ -356,21 +359,6 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
       )
     }),
   )
-  // Page in earlier history while the top comes within a viewport. A new observer after each page reports at once
-  // whether the top is still that close.
-  useEffect(() => {
-    const root = scrollRef.current
-    if (!root || !sentinel.current || loading || !canLoad) return undefined
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        // oxlint-disable-next-line typescript/no-floating-promises -- loadEarlier catches history failures and reports them as failed.
-        if (entry?.isIntersecting) void earlier()
-      },
-      { root, rootMargin: '100% 0px 0px 0px' },
-    )
-    observer.observe(sentinel.current)
-    return () => observer.disconnect()
-  }, [scrollRef, loading, canLoad, history])
   const { results, calls } = useMemo(() => indexTools(entries), [entries])
   // Keyed on the tools, not `live`: a streamed token must not re-render every row.
   const slots = useMemo(() => slotsOf(live.tools), [live.tools])
@@ -399,6 +387,78 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           follows({ entry: row.entry, calls: shownCalls(row) }),
       )
     : grouped.map((row) => row)
+  // #205147: a switch drew every loaded row in one long task. The newest rows draw first, the earlier ones a few at a
+  // time after each frame, or at once when the reader nears them or a reveal needs one: a switch costs about a screen.
+  const [hide, setHide] = useState<number>()
+  const batch = useRef(4)
+  if (hide === undefined && threaded.length > 0) setHide(threaded.length - firstRows)
+  const hidden = Math.max(0, Math.min(hide ?? threaded.length - firstRows, threaded.length))
+  const drawEarlier = useEffectEvent(() => {
+    if (hidden === 0) return
+    // A reader who scrolled up keeps the first row on screen in place while rows go in above it, also where the browser
+    // does not anchor (Safari). At the bottom the view follows the bottom anyway, and finding the row would lay out the
+    // whole transcript for every batch.
+    const view = state.isAtBottom ? undefined : scrollRef.current?.getBoundingClientRect().top
+    const row =
+      view === undefined
+        ? undefined
+        : [...(contentRef.current?.querySelectorAll(':scope > [data-entry-id]') ?? [])].find(
+            (element) => element.getBoundingClientRect().bottom > view,
+          )
+    if (row)
+      anchor.current = {
+        entryId: Number(row.getAttribute('data-entry-id')),
+        last: Number(row.getAttribute('data-run-last')) || undefined,
+        top: row.getBoundingClientRect().top,
+      }
+    // Drawn and placed before the reader's next scroll, so the anchor taken above still holds.
+    const started = performance.now()
+    flushSync(() => setHide(Math.max(0, hidden - batch.current)))
+    // A row costs from well under a millisecond (a divider) to tens (a long answer with code): a few per frame.
+    const took = performance.now() - started
+    if (took > 12) batch.current = Math.max(1, batch.current >> 1)
+    else if (took < 4) batch.current = Math.min(32, batch.current * 2)
+  })
+  useLayoutEffect(() => restoreAnchor(), [hidden])
+  // Rows that go in render whole once, so the browser keeps their height (`contain-intrinsic-size: auto` in
+  // index.css); only then do they skip their work off screen. Skipped before ever rendering, a row would stand at a
+  // guessed height and change it near the view: a shrink pulls the view off the bottom, and Safari, which does not
+  // anchor scrolling, would move what the reader sees.
+  const [seen, setSeen] = useState(Number.POSITIVE_INFINITY)
+  const top = hidden < threaded.length ? firstId(threaded[hidden]) : undefined
+  useEffect(() => {
+    if (top === undefined || top >= seen) return
+    // After the frame that laid them out; the next batch does not cancel it, or rows would stay whole until the last.
+    requestAnimationFrame(() => setTimeout(() => setSeen((value) => Math.min(value, top))))
+  }, [top, seen])
+  useEffect(() => {
+    if (hidden === 0 || loading) return undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const frame = requestAnimationFrame(() => (timer = setTimeout(drawEarlier)))
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+    }
+  }, [hidden, loading])
+  // Draw earlier rows, then page in earlier history, while the top comes within a viewport. A new observer after each
+  // draw or page reports at once whether the top is still that close.
+  const nearTop = useEffectEvent(() => {
+    if (hidden > 0) drawEarlier()
+    // oxlint-disable-next-line typescript/no-floating-promises -- loadEarlier catches history failures and reports them as failed.
+    else void earlier()
+  })
+  useEffect(() => {
+    const root = scrollRef.current
+    if (!root || !sentinel.current || loading || !(canLoad || hidden > 0)) return undefined
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) nearTop()
+      },
+      { root, rootMargin: '100% 0px 0px 0px' },
+    )
+    observer.observe(sentinel.current)
+    return () => observer.disconnect()
+  }, [scrollRef, loading, canLoad, history, hidden])
   const [shownBetween, setShownBetween] = useState(0)
   const [shownAside, setShownAside] = useState<ReadonlySet<number>>(new Set())
   // Folded runs the reader or a reveal opened, by the keys of all their parts: a run that gains earlier entries from a
@@ -474,7 +534,17 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
       // Inside the window's range: a fill still reading it brings it.
       if (filling) return
     }
-    // Open its stretch between thread rows, set-aside group and folded run first; the next commit scrolls.
+    // Draw the rows down to it, open its stretch between thread rows, set-aside group and folded run first; the next
+    // commit scrolls.
+    const at = threaded.findIndex((row) =>
+      ('between' in row ? row.between : [row]).some((inner) =>
+        itemParts(inner).some((part) => part.entry.id === revealed),
+      ),
+    )
+    if (at >= 0 && at < hidden) {
+      setHide(at)
+      return
+    }
     const between = threaded.find(
       (row): row is BetweenGroup<(typeof grouped)[number]> =>
         'between' in row &&
@@ -518,7 +588,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
   })
   useLayoutEffect(
     () => revealStep(),
-    [reveal, loading, pending, failed, history, opened, filling, shownAside, shownBetween],
+    [reveal, loading, pending, failed, history, opened, filling, shownAside, shownBetween, hidden],
   )
   const render = (row: CompactPart | WorkRun, last: boolean, faded = ''): ReactNode =>
     'work' in row ? (
@@ -526,6 +596,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         className={cn('empty:hidden', faded)}
         data-conversation-id={id}
         data-entry-id={row.work[0].entry.id}
+        data-fresh={row.work[0].entry.id < seen || undefined}
         data-run-last={row.work.at(-1)!.entry.id}
         key={partKey(row.work[0])}
       >
@@ -544,6 +615,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         className={cn('empty:hidden', faded)}
         data-conversation-id={id}
         data-entry-id={row.entry.id}
+        data-fresh={row.entry.id < seen || undefined}
         key={partKey(row)}
       >
         <EntryView
@@ -557,7 +629,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     )
   return (
     <TranscriptContext value={entries}>
-      {!loading && entries.length > 0 && cursor !== undefined && (
+      {!loading && entries.length > 0 && (cursor !== undefined || hidden > 0) && (
         <div
           className="flex min-h-5 items-center justify-center font-mono text-[11px] text-muted-foreground/70"
           data-earlier-history
@@ -583,8 +655,11 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         </div>
       )}
       {!loading && visible.length === 0 && !partial && <EmptyState />}
-      {!loading && visible.length > 0 && cursor === undefined && <Slot name="transcript.start" />}
-      {threaded.map((item, index) => {
+      {!loading && visible.length > 0 && cursor === undefined && hidden === 0 && (
+        <Slot name="transcript.start" />
+      )}
+      {threaded.slice(hidden).map((item, drawn) => {
+        const index = hidden + drawn
         const last = index === threaded.length - 1
         if (!('between' in item)) return renderItem(item, last)
         const key = `between:${partKey(itemParts(item.between[0])[0])}`
@@ -631,6 +706,7 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     return (
       <Collapsible
         className={cn('group/aside', faded)}
+        data-fresh={key < seen || undefined}
         data-set-aside={item.steps}
         key={`aside:${key}`}
         onOpenChange={(value) =>
@@ -660,6 +736,9 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     )
   }
 }
+
+/** Rows a switch draws at once: about a screen and a half. */
+const firstRows = 20
 
 /** Opened rows between thread rows stay faded and tighter, back to full on hover or focus. */
 const recedeRow =
@@ -757,6 +836,11 @@ function BetweenLine({
     </button>
   )
 }
+
+/** The first entry of a top-level row. */
+const firstId = (
+  item: CompactPart | WorkRun | AsideGroup | BetweenGroup<CompactPart | WorkRun | AsideGroup>,
+) => itemParts('between' in item ? item.between[0] : item)[0].entry.id
 
 /** A set-aside group is known by its first entry, so it stays open while later rows join it. */
 const asideKey = (group: AsideGroup) => partsOf(group.aside[0])[0].entry.id
