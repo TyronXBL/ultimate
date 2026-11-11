@@ -423,7 +423,9 @@ export default function backgroundExtension(
                 ? `Queued: next in line for the heavy-work slot, waiting for RAM: ${describeShort(short)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
                 : short
                   ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min. ${after}`
-                  : `Started in the background in ${cwd}${need ? ' (the heavy-work slot was free)' : ''}. ${after}`
+                  : need
+                    ? `Starting in the background in ${cwd}: the heavy-work slot is free, unless a job that asked at the same moment takes it first, and then this one waits its turn by itself. ${after}`
+                    : `Started in the background in ${cwd}. ${after}`
           return { output: [{ type: 'text', text }] }
         },
       }),
