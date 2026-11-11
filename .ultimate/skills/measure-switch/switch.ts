@@ -93,15 +93,17 @@ await page.addInitScript(() => {
   }).observe({ type: 'longtask', buffered: true })
   // `switchPaint.from` is the transcript element a switch leaves (each conversation gets its own): the first frame
   // painted with rows in another one is the switched-to conversation on screen.
-  const paint: { from?: Element | null; seen?: boolean; t?: number } = {}
+  const paint: { from?: Element | null; seen: boolean; t?: number } = { seen: true }
   w.switchPaint = paint
   new MutationObserver(() => {
     w.switchLastMutation = performance.now()
-    if (paint.seen || !('from' in paint)) return
+    if (paint.seen) return
     const transcript = document.querySelector('[data-ui="transcript"]')
     if (!transcript || transcript === paint.from || !transcript.querySelector('[data-entry-id]'))
       return
     paint.seen = true
+    // Let go of the left transcript, so it does not count in `heapMb`.
+    paint.from = undefined
     // A task queued from an animation frame runs after that frame is painted.
     requestAnimationFrame(() => setTimeout(() => (paint.t = performance.now())))
   }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true })
@@ -173,14 +175,14 @@ for (let round = 0; round < rounds; round++)
       const w = window as unknown as {
         switchEvents: { t: number; ev: string; sub?: number; conversation?: number; kb?: number }[]
         switchSubs: { t: number; url: string; conversation?: number; view: boolean }[]
-        switchPaint: { from?: Element | null; seen?: boolean; t?: number }
+        switchPaint: { from?: Element | null; seen: boolean; t?: number }
         switchLongTasks: { t: number; d: number }[]
         switchLastMutation?: number
       }
       w.switchEvents.length = 0
       w.switchSubs.length = 0
       performance.clearResourceTimings()
-      w.switchPaint = Object.assign(w.switchPaint, {
+      Object.assign(w.switchPaint, {
         from: document.querySelector('[data-ui="transcript"]'),
         seen: false,
         t: undefined,
@@ -195,8 +197,10 @@ for (let round = 0; round < rounds; round++)
       while (!ownView() && performance.now() < deadline) await pause()
       while (performance.now() < deadline && performance.now() - (w.switchLastMutation ?? 0) < 300)
         await pause()
-      while (performance.now() < deadline && w.switchPaint.t === undefined) await pause()
-      const long = w.switchLongTasks.filter((item) => item.t >= started)
+      const settled = w.switchLastMutation ?? started
+      // Rows seen are painted a frame later; a conversation without rows (an empty one) never paints any.
+      while (w.switchPaint.seen && w.switchPaint.t === undefined && performance.now() < deadline)
+        await pause()
       const memory = (performance as unknown as { memory: { usedJSHeapSize: number } }).memory
       // Where the view's wait went: the subscription that brought it, by its request's timing. The server writes the
       // view to the stream before it answers the request, so the request's first byte is the server done.
@@ -210,6 +214,10 @@ for (let round = 0; round < rounds; round++)
           | undefined
       if (asked) while (!answered() && performance.now() < deadline) await pause()
       const request = asked && answered()
+      // Read last: a long task is reported a moment after it ends. One under way at the click counts: React draws the
+      // switch in the task that makes it, which began just before `started` (#202077: a warm switch's whole draw,
+      // 0.2 to 1.7 s, was left out).
+      const long = w.switchLongTasks.filter((item) => item.t + item.d > started)
       const ms = (value: number | undefined) => (value === undefined ? -1 : Math.round(value))
       return {
         id,
@@ -221,10 +229,11 @@ for (let round = 0; round < rounds; round++)
         askMs: ms(asked && asked.t - started),
         queueMs: ms(request && asked && request.requestStart - asked.t),
         serverMs: ms(request && request.responseStart - request.requestStart),
-        handleMs: ms(request && view && view.t - request.responseStart),
+        // The view and the request's answer come on two connections: the event can be handled a moment before the first byte.
+        handleMs: ms(request && view && Math.max(0, view.t - request.responseStart)),
         // How often the page asked for this conversation's view: each time the server reads and sends it whole.
         subs: w.switchSubs.filter((item) => item.conversation === id && item.view).length,
-        settledMs: Math.round((w.switchLastMutation ?? started) - started),
+        settledMs: Math.round(settled - started),
         longMs: Math.round(long.reduce((sum, item) => sum + item.d, 0)),
         maxLongMs: Math.round(Math.max(0, ...long.map((item) => item.d))),
         eventKb: Math.round(w.switchEvents.reduce((sum, item) => sum + (item.kb ?? 0), 0)),
@@ -233,6 +242,11 @@ for (let round = 0; round < rounds; round++)
         heapMb: Math.round(memory.usedJSHeapSize / 1048576),
       }
     }, target)
+    // Read as "could not be measured", a store that subscribes another way would go unnoticed.
+    if (result.viewMs < 20_000 && result.askMs < 0)
+      throw new Error(
+        `The view of ${target} arrived on a subscription the page was not seen asking for`,
+      )
     results.push({ round, ...result })
     console.log(JSON.stringify({ round, ...result }))
   }
@@ -256,19 +270,17 @@ if (profile) {
 }
 await browser.close()
 
-const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]
+// Without the parts that could not be measured (-1).
+const median = (all: number[]) => {
+  const values = all.filter((value) => value >= 0).toSorted((a, b) => a - b)
+  return values[Math.floor(values.length / 2)] ?? -1
+}
 for (let round = 0; round < rounds; round++) {
   const rows = results.filter((row) => row.round === round)
-  const keys = ['paintMs', 'viewMs', 'askMs', 'queueMs', 'serverMs', 'handleMs', 'subs'].concat([
-    'settledMs',
-    'longMs',
-    'maxLongMs',
-    'eventKb',
-    'streams',
-    'heapMb',
-  ])
+  const keys =
+    'paintMs viewMs askMs queueMs serverMs handleMs subs settledMs longMs maxLongMs eventKb streams heapMb'
   console.log(
     `${round === 0 ? 'cold' : `warm ${round}`} medians:`,
-    Object.fromEntries(keys.map((key) => [key, median(rows.map((row) => row[key]))])),
+    Object.fromEntries(keys.split(' ').map((key) => [key, median(rows.map((row) => row[key]))])),
   )
 }

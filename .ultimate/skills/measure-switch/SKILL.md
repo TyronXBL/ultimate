@@ -48,7 +48,8 @@ node .ultimate/skills/measure-switch/profile-summary.ts $TMPDIR/switch-perf/a.cp
 - Round 0 is cold (never shown in the tab), later rounds warm (`store.show` paints the kept replica first).
 - `paintMs` (the conversation's rows on screen), `settledMs` and `longMs` are the user-facing numbers; `eventKb` shows
   what the server sends. A tab keeps one event stream and a switch only resubscribes on it, so `streams` (new streams
-  during the switch) should stay 0.
+  during the switch) should stay 0. `longMs` counts the task the switch starts in, where React draws it; numbers from
+  before #202077 left that task out, so do not compare `longMs` or `maxLongMs` with them.
 - `viewMs` is when the server's view arrives, which means something else per round: a cold switch has nothing to show
   before it, a warm one has painted the kept replica already and only refreshes it. Compare cold and warm on `paintMs`,
   never on `viewMs` (#202077: warm `viewMs` was twice the cold one while warm painted in half the time).
