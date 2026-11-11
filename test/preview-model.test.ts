@@ -77,7 +77,13 @@ it('reads instance.model project over user, defaults to Sol and turns off with n
   project = { instance: { model: 'opus' } }
   await expect(previewModelSetting(host)).rejects.toThrow('Invalid instance.model')
 
-  const options = { home: '/h', project: '/p', userHome: '/u', ownerPid: 1 }
+  const options = {
+    home: '/h',
+    project: '/p',
+    userHome: '/u',
+    parentUserHome: '/parent',
+    ownerPid: 1,
+  }
   expect(previewEnv({ ULTIMATE_MODEL: 'a/b' }, options)).not.toHaveProperty('ULTIMATE_MODEL')
   expect(previewEnv({}, { ...options, model: 'a/b' }).ULTIMATE_MODEL).toBe('a/b')
 })
