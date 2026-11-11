@@ -91,10 +91,11 @@ beforeAll(async () => {
     before[ref] = await tip(target, ref)
 
   // An open writer with uncheckpointed WAL frames: the copy must still be consistent and complete. The random
-  // blob compresses to more than one 16 MiB chunk.
+  // blob compresses to more than one 16 MiB chunk. `synchronous = OFF`: with an fsync per insert the 500 commits took
+  // 3.6–6 s of the hook's 10 s on two loaded CPUs, and timed it out in CI on 26f8bae9 (#220179); 0.1–0.4 s without.
   database = join(await temp('ultimate-snapshot-home-'), 'state.sqlite')
   writer = new DatabaseSync(database)
-  writer.exec(`PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
+  writer.exec(`PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA synchronous = OFF;
     CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT); CREATE TABLE blobs (data BLOB);`)
   const note = writer.prepare('INSERT INTO notes (body) VALUES (?)')
   for (let i = 0; i < 500; i++) note.run(`note ${i}`)

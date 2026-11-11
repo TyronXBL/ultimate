@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { setImmediate as yieldIO } from 'node:timers/promises'
+// fast-test-reason: `until` polls every 10 ms only once a wait has lasted 50 ms; fake time cannot drive another process.
+import { setImmediate as yieldIO, setTimeout as sleep } from 'node:timers/promises'
 import { join, resolve, sep } from 'node:path'
 import { applyImmutable } from '@earendil-works/chord/delta'
 import type { Op } from '@earendil-works/chord/delta'
@@ -361,11 +362,15 @@ export async function until(
   timeout = 30000,
   tick?: () => Promise<unknown>,
 ) {
-  const deadline = performance.now() + timeout
+  const start = performance.now()
+  const deadline = start + timeout
   while (!(await test())) {
     if (performance.now() > deadline) throw new Error('Timed out')
     await tick?.()
-    await yieldIO()
+    // Work in this process settles within a few turns, so the first 50 ms spin. A longer wait is on another process
+    // (a browser, a child, the disk): spinning then burned a core, 370k-520k polls and 3-4 s of CPU in one
+    // questions-keyboard test, beside the browser it waited for (#220179). A `tick` drives fake time and keeps spinning.
+    await (tick || performance.now() - start < 50 ? yieldIO() : sleep(10))
   }
 }
 export async function post(server: string | { url: string }, path: string, data: unknown = {}) {

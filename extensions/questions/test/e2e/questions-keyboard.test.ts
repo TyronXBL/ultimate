@@ -1,6 +1,6 @@
 // Answers a three-question card in a real browser with only the keyboard: letter keys choose, ↑/↓ move between
 // questions, Enter sends; the reply reaches @ultimate in the message's own numbering, with the note field's text after it.
-// Leaving the page inside the undo window still sends the answer.
+// After Accept picks one Enter sends, and leaving the page inside the undo window still sends the answer.
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
@@ -92,11 +92,11 @@ async function openCard() {
   await page.goto(`${server.url}/?conversation=${ultimate}`)
   const card = page.locator(`[data-questions-card="message:${asked.id}"]`)
   await card.locator('fieldset').nth(2).waitFor()
-  return { conversation, log, ask, asked, page, card }
+  return { log, asked, page, card }
 }
 
 it('answers a decisions card with letters, arrows and Enter', async () => {
-  const { conversation, log, ask, asked, page, card } = await openCard()
+  const { log, asked, page, card } = await openCard()
   // The composer takes focus on desktop and keeps its keys; the card takes them once the user leaves it.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   // Question 1: b; down to 2: a; down to 3: b; back up twice and change 1 to c.
@@ -135,29 +135,16 @@ it('answers a decisions card with letters, arrows and Enter', async () => {
     "1c. Branch starts in the context: leave as is\n\n2a. Boxer's copied agents/ultimate.md: assess a way to add tools without forking it\n\n3b. Land it: no, change something first\n\nNote: Also rename the tab.\nAnd soon.",
   )
   await card.waitFor({ state: 'detached' })
-  // @ultimate's turn on the answer must end first: an ask submitted while it runs steers into that turn, which
-  // then answers "Noted." instead of asking again.
-  await until(async () => (await answer())!.state === 'answered')
-
-  // A fresh card: Accept picks, then a single Enter sends.
-  await (await conversation.submit({ type: 'input', content: 'ask' }, context)).wait(context)
-  await until(async () => (await ask())!.id !== asked.id)
-  const second = (await ask())!
-  const next = page.locator(`[data-questions-card="message:${second.id}"]`)
-  await next.locator('fieldset').nth(2).waitFor()
-  await next.getByRole('button', { name: 'Accept picks' }).click()
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-  await page.keyboard.press('Enter')
-  const picked = async () =>
-    (await log())?.messages.find((m) => m.re === second.id && m.from === 'user')
-  await until(async () => !!(await picked()))
-  expect((await picked())!.text).toMatch(/^1a\. .+\n\n2a\. .+\n\n3a\. Land it: yes$/)
 })
 
+// Accept picks, then a single Enter sends: before ee569d52 it only moved to the next question. Proven here, not on a
+// second card in the test above, which made that test twice as long as other browser tests and ran it past 60 s on CI
+// runners (#220179).
 it('sends a held answer when the page is left inside the undo window', async () => {
   const { log, asked, page, card } = await openCard()
   await card.getByRole('button', { name: 'Accept picks' }).click()
-  await card.getByRole('button', { name: 'Send', exact: true }).click()
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.keyboard.press('Enter')
   await card.getByRole('button', { name: 'Undo' }).waitFor()
   await page.goto('about:blank')
   const answer = async () =>
