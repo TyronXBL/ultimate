@@ -31,6 +31,7 @@ import type {
   LanderEntry,
   LanderOutcome,
   LanderStep,
+  Reused,
   SubmitResult,
   WorkspaceIndex,
 } from './types.ts'
@@ -87,6 +88,11 @@ function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
           flaky: {command}
         </p>
       ))}
+      {outcome.reused?.map((check) => (
+        <p className="truncate text-muted-foreground" key={check.command}>
+          reused: {check.command} · <Origin reused={check} />
+        </p>
+      ))}
       {outcome.unchecked && <UncheckedNote unchecked={outcome.unchecked} />}
       {outcome.repeats?.map((repeat) => (
         <p className="break-words" key={repeat.test}>
@@ -112,6 +118,24 @@ function OutcomeBody({ outcome }: { outcome: LanderOutcome }) {
       {outcome.hint && <p className="text-muted-foreground">{outcome.hint}</p>}
       {outcome.output && <OutputTail output={outcome.output} />}
     </>
+  )
+}
+
+/** Where a reused pass came from: its run, linked, what it tested, when it finished and how long it took then. */
+function Origin({ reused }: { reused: Reused }) {
+  return (
+    <span title={reused.url}>
+      <a
+        className="underline-offset-2 hover:text-foreground hover:underline"
+        href={reused.url}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {reused.runner}
+      </a>{' '}
+      passed {short(reused.sha)} at {time(reused.completedAt)} in{' '}
+      {formatDuration(reused.seconds * 1000)}
+    </span>
   )
 }
 
@@ -250,8 +274,15 @@ function StepLine({
       >
         {row.check.command}
         {row.check.result !== 'passed' && ` · ${row.check.result}`}
-        {row.check.summary && (
-          <span className="text-muted-foreground/60"> · {row.check.summary}</span>
+        {row.check.result === 'reused' ? (
+          <span className="text-muted-foreground/60">
+            {' '}
+            · <Origin reused={row.check.reused} />
+          </span>
+        ) : (
+          row.check.summary && (
+            <span className="text-muted-foreground/60"> · {row.check.summary}</span>
+          )
         )}
       </Line>
     )

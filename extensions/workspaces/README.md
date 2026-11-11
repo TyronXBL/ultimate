@@ -131,8 +131,13 @@ is no main, so `workspace submit` refuses it. The task is its conversation's for
 tab shows it working while it lands. The sidebar pins every lander
 conversation above the others, never concluded, with "idle · last <sha> <time>" or a pulsing "landing". It logs
 every submission as `ultimate.lander` entries, which carry no model message, so no model run in that conversation
-sees them: `queued`, `started`, each step, each check with `passed`, `failed` or `flaky`, and the outcome (`landed`
-with `sha`, `commits`, `paths`, `flaky`, `pushed`, or `failed` with `reason` and the `output` tail). Each line is
+sees them: `queued`, `started`, each step, each check with `passed`, `failed`, `flaky` or `reused`, and the outcome
+(`landed` with `sha`, `commits`, `paths`, `flaky`, `reused`, `pushed`, or `failed` with `reason` and the `output`
+tail). A check that passes by reusing an earlier pass of exactly the commit it checks, instead of testing again, prints
+`lander-reused: ` and a JSON origin (`runner`, `url`, `sha`, `completedAt`, `seconds`); `settleCheck` (`check.ts`), the
+only writer of a check's result, records it as `reused` with that origin, which the report and the card show beside the
+checks that ran. A claim that names no complete origin, or another commit, fails the check, and a rerun after a
+failure never passes by reuse (#205147). Each line is
 committed with the task state change or doc update it describes; a check result is logged right after the check
 runs, so a crash before its memo logs the rerun too. The same commits record each step as `{ step, at, check? }` in
 the queue entry's `steps`; when the submission ends, its steps, outcome, tip and target move into the root document's

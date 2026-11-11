@@ -14,7 +14,7 @@ const SECRETS =
   /gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY/
 
 export type Run = { id: number; status: string; conclusion: string | null; html_url: string }
-type Job = {
+export type Job = {
   id: number
   name: string
   conclusion: string | null
@@ -175,6 +175,64 @@ export async function runState(cwd: string, repo: string, id: number) {
   const { jobs } = await call<{ jobs: Job[] }>(cwd, repo, `/repos/${repo}/actions/runs/${id}/jobs`)
   const run = await call<Run>(cwd, repo, `/repos/${repo}/actions/runs/${id}`)
   return { run, jobs }
+}
+
+/** How long after GitHub finished it a passed run of a commit stands in for the lander's gate (#205147). */
+export const REUSE_MS = 6 * 60 * 60_000
+
+/**
+ * What the lander's gate does with the push runs of the commit it checks, before any runner (#205147): wait for one
+ * still under way (in progress is never passed); run fresh when one ended any other way than passed, so a flaky pass
+ * cannot hide a failure of that very commit, or when none ran; else weigh reusing the newest pass (`reusable`).
+ */
+export type GatePlan =
+  | { kind: 'wait'; run: Run }
+  | { kind: 'fresh'; why: string }
+  | { kind: 'reuse'; run: Run }
+export function gatePlan(runs: Run[], sha: string): GatePlan {
+  const going = runs.find((run) => run.status !== 'completed')
+  if (going) return { kind: 'wait', run: going }
+  const ended = runs.find((run) => run.conclusion !== 'success')
+  if (ended)
+    return {
+      kind: 'fresh',
+      why: `tip CI had ${ended.conclusion === 'failure' ? 'failed' : `ended ${ended.conclusion}`}: ${ended.html_url}`,
+    }
+  return runs[0]
+    ? { kind: 'reuse', run: runs[0] }
+    : { kind: 'fresh', why: `no CI run of ${sha.slice(0, 7)}` }
+}
+
+/**
+ * The origin of passed run `run` of `sha`, from its jobs' times on GitHub, when it finished at most `REUSE_MS` before
+ * `now`; else why it runs fresh. A run whose jobs carry no times names no origin and is not reused.
+ */
+export function reusable(
+  run: Run,
+  jobs: Job[],
+  sha: string,
+  now: number,
+):
+  | { origin: { runner: string; url: string; sha: string; completedAt: number; seconds: number } }
+  | { origin?: undefined; why: string } {
+  const starts = jobs.flatMap((job) => (job.started_at ? [Date.parse(job.started_at)] : []))
+  const ends = jobs.flatMap((job) => (job.completed_at ? [Date.parse(job.completed_at)] : []))
+  if (!starts.length || ends.length < jobs.length)
+    return { why: `the pass of ${sha.slice(0, 7)} has no job times: ${run.html_url}` }
+  const completedAt = Math.max(...ends)
+  if (now - completedAt > REUSE_MS)
+    return {
+      why: `the pass of ${sha.slice(0, 7)} is ${+((now - completedAt) / 3_600_000).toFixed(1)} h old: ${run.html_url}`,
+    }
+  return {
+    origin: {
+      runner: 'GitHub Actions',
+      url: run.html_url,
+      sha,
+      completedAt,
+      seconds: Math.round((completedAt - Math.min(...starts)) / 1000),
+    },
+  }
 }
 
 export const jobResult = (job: Job): JobResult => ({

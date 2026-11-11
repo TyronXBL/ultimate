@@ -236,6 +236,36 @@ it.concurrent('runs a check group concurrently and records each summary', async 
   )
   expect(checks).toHaveLength(3)
 })
+it.concurrent('records a check that reused a named pass of the landed commit, with its origin', async () => {
+  // The check claims a pass of the commit it runs on, from run 4297, as the CI gate prints one.
+  const command = `printf '%s{"runner":"GitHub Actions","url":"https://ci.example/runs/4297","sha":"%s","completedAt":1794381000000,"seconds":198}\n' 'lander-reused: ' $(git rev-parse HEAD); echo reused it`
+  const f = await lander({ checks: [command] })
+  const id = await f.create()
+  await f.service.ready(id, context)
+  await commit((await f.service.get(id, context))!.path)
+  await f.service.submit(id, 'None', context)
+  const [report] = await submitted(f, id)
+  const sha = await git(f.projectRoot, 'rev-parse', 'HEAD')
+  expect(report).toContain('landed as')
+  expect(report).toContain(
+    `Reused: ${command}: GitHub Actions passed ${sha.slice(0, 7)} in 198 s, finished 2026-11-11T07:10:00.000Z: https://ci.example/runs/4297`,
+  )
+  const reused = {
+    runner: 'GitHub Actions',
+    url: 'https://ci.example/runs/4297',
+    sha,
+    completedAt: 1794381000000,
+    seconds: 198,
+  }
+  const log = (await landerLog(f)).log
+  expect(log.findLast((line) => line.check)!.check).toEqual({
+    command,
+    result: 'reused',
+    reused,
+    summary: 'reused it',
+  })
+  expect(log.at(-1)).toMatchObject({ outcome: 'landed', reused: [{ command, ...reused }] })
+})
 it.concurrent('reruns only the failing command of a group, reports its output twice failed, and lands a flaky one', async () => {
   const f = await lander({
     checks: [['echo PASSING_SUMMARY', 'echo CHECK_OUTPUT_TAIL; test ! -f fail.txt']],

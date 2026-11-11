@@ -60,17 +60,33 @@ export type Landed = {
   commits: string[]
   paths: string[]
   flaky: string[]
+  reused?: ReusedCheck[]
   unchecked?: Unchecked
   weight?: Weight
 }
 /** Lines and estimated tokens a landing added and removed over the files `lib/token-weight.ts` counts. */
 type Weight = { added: number; removed: number; tokens: number }
-/** A check's result; a passed or flaky one carries its last output line as `summary`. */
-type LanderCheck = {
-  command: string
-  result: 'passed' | 'failed' | 'flaky'
-  summary?: string
+/**
+ * The run whose pass a check reused instead of testing again (#205147): who ran it (`runner`), where to read it (`url`),
+ * the exact commit it tested, when it finished there and how long it took.
+ */
+export type Reused = {
+  runner: string
+  url: string
+  sha: string
+  completedAt: number
+  seconds: number
 }
+/** A check of a landing that reused an earlier pass, with that pass's origin. */
+export type ReusedCheck = { command: string } & Reused
+/**
+ * A check's result: it ran and passed, ran and failed, failed and passed its rerun (`flaky`), or exited 0 reusing a
+ * named earlier pass of the same commit (`reused`). Only `settleCheck` (check.ts) makes one. A result that passed
+ * carries its last output line as `summary`.
+ */
+export type LanderCheck =
+  | { command: string; result: 'passed' | 'failed' | 'flaky'; summary?: string }
+  | { command: string; result: 'reused'; reused: Reused; summary?: string }
 /** One row of a submission's progress: a step, or a check with its result. */
 export type LanderStep = {
   step: string
@@ -91,6 +107,8 @@ export type LanderOutcome = {
   commits?: string[]
   paths?: string[]
   flaky?: string[]
+  /** Checks that reused an earlier pass of the landed commit instead of running again, with where it came from. */
+  reused?: ReusedCheck[]
   unchecked?: Unchecked
   weight?: Weight
   /** `<remote>/<target>` it was pushed to. */

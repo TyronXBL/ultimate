@@ -324,6 +324,81 @@ it('runs the suites locally when GitHub did not start the jobs for billing, inst
   expect(stdout).not.toContain(TOKEN)
 })
 
+it('reuses a recent pass of the exact commit with its origin, without pushing or testing again', async () => {
+  const root = await temp('ultimate-ci-reuse-')
+  const checkout = join(root, 'checkout')
+  await mkdir(checkout)
+  await git(checkout, 'init', '-q', '-b', 'main')
+  await writeFile(join(checkout, 'a.txt'), 'a\n')
+  await git(checkout, 'add', '.')
+  await git(checkout, 'commit', '-qm', 'first')
+  // No such host: a push would fail, so the gate can only pass by reusing.
+  await git(checkout, 'remote', 'add', 'fork', 'https://github.com/owner/ultimate.git')
+  await git(
+    checkout,
+    'config',
+    `url.${join(root, 'nowhere')}/.pushInsteadOf`,
+    'https://github.com/',
+  )
+  await git(checkout, 'config', 'credential.helper', `!f() { echo password=${TOKEN}; }; f`)
+  const sha = await git(checkout, 'rev-parse', 'HEAD')
+  const finished = Date.now() - 60_000
+  const asked: string[] = []
+  const api = createServer((request, response) => {
+    const url = new URL(request.url!, 'http://api')
+    asked.push(`${url.pathname}${url.search}`)
+    const passed = { id: 7, status: 'completed', conclusion: 'success', html_url: 'https://run/7' }
+    const body =
+      url.pathname === '/repos/owner/ultimate/actions/runs'
+        ? { workflow_runs: url.searchParams.get('head_sha') === sha ? [passed] : [] }
+        : url.pathname === '/repos/owner/ultimate/actions/runs/7'
+          ? passed
+          : url.pathname === '/repos/owner/ultimate/actions/runs/7/jobs'
+            ? {
+                jobs: [
+                  {
+                    id: 2,
+                    name: 'test (1/2)',
+                    conclusion: 'success',
+                    started_at: new Date(finished - 198_000).toISOString(),
+                    completed_at: new Date(finished).toISOString(),
+                  },
+                ],
+              }
+            : undefined
+    response.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(body ?? { message: 'Not Found' }))
+  })
+  await new Promise<void>((done) => api.listen(0, '127.0.0.1', done))
+  const { stdout } = await run(
+    process.execPath,
+    [join(import.meta.dirname, '../../.ultimate/scripts/ci-gate.ts'), 'fork'],
+    {
+      cwd: checkout,
+      env: {
+        ...process.env,
+        CI_GATE_API: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+        HOME: join(root, 'home'),
+      },
+    },
+  )
+  api.close()
+  const line = stdout.split('\n').find((text) => text.startsWith('lander-reused: '))!
+  expect(JSON.parse(line.slice('lander-reused: '.length))).toEqual({
+    runner: 'GitHub Actions',
+    url: 'https://run/7',
+    sha,
+    completedAt: new Date(new Date(finished).toISOString()).getTime(),
+    seconds: 198,
+  })
+  expect(stdout).toContain(`ci-gate: reused: ${sha.slice(0, 7)} passed CI 1 min ago`)
+  expect(asked).toEqual([
+    `/repos/owner/ultimate/actions/runs?head_sha=${sha}&event=push`,
+    '/repos/owner/ultimate/actions/runs/7/jobs',
+    '/repos/owner/ultimate/actions/runs/7',
+  ])
+})
+
 it('runs CI on the PC runner first and delivers its failing tests without GitHub', async () => {
   const root = await temp('ultimate-ci-pc-')
   // The PC: a bare ci.git in its runner's home, reached by an `ssh` that runs the real forced command there.

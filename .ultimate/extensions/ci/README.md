@@ -33,8 +33,13 @@ A failed lookup leaves that out and delivers the result as it is.
 Aborting the task (its conversation concluded; Stop leaves it running) deletes the ref too and wakes nobody; a ref that stays behind then goes to
 the host's error report. It never runs the suites on this machine.
 
-The lander's gate, `.ultimate/scripts/ci-gate.ts`, tries the same PC first (`test`, `test:e2e`) and uses the same
-`github.ts`. When GitHub gives no verdict (unreachable, or jobs not started for billing) it runs `pnpm test` and
+The lander's gate, `.ultimate/scripts/ci-gate.ts`, first looks for a pass it may reuse (#205147): a GitHub run of
+exactly the commit it checks that passed, finished on GitHub at most 6 hours ago (`REUSE_MS`), with no run of that
+commit that failed or was cancelled (`gatePlan`, `reusable` in `github.ts`). A run in progress is never a pass. A
+reuse prints a `lander-reused:` line with the run's origin (runner, URL, commit, finish time, duration), which the
+lander records as a `reused` check on the landing card; otherwise the gate's last line says why it ran fresh ("tip CI
+had failed: <url>", "no CI run of <sha>", the pass's age). Then it tries the same PC (`test`, `test:e2e`) and uses the
+same `github.ts`. When GitHub gives no verdict (unreachable, or jobs not started for billing) it runs `pnpm test` and
 `pnpm test:e2e` on this machine instead, each as a job of the machine's heavy-work queue once its turn comes and the
 RAM floor admits it (`lib/slot.ts`; RAM short at the head of the line fails the gate after 10 min),
 with a `CI GATE FALLBACK` banner naming why. `github.ts` holds the secret scan, the remote's repository

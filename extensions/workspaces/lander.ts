@@ -37,6 +37,7 @@ import { CheckRan, SubmissionFailed, SubmissionLanded } from './api.ts'
 import { advance, type QueueEvent } from './queue.ts'
 import { setup, setupCommands } from './setup.ts'
 import { advanceWorkspace } from './state.ts'
+import { REUSED, reusedText, settleCheck } from './check.ts'
 import { failedTests, failingTests } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
 import type {
@@ -44,6 +45,8 @@ import type {
   LanderEntry,
   LanderOutcome,
   QueueEntry,
+  Reused,
+  ReusedCheck,
   Unchecked,
   WorkspaceIndex,
 } from './types.ts'
@@ -225,6 +228,7 @@ export async function runLanderCheck(
   const tmp = mkdtempSync(join(temp, `${process.pid}-`))
   let output = ''
   let partial = ''
+  let reused: string | undefined
   const failed = new Set<string>()
   let stopped: string | undefined
   const watchdog = new AbortController()
@@ -255,6 +259,7 @@ export async function runLanderCheck(
     for (const line of split) {
       const plain = stripVTControlCharacters(line).trim()
       if (failedLine.test(plain)) failed.add(plain.slice(0, 300))
+      if (plain.startsWith(REUSED)) reused = plain.slice(0, 2000)
     }
     clearTimeout(stallTimer)
     stallTimer = setTimeout(stalled, limits.stall * 1000)
@@ -279,7 +284,7 @@ export async function runLanderCheck(
     if (stopped) return { failure: report(stopped, 'Failed tests so far:'), timedOut: true }
     if (exitCode !== 0) return { failure: report(`exit ${exitCode}`, 'Failed tests:') }
     const last = lines(stripVTControlCharacters(output)).findLast((line) => line.trim())
-    return { summary: last?.trim().slice(0, 200) }
+    return { summary: last?.trim().slice(0, 200), ...(reused ? { reused } : {}) }
   } finally {
     clearTimeout(stallTimer)
     clearTimeout(totalTimer)
@@ -398,6 +403,7 @@ type Prepared = {
   base: string
   integrated: string
   flaky: string[]
+  reused?: ReusedCheck[]
   unchecked?: Unchecked
 }
 const landedOutcome = (landed: Landed): LanderOutcome => ({
@@ -407,6 +413,7 @@ const landedOutcome = (landed: Landed): LanderOutcome => ({
   commits: landed.commits,
   paths: landed.paths,
   flaky: landed.flaky,
+  ...(landed.reused ? { reused: landed.reused } : {}),
   ...(landed.unchecked ? { unchecked: landed.unchecked } : {}),
   ...(landed.weight ? { weight: landed.weight } : {}),
 })
@@ -559,7 +566,12 @@ export function createLander(
               await host.emit(tx, CheckRan, {
                 submission: id,
                 command: result.command,
-                result: ran.timedOut ? 'timeout' : result.result,
+                // A reuse ran the command too, and it passed.
+                result: ran.timedOut
+                  ? 'timeout'
+                  : result.result === 'reused'
+                    ? 'passed'
+                    : result.result,
                 ms: Math.round(ran.ms),
               })
           }, context)
@@ -652,6 +664,10 @@ export function createLander(
               : `had nothing new to land on ${entry.target}.`,
             ...(landed.commits.length ? [`Commits:\n${landed.commits.join('\n')}`] : []),
             ...landed.flaky.map((command) => `Flaky: ${command}`),
+            ...(landed.reused ?? []).map(
+              (check) =>
+                `Reused: ${check.command}: ${reusedText(check, (at) => new Date(at).toISOString())}`,
+            ),
             ...(landed.unchecked ? [uncheckedLine(landed.unchecked)] : []),
           ].join('\n')
         /**
@@ -919,6 +935,8 @@ export function createLander(
             if (unchecked?.reason === 'untrusted') await warn(uncheckedStep(unchecked))
             else if (unchecked) await step(uncheckedStep(unchecked))
             const flaky: string[] = []
+            const reused: ReusedCheck[] = []
+            const checked = merged.sha
             for (const [position, group] of settings.checks.entries()) {
               const members = Array.isArray(group) ? group : [group]
               const commands = members.map((check) => check.command)
@@ -931,27 +949,45 @@ export function createLander(
                   checkTemp(host.home),
                   limitsFor(members[member], limits),
                 )
-              /** One command: its first run, then one rerun when that failed; its output tail if it failed twice. */
-              const settle = async (command: string, member: number) => {
+              /**
+               * One command: its first run, then one rerun when that failed; its output tail if it failed twice, the
+               * earlier pass it reused when it reused one.
+               */
+              const settle = async (
+                command: string,
+                member: number,
+              ): Promise<{ failure?: string; flaky?: true; reused?: Reused }> => {
                 // Outcomes are durable (memos are first-writer-wins, so the rerun has its own key): a resume
-                // neither reruns a passed check nor grants another rerun, and keeps the flaky note.
+                // neither reruns a passed check nor grants another rerun, and keeps the flaky note and the reuse.
                 const key = `check:${id}:${attempt}:${Array.isArray(group) ? `${position}.${member}` : position}`
-                let first = await runtime.memo<'passed' | 'failed'>(key, context)
+                let first = await runtime.memo<'passed' | 'failed' | { reused: Reused }>(
+                  key,
+                  context,
+                )
                 if (!first) {
                   await step(`checking: ${command}`, { runs: command })
                   const began = performance.now()
                   const ran = await run(command, member)
-                  const result = ran.failure === undefined ? 'passed' : 'failed'
+                  const settled = settleCheck(command, 'first', ran, checked)
                   // Logged before the memo: a crash in between reruns the check and logs it again, as it ran.
                   // A failure keeps its output tail, so a check that passes on its rerun can still be diagnosed.
                   await step(`checked: ${command}`, {
-                    result: { command, result, ...(ran.summary ? { summary: ran.summary } : {}) },
-                    output: ran.failure,
+                    result: settled.check,
+                    output: settled.failure,
                     ran: { ms: performance.now() - began, timedOut: ran.timedOut },
                   })
-                  first = await runtime.memo(key, result, context)
+                  first = await runtime.memo(
+                    key,
+                    settled.check.result === 'reused'
+                      ? { reused: settled.check.reused }
+                      : settled.failure === undefined
+                        ? 'passed'
+                        : 'failed',
+                    context,
+                  )
                 }
                 if (first === 'passed') return {}
+                if (first !== 'failed') return { reused: first.reused }
                 // The rerun's outcome is durable either way: a resume while the group's other commands still run
                 // neither grants a third run nor loses the failure.
                 let rerun = await runtime.memo<{ failure?: string }>(`${key}:rerun`, context)
@@ -960,15 +996,9 @@ export function createLander(
                   const began = performance.now()
                   const ran = await run(command, member)
                   const timing = { ms: performance.now() - began, timedOut: ran.timedOut }
-                  if (ran.failure === undefined)
-                    await step(`checked: ${command}`, {
-                      result: {
-                        command,
-                        result: 'flaky',
-                        ...(ran.summary ? { summary: ran.summary } : {}),
-                      },
-                      ran: timing,
-                    })
+                  const settled = settleCheck(command, 'rerun', ran, checked)
+                  if (settled.failure === undefined)
+                    await step(`checked: ${command}`, { result: settled.check, ran: timing })
                   else
                     await runtime.commit(async (tx) => {
                       await host.emit(tx, CheckRan, {
@@ -980,7 +1010,7 @@ export function createLander(
                     }, context)
                   rerun = await runtime.memo<{ failure?: string }>(
                     `${key}:rerun`,
-                    ran.failure === undefined ? {} : { failure: ran.failure },
+                    settled.failure === undefined ? {} : { failure: settled.failure },
                     context,
                   )
                 }
@@ -1000,6 +1030,8 @@ export function createLander(
                   'Fix it at its cause (a flaky test too: fix or delete it), verify and submit again.',
                 )
               flaky.push(...commands.filter((_command, member) => results[member].flaky))
+              for (const [member, result] of results.entries())
+                if (result.reused) reused.push({ command: commands[member], ...result.reused })
               // The heavy part is done: the next job in line may start while the light checks run.
               if (position >= lastHeavy && release) {
                 await release()
@@ -1019,11 +1051,17 @@ export function createLander(
               )
             prepared = await runtime.memo<Prepared>(
               `prepared:${id}:${attempt}`,
-              { base, integrated: merged.sha, flaky, ...(unchecked ? { unchecked } : {}) },
+              {
+                base,
+                integrated: merged.sha,
+                flaky,
+                ...(reused.length ? { reused } : {}),
+                ...(unchecked ? { unchecked } : {}),
+              },
               context,
             )
           }
-          const { base, integrated, flaky, unchecked } = prepared
+          const { base, integrated, flaky, reused, unchecked } = prepared
           await step('fast-forwarding')
           let refused: string | undefined
           const moved = await serial(source, async () => {
@@ -1066,6 +1104,7 @@ export function createLander(
             commits: lines(commitLog),
             paths: lines(changedPaths),
             flaky,
+            ...(reused ? { reused } : {}),
             ...(unchecked ? { unchecked } : {}),
             weight: await weightDelta(source, base, integrated),
           }

@@ -14,7 +14,7 @@ Read worker reports and diffs; rerun checks only for missing or thin evidence, r
 workers, `server/` or `shared/` changes, or surprises in the diff, then land and call `workspace submit`.
 The lander is the final gate and the only way to main: code, no model. It runs every configured check (here
 `pnpm check`, then `.ultimate/scripts/ci-gate.ts`, which runs `pnpm test` and `pnpm test:e2e` on the fork's GitHub
-Actions) on the merged result, a failing check once more, then fast-forwards the branch and pushes to `lander.push`
+Actions, or reuses a recent pass of exactly the merged commit and names it on the landing card) on the merged result, a failing check once more, then fast-forwards the branch and pushes to `lander.push`
 (here `fork`), so keep working while it runs. The full suites are the lander's and CI's job: a branch runs
 `pnpm check` and the test files covering its change, and gets an earlier full run from the project's `ci` tool instead
 of running the suites here.

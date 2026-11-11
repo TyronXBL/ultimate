@@ -1,4 +1,6 @@
-// The lander's test gate. With a `pc` remote it first runs `pnpm test` and `pnpm test:e2e` on that PC
+// The lander's test gate. A passed GitHub run of exactly the checked-out commit, finished within `REUSE_MS`, with no
+// run of that commit ending otherwise, stands in for the suites (#205147): the gate prints its origin on a
+// `lander-reused:` line, which the landing card shows. Otherwise, with a `pc` remote it first runs `pnpm test` and `pnpm test:e2e` on that PC
 // (`.ultimate/extensions/ci/pc.ts`); when the PC gives no verdict (unreachable, busy), it pushes the checked-out commit
 // to `<remote>:ci/<sha>`, waits for its GitHub Actions run and exits with its result. When GitHub gives no verdict
 // either (unreachable, or Actions refused to start the jobs for billing) it runs the suites here instead, each as a job
@@ -15,15 +17,18 @@ import { describeWait, enterSlot, keepHeld, SLOT_POLL_MS, thisProcess } from '..
 import type { SlotClaim } from '../../lib/slot.ts'
 import {
   failuresOf,
+  gatePlan,
   git,
   jobResult,
   pollMs,
   repository,
+  reusable,
   runsOf,
   runState,
   secretsIn,
   Unreachable,
 } from '../extensions/ci/github.ts'
+import { REUSED } from '../../extensions/workspaces/check.ts'
 import type { Run } from '../extensions/ci/github.ts'
 import { pcHost, runOnPc } from '../extensions/ci/pc.ts'
 
@@ -44,15 +49,50 @@ const RAM_WAIT_MS = 10 * 60_000
 const log = (line: string) => console.log(`ci-gate: ${line}`)
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
 
+/** Why the suites run fresh, for the last line, which the landing card shows. */
+let fresh = 'no earlier CI run could be read'
+
+/**
+ * Whether an earlier run of `sha` decides the gate: true when a recent pass was reused (its origin printed), false when
+ * the suites run; `fresh` then says why. GitHub failing here only means nothing is reused.
+ */
+async function reuse(sha: string) {
+  try {
+    const repo = await repository(cwd, remote)
+    const plan = gatePlan(await runsOf(cwd, repo, sha), sha)
+    if (plan.kind === 'wait') {
+      fresh = `a run of ${sha.slice(0, 7)} was under way: ${plan.run.html_url}`
+      return false
+    }
+    if (plan.kind === 'fresh') {
+      fresh = plan.why
+      return false
+    }
+    const verdict = reusable(
+      plan.run,
+      (await runState(cwd, repo, plan.run.id)).jobs,
+      sha,
+      Date.now(),
+    )
+    if (!verdict.origin) {
+      fresh = verdict.why
+      return false
+    }
+    const { origin } = verdict
+    const age = Math.round((Date.now() - origin.completedAt) / 60_000)
+    console.log(`${REUSED}${JSON.stringify(origin)}`)
+    log(`reused: ${sha.slice(0, 7)} passed CI ${age} min ago, ${plan.run.html_url}`)
+    return true
+  } catch (error) {
+    log(`could not read earlier CI runs of ${sha.slice(0, 7)}: ${(error as Error).message}`)
+    return false
+  }
+}
+
 async function gate(repo: string, sha: string) {
   const poll = await pollMs(cwd, repo)
   const before = await runsOf(cwd, repo, sha)
-  const passed = before.find((run) => run.conclusion === 'success')
-  if (passed) {
-    log(`${sha.slice(0, 7)} already passed CI: ${passed.html_url}`)
-    return 0
-  }
-  // A run still going (a resumed lander) is waited for; after failed runs, a rerun pushes a new ref, which starts one.
+  // A run still going (the branch's own, a resumed lander) is waited for; else a push of a new ref starts one.
   let run: Run | undefined = before.find((candidate) => candidate.status !== 'completed')
   const refs: string[] = []
   if (!run) {
@@ -89,7 +129,10 @@ async function gate(repo: string, sha: string) {
           log(
             `  ${job.name}: ${job.conclusion} in ${job.seconds === undefined ? '-' : `${job.seconds} s`}`,
           )
-        if (run.conclusion === 'success') return 0
+        if (run.conclusion === 'success') {
+          log(`ran fresh (${fresh}): GitHub Actions passed ${sha.slice(0, 7)}, ${run.html_url}`)
+          return 0
+        }
         const { failures, notStarted } = await failuresOf(cwd, repo, state.jobs)
         if (notStarted)
           throw new Unreachable(`GitHub Actions did not start the jobs: ${notStarted}`)
@@ -131,7 +174,7 @@ async function onPc(sha: string) {
   }
   for (const job of run.jobs) log(`  ${job.name}: ${job.conclusion} in ${job.seconds} s on ${host}`)
   if (run.outcome === 'passed') {
-    log(`${host} passed ${sha.slice(0, 7)} in ${run.seconds} s`)
+    log(`ran fresh (${fresh}): ${host} passed ${sha.slice(0, 7)} in ${run.seconds} s`)
     return 0
   }
   for (const failure of run.failures) console.log(`FAIL ${failure.title}\n  ${failure.message}`)
@@ -202,6 +245,7 @@ async function main() {
     for (const leak of leaks) console.log(`FAIL secret pattern in ${leak}`)
     return 1
   }
+  if (await reuse(sha)) return 0
   const pc = await onPc(sha)
   if (pc !== undefined) return pc
   try {
