@@ -327,7 +327,7 @@ const lines = (log: string) =>
   readFile(log, 'utf8').then(
     (text) => text.trim().split('\n'),
     // Nothing ran yet.
-    () => [],
+    (): string[] => [],
   )
 
 it('runs heavy commands of two projects one at a time, in order; a failed one lets the next start', async () => {

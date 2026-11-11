@@ -459,7 +459,7 @@ it.concurrent('waits in the heavy-work queue for its heavy checks and lets the s
       ),
     ),
   )
-  await expect(access(ran)).rejects.toThrow()
+  await expect(access(ran)).rejects.toThrow('ENOENT')
   await releaseSlot(other.id)
   await light.started()
   // The heavy check ran, and the light one runs with the slot free for the next job in line.

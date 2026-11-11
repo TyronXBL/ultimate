@@ -45,6 +45,15 @@ it('groups by meaning, whoever owns the task, and keeps an unknown kind under it
   expect(
     meaning(task('workspaces.lander', { status: 'running', phase: 'land' }), { conversation: 7 }),
   ).toMatchObject({ group: 'landing', who: 7, detail: 'land' })
+  // A queued command says why it waits; once it runs, what it runs.
+  const waiting = 'next in line for the heavy-work slot, behind `pnpm test` from #3 in my-app'
+  const command = { conversation: 4, command: 'pnpm check', waiting }
+  expect(
+    meaning(task('background.run', { status: 'sleeping', phase: 'wait', until: at }), command),
+  ).toEqual({ group: 'background', text: 'Queued command of', who: 4, detail: waiting })
+  expect(
+    meaning(task('background.run', { status: 'sleeping', phase: 'poll', until: at }), command),
+  ).toEqual({ group: 'background', text: 'Command of', who: 4, detail: 'pnpm check' })
   expect(
     meaning(
       task(

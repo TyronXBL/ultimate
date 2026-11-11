@@ -30,7 +30,7 @@ const waiting = (id: string, at = 100, seen = 1000): SlotEntry => ({
   state: 'waiting',
   seen,
 })
-const running = (id: string, at = 100, since = 1000): SlotEntry => ({
+const running = (id: string, at = 100, since = 1000): Extract<SlotEntry, { state: 'running' }> => ({
   ...claim(id, at),
   state: 'running',
   since,

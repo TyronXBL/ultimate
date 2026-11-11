@@ -173,6 +173,13 @@ async function admitted(command: string[]) {
 async function local(command: string[]) {
   const release = await admitted(command)
   if (!release) return 1
+  try {
+    return await spawnLocal(command)
+  } finally {
+    await release()
+  }
+}
+function spawnLocal(command: string[]) {
   return new Promise<number>((done) => {
     log(`running ${command.join(' ')} locally (limit ${LOCAL_TIMEOUT_MS / 1000} s)`)
     const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true })
@@ -184,7 +191,7 @@ async function local(command: string[]) {
       clearTimeout(timer)
       done(code ?? 1)
     })
-  }).finally(release)
+  })
 }
 
 async function main() {
