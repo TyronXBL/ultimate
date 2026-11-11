@@ -1,6 +1,6 @@
 // Answers a three-question card in a real browser with only the keyboard: letter keys choose, ↑/↓ move between
 // questions, Enter sends; the reply reaches @ultimate in the message's own numbering, with the note field's text after it.
-// After Accept picks one Enter sends, and leaving the page inside the undo window still sends the answer.
+// After Accept picks one Enter sends, and leaving the page right after it, in the same task, still sends the answer.
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
@@ -143,10 +143,17 @@ it('answers a decisions card with letters, arrows and Enter', async () => {
 it('sends a held answer when the page is left inside the undo window', async () => {
   const { log, asked, page, card } = await openCard()
   await card.getByRole('button', { name: 'Accept picks' }).click()
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-  await page.keyboard.press('Enter')
-  await card.getByRole('button', { name: 'Undo' }).waitFor()
-  await page.goto('about:blank')
+  // Enter sends and the page goes away in one task, on a slow device, before the card renders Undo. The card listened
+  // for beforeunload only once Undo showed, so this send fell to its pagehide listener, which ran after the page's
+  // other pagehide work: 6 of 20 were lost at this throttling (#222078).
+  const devtools = await page.context().newCDPSession(page)
+  await devtools.send('Emulation.setCPUThrottlingRate', { rate: 6 })
+  await page.evaluate(() => {
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    location.href = 'about:blank'
+  })
+  await page.waitForURL('about:blank')
   const answer = async () =>
     (await log())?.messages.find((m) => m.re === asked.id && m.from === 'user')
   await until(async () => !!(await answer()))
