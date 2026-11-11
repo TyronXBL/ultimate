@@ -5,6 +5,7 @@ import type { Source } from './project.ts'
 import { useProjectSetup } from './project-setup.ts'
 import { extensionSettings } from './extension-settings.ts'
 import { coreTier, defaultOff } from '../shared/extension-api.ts'
+import { fileMemo } from '../lib/file-memo.ts'
 
 const sourceOrder = { builtin: 0, user: 1, project: 2 }
 
@@ -19,6 +20,23 @@ export function compareExtensions(
   )
 }
 
+type Found = {
+  name: string
+  path: string
+  /** `path` with symlinks resolved, read anew on each discovery: modules load from here, so a repointed link loads its new target. */
+  target: string
+  source: Source
+  files: string[]
+  core?: true
+  error?: string
+}
+
+/**
+ * The extension folders found per set of roots, kept while every folder listed and file read is unchanged: prompt
+ * sections, agent discovery and the extension host scan several times per model request (#222319).
+ */
+const scans = fileMemo<Found[]>()
+
 export async function discoverExtensions(
   ultimateRoot: string,
   projectRoot: string,
@@ -26,22 +44,39 @@ export async function discoverExtensions(
   includeProject = false,
   settings?: Awaited<ReturnType<typeof extensionSettings>>,
 ) {
-  type Found = {
-    name: string
-    path: string
-    /** `path` with symlinks resolved, read anew on each discovery: modules load from here, so a repointed link loads its new target. */
-    target: string
-    source: Source
-    files: string[]
-    core?: true
-    error?: string
-  }
+  const project = includeProject || useProjectSetup(projectRoot, userHome)
+  const key = [ultimateRoot, projectRoot, userHome, project].join('\0')
+  const found = scans.get(key) ?? (await scan(ultimateRoot, projectRoot, userHome, project, key))
+  settings ??= await extensionSettings(projectRoot, userHome)
+  const { overrides } = settings
+  const entries = found
+    .map((entry) => ({
+      ...entry,
+      // A core-tier extension stays on whatever the settings say; extension reloads report the ignored disable.
+      enabled:
+        entry.core ||
+        (overrides.get(entry.name) ??
+          !(entry.source === 'builtin' && defaultOff.includes(entry.name))),
+    }))
+    .toSorted(compareExtensions)
+  return Object.assign(entries, { settings })
+}
+
+async function scan(
+  ultimateRoot: string,
+  projectRoot: string,
+  userHome: string | undefined,
+  project: boolean,
+  key: string,
+) {
+  const since = Date.now()
+  const paths: string[] = []
   const winners = new Map<string, Found>()
   const builtinCore = new Set<string>()
   for (const root of discoveryRoots(ultimateRoot, projectRoot, userHome)) {
-    if (root.source === 'project' && !includeProject && !useProjectSetup(projectRoot, userHome))
-      continue
+    if (root.source === 'project' && !project) continue
     const directory = join(root.path, 'extensions')
+    paths.push(directory)
     const entries = await readdir(directory, { withFileTypes: true }).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error
@@ -54,6 +89,8 @@ export async function discoverExtensions(
       entries.map(async (entry): Promise<Found | undefined> => {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) return undefined
         const path = join(directory, entry.name)
+        // Links followed: a repointed link, a new file in the folder or an edited api.ts each change a stamp.
+        paths.push(path, join(path, 'api.ts'))
         try {
           if (!(await stat(path)).isDirectory()) return undefined
           const files = await readdir(path)
@@ -86,17 +123,7 @@ export async function discoverExtensions(
     )
     for (const winner of found) if (winner) winners.set(winner.name, winner)
   }
-  settings ??= await extensionSettings(projectRoot, userHome)
-  const { overrides } = settings
-  const entries = [...winners.values()]
-    .map((entry) => ({
-      ...entry,
-      // A core-tier extension stays on whatever the settings say; extension reloads report the ignored disable.
-      enabled:
-        entry.core ||
-        (overrides.get(entry.name) ??
-          !(entry.source === 'builtin' && defaultOff.includes(entry.name))),
-    }))
-    .toSorted(compareExtensions)
-  return Object.assign(entries, { settings })
+  const result = [...winners.values()]
+  scans.set(key, result, paths, since)
+  return result
 }

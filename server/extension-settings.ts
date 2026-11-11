@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { useProjectSetup } from './project-setup.ts'
+import { fileMemo } from '../lib/file-memo.ts'
 
 export function extensionSettingsFiles(projectRoot: string, userHome = homedir()) {
   return [join(userHome, '.ultimate/settings.json'), join(projectRoot, '.ultimate/settings.json')]
@@ -9,13 +10,31 @@ export function extensionSettingsFiles(projectRoot: string, userHome = homedir()
 
 const validLayers = new Map<string, Map<string, boolean>>()
 
+/** Read with every extension discovery, several times per model request: kept while both files are unchanged (#222319). */
+const kept = fileMemo<Awaited<ReturnType<typeof readExtensionSettings>>>()
+
 export async function extensionSettings(projectRoot: string, userHome?: string) {
+  const trusted = useProjectSetup(projectRoot, userHome)
+  const key = [projectRoot, userHome, trusted].join('\0')
+  const hit = kept.get(key)
+  if (hit) return hit
+  const since = Date.now()
+  const settings = await readExtensionSettings(projectRoot, userHome, trusted)
+  kept.set(key, settings, extensionSettingsFiles(projectRoot, userHome), since)
+  return settings
+}
+
+async function readExtensionSettings(
+  projectRoot: string,
+  userHome: string | undefined,
+  trusted: boolean,
+) {
   const overrides = new Map<string, boolean>()
   const layers = new Map<string, 'user' | 'project'>()
   const contents: (string | null)[] = []
   const notices: string[] = []
   for (const [index, path] of extensionSettingsFiles(projectRoot, userHome).entries()) {
-    if (index === 1 && !useProjectSetup(projectRoot, userHome)) {
+    if (index === 1 && !trusted) {
       contents.push(null)
       continue
     }

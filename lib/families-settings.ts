@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { mergeFamilies, parseFamilies } from './families.ts'
 import type { Families } from './families.ts'
+import { fileMemo } from './file-memo.ts'
 import { readJson, updateJson } from './json-file.ts'
 // oxlint-disable-next-line no-restricted-imports -- family settings follow the core project trust decision, as definitions do
 import { decisionRoot, projectSettings } from '../server/project-setup.ts'
@@ -35,6 +36,17 @@ async function readStored(path: string): Promise<Stored> {
   const value = await readJson<unknown>(path, {})
   if (!isObject(value)) throw new Error(`${path} must be a JSON object`)
   return value
+}
+
+/** The families file as read for every model choice and agent discovery: kept while unchanged, never changed (#222319). */
+const kept = fileMemo<Stored>()
+async function readKept(path: string) {
+  const hit = kept.get(path)
+  if (hit) return hit
+  const since = Date.now()
+  const stored = await readStored(path)
+  kept.set(path, stored, [path], since)
+  return stored
 }
 
 export type FamilyLayers = {
@@ -66,7 +78,7 @@ export async function readFamilyLayers(
     }
   }
   // An unreadable file counts as none here, and saving over it fails.
-  const stored = await readStored(familiesPath(userHome)).catch((error: unknown): Stored => {
+  const stored = await readKept(familiesPath(userHome)).catch((error: unknown): Stored => {
     errors.push(String(error))
     return {}
   })

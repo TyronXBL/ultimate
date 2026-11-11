@@ -1,13 +1,16 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { expandSkillCommand, projectSkills } from '../server/skills.ts'
 import { skillInfo } from '../server/system.ts'
-import { removeTemp, temp } from './helpers.ts'
+import { removeTemp, temp, until } from './helpers.ts'
 
 let home: string
-afterEach(() => removeTemp(home))
+afterEach(() => {
+  vi.useRealTimers()
+  return removeTemp(home)
+})
 
 async function skill(path: string, frontmatter: string, body = 'Do the thing.') {
   await mkdir(dirname(path), { recursive: true })
@@ -104,6 +107,52 @@ it('reloads on the next call after a skill is edited, added or nested, even with
     ['deep', 'Nested'],
     ['ship', 'User shiq'],
   ])
+})
+
+it('applies a change to a kept load on the next call', async () => {
+  const host = await setup()
+  // Loads run as if a minute after every write, so they are kept: a fresh write is never kept ("racily clean").
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(Date.now() + 60_000)
+  const described = () => projectSkills(host).skills.map((s) => `${s.name}: ${s.description}`)
+  // The real clock moves on before each change, so a coarse file system clock stamps it apart from the last one.
+  const later = async () => {
+    const from = performance.now()
+    await until(() => performance.now() > from + 20)
+  }
+  expect(described()).toEqual(['review: Clone review', 'ship: User ship'])
+  expect(projectSkills(host)).toBe(projectSkills(host))
+  const changes: [string, () => Promise<unknown>, string[]][] = [
+    [
+      'edit of the same size',
+      () =>
+        skill(
+          join(host.userHome, '.ultimate/skills/ship/SKILL.md'),
+          'name: ship\ndescription: User shiq',
+        ),
+      ['review: Clone review', 'ship: User shiq'],
+    ],
+    [
+      'nested skill',
+      () =>
+        skill(
+          join(host.ultimateRoot, 'skills/group/deep/SKILL.md'),
+          'name: deep\ndescription: Nested',
+        ),
+      ['deep: Nested', 'review: Clone review', 'ship: User shiq'],
+    ],
+    [
+      'trusting the project',
+      async () =>
+        new ProjectTrustStore(join(host.userHome, '.ultimate')).set(host.projectRoot, true),
+      ['deep: Nested', 'review: Project review', 'ship: User shiq', 'team: Team skill'],
+    ],
+  ]
+  for (const [change, apply, expected] of changes) {
+    await later()
+    await apply()
+    expect([change, described()]).toEqual([change, expected])
+  }
 })
 
 it('expands /skill:name args as Pi does and leaves anything else alone', async () => {

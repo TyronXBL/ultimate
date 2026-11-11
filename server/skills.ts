@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { useProjectSetup } from './project-setup.ts'
+import { fileMemo } from '../lib/file-memo.ts'
 import { loadSkills, stripFrontmatter } from '@earendil-works/pi-coding-agent'
 import type { Skill } from '@earendil-works/pi-coding-agent'
 
@@ -14,31 +14,22 @@ type ScopedSkill = Skill & { scope: SkillScope; overrides: string[] }
 const ignoreFiles = ['.gitignore', '.ignore', '.fdignore']
 
 /**
- * The paths, real paths (Pi drops a second link to one file) and texts of every file Pi's skill walk
- * (`loadSkillsFromDirInternal`) reads under `dir`: SKILL.md files and the layer's own `.md` files, walked as Pi walks.
- * False, and the walk ends, at an ignore file: Pi applies its rules (with the `ignore` package, not one of ours), so a
- * folder holding one is loaded by Pi on every call. Each real folder is read once, so a link back to an ancestor ends.
+ * Every path Pi's skill walk (`loadSkillsFromDirInternal`) looks at under `dir`, for `fileMemo`: each folder it lists,
+ * each link it follows, SKILL.md files and the layer's own `.md` files, walked as Pi walks. False, and the walk ends,
+ * at an ignore file: Pi applies its rules (with the `ignore` package, not one of ours), so a folder holding one is
+ * loaded by Pi on every call. Each real folder is listed once, so a link back to an ancestor ends.
  */
 function skillInputs(dir: string, top: boolean, out: string[], seen = new Set<string>()): boolean {
-  const read = (path: string) => {
-    try {
-      return `${realpathSync.native(path)}\0${readFileSync(path, 'utf8')}`
-    } catch (error) {
-      return String(error)
-    }
-  }
   let entries: Dirent[]
+  out.push(dir)
   try {
     const real = realpathSync.native(dir)
     // Pi reports a second link's skills before it drops them as duplicates: the link counts, its content once.
-    if (seen.has(real)) {
-      out.push(dir, real)
-      return true
-    }
+    if (seen.has(real)) return true
     seen.add(real)
     entries = readdirSync(dir, { withFileTypes: true })
-  } catch (error) {
-    out.push(dir, String(error))
+  } catch {
+    // Its stamp is the error, which changes once the folder can be read.
     return true
   }
   if (entries.some((entry) => ignoreFiles.includes(entry.name))) return false
@@ -46,6 +37,8 @@ function skillInputs(dir: string, top: boolean, out: string[], seen = new Set<st
     const path = join(dir, entry.name)
     if (!entry.isSymbolicLink())
       return { entry, path, file: entry.isFile(), folder: entry.isDirectory() }
+    // A link may be repointed, or start or stop resolving, without its folder changing.
+    out.push(path)
     try {
       const stats = statSync(path)
       return { entry, path, file: stats.isFile(), folder: stats.isDirectory() }
@@ -56,25 +49,24 @@ function skillInputs(dir: string, top: boolean, out: string[], seen = new Set<st
   })
   const skill = kinds.find(({ entry, file }) => entry.name === 'SKILL.md' && file)
   if (skill) {
-    out.push(skill.path, read(skill.path))
+    out.push(skill.path)
     return true
   }
   for (const { entry, path, file, folder } of kinds) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
     if (folder && !skillInputs(path, false, out, seen)) return false
-    if (top && file && entry.name.endsWith('.md')) out.push(path, read(path))
+    if (top && file && entry.name.endsWith('.md')) out.push(path)
   }
   return true
 }
 
 /**
- * The last load per working directory, reused while the trust decision and every file the walk reads are the same: the
- * skills section renders before each model request, and parsing every skill was most of its time (#166097). Keyed by
- * content, not modification times or folder watches, so an edit shows on the next call however fast it follows. It
- * keeps a digest of the inputs and the most recent directories only: every worktree is a directory of its own.
+ * The last load per working directory and trust decision, reused while every path the walk looks at stats as it did:
+ * the skills section renders before each model request, and reading and parsing every skill was most of its time
+ * (#166097, #222319). A `fileMemo`, so an edit shows on the next call however fast it follows. It keeps the most
+ * recent directories only: every worktree is a directory of its own.
  */
-const loads = new Map<string, { inputs: string; result: ReturnType<typeof loadLayers> }>()
-const LOADS_KEPT = 32
+const loads = fileMemo<ReturnType<typeof loadLayers>>()
 
 /**
  * Skills from the clone, `~/.ultimate/skills` and, once the project is trusted, its `.pi/skills` (before the user's),
@@ -101,24 +93,16 @@ export function projectSkills(
         ] as [string, SkillScope][])
       : []),
   ]
-  // Most folders don't exist; Pi warns about each missing one, which says nothing here.
+  const key = [host.ultimateRoot, host.projectRoot, host.userHome, cwd, trusted].join('\0')
+  const kept = loads.get(key)
+  if (kept) return kept
+  const since = Date.now()
+  // Most folders don't exist; Pi warns about each missing one, which says nothing here. A missing one is stamped too.
   const present = layers.filter(([folder]) => existsSync(folder))
-  const out: string[] = []
-  const cacheable = present.every(([folder]) => skillInputs(folder, true, out))
-  const key = [host.ultimateRoot, host.projectRoot, host.userHome, cwd].join('\0')
-  const last = loads.get(key)
-  // Deleted and set again, so the map's order is least recently used first.
-  loads.delete(key)
-  if (!cacheable) return loadLayers(present, cwd, join(host.userHome, '.ultimate'))
-  const inputs = createHash('sha256')
-    .update(JSON.stringify([present, out]))
-    .digest('base64')
-  const result =
-    last?.inputs === inputs
-      ? last.result
-      : loadLayers(present, cwd, join(host.userHome, '.ultimate'))
-  loads.set(key, { inputs, result })
-  if (loads.size > LOADS_KEPT) loads.delete(loads.keys().next().value!)
+  const paths = layers.map(([folder]) => folder)
+  const cacheable = present.every(([folder]) => skillInputs(folder, true, paths))
+  const result = loadLayers(present, cwd, join(host.userHome, '.ultimate'))
+  if (cacheable) loads.set(key, result, paths, since)
   return result
 }
 

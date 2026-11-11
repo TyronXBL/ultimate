@@ -1,13 +1,14 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ModelRuntime, ProjectTrustStore } from '@earendil-works/pi-coding-agent'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { discoverAgents, parseDefinition, serializeDefinition } from '../lib/agents.ts'
 import type { DefinitionFields } from '../lib/agents.ts'
-import { removeTemp, temp } from './helpers.ts'
+import { removeTemp, temp, until } from './helpers.ts'
 
 const directories: string[] = []
 afterEach(async () => {
+  vi.useRealTimers()
   for (const path of directories.splice(0)) await removeTemp(path)
 })
 async function directory() {
@@ -114,6 +115,78 @@ it('discovers an edited or added definition on the next call, even within the sa
     ['scout', 'Look aroune'],
     ['worker', 'Build it'],
   ])
+})
+
+it('applies every kind of change to a kept discovery on the next call', async () => {
+  const repo = await directory(),
+    home = await directory(),
+    project = await directory()
+  await mkdir(join(repo, 'agents'))
+  await mkdir(join(project, '.ultimate/agents'), { recursive: true })
+  await mkdir(join(home, '.ultimate/agents'), { recursive: true })
+  await writeFile(join(repo, 'agents/scout.md'), definition('Look around'))
+  await writeFile(join(repo, 'agents/worker.md'), definition('Build').replace('scout', 'worker'))
+  await writeFile(
+    join(project, '.ultimate/agents/lead.md'),
+    definition('Lead').replace('scout', 'lead'),
+  )
+  const modelRuntime = await ModelRuntime.create()
+  // Discoveries run as if a minute after every write, so they are kept: a fresh write is never kept ("racily clean").
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(Date.now() + 60_000)
+  const discover = () => discoverAgents(repo, project, home, modelRuntime)
+  const described = async () =>
+    (await discover()).definitions.map((agent) => `${agent.name}: ${agent.instructions}`)
+  // The real clock moves on before each change, so a coarse file system clock stamps it apart from the last one.
+  const later = async () => {
+    const from = performance.now()
+    await until(() => performance.now() > from + 20)
+  }
+  expect(await described()).toEqual(['scout: Look around', 'worker: Build'])
+  expect(await discover()).toBe(await discover())
+  const changes: [string, () => Promise<unknown>, string[]][] = [
+    [
+      'edit of the same size',
+      () => writeFile(join(repo, 'agents/scout.md'), definition('Look aroune')),
+      ['scout: Look aroune', 'worker: Build'],
+    ],
+    [
+      'new file',
+      () => writeFile(join(home, '.ultimate/agents/scout.md'), definition('Mine')),
+      ['scout: Mine', 'worker: Build'],
+    ],
+    [
+      'atomic rename over a file',
+      async () => {
+        await writeFile(join(home, '.ultimate/agents/.scout.tmp'), definition('Saved'))
+        await rename(
+          join(home, '.ultimate/agents/.scout.tmp'),
+          join(home, '.ultimate/agents/scout.md'),
+        )
+      },
+      ['scout: Saved', 'worker: Build'],
+    ],
+    [
+      'delete',
+      () => rm(join(home, '.ultimate/agents/scout.md')),
+      ['scout: Look aroune', 'worker: Build'],
+    ],
+    [
+      'trusting the project',
+      async () => new ProjectTrustStore(join(home, '.ultimate')).set(project, true),
+      ['scout: Look aroune', 'worker: Build', 'lead: Lead'],
+    ],
+    [
+      'declining it',
+      async () => new ProjectTrustStore(join(home, '.ultimate')).set(project, false),
+      ['scout: Look aroune', 'worker: Build'],
+    ],
+  ]
+  for (const [change, apply, expected] of changes) {
+    await later()
+    await apply()
+    expect([change, await described()]).toEqual([change, expected])
+  }
 })
 
 it('discovers model and thinking settings and reports unknown models', async () => {

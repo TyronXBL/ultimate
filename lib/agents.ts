@@ -7,6 +7,7 @@ import type { Agent, AgentChange } from '@earendil-works/pi-durable'
 import { parseFrontmatter, resolveCliModel } from '@earendil-works/pi-coding-agent'
 import type { ModelRuntime, SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { Source } from '../server/project.ts'
+import { fileMemo } from './file-memo.ts'
 import { writeTextAtomically } from './json-file.ts'
 import { isIconName, isMarkTint, markTints } from './marks.ts'
 import type { MarkTint } from './marks.ts'
@@ -556,13 +557,14 @@ export async function agentRoots(ultimateRoot: string, projectRoot: string, user
 }
 
 /**
- * The last discovery per set of roots, reused while every input reads the same and the models are unchanged: prompt
- * setup discovers before each model request, and parsing and model resolution were most of its time (#166097). Keyed
- * by content, not modification times or folder watches, so an edit shows on the next call however fast it follows.
- * The one state in this stateless `lib/` module, on purpose: no caller can tell it apart from a fresh discovery, and
- * every caller (prompt sections, residents, tools) shares it without an owner to route through.
+ * The last discovery per set of roots, reused while the roots, families, trust decision and models are the same and
+ * every definition folder and file stats as it did: prompt setup discovers before each model request, and reading,
+ * parsing and model resolution were most of its time (#166097, #222319). A `fileMemo`, so an edit shows on the next
+ * call however fast it follows. The one state in this stateless `lib/` module, on purpose: no caller can tell it apart
+ * from a fresh discovery, and every caller (prompt sections, residents, tools) shares it without an owner to route
+ * through.
  */
-const discoveries = new Map<string, { inputs: string; models: object; result: AgentDiscovery }>()
+const discoveries = fileMemo<{ inputs: string; models: object; result: AgentDiscovery }>()
 
 /**
  * Definitions from `agents/` in Ultimate's clone, `~/.ultimate/`, and the project's `.ultimate/`; a later file wins
@@ -601,10 +603,8 @@ export async function discoverAgents(
       ),
     }
   }
-  const [roots, families] = await Promise.all([
-    agentRoots(ultimateRoot, projectRoot, userHome).then((list) =>
-      Promise.all(list.map(async (root) => ({ ...root, files: await readRoot(root.path) }))),
-    ),
+  const [list, families] = await Promise.all([
+    agentRoots(ultimateRoot, projectRoot, userHome),
     readFamilies(userHome, projectRoot),
   ])
   const decision = projectDecision(projectRoot, userHome)
@@ -613,11 +613,13 @@ export async function discoverAgents(
   const models = modelRuntime.getAvailableSnapshot()
   // Saving an overlay skips a different file each time: that discovery is not kept.
   const key = skip ? undefined : [ultimateRoot, projectRoot, userHome].join('\0')
-  const inputs = JSON.stringify([roots, families, decision], (_key, value: unknown) =>
-    value instanceof Error ? String(value) : value,
-  )
+  const inputs = JSON.stringify([list, families, decision])
   const last = key === undefined ? undefined : discoveries.get(key)
   if (last?.models === models && last.inputs === inputs) return last.result
+  const since = Date.now()
+  const roots = await Promise.all(
+    list.map(async (root) => ({ ...root, files: await readRoot(root.path) })),
+  )
   for (const { source, path: directory, files } of roots) {
     if ('error' in files) {
       if ((files.error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -677,7 +679,12 @@ export async function discoverAgents(
     replaced,
     projectSetup: decision === true ? 'trusted' : decision === false ? 'declined' : 'undecided',
   }
-  if (key !== undefined) discoveries.set(key, { inputs, models, result })
+  // Each folder (a file added, removed or renamed) and each file read.
+  const paths = roots.flatMap(({ path, files }) => [
+    path,
+    ...('value' in files ? files.value.map((file) => file.path) : []),
+  ])
+  if (key !== undefined) discoveries.set(key, { inputs, models, result }, paths, since)
   return result
 }
 
