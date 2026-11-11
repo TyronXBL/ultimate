@@ -52,7 +52,8 @@ the database in the lander's checkout, and when to ask about Postgres) is the "W
 `integrate-ultimate` skill; setup health warns while an isolatable project with a package manifest has none.
 The first model request waits for preparation. Before every tool call, the workspace must be ready with a
 present, registered checkout. Otherwise the tool is blocked with the reason; the model can still reply and
-explain why it cannot use the checkout.
+explain why it cannot use the checkout. When Git does not answer (a timeout or a failed spawn on an overloaded
+machine), the tool is blocked with a retry instead, and no record changes and nothing is removed on that outcome.
 A removed workspace is recreated at the same path on the next model request, or by the next tool call when it was
 released mid-run. A leftover folder there that holds only files the source ignores (a dev server's `.vite/` cache) is
 cleared first; any other folder is refused. An existing branch with unlanded

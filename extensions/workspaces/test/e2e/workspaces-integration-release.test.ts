@@ -10,10 +10,25 @@ import type { ActionContext } from '../../../../server/actions.ts'
 import { actions } from '../../server.ts'
 import { Workspaces } from '../../workspaces.ts'
 import { git } from '../../../../lib/git.ts'
+import type { GitOptions } from '../../../../lib/git.ts'
 import { ConversationsApi } from '../../../conversations/api.ts'
 import { Subagents } from '../../../subagents/api.ts'
 import { until } from '../../../../test/helpers.ts'
 import { conversations, fixture, commit, holdGit } from './workspaces-integration-fixture.ts'
+
+/** Checkouts whose `git worktree list` hangs, as on an overloaded machine, until execFile's timeout stops it. */
+const hanging = vi.hoisted(() => new Set<string>())
+vi.mock('../../../../lib/git.ts', async (original) => {
+  const actual = await original<typeof import('../../../../lib/git.ts')>()
+  const { exec } = await import('../../../../lib/exec.ts')
+  return {
+    ...actual,
+    git: (cwd: string | GitOptions, ...args: string[]) =>
+      typeof cwd === 'string' && hanging.has(cwd) && args[0] === 'worktree'
+        ? exec('sleep', ['60'], { timeout: 100 }).then(() => '')
+        : actual.git(cwd, ...args),
+  }
+})
 
 async function nestedFixture() {
   const f = await fixture()
@@ -703,6 +718,27 @@ it.concurrent('the tool gate blocks a checkout removed after the provider reques
   expect(result?.role === 'toolResult' && result.isError).toBe(true)
   expect(JSON.stringify(result)).toContain('Workspace checkout is missing or unregistered:')
   expect(f.writes).toBe(0)
+})
+
+// #212525: on 2026-11-07 git timed out under load and the gate called intact worktrees missing or unregistered.
+it.concurrent('the tool gate asks for a retry when git does not answer for an intact checkout', async () => {
+  const f = await fixture()
+  const id = await f.create()
+  await f.service.ready(id, context)
+  const workspace = (await f.service.get(id, context))!
+  hanging.add(workspace.path)
+  const blocked = JSON.stringify(await f.call(id, 'write_commit'))
+  hanging.delete(workspace.path)
+  expect(blocked).toContain(
+    `Git did not answer while checking the workspace checkout ${workspace.path}`,
+  )
+  expect(blocked).toContain('call the tool again')
+  expect(blocked).not.toContain('missing or unregistered')
+  expect(f.writes).toBe(0)
+  expect((await f.service.get(id, context))!.state).toBe('ready')
+  const retried = await f.call(id, 'write_commit')
+  expect(retried?.role === 'toolResult' && retried.isError).toBe(false)
+  expect(f.writes).toBe(1)
 })
 
 it.concurrent('a conversation whose checkout is gone can still message', async () => {

@@ -13,7 +13,7 @@ import {
 import type { ConversationId, Cursor, TaskId, Tx } from '@earendil-works/pi-durable'
 import { exec } from '../../lib/exec.ts'
 import { mapBounded, PROCESS_CONCURRENCY } from '../../lib/bounded.ts'
-import { git, isolatable } from '../../lib/git.ts'
+import { git, gitAnswered, isolatable } from '../../lib/git.ts'
 import { needsRestart as restartNeeded } from '../../lib/layers.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { ConversationsApi } from '../conversations/api.ts'
@@ -192,26 +192,45 @@ async function onlyIgnored(workspace: WorkspaceIndex['items'][string]) {
   if (!entries.length) return true
   const paths = entries.map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
   const ignored = await git(workspace.source, 'check-ignore', '--no-index', '--', ...paths).catch(
-    () => '',
+    (error: unknown) => {
+      // Exit status 1 means none is ignored. Without an answer nothing is known, so the removal fails instead.
+      if (gitAnswered(error)) return ''
+      throw error
+    },
   )
   const matched = new Set(ignored.split('\n'))
   return paths.every((path) => matched.has(path))
 }
-async function registeredCheckout(workspace: WorkspaceIndex['items'][string]) {
-  if (!(await onDisk(workspace.path))) return false
-  const listed = await git(workspace.path, 'worktree', 'list', '--porcelain').catch(
-    // A folder Git cannot inspect is not a usable registered checkout.
-    () => '',
-  )
-  return listed
-    .split('\n\n')
-    .some((entry) => entry.split('\n').includes(`worktree ${workspace.path}`))
+/**
+ * A checkout as Git sees it: its folder is gone, Git lists it as a worktree, Git answered without listing it (a folder
+ * Git cannot inspect is not a usable checkout), or Git did not answer, which says nothing about the checkout.
+ */
+type Registration = 'missing' | 'registered' | 'unlisted' | 'unanswered'
+async function registration(workspace: WorkspaceIndex['items'][string]): Promise<Registration> {
+  if (!(await onDisk(workspace.path))) return 'missing'
+  try {
+    const listed = await git(workspace.path, 'worktree', 'list', '--porcelain')
+    return listed
+      .split('\n\n')
+      .some((entry) => entry.split('\n').includes(`worktree ${workspace.path}`))
+      ? 'registered'
+      : 'unlisted'
+  } catch (error) {
+    // On an overloaded machine (2026-11-07) git timed out, and intact checkouts were called missing (#212525).
+    return gitAnswered(error) ? 'unlisted' : 'unanswered'
+  }
 }
+/** Why a tool waits when Git did not answer: a retry, never a repair, since nothing is known to be wrong. */
+const noAnswer = (path: string) =>
+  `Git did not answer while checking the workspace checkout ${path} (the machine may be busy); nothing indicates a problem with the checkout, so call the tool again in a moment`
 /** Throws unless the checkout has its own branch checked out, saying how to get back onto it. */
 async function onBranch({ path, branch }: WorkspaceIndex['items'][string]) {
   const current = await git(path, 'symbolic-ref', '--quiet', '--short', 'HEAD').catch(
-    // A detached HEAD has no symbolic ref; it is named below.
-    () => '',
+    (error: unknown) => {
+      // A detached HEAD has no symbolic ref; it is named below. No answer must not be called detached.
+      if (gitAnswered(error)) return ''
+      throw error
+    },
   )
   if (current === branch) return
   if (current)
@@ -633,11 +652,16 @@ export function workspaces(host: Host) {
       return undefined
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      const [present, registered] = await Promise.all([
-        onDisk(workspace.path),
-        registeredCheckout(workspace),
-      ])
-      await reconcile(id, { present, registered, held: false }, context, reason)
+      const checkout = await registration(workspace)
+      // Nothing is known about the checkout: the record stays as it is, and the next attempt finishes the removal.
+      if (checkout === 'unanswered')
+        return { ...item, reason: `${reason}; ${noAnswer(workspace.path)}` }
+      await reconcile(
+        id,
+        { present: checkout !== 'missing', registered: checkout === 'registered', held: false },
+        context,
+        reason,
+      )
       return { ...item, reason }
     }
   }
@@ -796,7 +820,11 @@ export function workspaces(host: Host) {
       const dirty = await git(workspace.path, 'status', '--porcelain')
       if (dirty) throw new Error(`Worktree is dirty:\n${dirty}`)
       if (
-        (await git(source, 'symbolic-ref', '--short', 'HEAD').catch(() => '')) !== workspace.target
+        (await git(source, 'symbolic-ref', '--short', 'HEAD').catch((error: unknown) => {
+          // A detached source has no branch. No answer must not be called a changed target.
+          if (gitAnswered(error)) return ''
+          throw error
+        })) !== workspace.target
       )
         throw new Error(`Target branch changed; check out ${workspace.target} first`)
       await onBranch(workspace)
@@ -947,9 +975,18 @@ export function workspaces(host: Host) {
     }
     if (workspace.state !== 'ready')
       return `Workspace is ${workspace.state}: ${('error' in workspace ? workspace.error : undefined) ?? 'checkout is not ready; send a new input to retry'}`
-    if (!(await registeredCheckout(workspace)))
-      return `Workspace checkout is missing or unregistered: ${workspace.path}${workspace.error ? `; ${workspace.error}` : ''}`
-    return undefined
+    const checkout = await registration(workspace)
+    switch (checkout) {
+      case 'registered':
+        return undefined
+      case 'unanswered':
+        return noAnswer(workspace.path)
+      case 'missing':
+      case 'unlisted':
+        return `Workspace checkout is missing or unregistered: ${workspace.path}${workspace.error ? `; ${workspace.error}` : ''}`
+      default:
+        return checkout satisfies never
+    }
   }
   /**
    * Recreate a released checkout before the conversation uses it again, and with `retryFailed` also a failed setup whose

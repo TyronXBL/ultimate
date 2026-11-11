@@ -11,6 +11,15 @@ export async function git(cwd: string | GitOptions, ...args: string[]) {
   return stdout.trim()
 }
 
+/**
+ * Whether a rejection of `git` is Git's answer, an exit status such as "not a repository" or "no such ref", rather than
+ * no answer: a timeout, a kill or a failed spawn, as on an overloaded machine. Only an answer says something about the
+ * repository.
+ */
+export function gitAnswered(error: unknown) {
+  return typeof (error as { code?: unknown } | null)?.code === 'number'
+}
+
 export const noRepository = 'Isolation needs a Git repository'
 export const noCommit = 'Isolation needs a first commit'
 
