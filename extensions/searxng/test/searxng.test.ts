@@ -78,6 +78,7 @@ it('web_search asks SearXNG for JSON and returns its results with unresponsive e
   expect(result.text).toContain('1 upstream engine was unresponsive (duckduckgo: CAPTCHA)')
   expect(result.details).toEqual({
     status: 'success',
+    outcome: 'partial',
     results: [
       {
         url: 'https://www.example.com/a',
