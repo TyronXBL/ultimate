@@ -1,8 +1,9 @@
 // Measure conversation switches in a real Chromium against a running Ultimate (a preview on a paused copy).
 // Usage: node switch.ts <url> <start id> <id,id,...> [--rounds 2] [--profile out.cpuprofile]
 // Round 0 switches are cold (never shown in this tab), later rounds warm. Per switch it prints one JSON line: time to
-// the stream's `view` event, `settled` (the last DOM change before 300 ms of quiet), main-thread long tasks, server
-// event bytes, streams opened and JS heap; then medians per round. The first line is the identity of what was measured.
+// the conversation's rows painted (`paintMs`), to the stream's `view` event and the four waits that make it up,
+// `settled` (the last DOM change before 300 ms of quiet), main-thread long tasks, server event bytes, streams opened and
+// JS heap; then medians per round. The first line is the identity of what was measured.
 // --profile writes a CDP CPU profile of every switch, with that identity and each function's source position as its
 // bundle's source map names it (`ultimate.sources`, by node id), resolved now: a rebuild deletes the bundle soon after.
 import { writeFileSync } from 'node:fs'
@@ -33,7 +34,14 @@ await page.addInitScript(() => {
   const w = window as unknown as Record<string, unknown>
   // `window.ultimate` (web/src/sdk/test-hook.ts) for the readiness wait.
   sessionStorage.setItem('ultimate.driven', '1')
-  const log: { t: number; ev: string; url: string; kb?: number; conversation?: number }[] = []
+  const log: {
+    t: number
+    ev: string
+    url: string
+    kb?: number
+    sub?: number
+    conversation?: number
+  }[] = []
   w.switchEvents = log
   const Native = window.EventSource
   // The latest system event, and every bundle state it announced, to tell a run that spanned a rebuild.
@@ -51,25 +59,53 @@ await page.addInitScript(() => {
             w.switchSystem = data
             webs.push(JSON.parse(data).web)
           }
-          // A subscription's view is `<sub>\n{"conversation":{"id":N},…}`: read its id without parsing the rest.
-          const id = /^\d+\n\{"conversation":\{"id":(\d+)/.exec(data.slice(0, 80))?.[1]
+          // A subscription's view is `<sub>\n{"conversation":{"id":N},…}`: read both ids without parsing the rest.
+          const view = /^(\d+)\n\{"conversation":\{"id":(\d+)/.exec(data.slice(0, 80))
           log.push({
             t: performance.now(),
             ev: name,
             url: href,
             kb: data.length / 1024,
-            ...(id && { conversation: Number(id) }),
+            ...(view && { sub: Number(view[1]), conversation: Number(view[2]) }),
           })
         })
     }
+  }
+  // Every subscription the page asks for (`POST /api/events/<stream>/<sub>`): when, and for which conversation.
+  const subs: { t: number; url: string; conversation?: number; view: boolean }[] = []
+  w.switchSubs = subs
+  const subscription = /^\/api\/events\/[^/]+\/\d+$/
+  const nativeFetch = window.fetch
+  window.fetch = (input, init) => {
+    const body = init?.method === 'POST' && init.body
+    if (typeof body === 'string' && typeof input === 'string' && subscription.test(input))
+      subs.push({
+        t: performance.now(),
+        url: input,
+        ...(JSON.parse(body) as { conversation?: number; view: boolean }),
+      })
+    return nativeFetch(input, init)
   }
   const long: { t: number; d: number }[] = []
   w.switchLongTasks = long
   new PerformanceObserver((observed) => {
     for (const entry of observed.getEntries()) long.push({ t: entry.startTime, d: entry.duration })
   }).observe({ type: 'longtask', buffered: true })
+  // `switchPaint.from` is the transcript element a switch leaves (each conversation gets its own): the first frame
+  // painted with rows in another one is the switched-to conversation on screen.
+  const paint: { from?: Element | null; seen: boolean; t?: number } = { seen: true }
+  w.switchPaint = paint
   new MutationObserver(() => {
     w.switchLastMutation = performance.now()
+    if (paint.seen) return
+    const transcript = document.querySelector('[data-ui="transcript"]')
+    if (!transcript || transcript === paint.from || !transcript.querySelector('[data-entry-id]'))
+      return
+    paint.seen = true
+    // Let go of the left transcript, so it does not count in `heapMb`.
+    paint.from = undefined
+    // A task queued from an animation frame runs after that frame is painted.
+    requestAnimationFrame(() => setTimeout(() => (paint.t = performance.now())))
   }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true })
 })
 await page.goto(`${base}/?conversation=${start}`)
@@ -137,11 +173,20 @@ for (let round = 0; round < rounds; round++)
   for (const target of list.split(',').map(Number)) {
     const result = await page.evaluate(async (id) => {
       const w = window as unknown as {
-        switchEvents: { t: number; ev: string; url: string; kb?: number; conversation?: number }[]
+        switchEvents: { t: number; ev: string; sub?: number; conversation?: number; kb?: number }[]
+        switchSubs: { t: number; url: string; conversation?: number; view: boolean }[]
+        switchPaint: { from?: Element | null; seen: boolean; t?: number }
         switchLongTasks: { t: number; d: number }[]
         switchLastMutation?: number
       }
       w.switchEvents.length = 0
+      w.switchSubs.length = 0
+      performance.clearResourceTimings()
+      Object.assign(w.switchPaint, {
+        from: document.querySelector('[data-ui="transcript"]'),
+        seen: false,
+        t: undefined,
+      })
       const started = performance.now()
       history.pushState(null, '', `/?conversation=${id}`)
       dispatchEvent(new PopStateEvent('popstate'))
@@ -152,12 +197,43 @@ for (let round = 0; round < rounds; round++)
       while (!ownView() && performance.now() < deadline) await pause()
       while (performance.now() < deadline && performance.now() - (w.switchLastMutation ?? 0) < 300)
         await pause()
-      const long = w.switchLongTasks.filter((item) => item.t >= started)
+      const settled = w.switchLastMutation ?? started
+      // Rows seen are painted a frame later; a conversation without rows (an empty one) never paints any.
+      while (w.switchPaint.seen && w.switchPaint.t === undefined && performance.now() < deadline)
+        await pause()
       const memory = (performance as unknown as { memory: { usedJSHeapSize: number } }).memory
+      // Where the view's wait went: the subscription that brought it, by its request's timing. The server writes the
+      // view to the stream before it answers the request, so the request's first byte is the server done.
+      const view = ownView()
+      const asked = w.switchSubs.find((item) => item.url.endsWith(`/${view?.sub}`))
+      // The request's own answer follows the view; its timing is there once it has ended. The first entry of its URL:
+      // closing the subscription later is a DELETE of the same one.
+      const answered = () =>
+        performance.getEntriesByName(new URL(asked?.url ?? '', location.href).href)[0] as
+          | PerformanceResourceTiming
+          | undefined
+      if (asked) while (!answered() && performance.now() < deadline) await pause()
+      const request = asked && answered()
+      // Read last: a long task is reported a moment after it ends. One under way at the click counts: React draws the
+      // switch in the task that makes it, which began just before `started` (#202077: a warm switch's whole draw,
+      // 0.2 to 1.7 s, was left out).
+      const long = w.switchLongTasks.filter((item) => item.t + item.d > started)
+      const ms = (value: number | undefined) => (value === undefined ? -1 : Math.round(value))
       return {
         id,
-        viewMs: Math.round((ownView()?.t ?? deadline) - started),
-        settledMs: Math.round((w.switchLastMutation ?? started) - started),
+        // The conversation's rows painted: at once from the tab's kept replica on a warm switch, after `view` on a cold one.
+        paintMs: ms(w.switchPaint.t === undefined ? undefined : w.switchPaint.t - started),
+        viewMs: Math.round((view?.t ?? deadline) - started),
+        // `viewMs` in four parts: until the page asks, until the request leaves (a free connection), until the server
+        // has sent the view, until the page handles its event.
+        askMs: ms(asked && asked.t - started),
+        queueMs: ms(request && asked && request.requestStart - asked.t),
+        serverMs: ms(request && request.responseStart - request.requestStart),
+        // The view and the request's answer come on two connections: the event can be handled a moment before the first byte.
+        handleMs: ms(request && view && Math.max(0, view.t - request.responseStart)),
+        // How often the page asked for this conversation's view: each time the server reads and sends it whole.
+        subs: w.switchSubs.filter((item) => item.conversation === id && item.view).length,
+        settledMs: Math.round(settled - started),
         longMs: Math.round(long.reduce((sum, item) => sum + item.d, 0)),
         maxLongMs: Math.round(Math.max(0, ...long.map((item) => item.d))),
         eventKb: Math.round(w.switchEvents.reduce((sum, item) => sum + (item.kb ?? 0), 0)),
@@ -166,6 +242,11 @@ for (let round = 0; round < rounds; round++)
         heapMb: Math.round(memory.usedJSHeapSize / 1048576),
       }
     }, target)
+    // Read as "could not be measured", a store that subscribes another way would go unnoticed.
+    if (result.viewMs < 20_000 && result.askMs < 0)
+      throw new Error(
+        `The view of ${target} arrived on a subscription the page was not seen asking for`,
+      )
     results.push({ round, ...result })
     console.log(JSON.stringify({ round, ...result }))
   }
@@ -189,12 +270,17 @@ if (profile) {
 }
 await browser.close()
 
-const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]
+// Without the parts that could not be measured (-1).
+const median = (all: number[]) => {
+  const values = all.filter((value) => value >= 0).toSorted((a, b) => a - b)
+  return values[Math.floor(values.length / 2)] ?? -1
+}
 for (let round = 0; round < rounds; round++) {
   const rows = results.filter((row) => row.round === round)
-  const keys = ['viewMs', 'settledMs', 'longMs', 'maxLongMs', 'eventKb', 'streams', 'heapMb']
+  const keys =
+    'paintMs viewMs askMs queueMs serverMs handleMs subs settledMs longMs maxLongMs eventKb streams heapMb'
   console.log(
     `${round === 0 ? 'cold' : `warm ${round}`} medians:`,
-    Object.fromEntries(keys.map((key) => [key, median(rows.map((row) => row[key]))])),
+    Object.fromEntries(keys.split(' ').map((key) => [key, median(rows.map((row) => row[key]))])),
   )
 }

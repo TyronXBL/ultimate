@@ -13,7 +13,7 @@ import backupExtension from '../server.ts'
 import { BackupApi } from '../api.ts'
 import pauseExtension from '../../pause/server.ts'
 import { PauseApi } from '../../pause/api.ts'
-import { ModelsApi, Pin } from '../../models/api.ts'
+import { BackupOrder, ModelsApi, Pin } from '../../models/api.ts'
 import modelsExtension from '../../models/server.ts'
 import { Backups, Owner } from '../../models/set-model.ts'
 import {
@@ -111,6 +111,7 @@ async function fixture(fallback: string[] = ['faux/faux-2', 'faux/faux-3']) {
       return opened!
     },
     backup: () => services.want(BackupApi)!,
+    order: () => services.want(BackupOrder)!,
     models: () => services.want(ModelsApi)!,
     paused: () => services.want(PauseApi)!.paused(),
   }
@@ -420,6 +421,45 @@ it('skips a backup another conversation found out of quota', async () => {
   expect((await agent(harness, other.id)).model).toEqual({ provider: 'faux', modelId: 'faux-3' })
 })
 
+// #207552: a compaction's summary refused by every model failed the run, which could have waited on its primary.
+it('waits on its primary when no model could write a summary, and keeps the backup out of credit', async () => {
+  const f = await fixture()
+  const { root, harness } = await f.open()
+  const outOfCredit =
+    '402: {"message":"the organization is out of credit, add more to continue","code":"insufficient_quota"}'
+  await f.order().refused(
+    root.id,
+    [
+      { model: ref('faux-1'), error: rateLimit },
+      { model: ref('faux-2'), error: rateLimit },
+      { model: ref('faux-3'), error: outOfCredit },
+    ],
+    1234,
+  )
+  expect(await state(harness, root.id)).toMatchObject({
+    by: 'limit-wait',
+    primary: ref('faux-1'),
+    attempt: 1,
+    tried: ['faux/faux-1'],
+  })
+  const [card] = await dividers(harness, root.id, 'backup.wait')
+  expect(card.data).toMatchObject({
+    from: 'faux/faux-1',
+    primary: 'faux/faux-1',
+    reason: 'rate limit',
+    skipped: [
+      { model: 'faux/faux-2', why: 'rate limit on the summary' },
+      { model: 'faux/faux-3', why: 'out of credit' },
+    ],
+  })
+  // The next summary skips it too.
+  expect(
+    (await harness.commit((tx) => f.order().order(tx, root.id), context)).map(
+      (model) => model.modelId,
+    ),
+  ).toEqual(['faux-2'])
+})
+
 const ref = (modelId: string) => ({ provider: 'faux', modelId })
 const SINCE = 1_000_000
 const COOLDOWN_MS = 30 * 60_000
@@ -653,7 +693,8 @@ it('spreads the retries of conversations waiting on one limit', () => {
 })
 
 const HOUR = 3600_000
-const seen = { until: SINCE + HOUR, at: SINCE, error: 'out of credit' }
+const seen = { until: SINCE + HOUR, at: SINCE, error: 'quota' }
+const credit = { at: SINCE, error: 'out of credit' }
 it.each<{ row: string; from: Exhausted; event: ExhaustedEvent; now?: number; after: Exhausted }>([
   {
     row: 'a quota counts until its provider’s reset',
@@ -661,21 +702,29 @@ it.each<{ row: string; from: Exhausted; event: ExhaustedEvent; now?: number; aft
     event: { type: 'quota', model: 'faux/a', reset: SINCE + 5 * HOUR, error: 'quota' },
     after: { 'faux/a': { until: SINCE + 5 * HOUR, at: SINCE, error: 'quota' } },
   },
+  // #207552: GLM's 402 out of credit counted for an hour, and the next night's chain switched to it again.
   {
-    row: 'a quota without a reset counts for an hour',
+    row: 'a quota without a reset is out of credit, with no time',
     from: {},
     event: { type: 'quota', model: 'faux/a', error: 'out of credit' },
-    after: { 'faux/a': seen },
+    after: { 'faux/a': credit },
   },
   {
-    row: 'an answer of the model clears it, and only it',
-    from: { 'faux/a': seen, 'faux/b': seen },
+    row: 'out of credit outlasts any time',
+    from: { 'faux/a': credit },
+    event: { type: 'answered', model: 'faux/b' },
+    now: SINCE + 48 * HOUR,
+    after: { 'faux/a': credit },
+  },
+  {
+    row: 'an answer of the model, a pick of it after a top-up, clears it, and only it',
+    from: { 'faux/a': credit, 'faux/b': seen },
     event: { type: 'answered', model: 'faux/a' },
     after: { 'faux/b': seen },
   },
   {
     row: 'a login clears its provider’s models',
-    from: { 'faux/a': seen, 'other/a': seen },
+    from: { 'faux/a': credit, 'other/a': seen },
     event: { type: 'login', provider: 'faux' },
     after: { 'other/a': seen },
   },
@@ -693,6 +742,7 @@ it.each<{ row: string; from: Exhausted; event: ExhaustedEvent; now?: number; aft
 it('reads an exhausted model only until it resets', () => {
   expect(exhaustedUntil({ 'faux/a': seen }, 'faux/a', SINCE + HOUR - 1)).toBe(SINCE + HOUR)
   expect(exhaustedUntil({ 'faux/a': seen }, 'faux/a', SINCE + HOUR)).toBeUndefined()
+  expect(exhaustedUntil({ 'faux/a': credit }, 'faux/a', SINCE + 48 * HOUR)).toBe(Infinity)
 })
 
 it.each([

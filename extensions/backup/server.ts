@@ -16,12 +16,13 @@ import {
   hook,
   ROOT_CONVERSATION_ID,
 } from '@earendil-works/pi-durable'
-import type { ConversationId, EntryDraft, EntryId, Tx } from '@earendil-works/pi-durable'
+import type { ConversationId, EntryDraft, Tx } from '@earendil-works/pi-durable'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { hasLogin, previewModel } from '../../lib/agents.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { limited, limitOf } from '../../lib/rate-limit.ts'
 import { BackupOrder, LoginChanged, ModelsApi, Pin, Resets } from '../models/api.ts'
+import type { Refusal } from '../models/api.ts'
 import { ContextUsageDoc } from '../conversations/api.ts'
 import { Standing } from '../subagents/api.ts'
 import { BackupApi } from './api.ts'
@@ -120,6 +121,7 @@ async function skipper(host: Host, tx: Tx, id: ConversationId, exhausted: Exhaus
   return (ref: ModelRef) => {
     if (!hasLogin(available, ref)) return 'no login'
     const until = exhaustedUntil(exhausted, name(ref), now)
+    if (until === Infinity) return 'out of credit'
     if (until !== undefined) return `quota until ${utc(until)}`
     const window = host.modelRuntime.getModel(ref.provider, ref.modelId)?.contextWindow
     if (window && tokens + RESERVE > window)
@@ -164,45 +166,65 @@ function serial<T>(host: Pick<ExtensionHost, 'resource'>, work: () => Promise<T>
 
 /** How long a switch waits for the provider's reset time before it decides without it. */
 const RESET_WAIT = 1_500
+/** How long a quota counts while its provider's reset is still being read, until the reading corrects it. */
+const READING_FOR = 60 * 60_000
 const delay = (ms: number) =>
   new Promise<undefined>((done) => setTimeout(done, ms, undefined).unref())
 
 type Switched = Pick<BackupSwitch, 'from' | 'to' | 'reason'>
 type Waiting = { from: string; primary: string; reason: string; since: number; until: number }
+/** What a model answered with a limit: an assistant entry, or a refusal of work beside the conversation. */
+type Answer = Pick<AssistantMessage, 'provider' | 'model' | 'errorMessage'>
 
 /**
  * Switch conversation `id` off the model that answered `message` with a limit: to the first of its definition's backup
  * models that has a login here, room for its context and was not tried yet, recording the primary to return to; or,
- * when none can take it, back to the primary to wait. One commit, so a conversation runs on the backup or the primary
- * with the record, or on neither. Undefined when nothing changed.
+ * when none can take it, back to the primary to wait. `others` refused the same work after it (a summary's backups): none
+ * of them is taken, and a quota among them counts as exhausted. `known` is the reset of `message`'s provider when it was
+ * read already. One commit, so a conversation runs on the backup or the primary with the record, or on neither. Undefined
+ * when nothing changed.
  */
-async function switchNow(host: Host, id: ConversationId, message: AssistantMessage) {
+async function switchNow(
+  host: Host,
+  id: ConversationId,
+  message: Answer,
+  others: Refusal[] = [],
+  known?: { reset?: number },
+) {
   const failed = `${message.provider}/${message.model}`
   const limit = limitOf(message.errorMessage ?? '') ?? 'rate limit'
   // An exhausted quota resets when its provider says. The reading asks the provider (up to 15 s), and the watchdog reads
-  // this switch or wait 5 s after the failure: the commit waits for it only briefly, and a later reading only corrects
-  // the exhausted model's time, which no watchdog reads.
+  // this switch or wait 5 s after the failure: the commit waits for it only briefly. A reading still out, or failed, is
+  // no answer that the provider reports no reset: the quota counts for `READING_FOR`, so a primary's wait still starts,
+  // and a late reading corrects only the exhausted model's time, which no watchdog reads (review of #207552).
   const reading =
-    limit === 'quota'
+    limit === 'quota' && !known
       ? host
           .want(Resets)
           ?.resetsAt(message.provider)
-          .catch(() => undefined)
+          .then(
+            (at) => ({ at }),
+            () => undefined,
+          )
       : undefined
-  const reset = reading && (await Promise.race([reading, delay(RESET_WAIT)]))
-  if (reading && reset === undefined)
+  const read = reading && (await Promise.race([reading, delay(RESET_WAIT)]))
+  const reset = known ? known.reset : read ? read.at : reading && Date.now() + READING_FOR
+  if (reading && !read)
     reading
       .then(async (late) => {
-        if (late === undefined) return
+        if (!late) return
         await serial(host, () =>
           host.harness().commit(async (tx) => {
+            // Its answer or a login meanwhile cleared it: the reading has nothing left to correct.
+            if (!Object.hasOwn(await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID), failed)) return
             const error = short(message.errorMessage ?? '')
-            await exhaust(tx, { type: 'quota', model: failed, reset: late, error }, Date.now())
+            const at = late.at === undefined ? {} : { reset: late.at }
+            await exhaust(tx, { type: 'quota', model: failed, ...at, error }, Date.now())
           }, context),
         )
       })
       .catch((error: unknown) => {
-        // The model stays exhausted until the default time instead.
+        // The model stays exhausted until `READING_FOR` passes instead.
         console.error('backup: recording a quota reset failed:', error)
       })
   return serial(host, () =>
@@ -214,23 +236,25 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
       const now = Date.now()
       // Every conversation skips a model this one found out of quota, until it resets (#191380 and its siblings each
       // tried the same two exhausted backups).
-      const exhausted =
-        limit === 'quota'
-          ? await exhaust(
-              tx,
-              {
-                type: 'quota',
-                model: failed,
-                ...(reset ? { reset } : {}),
-                error: short(message.errorMessage ?? ''),
-              },
-              now,
-            )
-          : await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
+      let exhausted = await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID)
+      const quotas = [
+        { model: failed, error: message.errorMessage ?? '', ...(reset ? { reset } : {}) },
+        ...others.map((other) => ({ ...other, model: name(other.model) })),
+      ].filter((answer) => limitOf(answer.error) === 'quota')
+      for (const { model, error, reset: at } of quotas)
+        exhausted = await exhaust(
+          tx,
+          { type: 'quota', model, ...(at ? { reset: at } : {}), error: short(error) },
+          now,
+        )
       const backup = await backupFor(host, tx, id)
       const definition = await host.want(Pin)?.definition(tx, id)
       const primary = backup.kind === 'primary' ? current : backup.primary
       const primaryReset = exhaustedUntil(exhausted, name(primary), now)
+      const skip = await skipper(host, tx, id, exhausted, now)
+      const refused = new Map(
+        others.map((other) => [name(other.model), limitOf(other.error) ?? 'error']),
+      )
       const { state, outcome: step } = backupStep(backup, {
         type: 'limit',
         current,
@@ -238,8 +262,10 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
         failed,
         reason: limit,
         candidates: definition?.fallback ?? [],
-        skip: await skipper(host, tx, id, exhausted, now),
-        // A wait for a primary out of quota lasts until its quota resets.
+        skip: (ref) =>
+          skip(ref) ??
+          (refused.has(name(ref)) ? `${refused.get(name(ref))} on the summary` : undefined),
+        // A wait for a primary out of quota lasts until its quota resets; one out of credit (`Infinity`) starts none.
         ...(primaryReset === undefined ? {} : { reset: primaryReset }),
         jitter: jitterOf(id),
         now,
@@ -284,7 +310,7 @@ async function switchNow(host: Host, id: ConversationId, message: AssistantMessa
  * One line in @ultimate's transcript about conversation `id`. @ultimate reads the same card in its own conversation;
  * only another conversation's switch or wait needs a line there.
  */
-async function notify(host: Host, id: ConversationId, entry: EntryId, notice: BackupNotice) {
+async function notify(host: Host, id: ConversationId, entry: number, notice: BackupNotice) {
   const harness = host.harness()
   const ultimate = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
   if (ultimate === undefined || ultimate === id) return
@@ -314,8 +340,8 @@ const utc = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace('
 async function waitCard(
   host: Host,
   id: ConversationId,
-  message: AssistantMessage,
-  entry: EntryId,
+  message: Answer,
+  entry: number,
   waiting: Waiting & { skipped: Skipped[] },
 ) {
   const { from, primary, reason, since, until, skipped } = waiting
@@ -328,19 +354,12 @@ async function waitCard(
     skipped,
     error: short(message.errorMessage ?? ''),
   }
-  const content = `No backup model could take ${waiting.from}'s ${waiting.reason} (${waiting.skipped.map(({ model, why }) => `${model}: ${why}`).join('; ')}), so this conversation is back on ${waiting.primary} and continues by itself at ${utc(waiting.until)}.`
+  // Only kind and data, as the switch card: a model line waits for the run to end, and a run that fails keeps it queued
+  // until the next one, the wait's own continuation (#207552). The continuation's input names the error.
   await (
     await host.harness().conversation(id, context)
   )?.submit(
-    {
-      type: 'write',
-      requestId: `backup.wait:${entry}`,
-      entry: {
-        kind: 'backup.wait',
-        data,
-        model: [{ role: 'user', content, timestamp: Date.now() }],
-      },
-    },
+    { type: 'write', requestId: `backup.wait:${entry}`, entry: { kind: 'backup.wait', data } },
     context,
   )
   await notify(host, id, entry, {
@@ -355,16 +374,20 @@ async function waitCard(
 /**
  * Switch the conversation away from a model that answered with a limit, and say so: one `backup.switch` card in the
  * conversation and one `backup.notice` line in @ultimate's. True when it runs on a backup because of this failure, so a
- * failure reported twice (`Backup.fallBack` and the commit that recorded it) leaves one card.
+ * failure reported twice (`Backup.fallBack` and the commit that recorded it) leaves one card. `entry` names the failure
+ * in the cards' request ids: the answer's entry, or the task of the work `others` refused too (`switchNow`, as `known`);
+ * entries and tasks share one id sequence.
  */
 export async function fallBack(
   host: Host,
   id: ConversationId,
-  message: AssistantMessage,
-  entry: EntryId,
+  message: Answer,
+  entry: number,
+  others: Refusal[] = [],
+  known?: { reset?: number },
 ) {
   if (previewModel()) return false
-  const result = await switchNow(host, id, message)
+  const result = await switchNow(host, id, message, others, known)
   if (!result) return false
   if (result.kind === 'handled') return true
   if (result.kind === 'waiting') {
@@ -482,6 +505,18 @@ export default function extension(host: Host) {
         const level = clamped(host, ref, thinking)
         return level ? { ...ref, thinking: level } : ref
       })
+    },
+    // A summary no model could write: its own model's limit decides as that model's answer would, the backups after it
+    // count as tried, so the conversation waits on its primary instead of failing its run (#207552).
+    async refused(id, [own, ...others], key) {
+      if (!own) return
+      const answer = {
+        provider: own.model.provider,
+        model: own.model.modelId,
+        errorMessage: own.error,
+      }
+      // Lineage read the own model's reset already, and waited for it.
+      await fallBack(host, id, answer, key, others, own.reset ? { reset: own.reset } : {})
     },
   })
   let unsubscribe: (() => void) | undefined

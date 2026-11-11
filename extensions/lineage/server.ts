@@ -228,13 +228,15 @@ const refusal = ({ model, limit, error }: Refused, resetsAt: number | undefined)
 /**
  * Ask for a compaction summary on the conversation's own model, and when that answers with a limit on each model the
  * backup order goes to next, leaving the conversation on its own model. Another failure of its own model throws, so
- * Pi's summary retries it; when no model answers, the failure names each one, and when its limit resets.
+ * Pi's summary retries it; when no model answers, the failure names each one, and when its limit resets, and the
+ * backup order hears of their limits (`refused`, compaction `key`), so the run that fails can wait on its primary.
  */
 async function summarize(
   host: ExtensionHost,
   request: (model: ModelRef, thinking: ModelThinkingLevel | undefined) => Promise<string>,
   id: ConversationId,
   agent: { model: ModelRef; thinkingLevel?: ModelThinkingLevel },
+  key: number,
   ctx: Context,
 ): Promise<{ summary: string } | { fail: string }> {
   const text = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -256,14 +258,30 @@ async function summarize(
     }
   }
   const resets = host.want(Resets)
-  const named = await Promise.all(
+  const at = await Promise.all(
     refused.map(async (entry) => {
-      if (!entry.limit || !resets) return refusal(entry, undefined)
-      // Only the failure's wording loses the reset time; the failure itself stands.
-      const at = await resets.resetsAt(entry.model.provider).catch(() => undefined)
-      return refusal(entry, at)
+      if (!entry.limit || !resets) return undefined
+      // Only the failure's wording and the backup's record lose the reset time; the failure itself stands.
+      return resets.resetsAt(entry.model.provider).catch(() => undefined)
     }),
   )
+  const named = refused.map((entry, index) => refusal(entry, at[index]))
+  // #207552: a summary that failed on every model ended runs that could have waited on their primary.
+  await host
+    .want(BackupOrder)
+    ?.refused(
+      id,
+      refused.map(({ model, error }, index) => ({
+        model,
+        error,
+        ...(at[index] ? { reset: at[index] } : {}),
+      })),
+      key,
+    )
+    .catch((error: unknown) => {
+      // The summary's failure stands; only the wait on the primary is lost, and the run fails as it did before.
+      console.error('lineage: recording the refused summary failed:', error)
+    })
   return {
     fail: `No model could write the summary, so nothing was compacted or dropped: ${named.join('; ')}. Resume once a limit resets, or pick another model.`,
   }
@@ -1576,6 +1594,7 @@ export default function lineageExtension(host: ExtensionHost) {
                 ),
               api.conversationId,
               { model: agent.model, thinkingLevel: agent.thinkingLevel },
+              api.taskId,
               ctx,
             )
             // Pi upstream: @earendil-works/pi-durable@1.5.0 — patched `fail` decision: the compaction fails with this

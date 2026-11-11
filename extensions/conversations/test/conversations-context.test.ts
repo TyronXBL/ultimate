@@ -104,12 +104,10 @@ async function fixture({ start = true } = {}) {
 }
 
 it('marks kept answers stale by entry id, not their position after the head', () => {
-  const record = (id: number, kind: string) =>
-    ({
-      id,
-      kind,
-      model: kind === 'pi.assistant' ? [fauxAssistantMessage('Answer')] : [],
-    }) as unknown as EntryRecord
+  const answer = fauxAssistantMessage('Answer')
+  const measured = { ...answer, usage: { ...answer.usage, input: 1_000 } }
+  const record = (id: number, kind: string, message = measured) =>
+    ({ id, kind, model: kind === 'pi.assistant' ? [message] : [] }) as unknown as EntryRecord
   const view = [record(9, 'pi.compaction'), record(4, 'pi.user'), record(5, 'pi.assistant')]
   expect(lastAssistant(view)).toEqual({ stale: true, marker: 9 })
   expect(lastAssistant([...view, record(10, 'pi.assistant')])).toMatchObject({
@@ -118,6 +116,16 @@ it('marks kept answers stale by entry id, not their position after the head', ()
   })
   expect(lastAssistant([record(2, 'pi.assistant')])).toMatchObject({ stale: false })
   expect(lastAssistant([])).toEqual({ stale: false })
+  // #207552: a provider error after the answer reports no usage, and measures nothing.
+  const limited = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429' })
+  expect(lastAssistant([record(2, 'pi.assistant'), record(3, 'pi.assistant', limited)])).toEqual({
+    stale: false,
+    message: measured,
+  })
+  expect(lastAssistant([...view, record(10, 'pi.assistant', limited)])).toEqual({
+    stale: true,
+    marker: 9,
+  })
 })
 
 it('estimates the prompt, tools, summary and kept entries once after compaction; the next answer measures it', async () => {
@@ -304,14 +312,13 @@ it('starts forks at initial, including backfill, until their own answer', async 
 
 it('backfills missing and stale docs in bounded pages, in the background, and skips unchanged docs', async () => {
   const f = await fixture({ start: false })
+  const recovered = fauxAssistantMessage('Recovered answer')
+  recovered.usage = { ...recovered.usage, input: 100 }
   const ids = await f.harness.commit(async (tx) => {
     const created: ConversationId[] = []
     for (let index = 0; index < 65; index++) {
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } })
-      await tx.appendEntry(conversation.id, {
-        kind: 'pi.assistant',
-        model: [fauxAssistantMessage('Recovered answer')],
-      })
+      await tx.appendEntry(conversation.id, { kind: 'pi.assistant', model: [recovered] })
       created.push(conversation.id)
     }
     return created

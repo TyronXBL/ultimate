@@ -18,7 +18,8 @@ reads this extension's overview, titles and actions. `ui.tsx` declares the point
 
 `context.ts` keeps `conversations.context` (`ContextUsageDoc` in `api.ts`, `ContextDoc` in `refs.ts`) on each
 conversation: `tokens`, the current model's `window`, their `percent`, and `estimated`. Answers measure prompt tokens
-(input plus cache reads and writes, not output); compaction and reset estimate the next request's system prompt,
+(input plus cache reads and writes, not output); an answer that reported no usage, such as a provider's error, measures
+nothing and the last one that did stands, as in Pi's `estimateContext`; compaction and reset estimate the next request's system prompt,
 tools and new context until another answer. Model changes update the window. Unknown fields are absent. `at` is Unix
 milliseconds (the answer/head message timestamp, or when the estimate was made if absent); `entry` identifies the
 source assistant or head entry. A fork starts at `{ at: 0 }`, without inheriting its parent's measurement.
