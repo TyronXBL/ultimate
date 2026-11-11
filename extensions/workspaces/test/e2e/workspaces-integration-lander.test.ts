@@ -2,7 +2,8 @@ import { mkdir, readdir, readFile, rm, writeFile, access } from 'node:fs/promise
 import { join, resolve } from 'node:path'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { TaskId } from '@earendil-works/pi-durable'
-import { expect, it } from 'vitest'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { expect, it, vi } from 'vitest'
 import { context } from '../../../../server/harness.ts'
 import { Metadata } from '../../../../server/metadata.ts'
 import type { ActionContext } from '../../../../server/actions.ts'
@@ -24,6 +25,13 @@ import {
   messageLog,
   lander,
 } from './workspaces-integration-fixture.ts'
+
+/** The machine's load as the heavy-work queue reads it: idle unless a test says otherwise. */
+const machine = vi.hoisted(() => ({ load: { load: 0, cores: 6, pressure: 0 } }))
+vi.mock('../../../../lib/cpu.ts', async (original) => ({
+  ...(await original<typeof import('../../../../lib/cpu.ts')>()),
+  machineLoad: async () => machine.load,
+}))
 
 async function withRemote() {
   const paths = await repository()
@@ -479,7 +487,13 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
   f.host.projectSettings = async () => ({
     lander: { checks: [`: pnpm check; touch '${ran}'`, light.command] },
   })
-  const other = { id: 'other-job', at: 0, label: 'pnpm test', from: '#7 in my-app' }
+  const other = {
+    id: 'other-job',
+    kind: 'heavy' as const,
+    at: 0,
+    label: 'pnpm test',
+    from: '#7 in my-app',
+  }
   const start = { floor: undefined, need: 1536, start: thisProcess }
   expect(await enterSlot(other, start)).toMatchObject({ kind: 'started' })
   const id = await f.create()
@@ -498,10 +512,49 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
   await light.started()
   // The heavy check ran, and the light one runs with the slot free for the next job in line.
   await access(ran)
-  expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({ kind: 'next' })
+  expect(await peekSlot({ id: 'next-job', kind: 'heavy', at: Date.now() })).toEqual({
+    kind: 'next',
+  })
   await light.release()
   const [report] = await submitted(f, id)
   expect(report).toContain('landed as')
+})
+// Not concurrent either: it holds the heavy-work queue too.
+it('waits for CPU durably, as a step and without a check limit, and lands once the load falls', async () => {
+  const f = await fixture()
+  const ran = join(f.directory, 'heavy-ran')
+  await mkdir(join(f.directory, '.ultimate'), { recursive: true })
+  await writeFile(
+    join(f.directory, '.ultimate/settings.json'),
+    JSON.stringify({ cpu: { maxLoadPerCore: 1 } }),
+  )
+  // A short stall limit: were the wait inside a check, its silence would stop it.
+  f.host.projectSettings = async () => ({
+    lander: { checks: [{ command: `: pnpm check; touch '${ran}'`, timeout: 5 }] },
+  })
+  machine.load = { load: 27.6, cores: 6, pressure: 0 }
+  try {
+    const id = await f.create()
+    await f.service.ready(id, context)
+    await commit((await f.service.get(id, context))!.path)
+    await f.service.submit(id, 'None', context)
+    await until(async () =>
+      (await landerLog(f)).log.some((row) =>
+        row.step?.startsWith(
+          'waiting: next in line, waiting for CPU: load 27.6 on 6 cores, CPU pressure 0 %; starts below load 6 and 20 %',
+        ),
+      ),
+    )
+    // Longer than the check's own limits, still waiting and nothing run.
+    await sleep(6000)
+    await expect(access(ran)).rejects.toThrow('ENOENT')
+    machine.load = { load: 2, cores: 6, pressure: 0 }
+    const [report] = await submitted(f, id)
+    expect(report).toContain('landed as')
+    await access(ran)
+  } finally {
+    machine.load = { load: 0, cores: 6, pressure: 0 }
+  }
 })
 it("queues a check's own heavy work in the machine's queue, not in the check's private TMPDIR", async () => {
   const f = await fixture()
@@ -510,11 +563,17 @@ it("queues a check's own heavy work in the machine's queue, not in the check's p
   await writeFile(
     script,
     `import { enterSlot, thisProcess } from '${resolve('lib/slot.ts')}'\n` +
-      `const look = await enterSlot({ id: 'gate', at: Date.now(), label: 'pnpm test', from: 'the gate' }, { floor: undefined, need: 1536, start: thisProcess, queue: false })\n` +
+      `const look = await enterSlot({ id: 'gate', kind: 'heavy', at: Date.now(), label: 'pnpm test', from: 'the gate' }, { floor: undefined, need: 1536, start: thisProcess, queue: false })\n` +
       `process.exit(look.kind === 'waiting' ? 0 : 1)\n`,
   )
   f.host.projectSettings = async () => ({ lander: { checks: [`node '${script}'`] } })
-  const other = { id: 'gate-other', at: 0, label: 'pnpm test', from: '#7 in my-app' }
+  const other = {
+    id: 'gate-other',
+    kind: 'heavy' as const,
+    at: 0,
+    label: 'pnpm test',
+    from: '#7 in my-app',
+  }
   expect(
     await enterSlot(other, { floor: undefined, need: 1536, start: thisProcess }),
   ).toMatchObject({ kind: 'started' })

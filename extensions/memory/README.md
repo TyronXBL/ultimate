@@ -57,6 +57,39 @@ nothing else holds it, no job that asked earlier waits, and RAM above the floor 
 - **Nested work.** A slot job's processes carry `ULTIMATE_SLOT`; heavy work they start themselves (a scratch server's
   own jobs) is part of that job and never queues behind it.
 
+## CPU admission
+
+`cpu.maxLoadPerCore` (in `~/.ultimate/settings.json` only, a number, off by default; Linux only) makes the queue judge a
+job by what it does, not only by what its command is called (`lib/cpu.ts`, #227574: on 2026-11-11 a wrapper script,
+`pnpm mutate:changed` and two Playwright audits run from plain bash all counted as light and drove load to 36 on 6
+cores). With it set:
+
+- **Load gate.** The job at the head of the line (a `background` command, the lander's heavy step, the CI gate's local
+  fallback) starts only while the one-minute load is below `maxLoadPerCore` times the core count (1: no task waits for
+  a CPU) and CPU pressure (`/proc/pressure/cpu`, `some avg10`) is below 20 %, which shows a job that fills the machine
+  within seconds where the load average lags a minute. It says so while it waits ("waiting for CPU: load 27.6 on 6
+  cores, CPU pressure 36 %; starts below load 6 and 20 %"). Load from work the queue does not run (nothing of it holds
+  the slot) delays it at most 5 min; then it starts anyway and says it started under pressure. Load from the queue's
+  own jobs is a turn and never forces a start.
+- **Every `background` command queues.** One whose text names nothing heavy starts on probation: it is measured for
+  20 s, one such job at a time, so light jobs started together begin about 20 s apart each. Above one core on average
+  it holds the slot like a known heavy job; otherwise it leaves the queue. It is measured at every look after that:
+  above one core for 20 s it holds the slot again, below half a core for 60 s it lets it go, so an idle server never
+  holds it. An unknown job starts beside a running heavy job when the load and pressure allow, and passes the heavy
+  jobs waiting for that one; a known heavy job waits for every holder.
+- **Plain `bash`.** A command the list does not know runs at once and is measured every 5 s. Above one core for 30 s
+  it takes the slot if nobody holds it or waits for it, and holds it to its end; otherwise it is stopped: TERM to every
+  process it started, KILL after 3 s, and the tool result names what held the slot, the CPU it measured, that files
+  it wrote may be incomplete, and the `background` call to make. A command the list knows is refused up front.
+
+A job is measured by its session (the CPU time in `/proc` of every process in the session its shell starts), not its
+process group, since `timeout` moves its command into a group of its own. What still gets through, seen only by the
+load gate: a process that leaves the session (`setsid`, a daemon that detaches), a process left running after its
+`bash` call returned (`nohup … &`), work of other users and programs, and work started on a host that runs older code.
+A job that passed the gate while the load lagged can still turn heavy beside another (at most one per probation).
+Previews (`instance start`) are not gated: they count through the load they cause. Nothing running is stopped because
+of load alone.
+
 A command's need comes from what it runs outside quotes: test runs (`pnpm test`, `test:e2e`, `vitest`, `playwright`)
 and Ultimate servers (`node server/main.ts`) about 1536 MiB; `pnpm check`, `fix`, `install` and builds about
 1024 MiB; anything else 0, so it only waits once the floor is already breached. The match is by name, not by command

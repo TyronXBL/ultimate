@@ -4,6 +4,8 @@
  * card. The shell writes the output and the exit code to files, so a command outlives a host restart and its result is
  * still delivered. A heavy command (tests, checks, installs, builds) waits in the machine's heavy-work queue
  * (`lib/slot.ts`) for its turn and for RAM above the floor (`memory.minAvailableMiB`); a light one starts at once.
+ * With CPU admission on (`cpu.maxLoadPerCore`, `lib/cpu.ts`), every command queues and waits for load: one whose text
+ * names nothing heavy is measured on probation and holds the slot while it uses more than a core.
  */
 import { num, obj, opt, str } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
@@ -22,6 +24,18 @@ import {
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
 import {
+  cpuGate,
+  cpuLimit,
+  describeLoad,
+  sessionCpuMs,
+  holdsSlot,
+  machineLoad,
+  measuring,
+  observe,
+  PROBATION_MS,
+} from '../../lib/cpu.ts'
+import type { Observation } from '../../lib/cpu.ts'
+import {
   groupAlive,
   identify,
   readPidFile,
@@ -31,6 +45,7 @@ import {
 import {
   describeWait,
   enterSlot,
+  heavySlot,
   holdSlot,
   peekSlot,
   releaseSlot,
@@ -49,12 +64,22 @@ type Input = { to: number; cwd: string; command: string; timeout: number; home: 
 type Checkpoint =
   | { phase: 'start' }
   /**
-   * Waits since `since`: a heavy command in line for the heavy-work slot, `ramSince` since it is next but RAM is short;
-   * a light one for RAM above the floor. `waiting` says why, for the Tasks panel.
+   * Waits since `since`: a queued command in line, `ramSince` since it is next but RAM is short, `pressureSince` since it
+   * is next but waits for load the queue does not cause; a light one for RAM above the floor. `waiting` says why, for
+   * the Tasks panel.
    */
-  | { phase: 'wait'; since: number; ramSince?: number; waiting?: string }
-  /** Runs; a heavy command holds the slot as `identity` (its leader's start time), after `queued` ms in line. */
-  | { phase: 'poll'; pid: number; began: number; slot?: { identity: string; queued: number } }
+  | { phase: 'wait'; since: number; ramSince?: number; pressureSince?: number; waiting?: string }
+  /**
+   * Runs; a queued command is in the queue as `identity` (its leader's start time), after `queued` ms in line. A heavy
+   * one holds the slot; an unknown one (its text names nothing heavy) holds it as `observed` says. `forced` says it
+   * started under load it waited out in vain.
+   */
+  | {
+      phase: 'poll'
+      pid: number
+      began: number
+      slot?: { identity: string; queued: number; observed?: Observation; forced?: string }
+    }
   | { phase: 'deliver'; result: BackgroundResult }
 
 /**
@@ -133,6 +158,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
   const from = (to: number) => `#${to} in ${basename(host.projectRoot)}`
   const claimOf = (task: { id: number; input: Input }, at: number): SlotClaim => ({
     id: slotId(task),
+    kind: commandNeedMiB(task.input.command) ? 'heavy' : 'unknown',
     at,
     label: slotLabel(task.input.command),
     from: from(task.input.to),
@@ -150,6 +176,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     const since = checkpoint.phase === 'wait' ? checkpoint.since : runtime.now()
     const need = commandNeedMiB(task.input.command)
     const floor = await memoryFloor(host.userHome)
+    const cpu = await cpuLimit(host.userHome)
     // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started and
     // starts it again: a light command at once, as before the floor existed (that attempt already ran, and its own RAM
     // was just freed), a heavy one through the queue: in its place when it had waited before, else at the end of the line.
@@ -186,7 +213,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         note: `${note} Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
       })
     const now = runtime.now()
-    if (!need) {
+    if (!need && cpu === undefined) {
       const short = left ? undefined : await admitRam(floor, 0)
       const next = !short
         ? {
@@ -208,6 +235,8 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     const entered = await enterSlot(claim, {
       floor,
       need,
+      cpu,
+      ...(checkpoint.phase === 'wait' && { pressureSince: checkpoint.pressureSince }),
       start: () => {
         const pid = spawn()
         const identity = identify(pid)
@@ -224,7 +253,14 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
           phase: 'poll' as const,
           pid: entered.holder.pid,
           began: now,
-          slot: { identity: entered.holder.identity, queued: now - since },
+          slot: {
+            identity: entered.holder.identity,
+            queued: now - since,
+            ...(!need && { observed: measuring(now) }),
+            ...(entered.forced && {
+              forced: `It started under pressure (${describeLoad(entered.forced)}) after ${Math.round(entered.forced.waited / 60_000)} min waiting for load the heavy-work queue did not cause.`,
+            }),
+          },
         },
       }
     else {
@@ -234,6 +270,13 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         entered.kind === 'ram'
           ? checkpoint.phase === 'wait'
             ? (checkpoint.ramSince ?? now)
+            : now
+          : undefined
+      // Only load the queue does not cause counts towards starting anyway: a wait behind its own work is a turn.
+      const pressureSince =
+        entered.kind === 'cpu' && entered.outside
+          ? checkpoint.phase === 'wait'
+            ? (checkpoint.pressureSince ?? now)
             : now
           : undefined
       if (entered.kind === 'ram' && now - ramSince! >= RAM_WAIT_MS) {
@@ -250,6 +293,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             phase: 'wait' as const,
             since,
             ...(ramSince !== undefined && { ramSince }),
+            ...(pressureSince !== undefined && { pressureSince }),
             waiting: describeWait(entered, now),
           },
         }
@@ -292,7 +336,9 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             ...(slot && { queued: Math.round(slot.queued / 1000) }),
             tail: await tail(files.log),
             log: files.log,
-            ...(note && { note }),
+            ...((note || slot?.forced) && {
+              note: [slot?.forced, note].filter(Boolean).join('\n'),
+            }),
           })
         const now = runtime.now()
         let next
@@ -306,13 +352,39 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
           const late = await exitCode(files.status)
           next = await result(late === undefined ? 'lost' : 'finished', late ?? null, await stop())
         } else {
+          const claim = slot && claimOf(task, began - slot.queued)
+          const holder = slot && { pid, identity: slot.identity }
+          // An unknown command is measured at every look; it holds the slot on probation and while it is heavy.
+          const cpuMs = slot?.observed ? await sessionCpuMs(pid) : undefined
+          const observed =
+            slot?.observed && cpuMs !== undefined
+              ? observe(slot.observed, { at: now, cpuMs })
+              : slot?.observed
           // Said again at every look: after the queue's file was removed, this puts the job back before anyone starts.
-          if (slot)
-            await holdSlot(claimOf(task, began - slot.queued), { pid, identity: slot.identity })
+          if (claim && holder && (!observed || observed.kind === 'measuring'))
+            await holdSlot(claim, holder)
+          else if (claim && holder && observed && holdsSlot(observed))
+            await heavySlot(claim, holder)
+          else if (
+            claim &&
+            slot?.observed &&
+            (slot.observed.kind === 'measuring' || holdsSlot(slot.observed))
+          )
+            await releaseSlot(claim.id)
           next = {
             status: 'sleeping' as const,
-            until: now + pollMs(now - began),
-            checkpoint: { phase: 'poll' as const, pid, began, ...(slot && { slot }) },
+            // On probation it is looked at again right when its probation ends.
+            until:
+              now +
+              (observed?.kind === 'measuring'
+                ? Math.min(pollMs(now - began), Math.max(1000, began + PROBATION_MS - now))
+                : pollMs(now - began)),
+            checkpoint: {
+              phase: 'poll' as const,
+              pid,
+              began,
+              ...(slot && { slot: { ...slot, ...(observed && { observed }) } }),
+            },
           }
         }
         // Its group is stopped: the next job in line may start.
@@ -350,8 +422,8 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
       if (recorded) await stopGroup(recorded, { pidFile: pid })
-      // Whether it waited in line or ran: the next job may start.
-      if (commandNeedMiB(task.input.command)) await releaseSlot(slotId(task))
+      // Whether it waited in line or ran: the next job may start. A command that never queued has nothing to release.
+      await releaseSlot(slotId(task))
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx)
     },
   })
@@ -389,10 +461,18 @@ export default function backgroundExtension(
         async execute(args, api, ctx) {
           const cwd = (await api.agent(ctx)).cwd ?? host.projectRoot
           const need = commandNeedMiB(args.command)
+          const cpu = await cpuLimit(host.userHome)
+          const queued = need > 0 || cpu !== undefined
           // Looked at before the task exists, so neither its place in line nor its admission counts against it.
-          const turn = need ? await peekSlot({ id: '', at: Date.now() }) : undefined
+          const turn = queued
+            ? await peekSlot({ id: '', at: Date.now(), kind: need ? 'heavy' : 'unknown' })
+            : undefined
+          const gate =
+            turn?.kind === 'next'
+              ? cpuGate(await machineLoad(), cpu, undefined, Date.now())
+              : undefined
           const short =
-            turn?.kind === 'next' || !need
+            (turn?.kind === 'next' && gate?.kind !== 'wait') || !queued
               ? await checkRam(await memoryFloor(host.userHome), need)
               : undefined
           await api.commit(
@@ -416,16 +496,21 @@ export default function backgroundExtension(
           )
           const after =
             'Its result steers you or wakes you once; keep working or end your turn, never sleep or poll for it.'
+          const measured = `Its command names nothing known to be heavy, so for its first ${PROBATION_MS / 1000} s it is measured: above one core it counts as heavy and holds the heavy-work slot until it ends or calms down; until it is decided, other such jobs wait.`
           const text =
             turn && turn.kind !== 'next'
-              ? `Queued, ${describeWait({ kind: 'waiting', turn })}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits. ${after}`
-              : short && need
-                ? `Queued: next in line for the heavy-work slot, waiting for RAM: ${describeShort(short)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
-                : short
-                  ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min. ${after}`
-                  : need
-                    ? `Starting in the background in ${cwd}: the heavy-work slot is free, unless a job that asked at the same moment takes it first, and then this one waits its turn by itself. ${after}`
-                    : `Started in the background in ${cwd}. ${after}`
+              ? `Queued, ${describeWait({ kind: 'waiting', turn })}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
+              : gate?.kind === 'wait'
+                ? `Queued: ${describeWait({ kind: 'cpu', gate, outside: false })}. It starts in ${cwd} by itself once the load falls; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
+                : short && need
+                  ? `Queued: next in line for the heavy-work slot, waiting for RAM: ${describeShort(short)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
+                  : short
+                    ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min. ${after}`
+                    : need
+                      ? `Starting in the background in ${cwd}: the heavy-work slot is free, unless a job that asked at the same moment takes it first, and then this one waits its turn by itself. ${after}`
+                      : queued
+                        ? `Starting in the background in ${cwd}. ${measured} ${after}`
+                        : `Started in the background in ${cwd}. ${after}`
           return { output: [{ type: 'text', text }] }
         },
       }),

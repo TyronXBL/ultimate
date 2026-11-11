@@ -29,6 +29,11 @@ holds the slot while its group runs and lets it go once the group is stopped, wh
 up. A light command starts at once, or, when the floor is already breached, waits for RAM, looking every 10 s for up
 to 30 min.
 
+With CPU admission on (`cpu.maxLoadPerCore`, `extensions/memory/README.md`), every command queues and the head of the
+line waits for load too. A command the list does not know starts on probation: the task measures its group's CPU at
+each look, its answer says it is being measured, and it holds the slot while it uses more than a core. A start that
+waited out load the queue did not cause says so on its result card.
+
 The shell, not the host, writes the log and the code, so a command keeps running through a host restart and its
 result still arrives. The command keeps running across the caller's turns and its Stop button; concluding the
 conversation aborts the task, which stops the command's group and wakes nobody.

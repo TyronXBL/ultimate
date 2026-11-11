@@ -1,7 +1,9 @@
 import { rm } from 'node:fs/promises'
 import { afterEach, expect, it, vi } from 'vitest'
+import { PRESSURE_WAIT_MS, PROBATION_MS } from '../lib/cpu.ts'
 import {
   enterSlot,
+  heavySlot,
   holdSlot,
   releaseSlot,
   SETTLE_MS,
@@ -14,16 +16,26 @@ import type { SlotClaim, SlotEntry, SlotEvent, SlotQueue } from '../lib/slot.ts'
 import { stateDir } from '../lib/memory.ts'
 import { temp } from './helpers.ts'
 
+/** The machine's load as the queue reads it: idle unless a test says otherwise. */
+const machine = vi.hoisted(() => ({ load: { load: 0, cores: 6, pressure: 0 } }))
+vi.mock('../lib/cpu.ts', async (original) => ({
+  ...(await original<typeof import('../lib/cpu.ts')>()),
+  machineLoad: async () => machine.load,
+}))
+
 afterEach(() => {
   vi.useRealTimers()
+  machine.load = { load: 0, cores: 6, pressure: 0 }
 })
 
-const claim = (id: string, at = 100): SlotClaim => ({
+const claim = (id: string, at = 100, kind: SlotClaim['kind'] = 'heavy'): SlotClaim => ({
   id,
+  kind,
   at,
   label: `job ${id}`,
   from: '#1 in my-app',
 })
+const unknown = (id: string, at = 100) => claim(id, at, 'unknown')
 const holder = { pid: 42, identity: 'boot:7' }
 const waiting = (id: string, at = 100, seen = 1000): SlotEntry => ({
   ...claim(id, at),
@@ -35,6 +47,22 @@ const running = (id: string, at = 100, since = 1000): Extract<SlotEntry, { state
   state: 'running',
   since,
   holder,
+})
+const measured = (
+  id: string,
+  at = 100,
+  since = 1000,
+): Extract<SlotEntry, { state: 'measuring' }> => ({
+  ...unknown(id, at),
+  state: 'measuring',
+  since,
+  until: since + PROBATION_MS,
+  holder,
+})
+const waitingUnknown = (id: string, at = 100, seen = 1000): SlotEntry => ({
+  ...unknown(id, at),
+  state: 'waiting',
+  seen,
 })
 const queue = (...entries: SlotEntry[]): SlotQueue => ({ entries })
 const alive = (pid: number) => (h: { pid: number }) => h.pid === pid
@@ -77,6 +105,36 @@ it.each<[string, SlotQueue, SlotEvent, SlotQueue]>([
     queue(running('a')),
   ],
   [
+    'an unknown job that starts is measured',
+    queue(waitingUnknown('a')),
+    { type: 'start', claim: unknown('a'), holder, now: 1000 },
+    queue(measured('a')),
+  ],
+  [
+    'an unknown job said again stays on its probation',
+    queue(measured('a')),
+    { type: 'start', claim: unknown('a'), holder, now: 5000 },
+    queue(measured('a')),
+  ],
+  [
+    'measured heavy, it holds the slot since it started',
+    queue(measured('a')),
+    { type: 'heavy', claim: unknown('a'), holder, now: 21_000 },
+    queue({ ...unknown('a'), state: 'running', since: 1000, holder }),
+  ],
+  [
+    'a light job that turns heavy holds the slot from then on',
+    queue(running('b')),
+    { type: 'heavy', claim: unknown('a'), holder, now: 9000 },
+    queue(running('b'), { ...unknown('a'), state: 'running', since: 9000, holder }),
+  ],
+  [
+    'a late wait never ends a probation',
+    queue(measured('a')),
+    { type: 'wait', claim: unknown('a'), now: 2000 },
+    queue(measured('a')),
+  ],
+  [
     'a release leaves the line',
     queue(running('a'), waiting('b')),
     { type: 'release', id: 'a' },
@@ -99,6 +157,18 @@ it.each<[string, SlotQueue, SlotEvent, SlotQueue]>([
     queue(running('a'), waiting('b')),
     { type: 'expire', now: 1000, alive: alive(7) },
     queue(waiting('b')),
+  ],
+  [
+    'expiry keeps a probation its owner may still decide',
+    queue(measured('a')),
+    { type: 'expire', now: 1000 + PROBATION_MS + WAIT_TTL_MS, alive: alive(42) },
+    queue(measured('a')),
+  ],
+  [
+    'expiry ends a probation its owner stopped deciding',
+    queue(measured('a')),
+    { type: 'expire', now: 1001 + PROBATION_MS + WAIT_TTL_MS, alive: alive(42) },
+    queue(),
   ],
   [
     'expiry ends a settling time that passed',
@@ -128,19 +198,55 @@ it.each<[string, SlotQueue, SlotClaim, ReturnType<typeof slotTurn>]>([
     'another job runs',
     queue(running('b')),
     claim('a'),
-    { kind: 'behind', running: running('b'), ahead: [] },
+    { kind: 'behind', holders: [running('b')], ahead: [] },
   ],
   [
     'an earlier job waits',
     queue(waiting('b', 50), waiting('a')),
     claim('a'),
-    { kind: 'behind', ahead: [claim('b', 50)] },
+    { kind: 'behind', holders: [], ahead: [claim('b', 50)] },
   ],
   [
     'the same time: the smaller id first',
     queue(waiting('a')),
     claim('b'),
-    { kind: 'behind', ahead: [claim('a')] },
+    { kind: 'behind', holders: [], ahead: [claim('a')] },
+  ],
+  [
+    'a heavy job waits for a probation',
+    queue(measured('b')),
+    claim('a'),
+    { kind: 'behind', holders: [measured('b')], ahead: [] },
+  ],
+  [
+    'unknown jobs are measured one at a time (the incident: three wrapper scripts at once)',
+    queue(measured('b')),
+    unknown('a'),
+    { kind: 'behind', holders: [measured('b')], ahead: [] },
+  ],
+  [
+    'an unknown job starts beside a running heavy one; the load decides',
+    queue(running('b')),
+    unknown('a'),
+    { kind: 'next' },
+  ],
+  [
+    'an unknown job passes heavy waiters while the job they wait for runs',
+    queue(running('b'), waiting('c', 50)),
+    unknown('a'),
+    { kind: 'next' },
+  ],
+  [
+    'an unknown job keeps its turn behind a heavy waiter when nothing runs',
+    queue(waiting('c', 50)),
+    unknown('a'),
+    { kind: 'behind', holders: [], ahead: [claim('c', 50)] },
+  ],
+  [
+    'unknown jobs keep their order among themselves',
+    queue(running('b'), waitingUnknown('c', 50)),
+    unknown('a'),
+    { kind: 'behind', holders: [], ahead: [unknown('c', 50)] },
   ],
   ['only later jobs wait', queue(waiting('b', 200), waiting('a')), claim('a'), { kind: 'next' }],
   [
@@ -178,7 +284,7 @@ it('grants the slot one job at a time, in the order the jobs asked', async () =>
   expect(await enter(parent, claim('second', 200))).toMatchObject({ kind: 'started' })
   expect(await enter(parent, claim('bash', 400), false)).toMatchObject({
     kind: 'waiting',
-    turn: { running: { id: 'second' } },
+    turn: { holders: [{ id: 'second' }] },
   })
   await releaseSlot('second', parent)
   expect(await enter(parent, claim('third', 300))).toMatchObject({ kind: 'started' })
@@ -202,8 +308,64 @@ it('starts nobody beside a running job after its file was removed, and keeps the
   vi.setSystemTime(Date.now() + SETTLE_MS)
   expect(await enter(parent, claim('waiting', 200))).toMatchObject({
     kind: 'waiting',
-    turn: { running: { id: 'running' } },
+    turn: { holders: [{ id: 'running' }] },
   })
   await releaseSlot('running', parent)
   expect(await enter(parent, claim('waiting', 200))).toMatchObject({ kind: 'started' })
+})
+
+const look = (
+  parent: string,
+  asking: SlotClaim,
+  pressureSince?: number,
+): ReturnType<typeof enterSlot> =>
+  enterSlot(asking, {
+    floor: undefined,
+    need: 0,
+    start: thisProcess,
+    parent,
+    cpu: 1,
+    pressureSince,
+  })
+
+it('takes turns with jobs it does not know: one measured at a time, a heavy one holding the slot', async () => {
+  const parent = await temp('ultimate-slot-')
+  // Three wrapper scripts asked at the same moment, from two worktrees.
+  expect(await look(parent, unknown('first', 100))).toMatchObject({ kind: 'started' })
+  expect(await look(parent, unknown('second', 101))).toMatchObject({
+    kind: 'waiting',
+    turn: { holders: [{ id: 'first', state: 'measuring' }] },
+  })
+  expect(await look(parent, unknown('third', 102))).toMatchObject({ kind: 'waiting' })
+  // Measured above a core: it holds the slot, and the next one is measured beside it only while the load allows.
+  await heavySlot(unknown('first', 100), thisProcess(), parent)
+  machine.load = { load: 6.5, cores: 6, pressure: 0 }
+  expect(await look(parent, unknown('second', 101))).toMatchObject({
+    kind: 'cpu',
+    outside: false,
+    gate: { kind: 'wait', load: 6.5, cores: 6, pressure: 0 },
+  })
+  // Its own load never forces a start, however long it lasts.
+  expect(await look(parent, unknown('second', 101), Date.now() - PRESSURE_WAIT_MS)).toMatchObject({
+    kind: 'cpu',
+  })
+  await releaseSlot('first', parent)
+  machine.load = { load: 1, cores: 6, pressure: 0 }
+  expect(await look(parent, unknown('second', 101))).toMatchObject({ kind: 'started' })
+  // Measured light: it leaves the queue, and the third one's turn comes.
+  await releaseSlot('second', parent)
+  expect(await look(parent, unknown('third', 102))).toMatchObject({ kind: 'started' })
+})
+
+it('waits for load it does not cause, then starts anyway and says so', async () => {
+  const parent = await temp('ultimate-slot-')
+  machine.load = { load: 9, cores: 6, pressure: 0 }
+  expect(await look(parent, claim('heavy'))).toMatchObject({ kind: 'cpu', outside: true })
+  expect(await look(parent, claim('heavy'), Date.now() - PRESSURE_WAIT_MS + 60_000)).toMatchObject({
+    kind: 'cpu',
+  })
+  expect(await look(parent, claim('heavy'), Date.now() - PRESSURE_WAIT_MS)).toMatchObject({
+    kind: 'started',
+    forced: { kind: 'forced', load: 9, cores: 6, pressure: 0 },
+  })
 })

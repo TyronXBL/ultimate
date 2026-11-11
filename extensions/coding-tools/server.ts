@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import type { Context } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context'
 import { bool, num, obj, opt, str } from '@earendil-works/pi-schema'
@@ -29,7 +30,25 @@ import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
 import { commandNeedMiB, listUsers, memoryFloor, memoryUsers } from '../../lib/memory.ts'
-import { describeWait, enterSlot, keepHeld, slotLabel, thisProcess } from '../../lib/slot.ts'
+import {
+  describeBehind,
+  describeWait,
+  enterSlot,
+  keepHeld,
+  slotLabel,
+  thisProcess,
+} from '../../lib/slot.ts'
+import {
+  BASH_SAMPLE_MS,
+  BASH_WINDOW_MS,
+  cpuLimit,
+  holdsSlot,
+  observe,
+  sessionCpuMs,
+  sessionMarked,
+  sessionMembers,
+} from '../../lib/cpu.ts'
+import type { CpuSample, Observation } from '../../lib/cpu.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { watchSteer } from '../../lib/steer.ts'
@@ -202,6 +221,122 @@ const Cancelled = defineDoc<{ calls: Record<string, number> }>({
 })
 export const docs = [Cancelled]
 
+/** Set in a bash call's environment to an id of its own: `watchHeavy` finds the call's shell by it. */
+const BASH_CALL_ENV = 'ULTIMATE_BASH_CALL'
+
+/**
+ * Stop a running bash call from a watch: it names why and what to do instead, and gets the function that cancels the
+ * call (Pi then KILLs its group), or undefined when the call is already being stopped.
+ */
+type Halt = (why: string, detail: string) => (() => void) | undefined
+
+/** CPU use in cores, from the oldest of `samples` to the newest. */
+const coresOver = (samples: CpuSample[]) => {
+  const first = samples[0]
+  const last = samples.at(-1)!
+  return Math.max(0, last.cpuMs - first.cpuMs) / Math.max(1, last.at - first.at)
+}
+
+/** Send `signal` to each of `pids`; one that ended meanwhile is skipped. */
+function signalEach(pids: number[], signal: NodeJS.Signals) {
+  for (const pid of pids)
+    try {
+      process.kill(pid, signal)
+    } catch (error) {
+      // It ended between the listing and the signal.
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+}
+
+/**
+ * Watch a running bash call's session (its shell's, found by `marker` in its environment; `lib/cpu.ts` says why not
+ * its process group): once it uses more than a core for `BASH_WINDOW_MS`, it is heavy work beside the tool call. It
+ * then takes the heavy-work slot if nobody holds it or waits for it, and holds it to its end; otherwise it is stopped,
+ * TERM to every process of the session and KILL after 3 s, with the `background` call that queues it instead. Origin:
+ * #227574, where two Playwright audits ran from bash under `timeout`, one sent to the background with `&`, while the
+ * queue ran its own heavy job. Returns the function that ends the watch.
+ */
+function watchHeavy(
+  host: Pick<ExtensionHost, 'projectRoot'>,
+  api: Pick<ToolExecutionApi, 'conversationId'>,
+  command: string,
+  marker: string,
+) {
+  return (halt: Halt) => {
+    const began = Date.now()
+    let observation: Observation = { kind: 'light', last: { at: began, cpuMs: 0 } }
+    const samples: CpuSample[] = [observation.last]
+    let sid: number | undefined
+    let release: (() => Promise<void>) | undefined
+    let done = false
+    const look = async () => {
+      sid ??= await sessionMarked(marker)
+      const cpuMs = sid === undefined ? undefined : await sessionCpuMs(sid)
+      if (sid === undefined || cpuMs === undefined) return
+      const now = Date.now()
+      samples.push({ at: now, cpuMs })
+      while (samples.length > 2 && now - samples[1].at >= BASH_WINDOW_MS) samples.shift()
+      observation = observe(observation, { at: now, cpuMs }, BASH_WINDOW_MS)
+      if (!holdsSlot(observation)) return
+      done = true
+      const claim = {
+        id: `${host.projectRoot}:bash:${randomUUID()}`,
+        kind: 'heavy' as const,
+        at: now,
+        label: slotLabel(command),
+        from: `#${api.conversationId} in ${basename(host.projectRoot)} (bash, measured)`,
+      }
+      // Taken only when nobody holds it or waits for it: a bash command never jumps the line.
+      const entered = await enterSlot(claim, {
+        floor: undefined,
+        need: 0,
+        start: thisProcess,
+        queue: false,
+      })
+      if (entered.kind === 'started') {
+        release = keepHeld(claim)
+        return
+      }
+      const holders =
+        entered.kind === 'waiting' && entered.turn.kind === 'behind'
+          ? `${describeBehind(entered.turn, now)} held or waited for the heavy-work slot`
+          : 'the heavy-work queue settled after its file was removed'
+      const cancel = halt(
+        `Stopped by the heavy-work queue: it used ${coresOver(samples).toFixed(1)} cores over the last ${Math.round((now - samples[0].at) / 1000)} s while ${holders}`,
+        `Every process it started got TERM, then KILL after 3 s, so files it was writing may be incomplete. Heavy work runs in the queue, one job at a time, in order; it starts by itself and its result steers or wakes you, so never sleep, poll or retry it in bash:\nbackground ${JSON.stringify({ command })}`,
+      )
+      if (!cancel) return
+      // Ours: its shell's environment holds this call's marker, checked again right before the signals; a session id is
+      // never reused while its leader lives.
+      if ((await sessionMarked(marker)) === sid) {
+        signalEach(await sessionMembers(sid), 'SIGTERM')
+        const deadline = Date.now() + 3000
+        while ((await sessionMembers(sid)).length && Date.now() < deadline) await sleep(100)
+        signalEach(await sessionMembers(sid), 'SIGKILL')
+      }
+      cancel()
+    }
+    let looks = Promise.resolve()
+    const timer = setInterval(() => {
+      looks = looks.then(() =>
+        done
+          ? undefined
+          : look().catch((error: unknown) =>
+              // The next look measures again; a failed one only delays it.
+              console.error('coding-tools: measuring a bash command failed:', error),
+            ),
+      )
+    }, BASH_SAMPLE_MS)
+    timer.unref()
+    return async () => {
+      done = true
+      clearInterval(timer)
+      await looks
+      await release?.()
+    }
+  }
+}
+
 /** `40s`, `5m 09s`, `2h 05m`. */
 function took(ms: number) {
   const seconds = Math.round(ms / 1000)
@@ -216,13 +351,15 @@ function took(ms: number) {
  * `interruptible`, by a steer queued in its conversation. A steer joins a run only after the tool round, so a wait would
  * otherwise hold it; ending the command here lets the run go on and the steer be placed at once. Follow-ups wait for the
  * run's end anyway, so they never interrupt. A stopped command is killed, and the call ends with the output so far and a
- * notice, as an ordinary result.
+ * notice, as an ordinary result. `watch` may stop it too, after its own TERM (`Halt`): then the notice stands even when
+ * the command ended on that TERM by itself, and `detail` follows it.
  */
 async function untilStopped(
   run: (context: Context) => Promise<ToolExecutionResult>,
   api: ToolExecutionApi,
   interruptible: boolean | undefined,
   context: Context,
+  watch?: (halt: Halt) => () => Promise<void>,
 ): Promise<ToolExecutionResult> {
   const id = api.conversationId
   // A watch needs the document to exist; created once per conversation.
@@ -232,10 +369,30 @@ async function untilStopped(
   const started = performance.now()
   const { context: command, cancel } = withCancel(context)
   let reason: string | undefined
+  let detail: string | undefined
   const stop = (why: string) => {
     if (reason) return
     reason = why
     cancel(new Error(why))
+  }
+  const halt: Halt = (why, more) => {
+    if (reason) return undefined
+    reason = why
+    detail = more
+    return () => cancel(new Error(why))
+  }
+  const notice = () => {
+    const retained = api.retainedOutput()
+    // The notice goes last: long output keeps its tail, so a leading notice would be cut.
+    return {
+      output: [
+        {
+          type: 'text' as const,
+          text: `${retained.text || '(no output)'}\n[${reason} after ${took(performance.now() - started)}; the output above is the last the command printed.]${detail ? `\n${detail}` : ''}`,
+        },
+      ],
+      structuredOutput: { output: retained.text, truncated: retained.truncated, exitCode: 130 },
+    }
   }
   const inspectCancelled = (value: typeof cancelled.value) => {
     if (value?.calls[api.callId] !== undefined) stop('Cancelled by the user')
@@ -246,24 +403,17 @@ async function untilStopped(
   const stopSteer = interruptible
     ? await watchSteer(api, context, () => stop('Interrupted by a steering message'))
     : undefined
+  const stopWatch = watch?.(halt)
   try {
     inspectCancelled(cancelled.value)
-    return await run(command)
+    const result = await run(command)
+    // A halt's TERM may end the command before its KILL: it was stopped all the same.
+    return detail === undefined ? result : notice()
   } catch (error) {
     if (!reason || context.abortSignal?.aborted) throw error
-    const retained = api.retainedOutput()
-    // The notice goes last: long output keeps its tail, so a leading notice would be cut.
-    return {
-      output: [
-        {
-          type: 'text',
-          text: `${retained.text || '(no output)'}\n[${reason} after ${took(performance.now() - started)}; the output above is the last the command printed.]`,
-        },
-      ],
-      structuredOutput: { output: retained.text, truncated: retained.truncated, exitCode: 130 },
-    }
+    return notice()
   } finally {
-    await Promise.all([cancelled.stop(), stopSteer?.()])
+    await Promise.all([cancelled.stop(), stopSteer?.(), stopWatch?.()])
   }
 }
 
@@ -399,8 +549,13 @@ export default function codingTools(
           api.diagnostic({ severity: 'info', code: 'bash_hint', message })
       // One log per invocation: task ids repeat across projects and a retried call reruns its task.
       const log = join(tmpdir(), `ultimate-commits-${randomUUID()}.log`)
+      // Marks this call's shell, so its process group can be found and measured (`watchHeavy`).
+      const marker = randomUUID()
       const call = createBashTool({
-        prepare: (execution) => prepareBash(execution, api, log),
+        prepare: (execution) => {
+          prepareBash(execution, api, log)
+          execution.env[BASH_CALL_ENV] = marker
+        },
       })
       const run = (command: Context) => call.execute(args, api, command)
       // A known heavy command (tests, checks, installs, a server) runs here only while the machine's heavy-work slot is
@@ -410,12 +565,14 @@ export default function codingTools(
       if (need) {
         const claim = {
           id: `${host.projectRoot}:bash:${randomUUID()}`,
+          kind: 'heavy' as const,
           at: Date.now(),
           label: slotLabel(args.command),
           from: `#${api.conversationId} in ${basename(host.projectRoot)} (bash)`,
         }
         const entered = await enterSlot(claim, {
           floor: await memoryFloor(host.userHome),
+          cpu: await cpuLimit(host.userHome),
           need,
           start: thisProcess,
           queue: false,
@@ -427,8 +584,13 @@ export default function codingTools(
         // Held from here: the `finally` below lets it go however the command ends.
         release = keepHeld(claim)
       }
+      // With CPU admission on, a command its text does not show heavy is measured while it runs (#227574).
+      const watch =
+        !need && (await cpuLimit(host.userHome)) !== undefined
+          ? watchHeavy(host, api, args.command, `${BASH_CALL_ENV}=${marker}`)
+          : undefined
       try {
-        return await untilStopped(run, api, interruptible, context)
+        return await untilStopped(run, api, interruptible, context, watch)
       } finally {
         await release?.()
         // A failed or stopped command may still have committed, so record what it made either way.

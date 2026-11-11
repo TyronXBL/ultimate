@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename } from 'node:path'
+import { cpuLimit } from '../../lib/cpu.ts'
 import { commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
 import { describeWait, enterSlot, keepHeld, SLOT_POLL_MS, thisProcess } from '../../lib/slot.ts'
 import type { SlotClaim } from '../../lib/slot.ts'
@@ -181,18 +182,23 @@ async function onPc(sha: string, why: string) {
  */
 async function admitted(command: string[]) {
   const floor = await memoryFloor(homedir())
+  const cpu = await cpuLimit(homedir())
   const need = commandNeedMiB(command.join(' '))
   const claim: SlotClaim = {
     id: `ci-gate:${process.pid}:${command.join(' ')}`,
+    kind: 'heavy',
     at: Date.now(),
     label: command.join(' '),
     from: `the lander's CI gate in ${basename(cwd)}`,
   }
   let ramSince: number | undefined
+  let pressureSince: number | undefined
   for (let polls = 0; ; polls++) {
-    const entered = await enterSlot(claim, { floor, need, start: thisProcess })
+    const entered = await enterSlot(claim, { floor, need, cpu, pressureSince, start: thisProcess })
     if (entered.kind === 'started') return keepHeld(claim)
     ramSince = entered.kind === 'ram' ? (ramSince ?? Date.now()) : undefined
+    pressureSince =
+      entered.kind === 'cpu' && entered.outside ? (pressureSince ?? Date.now()) : undefined
     if (ramSince !== undefined && Date.now() - ramSince > RAM_WAIT_MS) {
       log(
         `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeWait(entered)}`,
