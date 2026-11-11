@@ -30,7 +30,34 @@ server:
   image_proxy: false
 search:
   formats: [html, json]
+outgoing:
+  source_ips: ['0.0.0.0']
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+engines:
+  - name: yahoo
+    disabled: false
+    categories: [general]
+  - name: duckduckgo
+    disabled: true
+  - name: github
+    categories: [general, it]
+  - name: stackoverflow
+    categories: [general, it]
+  - name: mdn
+    categories: [general, it]
 ```
+
+This profile prefers Yahoo over DuckDuckGo and makes GitHub, Stack Overflow and MDN available to general searches as well as `it`. Outgoing requests use IPv4; the five-second per-request timeout and ten-second request cap bound slow searches. Keep SearXNG's default engine error suspension behavior: repeated failures suspend an engine rather than retrying aggressively. Engine behavior and available names vary by SearXNG release; verify against the installed `settings.yml` and test real queries after updating.
+
+For a live user config, preserve a copy before editing and restart the user service after changes:
+
+```sh
+cp -p ~/.config/searxng/settings.yml ~/.config/searxng/settings.yml.before-profile
+systemctl --user restart searxng
+```
+
+Keep `secret.env` unchanged. The update automation refreshes the source and venv and restarts the service; it does not write `settings.yml`.
 
 `~/.config/systemd/user/searxng.service`:
 
