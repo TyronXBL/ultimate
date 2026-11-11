@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { chapterFiles, readChapters } from '../../lib/chapters.ts'
 import { concludedIds } from '../../lib/concluded.ts'
 import { shortTitle } from '../../lib/title.ts'
+import { forkChain } from './search.ts'
 
 export const limit = (value: unknown, fallback = 100) => {
   const n = value ?? fallback
@@ -62,19 +63,16 @@ export function readChapter(database: string, op: HistoryRead, args: unknown[]) 
       return JSON.parse(String(row.record)) as ConversationRecord
     }
     function* entries(value: unknown, before?: number): Generator<EntryRecord> {
-      let record = conversation(value)
-      let upper = before === undefined ? Number.MAX_SAFE_INTEGER : before - 1
-      while (true) {
-        for (const row of db
-          .prepare(
-            'SELECT record FROM entries WHERE conversation_id = ? AND id <= ? ORDER BY id DESC',
-          )
-          .iterate(record.id, upper))
+      const segment = db.prepare(
+        'SELECT record FROM entries WHERE conversation_id = ? AND id <= ? ORDER BY id DESC',
+      )
+      for (const { id: owner, upper } of forkChain(
+        conversation,
+        id(value),
+        before === undefined ? Number.MAX_SAFE_INTEGER : before - 1,
+      ))
+        for (const row of segment.iterate(owner, upper))
           yield JSON.parse(String(row.record)) as EntryRecord
-        if (!record.parent) return
-        upper = Math.min(upper, record.parent.at)
-        record = conversation(record.parent.conversationId)
-      }
     }
     /** The latest value of conversation document `kind` on `owner`: its last base with later deltas applied. */
     const doc = (kind: string, owner: number) => {

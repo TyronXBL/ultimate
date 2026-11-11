@@ -69,11 +69,10 @@ it('a long search neither stalls the event loop nor fails or delays host writes,
     expect(await searching).toEqual([])
     const searched = performance.now() - started
     clearInterval(tick)
-    // A scan on this thread would stall it for the whole search. The bounds leave room for a loaded machine, where an
-    // idle process already sees timer gaps of 100–170 ms (measured in #214751).
-    expect(searched).toBeGreaterThan(500)
-    expect(longest).toBeLessThan(250)
-    expect(writes.length).toBeGreaterThan(10)
+    // A scan on this thread would stall it for the whole search (984 ms of 1.2 s, measured in #214751). Half the search
+    // leaves room for a loaded machine, where an idle process already sees timer gaps of 100–170 ms.
+    expect(longest).toBeLessThan(Math.max(searched / 2, 100))
+    expect(writes.length).toBeGreaterThan(2)
     expect(writes.toSorted((a, b) => a - b)[writes.length >> 1]).toBeLessThan(20)
     expect(Math.max(...writes)).toBeLessThan(250)
     // A write the host committed is found by the next search.

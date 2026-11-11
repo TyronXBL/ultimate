@@ -3,7 +3,7 @@
  * the whole history never blocks the host (#199903: a full scan of a 145 MB chapter in JavaScript on the main thread
  * froze the host for 1.86 s). SQLite's `instr()` finds the matching rows; JavaScript only reads the hits.
  */
-import type { ConversationRecord } from '@earendil-works/pi-durable'
+import type { ConversationRecord, EntryRecord } from '@earendil-works/pi-durable'
 import { DatabaseSync } from 'node:sqlite'
 import { Worker } from 'node:worker_threads'
 
@@ -35,8 +35,9 @@ export function searchDatabase({
 }: SearchRequest) {
   // Pi upstream: @earendil-works/pi-durable@1.5.0 src/storage/sqlite/storage.ts writes each entry as
   // `JSON.stringify(entry)` into `entries.record`, so a substring of the stored text is a substring of the entry's JSON,
-  // and the excerpt below is cut from the same string the JavaScript scan built. Fork chains follow `readEntries`.
-  const db = new DatabaseSync(database, { readOnly: true })
+  // and the excerpt below is cut from the same string the JavaScript scan built.
+  // A busy timeout like Pi's own connections, for the rare moment a reader must wait (WAL recovery).
+  const db = new DatabaseSync(database, { readOnly: true, timeout: 1000 })
   try {
     const records = new Map(
       db
@@ -44,31 +45,29 @@ export function searchDatabase({
         .all()
         .map((row) => [Number(row.id), JSON.parse(String(row.record)) as ConversationRecord]),
     )
-    if (conversationId !== undefined && !records.has(conversationId))
-      throw new Error('Unknown conversation')
-    // One statement, and so one read transaction, per fork segment: a WAL checkpoint waits for at most one of them.
-    // SQLite matches UTF-8, where half a surrogate pair is no substring; JavaScript's indexOf matches it in UTF-16, so
-    // such text reads every row and the check below decides.
+    const conversation = (id: number) => {
+      const record = records.get(id)
+      if (!record) throw new Error('Unknown conversation')
+      return record
+    }
+    // One statement, and so one read transaction, per fork segment: a WAL checkpoint waits for at most one segment's
+    // scan. SQLite matches UTF-8, where half a surrogate pair is no substring; JavaScript's indexOf matches it in
+    // UTF-16, so such text reads every row and the check below decides.
     const segment = db.prepare(
-      `SELECT json_extract(record, '$.kind') AS kind, record FROM entries WHERE conversation_id = ? AND id <= ? AND ${text.isWellFormed() ? 'instr(record, ?) > 0' : '? IS NOT NULL'} ORDER BY id DESC`,
+      `SELECT record FROM entries WHERE conversation_id = ? AND id <= ? AND ${text.isWellFormed() ? 'instr(record, ?) > 0' : '? IS NOT NULL'} ORDER BY id DESC`,
     )
     const matches: unknown[] = []
-    for (const start of conversationId === undefined ? records.keys() : [conversationId]) {
-      let record = records.get(start)!
-      let upper = Number.MAX_SAFE_INTEGER
-      while (true) {
-        for (const row of segment.iterate(record.id, upper, text)) {
+    for (const start of conversationId === undefined ? records.keys() : [conversationId])
+      for (const { id, upper } of forkChain(conversation, start))
+        for (const row of segment.iterate(id, upper, text)) {
           const json = String(row.record)
           const at = json.indexOf(text)
-          if (at < 0 || (kinds && !kinds.includes(String(row.kind)))) continue
-          matches.push(hit(json, at, text.length, full))
+          if (at < 0) continue
+          const entry = JSON.parse(json) as EntryRecord
+          if (kinds && !kinds.includes(entry.kind)) continue
+          matches.push(full ? entry : hit(entry, json, at, text.length))
           if (matches.length === count) return matches
         }
-        if (!record.parent) break
-        upper = Math.min(upper, record.parent.at)
-        record = records.get(record.parent.conversationId)!
-      }
-    }
     return matches
   } finally {
     db.close()
@@ -76,13 +75,29 @@ export function searchDatabase({
 }
 
 /**
- * What a search returns for an entry whose JSON has the match at `at`: the whole entry with `full`, otherwise
- * `{conversation, id, kind, at, excerpt}` with about 200 characters of its JSON around the match, so wide audits stay
- * small enough to return and to send across projects.
+ * A conversation's fork-aware history as stored, newest first: the conversation, then each parent up to its fork point,
+ * as `{ id, upper }` segments, `upper` the last entry id the segment contributes.
  */
-function hit(json: string, at: number, length: number, full: boolean | undefined) {
-  const entry = JSON.parse(json)
-  if (full) return entry
+// Pi upstream: @earendil-works/pi-durable@1.5.0 src/storage/sqlite/storage.ts `readEntries` walks the same chain.
+export function* forkChain(
+  conversation: (id: number) => ConversationRecord,
+  start: number,
+  upper = Number.MAX_SAFE_INTEGER,
+) {
+  let record = conversation(start)
+  while (true) {
+    yield { id: record.id as number, upper }
+    if (!record.parent) return
+    upper = Math.min(upper, record.parent.at)
+    record = conversation(record.parent.conversationId)
+  }
+}
+
+/**
+ * The compact hit for an entry whose JSON has the match at `at`: `{conversation, id, kind, at, excerpt}` with about
+ * 200 characters of its JSON around the match, so wide audits stay small enough to return and to send across projects.
+ */
+function hit(entry: EntryRecord, json: string, at: number, length: number) {
   const start = Math.max(0, at - 80)
   const end = Math.min(json.length, at + length + 120)
   const time = entry.model?.[0]?.timestamp

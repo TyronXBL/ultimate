@@ -211,8 +211,15 @@ function localReads(host: ExtensionHost, context: Context) {
       })
     return rows.slice(0, count)
   }
-  /** Search the active chapter, or the closed one `options.chapter` names, in a worker (`search.ts`). */
-  const search = async (text: unknown, options: SearchOptions = {}) => {
+  /**
+   * Search the active chapter, or the closed one `options.chapter` names, in a worker (`search.ts`) that `signal`, the
+   * script call's own, terminates.
+   */
+  const search = async (
+    text: unknown,
+    options: SearchOptions = {},
+    signal = context.abortSignal,
+  ) => {
     const database =
       (await closedChapter(host.home, host.chapter.name, options)) ?? host.chapter.database
     if (typeof text !== 'string' || !text) throw new Error('search text must be nonempty')
@@ -225,7 +232,7 @@ function localReads(host: ExtensionHost, context: Context) {
         ...(options.kinds && { kinds: options.kinds }),
         ...(options.full && { full: true }),
       },
-      context.abortSignal,
+      signal,
     )
   }
   /**
@@ -261,7 +268,8 @@ function localReads(host: ExtensionHost, context: Context) {
     entries: history('entries', 1, ([conversation, options]) =>
       entries(conversation, options as Parameters<typeof entries>[1]),
     ),
-    search: ([text, options]) => search(text, options as SearchOptions),
+    search: ([text, options], signal?: AbortSignal) =>
+      search(text, options as SearchOptions, signal),
     trace: ([query]) => host.trace.query(query ?? {}),
     traceTree: ([traceId]) => {
       if (typeof traceId !== 'string' || !traceId) throw new Error('traceId must be nonempty')
@@ -275,7 +283,7 @@ function localReads(host: ExtensionHost, context: Context) {
       const snapshot = await host.harness().snapshot(token, id(conversation), context)
       return snapshot ?? token.definition.initial()
     },
-  } satisfies Record<Read, (args: unknown[]) => unknown>
+  } satisfies Record<Read, (args: unknown[], signal?: AbortSignal) => unknown>
   return { ...reads, toolRuns }
 }
 
@@ -325,7 +333,7 @@ function globals(
         )
         if (remote) return remote.value
       }
-      return reads[op](args)
+      return reads[op](args, signal)
     }
   const helpers: {
     name: string
