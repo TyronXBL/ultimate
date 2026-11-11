@@ -7,6 +7,7 @@ import { api, cn, errorMessage, useConversation, useDocOf, useViewport } from '@
 import { openQuestion } from '../../lib/message-state.ts'
 import type { Question } from '../messages/refs.ts'
 import { MessagesDoc } from '../messages/ui.tsx'
+import { holdAnswer } from './hold.tsx'
 import { keyCard, openQuestions } from './open.tsx'
 import type { Message } from './open.tsx'
 import { brief, QuestionItem } from './question.tsx'
@@ -80,19 +81,6 @@ export function MessageQuestions({
       {...(className === undefined ? {} : { className })}
     />
   )
-}
-
-/** Sends the answer waiting out its undo window now, if one does. */
-function flushPending(
-  pending: {
-    current?: { timer: ReturnType<typeof setTimeout>; fire: (keepalive?: boolean) => void }
-  },
-  keepalive = false,
-) {
-  const waiting = pending.current
-  if (!waiting) return
-  clearTimeout(waiting.timer)
-  waiting.fire(keepalive)
 }
 
 /** Where the card is: being answered, sent but still undoable, on its way, or settled into a summary. */
@@ -253,13 +241,10 @@ function Card({
   const [phase, setPhase] = useState<Phase>('answering')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
-  // The send waiting out its undo window, and the click that folds a chosen question away.
-  const pending = useRef<{
-    timer: ReturnType<typeof setTimeout>
-    fire: (keepalive?: boolean) => void
-  }>(undefined)
+  // The answer waiting out its undo window, and the click that folds a chosen question away.
+  const pending = useRef<ReturnType<typeof holdAnswer>>(undefined)
   const advance = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const flush = () => flushPending(pending)
+  const flush = () => pending.current?.now()
   const phone = useViewport() === 'phone'
   const hints = keys && !phone
   const words = questions.map((question, index) => answerOf(question, drafts[index]))
@@ -269,27 +254,14 @@ function Card({
   )
   const settled = phase !== 'answering'
 
-  // Leaving the page inside the undo window sends what was sent: only Undo takes it back.
-  useEffect(() => {
-    // Only this send is keepalive: keepalive bodies share a budget of about 64 KiB, and a note can be longer.
-    const leave = () => flushPending(pending, true)
-    window.addEventListener('pagehide', leave)
-    return () => {
-      window.removeEventListener('pagehide', leave)
+  // A card going away sends what it holds; leaving the page is holdAnswer's.
+  useEffect(
+    () => () => {
       clearTimeout(advance.current)
       flush()
-    }
-  }, [])
-  // pagehide alone lost about a third of these sends (#194520): its listeners run in the order they were added, the
-  // card's after the resume snapshot (web/src/sdk/resume.ts), and Chromium dropped a request the leaving page started
-  // that late. beforeunload fires before the page starts to go away; pagehide still covers phones, where it may not.
-  // Listened for only while Undo shows, as MDN advises for beforeunload.
-  useEffect(() => {
-    if (phase !== 'undo') return undefined
-    const leave = () => flushPending(pending, true)
-    window.addEventListener('beforeunload', leave)
-    return () => window.removeEventListener('beforeunload', leave)
-  }, [phase])
+    },
+    [],
+  )
 
   const focusField = (index: number) =>
     requestAnimationFrame(() =>
@@ -358,7 +330,7 @@ function Card({
     const extra = note.trim()
     if ((!list.length && !extra) || pending.current || phase !== 'answering') return
     clearTimeout(advance.current)
-    const fire = (keepalive = false) => {
+    const fire = (keepalive: boolean) => {
       pending.current = undefined
       setPhase('sending')
       setError(undefined)
@@ -370,13 +342,13 @@ function Card({
         },
       )
     }
-    pending.current = { timer: setTimeout(fire, UNDO_MS), fire }
+    pending.current = holdAnswer(fire, UNDO_MS)
     setPhase('undo')
   }
   const now = flush
   const undo = () => {
     if (!pending.current) return
-    clearTimeout(pending.current.timer)
+    pending.current.undo()
     pending.current = undefined
     setPhase('answering')
   }
