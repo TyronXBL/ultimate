@@ -489,10 +489,13 @@ it("queues a check's own heavy work in the machine's queue, not in the check's p
   await f.service.ready(id, context)
   await commit((await f.service.get(id, context))!.path)
   await f.service.submit(id, 'None', context)
-  // The check sees the job this test holds, so it passes.
-  const [report] = await submitted(f, id)
-  await releaseSlot(other.id)
-  expect(report).toContain('landed as')
+  try {
+    // The check sees the job this test holds, so it passes.
+    const [report] = await submitted(f, id)
+    expect(report).toContain('landed as')
+  } finally {
+    await releaseSlot(other.id)
+  }
 })
 it.concurrent('runs worktree setup on the merged revision before the checks', async () => {
   const f = await fixture()

@@ -152,7 +152,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     const floor = await memoryFloor(host.userHome)
     // A rerun after a crash between spawning and the poll checkpoint stops the group the first attempt started and
     // starts it again: a light command at once, as before the floor existed (that attempt already ran, and its own RAM
-    // was just freed), a heavy one through the queue, where its early `since` puts it first once the slot is free.
+    // was just freed), a heavy one through the queue: in its place when it had waited before, else at the end of the line.
     const left = await readPidFile(files.pid)
     if (left) await stopGroup(left, { pidFile: files.pid })
     const spawn = () => {
