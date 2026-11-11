@@ -322,6 +322,26 @@ describe('web replica store', () => {
     store.stop()
   })
 
+  it('shows a kept conversation, not the one before it, while its subscription is on its way', async () => {
+    const { store, server, latest } = setup()
+    latest().open()
+    store.show(7)
+    await tick()
+    server.of(7)!.send('view', view([user(2, 'seven')], {}, 7))
+    store.show(8)
+    await tick()
+    const eight = server.of(8)!
+    eight.send('view', view([user(3, 'eight')], {}, 8))
+    // Back to 7 from its kept copy: 7 is subscribed in a task of its own, and until then 8's subscription still sends
+    // (#224333: a late snapshot of 8 showed 8 under 7's address).
+    store.show(7)
+    eight.send('view', view([user(3, 'eight'), user(4, 'more')], {}, 8))
+    eight.send('ops', [['p', ['entries'], 1, 0, [user(5, 'later')]]])
+    expect(store.getState().view?.conversation.id).toBe(7)
+    expect(store.getState().view?.entries.map((entry) => entry.id)).toEqual([2])
+    store.stop()
+  })
+
   it('keeps the last six views shown and forgets the rest', async () => {
     const { store, server, latest } = setup()
     latest().open()

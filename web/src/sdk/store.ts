@@ -308,7 +308,13 @@ export function createStore(options: StoreOptions = {}) {
     const requested = state.requested
     main = subscribe(
       { conversation: requested, docs: [...docKinds.keys()].toSorted(), view: true },
-      (name, raw) => (name === 'view' ? receiveView(raw) : handle(name, JSON.parse(raw))),
+      (name, raw) => {
+        // `show` subscribes the next conversation in a task of its own: until then this one's events still arrive, and
+        // a late snapshot showed it under the next one's address (#224333).
+        if (requested !== state.requested) return
+        if (name === 'view') receiveView(raw)
+        else handle(name, JSON.parse(raw))
+      },
       (status) => {
         // The stream ended: its reconnect resubscribes.
         if (status === 410) return

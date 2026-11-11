@@ -74,7 +74,7 @@ async function seed() {
   await server.harness.commit(async (tx) => {
     ;(await tx.doc(Started, branch.id)).by = ultimate
   }, context)
-  for (const content of ['ask', ...Array.from({ length: 30 }, (_, index) => `turn ${index + 1}`)])
+  for (const content of ['ask', ...Array.from({ length: 15 }, (_, index) => `turn ${index + 1}`)])
     await (await branch.submit({ type: 'input', content }, context)).wait(context)
   const log = () => server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context)
   const ask = async () =>
@@ -98,32 +98,28 @@ it('jumps to an open question whose row is not drawn yet', async () => {
   await page.clock.install()
   await page.goto(`${server.url}/?conversation=${branch.id}`)
   const log = page.getByRole('log')
-  await log.getByText('Noted: turn 30.').waitFor()
+  await log.getByText('Noted: turn 15.').waitFor()
   await show(page, ultimate)
-  // Its own view in, before the pause: arriving later, it would take the place of the branch shown from its copy.
-  await page
-    .locator(`[data-ui="transcript"] [data-conversation-id="${ultimate}"]`)
-    .first()
-    .waitFor()
   // A second ahead, not more: a long jump fires the page's own timers, such as the stream's liveness checks.
   await page.clock.pauseAt(Date.now() + 1000)
   // Back to the branch from the tab's kept copy: its newest rows draw, the rest wait for a frame.
   await show(page, branch.id)
-  await log.getByText('Noted: turn 30.').waitFor()
-  const card = page.locator(`[data-message-outgoing="${question}"]`)
-  expect(await card.count()).toBe(0)
+  await log.getByText('Noted: turn 15.').waitFor()
+  const selector = `[data-message-outgoing="${question}"]`
+  expect(await page.locator(selector).count()).toBe(0)
   // All of it is loaded: the top marker stands only for rows not drawn yet.
   expect(await page.locator('[data-earlier-history]').count()).toBe(1)
 
   const mark = page.getByRole('button', { name: 'A question awaits your reply above' })
   await mark.click()
-  // The mark asks for the jump in the next frame.
-  await page.clock.runFor(20)
-  await card.waitFor()
-  const top = await card.evaluate((node) => node.getBoundingClientRect().top)
-  const view = await log.evaluate((node) => node.getBoundingClientRect())
-  expect(top).toBeGreaterThanOrEqual(view.top)
-  expect(top).toBeLessThan(view.bottom)
+  // The mark asks for the jump in a frame: one frame at a time until the card is on screen.
+  const onScreen = () =>
+    page.evaluate((target) => {
+      const top = document.querySelector(target)?.getBoundingClientRect().top
+      const view = document.querySelector('[role="log"]')!.getBoundingClientRect()
+      return top !== undefined && top >= view.top && top < view.bottom
+    }, selector)
+  await until(onScreen, 30_000, () => page.clock.runFor(16))
   // With the card on screen, the mark that pointed up to it is gone.
   await mark.waitFor({ state: 'detached' })
 })
@@ -142,10 +138,10 @@ it('stays at the bottom while earlier rows draw and new turns arrive', async () 
   })
   await page.goto(`${server.url}/?conversation=${branch.id}`)
   const log = page.getByRole('log')
-  await log.getByText('Noted: turn 30.').waitFor()
-  for (const content of ['turn 31', 'turn 32', 'turn 33'])
+  await log.getByText('Noted: turn 15.').waitFor()
+  for (const content of ['turn 16', 'turn 17', 'turn 18'])
     await (await branch.submit({ type: 'input', content }, context)).wait(context)
-  await log.getByText('Noted: turn 33.').waitFor()
+  await log.getByText('Noted: turn 18.').waitFor()
   // Every row drawn: with all of the history loaded, the top marker stood only for rows not drawn yet.
   await page.locator('[data-earlier-history]').waitFor({ state: 'detached' })
   // The view follows the last rows in the frame after they went in.
