@@ -2,13 +2,17 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import searxng from '../server.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import { removeTemp, temp } from '../../../test/helpers.ts'
 
 const cleanup: (() => Promise<void>)[] = []
+beforeEach(() => {
+  vi.stubEnv('ULTIMATE_WEB_SEARCH_STATE_HOME', undefined)
+})
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const close of cleanup.splice(0)) await close()
 })
 

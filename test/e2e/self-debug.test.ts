@@ -17,6 +17,7 @@ it('terminates an isolated instance after its owner is SIGKILLed', async () => {
     'ULTIMATE_GENERATION',
     'ULTIMATE_PREVIOUS_BUILD',
     'ULTIMATE_HOME',
+    'ULTIMATE_WEB_SEARCH_STATE_HOME',
     'ULTIMATE_PORT',
     'ULTIMATE_NO_OPEN',
     'ULTIMATE_INSTANCE_OWNER',
@@ -106,6 +107,7 @@ it('terminates an isolated instance after its owner is SIGKILLed', async () => {
     for (const key of keys.slice(0, 4)) expect(env).not.toHaveProperty(key)
     expect(env).toMatchObject({
       ULTIMATE_HOME: instance!.home,
+      ULTIMATE_WEB_SEARCH_STATE_HOME: home,
       ULTIMATE_PORT: '0',
       ULTIMATE_NO_OPEN: '1',
       ULTIMATE_INSTANCE_OWNER: String(owner.pid),

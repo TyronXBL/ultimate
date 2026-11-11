@@ -52,6 +52,8 @@ async function fixture({ foreign = false } = {}) {
   const root = await temp('ultimate-preview-')
   // Child hosts must sweep only this fixture, never the machine's real temporary directory.
   vi.stubEnv('TMPDIR', root)
+  // A developer's shared search override must not escape into a test preview.
+  vi.stubEnv('ULTIMATE_WEB_SEARCH_STATE_HOME', undefined)
   const checkout = resolve('.')
   const source = join(root, 'source')
   await git(root, 'clone', '--no-hardlinks', checkout, source)

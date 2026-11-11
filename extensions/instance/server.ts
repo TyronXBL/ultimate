@@ -179,7 +179,8 @@ function includeIn(parent: NodeJS.ProcessEnv, common: string, config: string) {
 /**
  * A preview keeps ordinary parent variables, but gets its own host identity, its own home (`HOME` and
  * `ULTIMATE_USER_HOME`, linked back by `linkHome` so `~` reaches its private `.ultimate` and the shared rest), no
- * inherited cloud settings, and `ULTIMATE_MODEL` only when `model` is set. In a git project (`git`: its real common
+ * inherited cloud settings, and `ULTIMATE_MODEL` only when `model` is set. Search admission and budget keep the
+ * parent's shared home. In a git project (`git`: its real common
  * dir, the preview's branch and its `guardConfig`) it never pushes and moves only its own branches; its lander lands on
  * `ULTIMATE_PREVIEW_BRANCH`.
  */
@@ -189,6 +190,7 @@ export function previewEnv(
     home: string
     project: string
     userHome: string
+    parentUserHome: string
     ownerPid: number
     model?: string
     git?: { common: string; branch: string; config: string }
@@ -205,6 +207,7 @@ export function previewEnv(
             'ULTIMATE_PREVIOUS_BUILD',
             'ULTIMATE_HOME',
             'ULTIMATE_USER_HOME',
+            'ULTIMATE_WEB_SEARCH_STATE_HOME',
             'ULTIMATE_PORT',
             'ULTIMATE_CLOUD_URL',
             'ULTIMATE_CLOUD_TOKEN',
@@ -218,6 +221,7 @@ export function previewEnv(
     ULTIMATE_PROJECT: options.project,
     HOME: options.userHome,
     ULTIMATE_USER_HOME: options.userHome,
+    ULTIMATE_WEB_SEARCH_STATE_HOME: parent.ULTIMATE_WEB_SEARCH_STATE_HOME ?? options.parentUserHome,
     ULTIMATE_PORT: '0',
     ULTIMATE_NO_OPEN: '1',
     ULTIMATE_INSTANCE_OWNER: String(options.ownerPid),
@@ -511,6 +515,7 @@ export default function instanceExtension(
         home,
         project,
         userHome,
+        parentUserHome: host.userHome,
         ownerPid: process.pid,
         model: await previewModelSetting(host),
         git: await previewGit(project, home),

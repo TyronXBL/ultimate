@@ -1,15 +1,20 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import { removeTemp, temp } from '../../../test/helpers.ts'
 import { writeSecret } from '../../secrets/store.ts'
+import { previewEnv } from '../../instance/server.ts'
 import { reserveSearch } from '../budget.ts'
 import searxng from '../server.ts'
 
 const homes: string[] = []
+beforeEach(() => {
+  vi.stubEnv('ULTIMATE_WEB_SEARCH_STATE_HOME', undefined)
+})
 afterEach(async () => {
+  vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   for (const home of homes.splice(0)) await removeTemp(home)
 })
@@ -145,6 +150,51 @@ it.each([
   expect(result.output[0].text.includes(failure)).toBe(
     scenario.outcome === 'outage' || scenario.outcome === 'unknown-empty',
   )
+})
+
+it('shares a host budget with a preview while keeping private user homes isolated', async () => {
+  const root = await temp()
+  homes.push(root)
+  const parent = join(root, 'parent')
+  const preview = join(root, 'preview')
+  await writeSecret(parent, 'TAVILY_API_KEY', 'test-key')
+  await writeSecret(preview, 'TAVILY_API_KEY', 'test-key')
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<(input: string | URL) => Promise<Response>>(async (input) =>
+      String(input).startsWith('https://api.tavily.com/')
+        ? Response.json({ results: [{ url: 'https://example.org', title: 'Result' }] })
+        : Response.json({ results: [], unresponsive_engines: [] }),
+    ),
+  )
+  const search = async (userHome: string) => {
+    const host = {
+      userHome,
+      notice: () => {},
+      resource: <T>(_key: string, create: () => T) => create(),
+      onClose: () => {},
+    } as unknown as ExtensionHost
+    const tool = searxng(host).tools![0]
+    const details = vi.fn<(value: unknown) => Promise<void>>(async () => {})
+    await tool.execute({ query: 'test' }, { details } as never, {} as never)
+    return details.mock.calls[0][0] as { outcome: string }
+  }
+  expect((await search(parent)).outcome).toBe('fallback')
+  const env = previewEnv(
+    {},
+    { home: root, project: root, userHome: preview, parentUserHome: parent, ownerPid: 1 },
+  )
+  vi.stubEnv('ULTIMATE_WEB_SEARCH_STATE_HOME', env.ULTIMATE_WEB_SEARCH_STATE_HOME)
+  expect((await search(preview)).outcome).toBe('fallback')
+  const db = new DatabaseSync(join(parent, '.ultimate/tavily-budget.sqlite'))
+  expect(db.prepare('SELECT used FROM budget').get()).toEqual({ used: 2 })
+  db.close()
+  await expect(access(join(preview, '.ultimate/tavily-budget.sqlite'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
+  await expect(
+    access(join(preview, '.ultimate/web-search-admission.sqlite')),
+  ).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 it('does not initiate fallback when a search is cancelled', async () => {

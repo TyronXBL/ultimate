@@ -359,6 +359,8 @@ async function body(response: Awaited<ReturnType<typeof fetch>>, contentType: st
 }
 
 export default function searxng(host: ExtensionHost) {
+  // A preview has private user settings but shares search admission and budget with its parent.
+  const stateHome = process.env.ULTIMATE_WEB_SEARCH_STATE_HOME ?? host.userHome
   // Unreachable or misconfigured instance: a tool error every call, one process-local notice ever.
   const notices = host.resource('searxng:notice', () => ({ sent: false }))
   const missingKey = host.resource('searxng:tavily-notice', () => ({ sent: false }))
@@ -628,7 +630,7 @@ export default function searxng(host: ExtensionHost) {
         async execute(args, api, context) {
           let release: (() => Promise<void>) | undefined
           try {
-            release = await admitSearch(host.userHome, context.abortSignal)
+            release = await admitSearch(stateHome, context.abortSignal)
             const primary = await search(args.query, {
               signal: context.abortSignal,
               categories: args.categories,
@@ -676,7 +678,7 @@ export default function searxng(host: ExtensionHost) {
               if (key) {
                 let reservation: number | null | undefined
                 try {
-                  reservation = await reserveSearch(host.userHome, context.abortSignal)
+                  reservation = await reserveSearch(stateHome, context.abortSignal)
                   if (reservation === null) reason = 'Tavily monthly limit of 1,000 calls reached.'
                 } catch {
                   reason = 'Tavily budget is unavailable; no request was sent.'
