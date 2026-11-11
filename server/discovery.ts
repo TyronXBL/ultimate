@@ -23,7 +23,7 @@ export function compareExtensions(
 type Found = {
   name: string
   path: string
-  /** `path` with symlinks resolved, read anew on each discovery: modules load from here, so a repointed link loads its new target. */
+  /** `path` with symlinks resolved: modules load from here, and a repointed link changes `path`'s stamp, so the next discovery loads its new target. */
   target: string
   source: Source
   files: string[]

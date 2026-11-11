@@ -1,10 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 import { afterEach, expect, it, vi } from 'vitest'
 import { expandSkillCommand, projectSkills } from '../server/skills.ts'
 import { skillInfo } from '../server/system.ts'
-import { removeTemp, temp, until } from './helpers.ts'
+import { removeTemp, temp } from './helpers.ts'
 
 let home: string
 afterEach(() => {
@@ -115,14 +115,12 @@ it('applies a change to a kept load on the next call', async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(Date.now() + 60_000)
   const described = () => projectSkills(host).skills.map((s) => `${s.name}: ${s.description}`)
-  // The real clock moves on before each change, so a coarse file system clock stamps it apart from the last one.
-  const later = async () => {
-    const from = performance.now()
-    await until(() => performance.now() > from + 20)
-  }
   expect(described()).toEqual(['review: Clone review', 'ship: User ship'])
   expect(projectSkills(host)).toBe(projectSkills(host))
-  const changes: [string, () => Promise<unknown>, string[]][] = [
+  // Each change gets a modification time of its own, as a later clock tick gives it; a coarse file system clock could
+  // otherwise stamp it as the setup, in the same tick (a real result that young is never kept).
+  let tick = 1_000_000_000
+  const changes: [string, () => Promise<unknown>, string, string[]][] = [
     [
       'edit of the same size',
       () =>
@@ -130,6 +128,7 @@ it('applies a change to a kept load on the next call', async () => {
           join(host.userHome, '.ultimate/skills/ship/SKILL.md'),
           'name: ship\ndescription: User shiq',
         ),
+      join(host.userHome, '.ultimate/skills/ship/SKILL.md'),
       ['review: Clone review', 'ship: User shiq'],
     ],
     [
@@ -139,18 +138,21 @@ it('applies a change to a kept load on the next call', async () => {
           join(host.ultimateRoot, 'skills/group/deep/SKILL.md'),
           'name: deep\ndescription: Nested',
         ),
+      join(host.ultimateRoot, 'skills'),
       ['deep: Nested', 'review: Clone review', 'ship: User shiq'],
     ],
     [
       'trusting the project',
       async () =>
         new ProjectTrustStore(join(host.userHome, '.ultimate')).set(host.projectRoot, true),
+      join(host.userHome, '.ultimate/trust.json'),
       ['deep: Nested', 'review: Project review', 'ship: User shiq', 'team: Team skill'],
     ],
   ]
-  for (const [change, apply, expected] of changes) {
-    await later()
+  for (const [change, apply, changed, expected] of changes) {
     await apply()
+    tick++
+    await utimes(changed, tick, tick)
     expect([change, described()]).toEqual([change, expected])
   }
 })

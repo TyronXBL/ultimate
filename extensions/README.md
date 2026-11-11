@@ -70,7 +70,8 @@ No restart, no reload.
   (git and isolation checks), `json-file.ts` (read, atomic write, serialised update), `settings.ts`, `secrets.ts`
   (read-only), `cloud.ts` (the user's cloud settings), `project-identity.ts` (a project's GitHub key), `entries.ts`
   (`isInput`) and `agents.ts` (agent definitions and their discovery). Import them freely; they reload with the
-  extensions that import them. `lib/` holds no state and imports no extension or `web/` code; only `agents.ts` reads
+  extensions that import them. `lib/` holds no state (beyond `file-memo.ts` caches no caller can tell from a fresh read)
+  and imports no extension or `web/` code; only `agents.ts` reads
   the core project trust decision at runtime.
 
 ## Tests

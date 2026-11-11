@@ -1,10 +1,10 @@
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ModelRuntime, ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 import { afterEach, expect, it, vi } from 'vitest'
 import { discoverAgents, parseDefinition, serializeDefinition } from '../lib/agents.ts'
 import type { DefinitionFields } from '../lib/agents.ts'
-import { removeTemp, temp, until } from './helpers.ts'
+import { removeTemp, temp } from './helpers.ts'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -137,54 +137,57 @@ it('applies every kind of change to a kept discovery on the next call', async ()
   const discover = () => discoverAgents(repo, project, home, modelRuntime)
   const described = async () =>
     (await discover()).definitions.map((agent) => `${agent.name}: ${agent.instructions}`)
-  // The real clock moves on before each change, so a coarse file system clock stamps it apart from the last one.
-  const later = async () => {
-    const from = performance.now()
-    await until(() => performance.now() > from + 20)
-  }
   expect(await described()).toEqual(['scout: Look around', 'worker: Build'])
   expect(await discover()).toBe(await discover())
-  const changes: [string, () => Promise<unknown>, string[]][] = [
+  const userAgents = join(home, '.ultimate/agents')
+  // Each change gets a modification time of its own, as a later clock tick gives it; a coarse file system clock could
+  // otherwise stamp it as the setup, in the same tick (a real result that young is never kept).
+  let tick = 1_000_000_000
+  const changes: [string, () => Promise<unknown>, string, string[]][] = [
     [
       'edit of the same size',
       () => writeFile(join(repo, 'agents/scout.md'), definition('Look aroune')),
+      join(repo, 'agents/scout.md'),
       ['scout: Look aroune', 'worker: Build'],
     ],
     [
       'new file',
-      () => writeFile(join(home, '.ultimate/agents/scout.md'), definition('Mine')),
+      () => writeFile(join(userAgents, 'scout.md'), definition('Mine')),
+      userAgents,
       ['scout: Mine', 'worker: Build'],
     ],
     [
       'atomic rename over a file',
       async () => {
-        await writeFile(join(home, '.ultimate/agents/.scout.tmp'), definition('Saved'))
-        await rename(
-          join(home, '.ultimate/agents/.scout.tmp'),
-          join(home, '.ultimate/agents/scout.md'),
-        )
+        await writeFile(join(userAgents, '.scout.tmp'), definition('Saved'))
+        await rename(join(userAgents, '.scout.tmp'), join(userAgents, 'scout.md'))
       },
+      userAgents,
       ['scout: Saved', 'worker: Build'],
     ],
     [
       'delete',
-      () => rm(join(home, '.ultimate/agents/scout.md')),
+      () => rm(join(userAgents, 'scout.md')),
+      userAgents,
       ['scout: Look aroune', 'worker: Build'],
     ],
     [
       'trusting the project',
       async () => new ProjectTrustStore(join(home, '.ultimate')).set(project, true),
+      join(home, '.ultimate/trust.json'),
       ['scout: Look aroune', 'worker: Build', 'lead: Lead'],
     ],
     [
       'declining it',
       async () => new ProjectTrustStore(join(home, '.ultimate')).set(project, false),
+      join(home, '.ultimate/trust.json'),
       ['scout: Look aroune', 'worker: Build'],
     ],
   ]
-  for (const [change, apply, expected] of changes) {
-    await later()
+  for (const [change, apply, changed, expected] of changes) {
     await apply()
+    tick++
+    await utimes(changed, tick, tick)
     expect([change, await described()]).toEqual([change, expected])
   }
 })

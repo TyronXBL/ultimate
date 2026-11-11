@@ -59,7 +59,9 @@ export function decisionRoot(projectRoot: string) {
 /** `decisionRoot` and every path it read. */
 function decisionInputs(projectRoot: string) {
   const root = realpathSync(resolve(projectRoot))
-  const paths = [projectRoot, join(root, '.git')]
+  // The folder's own stamp changes when a `.git` appears, goes or turns from a folder into a file. A `.git` folder
+  // itself is not stamped: most git commands change it.
+  const paths = [projectRoot]
   let link: string
   try {
     link = readFileSync(join(root, '.git'), 'utf8')
@@ -69,6 +71,7 @@ function decisionInputs(projectRoot: string) {
       return { root, paths }
     throw error
   }
+  paths.push(join(root, '.git'))
   const gitdir = resolve(root, link.match(/^gitdir: (.+)$/m)![1])
   paths.push(join(gitdir, 'commondir'))
   // A submodule's `.git` file has no `commondir`; it keeps its own decision too.
@@ -90,7 +93,10 @@ export function projectDecision(projectRoot: string, userHome = homedir()) {
   const path = join(userHome, '.ultimate/trust.json')
   const key = `${projectRoot}\0${userHome}`
   const kept = decisions.get(key)
-  if (kept !== undefined) return kept
+  if (kept !== undefined) {
+    errors.delete(path)
+    return kept
+  }
   const since = Date.now()
   try {
     const { root, paths } = decisionInputs(projectRoot)

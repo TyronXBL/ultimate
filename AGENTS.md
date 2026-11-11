@@ -40,7 +40,8 @@ picture, the UI included, for explaining Ultimate to a user; `extensions/lineage
 - `extensions/<name>/api.ts`: its contract for other extensions; `export const tier = 'core'` puts it in the
   always-on core tier, which depends only on the core tier, one way
   ([the core tier docs](docs/extensions/core-tier.md)). Goes live with the facets that import it.
-- `lib/`: pure helpers extensions share (exec, git, JSON and settings files, secret reads); no state, no extension
+- `lib/`: pure helpers extensions share (exec, git, JSON and settings files, secret reads); no state beyond
+  `file-memo.ts` caches no caller can tell from a fresh read, no extension
   imports. Goes live like the extensions that import it: rebuilt or reinstalled on save.
 - `web/`: the web core (surface host with primitives, SDK in `web/src/sdk`, transcript, composer, palette). Rebuilt
   and switched to like a `web.tsx`.
