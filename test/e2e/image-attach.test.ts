@@ -30,6 +30,7 @@ it('attaches an image picked with the paperclip and sends it', async () => {
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   let received: { data: string; mimeType: string } | undefined
@@ -73,6 +74,7 @@ it('uploads a PDF picked with the paperclip and sends its path, not its bytes', 
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   let received: unknown

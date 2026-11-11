@@ -22,6 +22,7 @@ it('leaves the shared selection alone when a plain Playwright page opens another
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   const created = async () => (await post(server, '/api/conversations', {})).data.id as number

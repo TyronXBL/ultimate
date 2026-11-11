@@ -35,6 +35,7 @@ async function setup() {
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   // The branch asks with its reasoning first, as models do; anything else gets a long answer.

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { setImmediate as yieldIO } from 'node:timers/promises'
 import { join, resolve, sep } from 'node:path'
@@ -9,7 +9,7 @@ import { awaitWithContext } from '@earendil-works/chord/context'
 import type { Context } from '@earendil-works/chord'
 import { defineTask } from '@earendil-works/pi-durable'
 import type { ConversationId, ConversationView, Harness } from '@earendil-works/pi-durable'
-import { afterAll, vi } from 'vitest'
+import { afterAll, inject, vi } from 'vitest'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux'
@@ -33,6 +33,7 @@ import type { Api } from '../shared/extension-api.ts'
 import type { EventData, EventToken } from '../shared/events.ts'
 import { EventFeed, eventLog } from '../server/events.ts'
 import type { Reactor } from '../server/events.ts'
+import { copySource, linkDependencies } from './source-copy.ts'
 
 vi.mock('@earendil-works/pi-ai/providers/faux', async (importOriginal) => {
   const original = await importOriginal<typeof import('@earendil-works/pi-ai/providers/faux')>()
@@ -203,14 +204,7 @@ export async function temp(prefix = 'ultimate-test-', parent = tmpdir()) {
   temps.add(path)
   return path
 }
-export async function linkDependencies(root: string) {
-  const target = join(root, 'node_modules')
-  await mkdir(target)
-  for (const name of await readdir(resolve('node_modules'))) {
-    if (name.startsWith('.vite')) continue
-    await symlink(resolve('node_modules', name), join(target, name))
-  }
-}
+export { linkDependencies }
 /**
  * Copy `shared/`, `lib/` and every extension's `api.ts` and `refs.ts` into `root`, so partially copied extensions find
  * their contracts and helpers.
@@ -253,38 +247,11 @@ export async function trimmedSourceCopy(parent: string, used: string[]) {
     await rm(join(root, 'extensions', name), { recursive: true })
   return root
 }
-/**
- * A copy of the checkout to boot a server from. With `web`, it optimizes its dependencies and warms the app up at boot
- * as the host does, for a test that loads the page.
- */
-export async function sourceCopy(parent: string, { web = false } = {}) {
+/** A copy of the checkout to boot a server from. */
+export async function sourceCopy(parent: string) {
   await mkdir(parent, { recursive: true })
   const root = await temp('source-', parent)
-  // One cp per top-level entry: a `filter` makes Node walk the tree in JS, more than ten times slower.
-  await Promise.all(
-    (await readdir(resolve('.')))
-      .filter((name) => name !== '.git' && name !== 'node_modules')
-      .map((name) => cp(resolve(name), join(root, name), { recursive: true })),
-  )
-  await linkDependencies(root)
-  const config = join(root, 'vite.config.ts')
-  // This config is immutable after boot: ignore stale native events replayed from the initial copy.
-  let source = (await readFile(config, 'utf8')).replace(
-    'export default defineConfig({',
-    'export default defineConfig({ server: { watch: { ignored: [(file) => file === fileURLToPath(import.meta.url)] } },',
-  )
-  // Without `web`, optimize on page requests, not fixture boot; React's plugin otherwise eagerly includes deps.
-  if (!web)
-    source = source
-      .replace(
-        'export default defineConfig({',
-        "export default defineConfig({ cacheDir: '.vite-cache', optimizeDeps: { entries: [] },",
-      )
-      .replace(
-        'plugins: [react(), tailwindcss()],',
-        "plugins: [react(), tailwindcss(), { name: 'test:lazy-deps', configResolved(config) { config.optimizeDeps.include = [] } }],",
-      )
-  await writeFile(config, source)
+  await copySource(root)
   new ProjectTrustStore(join(parent, '.ultimate')).set(root, true)
   return root
 }
@@ -313,14 +280,28 @@ type FixtureOptions = ServerOptions & {
   localSetup?: boolean
   /** Keep the first-run welcome; by default it is marked done so it does not cover the UI under test. */
   firstRun?: boolean
-  /** The test loads the page: the source copy prepares the web app at boot (`sourceCopy`). */
+  /**
+   * The test loads the page: the server runs from the run's shared source copy and starts with its built web bundle
+   * (`test/e2e/web-bundle.ts`), so the first page load does not build one. e2e tests only, on this checkout.
+   */
   web?: boolean
+}
+/** The run's shared source copy, its built bundle copied into the fixture's home, where the server finds it fresh. */
+async function prebuilt({ ultimateRoot, projectRoot, home }: FixtureOptions) {
+  const bundle = inject('webBundle')
+  if (!bundle)
+    throw new Error('`web` needs the bundle the e2e global setup builds (test/e2e/web-bundle.ts)')
+  if (ultimateRoot !== resolve('.') || (projectRoot && projectRoot !== resolve('.')))
+    throw new Error('`web` serves the shared copy of this checkout')
+  await cp(bundle.web, join(home, 'web'), { recursive: true })
+  return bundle.root
 }
 async function isolated(options: FixtureOptions) {
   const { home, userHome } = options
-  const ultimateRoot =
-    options.ultimateRoot === resolve('.')
-      ? await sourceCopy(home, { web: options.web })
+  const ultimateRoot = options.web
+    ? await prebuilt(options)
+    : options.ultimateRoot === resolve('.')
+      ? await sourceCopy(home)
       : options.ultimateRoot
   const projectRoot =
     !options.projectRoot || options.projectRoot === resolve('.')

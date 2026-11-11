@@ -21,6 +21,7 @@ it('keeps the composer editor and file input when the standing agents document a
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   const browser = await launchBrowser()

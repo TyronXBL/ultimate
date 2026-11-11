@@ -21,6 +21,7 @@ it('resizes a pasted image over the limit and sends it', async () => {
     userHome: home,
     home: join(home, 'state'),
     port: 0,
+    web: true,
   })
   cleanup.push(() => server.close())
   let received: { data: string; mimeType: string } | undefined
