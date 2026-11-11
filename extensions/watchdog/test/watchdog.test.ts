@@ -37,6 +37,7 @@ import { Pin } from '../../models/api.ts'
 import { Owner } from '../../models/set-model.ts'
 import type { ModelOwner } from '../../models/refs.ts'
 import { ContextUsageDoc } from '../../conversations/api.ts'
+import { contextBehavior } from '../../conversations/context.ts'
 import { idleNote } from '../idle.ts'
 import { Messages } from '../../messages/api.ts'
 import { Branch } from '../../lineage/api.ts'
@@ -87,12 +88,13 @@ async function fixture(
   let now = 1_000_000
   const registry = createRegistry()
   const models = createModels()
-  // Windows as in #189897's chain: a 1M primary and backup, and a last backup of 128k.
+  // Windows as in #189897's and #207552's chains: a 1M primary and backups, and a last backup of 128k.
   const faux = fauxProvider({
     models: [
       { id: 'faux-1', reasoning: true, contextWindow: 1_000_000 },
       { id: 'faux-2', reasoning: true, contextWindow: 1_000_000 },
       { id: 'faux-3', reasoning: true, contextWindow: 128_000 },
+      { id: 'faux-4', reasoning: true, contextWindow: 1_000_000 },
     ],
   })
   models.setProvider(faux.provider)
@@ -287,6 +289,8 @@ async function fixture(
       })
       registry.install(modelsExtension(host))
       registry.install(backupExtension(host))
+      // The context size backup reads, kept from the answers as the conversations extension does.
+      contextBehavior(host)
     },
     stop: async (id: ConversationId, parent: ConversationId) => {
       // Its own registry: this subagents must not replace the fixture's Pin.
@@ -560,18 +564,28 @@ it('continues on a backup model after a quota limit, and reports nothing', async
 /**
  * #189897, #191380, #194520 and @ultimate #147499 on 2026-11-09: the primary answers with a rate limit, the first backup
  * with an exhausted quota, and the last backup has a window smaller than the conversation. @ultimate fails itself, so
- * nothing would resume it. Brought to the point where it waits on its primary, past its watchdog's 5 seconds.
+ * nothing would resume it. Brought to the point where it waits on its primary, past its watchdog's 5 seconds. `limits`
+ * says what each model answers while `limited.primary`; the conversation's last answer measured `tokens`.
  */
-async function incident(
+async function incident({
   fallback = ['faux/faux-2', 'faux/faux-3'],
-  who: 'ultimate' | 'branch' = 'ultimate',
-) {
+  who = 'ultimate',
+  limits = { 'faux-1': rateLimit, 'faux-2': quota },
+  tokens = 200_000,
+}: {
+  fallback?: string[]
+  who?: 'ultimate' | 'branch'
+  limits?: Record<string, string>
+  tokens?: number
+} = {}) {
   vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 })
   const limited = { primary: true }
+  const asked: string[] = []
   const answered: { model: string; inputs: string[] }[] = []
   const f = await fixture((transcript, _options, _state, by) => {
-    if (by.id === 'faux-2') return error(quota)
-    if (by.id === 'faux-1' && limited.primary) return error(rateLimit)
+    asked.push(by.id)
+    // Thrown, so the error reports no usage, as a provider's 429 or 402 does; a returned one gets faux's estimate.
+    if (limited.primary && Object.hasOwn(limits, by.id)) throw new Error(limits[by.id])
     answered.push({
       model: by.id,
       inputs: transcript.messages.flatMap((message) =>
@@ -588,18 +602,28 @@ async function incident(
     f.advance(ms)
   }
   const id = who === 'ultimate' ? f.ultimate : await f.conversation('Branch')
+  // Measured as in production, from the last answer's usage (#207552: the size was written by hand before).
+  const measured = fauxAssistantMessage('read')
+  measured.usage = { ...measured.usage, input: 2, cacheRead: tokens - 2 }
   await f.harness.commit(async (tx) => {
-    ;(await tx.doc(ContextUsageDoc, id)).tokens = 200_000
+    await tx.appendEntry(id, { kind: 'pi.assistant', model: [measured] })
   }, context)
+  await until(
+    async () => (await f.harness.snapshot(ContextUsageDoc, id, context))?.tokens === tokens,
+  )
   await (await f.submit(id, 'go')).wait(context)
-  // The rate limit moved it to the first backup; its continuation there met the exhausted quota.
-  await f.sleeping()
-  tick(5_000)
+  // Each limit moves it to the next backup, and its watchdog continues it there 5 seconds later, until it waits.
   const owner = () => f.harness.snapshot(Owner, id, context)
-  await until(async () => (await owner())?.by === 'limit-wait')
-  await until(async () => (await f.tasks()).length === 2)
-  await f.sleeping()
-  tick(5_000)
+  for (let failures = 1; ; failures++) {
+    await until(async () => {
+      const now = await owner()
+      return now?.by === 'limit-wait' || (now?.by === 'backup' && now.tried.length === failures)
+    })
+    await until(async () => (await f.tasks()).length === failures)
+    await f.sleeping()
+    tick(5_000)
+    if ((await owner())?.by === 'limit-wait') break
+  }
   // Sleeping for the wait, not for the watchdog's first 5 seconds, which also wake into `retry`.
   const retrying = async () =>
     (await f.tasks()).filter(
@@ -612,7 +636,7 @@ async function incident(
   const [sleeping] = await retrying()
   const inputs = async () =>
     (await f.host.scanSubmissions({ conversationId: id }, 100, undefined, context)).items
-  return { f, id, tick, limited, answered, owner, wait, sleeping, inputs, retrying }
+  return { f, id, tick, limited, asked, answered, owner, wait, sleeping, inputs, retrying }
 }
 
 it('waits on the primary when no backup can take a limit, and continues @ultimate itself once the wait is over', async () => {
@@ -690,10 +714,9 @@ it('waits on the primary when no backup can take a limit, and continues @ultimat
 
 // Review of #195155: a branch's answer reaches its starter only as the answer to an input, so each try asks again.
 it('asks a branch to continue at each try of its wait', async () => {
-  const { f, tick, limited, answered, owner, wait, inputs, retrying } = await incident(
-    undefined,
-    'branch',
-  )
+  const { f, tick, limited, answered, owner, wait, inputs, retrying } = await incident({
+    who: 'branch',
+  })
   tick(wait.until - Date.now())
   await until(async () => {
     const now = await owner()
@@ -715,7 +738,7 @@ it('asks a branch to continue at each try of its wait', async () => {
 
 // Review of #195155: with one backup, the watchdog saw no other backup to continue on and reported a wait as a failure.
 it('continues a wait when its only backup is limited too', async () => {
-  const { f, tick, limited, answered, owner, wait } = await incident(['faux/faux-2'])
+  const { f, tick, limited, answered, owner, wait } = await incident({ fallback: ['faux/faux-2'] })
   expect(wait).toMatchObject({
     by: 'limit-wait',
     attempt: 1,
@@ -727,6 +750,76 @@ it('continues a wait when its only backup is limited too', async () => {
   expect(await owner()).toEqual({ by: 'default' })
   expect(await f.entries()).toEqual([])
 })
+
+const outOfCredit =
+  '402: {"message":"the organization is out of credit, add more to continue","type":"insufficient_quota","param":null,"code":"insufficient_quota"}'
+/**
+ * #207552, 2026-11-10 about 22:40 UTC: one account's rate limit on every Anthropic model, and the last backup, GLM with a
+ * 128k window, out of credit. The size check read 0 after the first 429, so each chain switched to GLM, where Pi
+ * compacted and no model could write the summary: nothing waited, and the runs sat until morning.
+ */
+it.each([
+  {
+    row: '#206919, a branch on Opus',
+    who: 'branch',
+    fallback: ['faux/faux-2', 'faux/faux-3'],
+    tokens: 153_828,
+  },
+  {
+    row: '#202077, a branch on Fable',
+    who: 'branch',
+    fallback: ['faux/faux-4', 'faux/faux-2', 'faux/faux-3'],
+    tokens: 158_429,
+  },
+  {
+    row: '#199140, @ultimate on Fable',
+    who: 'ultimate',
+    fallback: ['faux/faux-4', 'faux/faux-2', 'faux/faux-3'],
+    tokens: 165_179,
+  },
+] as const)(
+  'waits on the primary when every model of its chain is limited: $row',
+  async ({ who, fallback, tokens }) => {
+    const { f, id, tick, limited, asked, answered, owner, wait } = await incident({
+      who,
+      fallback: [...fallback],
+      tokens,
+      limits: {
+        'faux-1': rateLimit,
+        'faux-4': rateLimit,
+        'faux-2': rateLimit,
+        'faux-3': outOfCredit,
+      },
+    })
+    const rated = fallback.filter((ref) => ref !== 'faux/faux-3')
+    expect(wait).toMatchObject({ primary: model, attempt: 1, tried: ['faux/faux-1', ...rated] })
+    await until(async () => (await f.entries(id, 'backup.wait')).length === 1)
+    const [card] = await f.entries(id, 'backup.wait')
+    expect(card.data).toMatchObject({
+      primary: 'faux/faux-1',
+      reason: 'rate limit',
+      skipped: [
+        ...rated.map((ref) => ({ model: ref, why: 'tried' })),
+        { model: 'faux/faux-3', why: `128k window, ${Math.round(tokens / 1000)}k context` },
+      ],
+    })
+    // The 128k backup is asked for nothing, neither an answer nor a summary.
+    expect(asked).not.toContain('faux-3')
+
+    limited.primary = false
+    tick(wait.until - Date.now())
+    await until(async () => answered.length === 1)
+    expect(answered[0].model).toBe('faux-1')
+    expect(await owner()).toEqual({ by: 'default' })
+    const compactions = await f.harness.commit(
+      (tx) => tx.scanTasks({ kind: CompactionTask.definition.name }, 10),
+      context,
+    )
+    expect(compactions.items).toEqual([])
+    expect(await f.entries()).toEqual([])
+    expect(f.notices).toEqual([])
+  },
+)
 
 it('keeps a wait across a restart: it neither fires at once nor is lost', async () => {
   const { f, tick, limited, answered, wait, inputs } = await incident()

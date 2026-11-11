@@ -67,18 +67,18 @@ export function waitUntil(now: number, attempt: number, jitter: number, reset?: 
  */
 export const jitterOf = (id: number) => ((id * 2654435761) % 2 ** 32) / 2 ** 32
 
-/** How long a quota whose provider gave no reset time (a 402 out of credit) counts as exhausted. */
-const EXHAUSTED_FOR = 60 * MINUTE
-
 /**
  * `backup.exhausted`, on the root: the models (`provider/modelId`) this machine saw answer with an exhausted quota, and
  * until when, so no conversation tries them again before; `at` when it was seen, `error` as the provider said it.
+ * Without `until` its provider reported no reset: an account out of credit, which no time resets (#207552: GLM's 402
+ * came back every hour).
  */
-export type Exhausted = Record<string, { until: number; at: number; error: string }>
+export type Exhausted = Record<string, { until?: number; at: number; error: string }>
 
 /**
- * What changes the exhausted models: a quota answer of `model`, until its provider's reset or `EXHAUSTED_FOR`; an answer
- * of `model` that is no error, which shows it has room again; a login or logout of `provider`, whose account may differ.
+ * What changes the exhausted models: a quota answer of `model`, until its provider's reset, else until one of the
+ * others; an answer of `model` that is no error, which shows it has room again (a pick of it, after a top-up); a login
+ * or logout of `provider`, whose account may differ.
  */
 export type ExhaustedEvent =
   | { type: 'quota'; model: string; reset?: number; error: string }
@@ -90,24 +90,28 @@ export function exhaustedStep(doc: Exhausted, event: ExhaustedEvent, now: number
   const next = Object.fromEntries(
     Object.entries(doc).filter(
       ([model, { until }]) =>
-        until > now &&
+        (until === undefined || until > now) &&
         !(event.type === 'answered' && model === event.model) &&
         !(event.type === 'login' && model.startsWith(`${event.provider}/`)),
     ),
   )
   if (event.type === 'quota')
     next[event.model] = {
-      until: event.reset !== undefined && event.reset > now ? event.reset : now + EXHAUSTED_FOR,
+      ...(event.reset !== undefined && event.reset > now ? { until: event.reset } : {}),
       at: now,
       error: event.error,
     }
   return next
 }
 
-/** Until when `model` is exhausted at `now`; undefined when it is not. */
+/**
+ * Until when `model` is exhausted at `now`: a time, `Infinity` when out of credit (no reset in time), undefined when it
+ * is not.
+ */
 export const exhaustedUntil = (doc: Exhausted, model: string, now: number) => {
-  const until = Object.hasOwn(doc, model) ? doc[model].until : undefined
-  return until !== undefined && until > now ? until : undefined
+  if (!Object.hasOwn(doc, model)) return undefined
+  const { until = Infinity } = doc[model]
+  return until > now ? until : undefined
 }
 
 /**

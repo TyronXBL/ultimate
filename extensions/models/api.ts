@@ -49,6 +49,19 @@ export type BackupOrderService = {
    * read inside `tx`. Switches nothing.
    */
   order(tx: Tx, id: ConversationId): Promise<FallbackModel[]>
+  /**
+   * No model could do that work for conversation `id`: `refusals` are the models that refused it, its own model first
+   * (with a limit), then those of `order`, each with its error and, when its provider reported one, its reset (ms).
+   * Recorded as if the conversation had asked them, so it waits on its primary when it can, instead of failing (#207552).
+   * `key` names the work (a compaction task), so the work done again records once.
+   */
+  refused(id: ConversationId, refusals: Refusal[], key: number): Promise<void>
+}
+/** A model that refused work for a conversation (`BackupOrderService.refused`). */
+export type Refusal = {
+  model: { provider: string; modelId: string }
+  error: string
+  reset?: number
 }
 /**
  * The extension point work that runs on a conversation's model asks where to go when that model is limited, without
