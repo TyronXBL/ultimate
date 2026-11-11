@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, rm, writeFile, access } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { TaskId } from '@earendil-works/pi-durable'
 import { expect, it } from 'vitest'
@@ -437,7 +437,8 @@ it.concurrent('kills the whole process group of a running check when the lander 
     }
   }, 5000)
 })
-it.concurrent('waits in the heavy-work queue for its heavy checks and lets the slot go before the light ones', async () => {
+// Not concurrent, like the next one: both hold the heavy-work queue this file's tests share.
+it('waits in the heavy-work queue for its heavy checks and lets the slot go before the light ones', async () => {
   const f = await fixture()
   const ran = join(f.directory, 'heavy-ran')
   const light = heldCheck(f)
@@ -467,6 +468,30 @@ it.concurrent('waits in the heavy-work queue for its heavy checks and lets the s
   expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({ kind: 'next' })
   await light.release()
   const [report] = await submitted(f, id)
+  expect(report).toContain('landed as')
+})
+it("queues a check's own heavy work in the machine's queue, not in the check's private TMPDIR", async () => {
+  const f = await fixture()
+  // What the CI gate's local fallback does: look at the queue from inside a check, as a plain bash command would.
+  const script = join(f.directory, 'look.ts')
+  await writeFile(
+    script,
+    `import { enterSlot, thisProcess } from '${resolve('lib/slot.ts')}'\n` +
+      `const look = await enterSlot({ id: 'gate', at: Date.now(), label: 'pnpm test', from: 'the gate' }, { floor: undefined, need: 1536, start: thisProcess, queue: false })\n` +
+      `process.exit(look.kind === 'waiting' ? 0 : 1)\n`,
+  )
+  f.host.projectSettings = async () => ({ lander: { checks: [`node '${script}'`] } })
+  const other = { id: 'gate-other', at: 0, label: 'pnpm test', from: '#7 in my-app' }
+  expect(
+    await enterSlot(other, { floor: undefined, need: 1536, start: thisProcess }),
+  ).toMatchObject({ kind: 'started' })
+  const id = await f.create()
+  await f.service.ready(id, context)
+  await commit((await f.service.get(id, context))!.path)
+  await f.service.submit(id, 'None', context)
+  // The check sees the job this test holds, so it passes.
+  const [report] = await submitted(f, id)
+  await releaseSlot(other.id)
   expect(report).toContain('landed as')
 })
 it.concurrent('runs worktree setup on the merged revision before the checks', async () => {

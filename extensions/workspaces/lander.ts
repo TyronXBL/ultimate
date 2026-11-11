@@ -24,8 +24,10 @@ import {
   describeWait,
   enterSlot,
   keepHeld,
+  queueTmpdir,
   releaseSlot,
   SLOT_POLL_MS,
+  SLOT_TMPDIR_ENV,
   thisProcess,
 } from '../../lib/slot.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
@@ -262,7 +264,8 @@ export async function runLanderCheck(
     try {
       exitCode = await runGroup('/bin/bash', ['-c', command], {
         cwd: path,
-        env: { ...process.env, TMPDIR: tmp },
+        // Its own TMPDIR, but the machine's heavy-work queue: the CI gate's local fallback queues there.
+        env: { ...process.env, TMPDIR: tmp, [SLOT_TMPDIR_ENV]: queueTmpdir() },
         pidFile: join(pids, `${process.pid}-${randomUUID()}.pid`),
         signal,
         grace: 2000,

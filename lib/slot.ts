@@ -62,6 +62,13 @@ export const SLOT_POLL_MS = 5000
 export const SETTLE_MS = 30_000
 /** Set in a slot job's environment to its claim id: heavy work it starts itself is part of it and never queues again. */
 export const SLOT_ENV = 'ULTIMATE_SLOT'
+/**
+ * The TMPDIR whose queue a process joins when its own TMPDIR is private: the lander gives each check a fresh one, and
+ * the CI gate's local fallback, run as a check, must still queue with everyone else (review of #206919).
+ */
+export const SLOT_TMPDIR_ENV = 'ULTIMATE_SLOT_TMPDIR'
+/** Where the machine's queue lives for this process. */
+export const queueTmpdir = () => process.env[SLOT_TMPDIR_ENV] ?? tmpdir()
 
 const order = (a: SlotClaim, b: SlotClaim) =>
   a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
@@ -150,7 +157,10 @@ type SlotEntered =
   /** Its turn, but RAM would drop below the floor. */
   | { kind: 'ram'; short: RamShort }
 
-/** Folders this process saw a queue file in: one missing there later was removed. */
+/**
+ * Folders this process saw a queue file in: one missing there later was removed. Only a process that saw it can tell a
+ * removed file from a first use, so a host that starts after the removal settles nothing (extensions/memory/README.md).
+ */
 const seen = new Set<string>()
 const file = (dir: string) => join(dir, 'slot.json')
 
@@ -190,7 +200,7 @@ async function update<T>(
 }
 
 /** Where `claim` would stand now, without joining the line. */
-export function peekSlot(claim: Pick<SlotClaim, 'id' | 'at'>, parent = tmpdir()) {
+export function peekSlot(claim: Pick<SlotClaim, 'id' | 'at'>, parent = queueTmpdir()) {
   return update<SlotTurn>(parent, async (queue, now) => [queue, slotTurn(queue, claim, now)])
 }
 
@@ -210,7 +220,7 @@ export async function enterSlot(
     parent?: string
   },
 ): Promise<SlotEntered> {
-  const { floor, need, start, queue: joins = true, parent = tmpdir() } = options
+  const { floor, need, start, queue: joins = true, parent = queueTmpdir() } = options
   if (process.env[SLOT_ENV]) return { kind: 'started', holder: await start() }
   return update<SlotEntered>(parent, async (queue, now, dir) => {
     const turn = slotTurn(queue, claim, now)
@@ -227,7 +237,7 @@ export async function enterSlot(
 }
 
 /** Say again that `claim` runs, held by `holder`: after a removed file, this puts it back before anyone else starts. */
-export function holdSlot(claim: SlotClaim, holder: SlotHolder, parent = tmpdir()) {
+export function holdSlot(claim: SlotClaim, holder: SlotHolder, parent = queueTmpdir()) {
   if (process.env[SLOT_ENV]) return Promise.resolve()
   return update<void>(parent, async (queue, now) => [
     slotStep(queue, { type: 'start', claim, holder, now }),
@@ -236,7 +246,7 @@ export function holdSlot(claim: SlotClaim, holder: SlotHolder, parent = tmpdir()
 }
 
 /** Leave the queue: the job ended, gave up or was stopped. */
-export function releaseSlot(id: string, parent = tmpdir()) {
+export function releaseSlot(id: string, parent = queueTmpdir()) {
   if (process.env[SLOT_ENV]) return Promise.resolve()
   return update<void>(parent, async (queue) => [
     slotStep(queue, { type: 'release', id }),
@@ -250,17 +260,26 @@ export function thisProcess(): SlotHolder {
 }
 
 /** While this process holds the slot for `claim`, say so every `SLOT_POLL_MS`; the returned function releases it. */
-export function keepHeld(claim: SlotClaim, parent = tmpdir()) {
+export function keepHeld(claim: SlotClaim, parent = queueTmpdir()) {
   const holder = thisProcess()
+  let released = false
+  // One look at a time, and none after the release: a late one would bring the slot back, held by this live process.
+  let looks = Promise.resolve()
   const timer = setInterval(() => {
-    holdSlot(claim, holder, parent).catch((error: unknown) =>
-      // The next look says it again; a failed one only delays that.
-      console.error('slot: saying the slot is held failed:', error),
+    looks = looks.then(() =>
+      released
+        ? undefined
+        : holdSlot(claim, holder, parent).catch((error: unknown) =>
+            // The next look says it again; a failed one only delays that.
+            console.error('slot: saying the slot is held failed:', error),
+          ),
     )
   }, SLOT_POLL_MS)
   timer.unref()
   return async () => {
+    released = true
     clearInterval(timer)
+    await looks
     await releaseSlot(claim.id, parent)
   }
 }
@@ -268,7 +287,7 @@ export function keepHeld(claim: SlotClaim, parent = tmpdir()) {
 const ordinal = (n: number) =>
   n === 1
     ? 'next'
-    : `${n}${n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`
+    : `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th')}`
 const minutes = (ms: number) =>
   ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`
 

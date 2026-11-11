@@ -50,7 +50,10 @@ nothing else holds it, no job that asked earlier waits, and RAM above the floor 
 - **What survives.** Each waiter keeps the time it asked in its own durable state and says so again at every look, so
   the order survives a host restart (a host down for over 2 min drops its waiters until they look again, which can let
   a later job go first); each holder says so again at every look too. When the file disappears (the daily temp cleanup,
-  by hand), nobody gets the slot for 30 s, until every running job has put itself back.
+  by hand), nobody gets the slot for 30 s, until every running job has put itself back. Only a process that saw the
+  file can tell it was removed: a host started after the removal takes it for a first use and waits for nothing.
+- **Private TMPDIRs.** A lander check runs with a TMPDIR of its own; `ULTIMATE_SLOT_TMPDIR` names the machine's, so the
+  CI gate's local fallback queues with everyone else.
 - **Nested work.** A slot job's processes carry `ULTIMATE_SLOT`; heavy work they start themselves (a scratch server's
   own jobs) is part of that job and never queues behind it.
 
@@ -61,8 +64,8 @@ position: an unquoted `vitest` in a path or a search pattern counts too, so quot
 
 The `ci` tool runs nothing on this machine and is not gated; test suites are gated where they start, not per server a
 test boots. A background command whose first attempt was interrupted by a host crash is stopped and started again: a
-light one at once, without admission, since it already ran; a heavy one through the queue, where the time it first
-asked puts it first once the slot is free.
+light one at once, without admission, since it already ran; a heavy one through the queue, keeping its place when it
+had waited before and joining the end of the line when it had started at its first look.
 
 ## Status line
 

@@ -26,7 +26,8 @@ head of the line gives up after 30 min with a `not-started` card listing what us
 place and what it waits for ("Queued, 2nd in line for the heavy-work slot, behind `pnpm check` from #12 in my-app
 (running 2 min); …"); while it waits the Tasks panel shows the same, and the result card how long it was queued. It
 holds the slot while its group runs and lets it go once the group is stopped, when it is concluded, or when it gives
-up. A light command starts at once, or waits for RAM the same way when the floor is already breached.
+up. A light command starts at once, or, when the floor is already breached, waits for RAM, looking every 10 s for up
+to 30 min.
 
 The shell, not the host, writes the log and the code, so a command keeps running through a host restart and its
 result still arrives. The command keeps running across the caller's turns and its Stop button; concluding the
