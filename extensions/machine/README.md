@@ -1,0 +1,41 @@
+Shows the machine: the heavy-work queue (what runs, what waits and why), CPU load, memory against the RAM floor, swap and the temp folders over the last hour, and who uses the machine now, grouped by project and conversation. Read-only.
+
+## Where
+
+The **Machine** tab of the System surface (⌘K "Open Machine"), and a status-line chip that shows the queue's length,
+turns amber when something needs attention (RAM near the floor, load at or above the cores, swap or a temp folder
+nearly full, work outside the queue using more than a core) and opens the tab.
+
+## What it reads
+
+- **The queue** through `lib/slot.ts`'s own derivation: `peekSlot` for a claim at the very end of the line lists every
+  job that holds the slot and every waiter in order (`queue.ts`). A waiter waits behind the job just ahead of it; the
+  first one, with nothing running, waits for RAM (`checkRam`, the admission's own computation with its reservations),
+  for load (the one-minute load at or above the cores) or starts at its next look. With #227574's queue a job measured
+  on probation shows as `measuring`. Every Ultimate and preview on the machine shares the queue, so other projects'
+  jobs show too, named by project; this project's link to their conversations.
+- **Who uses the machine** from `/proc/<pid>/stat` (CPU, RSS, parent, process group) and, once per process, the command
+  line and folder of each group's topmost process (`owners.ts`). A group is named by what it is and by the group that
+  started it: a project's host (its supervisor's group, from the projects' `ultimate.lock`), a queue job (the group its
+  holder leads, and what it starts), a preview (`server/main.ts`), a Chromium, an automation, a landing's checks, a
+  conversation's work outside the queue (by its worktree), or a system program. Only program names are shown, never
+  argument values; other users' processes show by program name.
+- **Resources**: `/proc/loadavg`, `/proc/meminfo`, `statfs` of `$TMPDIR` and `/tmp` (a RAM file system is marked).
+
+## Cost and history
+
+One look reads about one small file per process plus the queue under its lock: about 15 ms of CPU on the main thread
+with 300 processes. It runs every 15 s in the background and every 3 s while a dashboard asks (`state`, polled every
+3 s while the tab is on screen, keeps it fast for 20 s). The chip's `summary` reads the latest look and samples
+nothing.
+
+History is an hour of samples in this process's memory: every sample of the last 10 minutes, one per 15 s before. It
+survives a reload of this extension and starts empty after a host restart; nothing is written to disk.
+
+## Actions
+
+- `state { since? }` → `MachineState` (`refs.ts`): the queue, owners, temp folders, pressure and the samples after
+  `since`.
+- `summary` → `{ running, waiting, pressure }`.
+
+Controls (run next, cancel) would go on the queue's rows; there are none yet.
