@@ -13,6 +13,7 @@
     "test/**/*.test.ts",
     "extensions/*/test/**/*.test.ts",
     "extensions/browser/test/e2e/dropping-chrome.ts",
+    "extensions/codemode/search-worker.ts",
     "test/mutation.config.ts"
   ],
   "project": ["**/*.{ts,tsx,css}"],

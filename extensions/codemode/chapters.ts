@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { chapterFiles, readChapters } from '../../lib/chapters.ts'
 import { concludedIds } from '../../lib/concluded.ts'
 import { shortTitle } from '../../lib/title.ts'
+import { forkChain } from './search.ts'
 
 export const limit = (value: unknown, fallback = 100) => {
   const n = value ?? fallback
@@ -23,37 +24,8 @@ export const id = (value: unknown): ConversationId => {
   return value as ConversationId
 }
 
-export type HistoryRead = 'conversations' | 'entries' | 'search'
-
-export type SearchOptions = {
-  conversationId?: number
-  limit?: number
-  kinds?: string[]
-  full?: boolean
-}
-
-/**
- * Whether `entry` matches a search, and what the search returns for it: the whole entry with `full`, otherwise
- * `{conversation, id, kind, at, excerpt}` with about 200 characters of its JSON around the match, so wide audits
- * stay small enough to return and to send across projects.
- */
-export function searchHit(entry: EntryRecord, text: string, options: SearchOptions) {
-  if (options.kinds && !options.kinds.includes(entry.kind)) return undefined
-  const json = JSON.stringify(entry)
-  const at = json.indexOf(text)
-  if (at < 0) return undefined
-  if (options.full) return entry
-  const start = Math.max(0, at - 80)
-  const end = Math.min(json.length, at + text.length + 120)
-  const time = entry.model?.[0]?.timestamp
-  return {
-    conversation: entry.conversationId,
-    id: entry.id,
-    kind: entry.kind,
-    ...(typeof time === 'number' && { at: new Date(time).toISOString() }),
-    excerpt: `${start > 0 ? '…' : ''}${json.slice(start, end)}${end < json.length ? '…' : ''}`,
-  }
-}
+/** Reads of a closed chapter served here; its searches run in a worker (`search.ts`). */
+export type HistoryRead = 'conversations' | 'entries'
 
 /** Undefined means the live chapter; unknown names fail before any database is opened. */
 export async function closedChapter(home: string, active: string, options: unknown) {
@@ -91,19 +63,16 @@ export function readChapter(database: string, op: HistoryRead, args: unknown[]) 
       return JSON.parse(String(row.record)) as ConversationRecord
     }
     function* entries(value: unknown, before?: number): Generator<EntryRecord> {
-      let record = conversation(value)
-      let upper = before === undefined ? Number.MAX_SAFE_INTEGER : before - 1
-      while (true) {
-        for (const row of db
-          .prepare(
-            'SELECT record FROM entries WHERE conversation_id = ? AND id <= ? ORDER BY id DESC',
-          )
-          .iterate(record.id, upper))
+      const segment = db.prepare(
+        'SELECT record FROM entries WHERE conversation_id = ? AND id <= ? ORDER BY id DESC',
+      )
+      for (const { id: owner, upper } of forkChain(
+        conversation,
+        id(value),
+        before === undefined ? Number.MAX_SAFE_INTEGER : before - 1,
+      ))
+        for (const row of segment.iterate(owner, upper))
           yield JSON.parse(String(row.record)) as EntryRecord
-        if (!record.parent) return
-        upper = Math.min(upper, record.parent.at)
-        record = conversation(record.parent.conversationId)
-      }
     }
     /** The latest value of conversation document `kind` on `owner`: its last base with later deltas applied. */
     const doc = (kind: string, owner: number) => {
@@ -154,30 +123,12 @@ export function readChapter(database: string, op: HistoryRead, args: unknown[]) 
         }
       })
     }
-    const matches: unknown[] = []
-    if (op === 'entries') {
-      const options = (args[1] ?? {}) as { kinds?: string[]; limit?: number; before?: number }
-      const count = limit(options.limit)
-      for (const entry of entries(args[0], options.before)) {
-        if (!options.kinds || options.kinds.includes(entry.kind)) matches.push(entry)
-        if (matches.length === count) break
-      }
-    } else {
-      const text = args[0]
-      if (typeof text !== 'string' || !text) throw new Error('search text must be nonempty')
-      const options = (args[1] ?? {}) as SearchOptions
-      const count = limit(options.limit)
-      const records =
-        options.conversationId === undefined
-          ? conversations()
-          : [{ id: id(options.conversationId) }]
-      for (const record of records) {
-        for (const entry of entries(record.id)) {
-          const hit = searchHit(entry, text, options)
-          if (hit) matches.push(hit)
-          if (matches.length === count) return matches
-        }
-      }
+    const matches: EntryRecord[] = []
+    const options = (args[1] ?? {}) as { kinds?: string[]; limit?: number; before?: number }
+    const count = limit(options.limit)
+    for (const entry of entries(args[0], options.before)) {
+      if (!options.kinds || options.kinds.includes(entry.kind)) matches.push(entry)
+      if (matches.length === count) break
     }
     return matches
   } finally {

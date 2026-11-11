@@ -40,8 +40,10 @@ import type { ActionContext } from '../../server/actions.ts'
 import { READS, readProject } from './projects.ts'
 import { REMOTE_BYTES } from '../../lib/remote.ts'
 import type { Read } from './projects.ts'
-import { closedChapter, id, limit, readChapter, searchHit } from './chapters.ts'
-import type { HistoryRead, SearchOptions } from './chapters.ts'
+import { closedChapter, id, limit, readChapter } from './chapters.ts'
+import type { HistoryRead } from './chapters.ts'
+import { searchChapter } from './search.ts'
+import type { SearchOptions } from './search.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { concludedIds } from '../../lib/concluded.ts'
 import { MessagesApi } from '../messages/api.ts'
@@ -209,29 +211,29 @@ function localReads(host: ExtensionHost, context: Context) {
       })
     return rows.slice(0, count)
   }
-  const search = async (text: unknown, options: SearchOptions = {}) => {
+  /**
+   * Search the active chapter, or the closed one `options.chapter` names, in a worker (`search.ts`) that `signal`, the
+   * script call's own, terminates.
+   */
+  const search = async (
+    text: unknown,
+    options: SearchOptions = {},
+    signal = context.abortSignal,
+  ) => {
+    const database =
+      (await closedChapter(host.home, host.chapter.name, options)) ?? host.chapter.database
     if (typeof text !== 'string' || !text) throw new Error('search text must be nonempty')
-    const count = limit(options.limit)
-    const records =
-      options.conversationId === undefined
-        ? await conversations()
-        : [{ id: id(options.conversationId) }]
-    const matches: unknown[] = []
-    for (const conversation of records) {
-      let cursor: Cursor | undefined
-      do {
-        const found = await host.harness().conversation(conversation.id, context)
-        if (!found) throw new Error('Unknown conversation')
-        const page = await found.entries({}, 100, cursor, context)
-        for (const entry of page.items) {
-          const hit = searchHit(entry, text, options)
-          if (hit) matches.push(hit)
-          if (matches.length === count) return matches
-        }
-        cursor = page.next
-      } while (cursor)
-    }
-    return matches
+    return searchChapter(
+      {
+        database,
+        text,
+        count: limit(options.limit),
+        ...(options.conversationId !== undefined && { conversationId: id(options.conversationId) }),
+        ...(options.kinds && { kinds: options.kinds }),
+        ...(options.full && { full: true }),
+      },
+      signal,
+    )
   }
   /**
    * Every conversation with its summary (title, label, cwd, busy, latest input) and whether it is concluded.
@@ -266,7 +268,8 @@ function localReads(host: ExtensionHost, context: Context) {
     entries: history('entries', 1, ([conversation, options]) =>
       entries(conversation, options as Parameters<typeof entries>[1]),
     ),
-    search: history('search', 1, ([text, options]) => search(text, options as SearchOptions)),
+    search: ([text, options], signal?: AbortSignal) =>
+      search(text, options as SearchOptions, signal),
     trace: ([query]) => host.trace.query(query ?? {}),
     traceTree: ([traceId]) => {
       if (typeof traceId !== 'string' || !traceId) throw new Error('traceId must be nonempty')
@@ -280,7 +283,7 @@ function localReads(host: ExtensionHost, context: Context) {
       const snapshot = await host.harness().snapshot(token, id(conversation), context)
       return snapshot ?? token.definition.initial()
     },
-  } satisfies Record<Read, (args: unknown[]) => unknown>
+  } satisfies Record<Read, (args: unknown[], signal?: AbortSignal) => unknown>
   return { ...reads, toolRuns }
 }
 
@@ -330,7 +333,7 @@ function globals(
         )
         if (remote) return remote.value
       }
-      return reads[op](args)
+      return reads[op](args, signal)
     }
   const helpers: {
     name: string
