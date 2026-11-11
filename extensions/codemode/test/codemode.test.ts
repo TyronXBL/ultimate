@@ -423,9 +423,11 @@ it('applies each automation call in one script to its own arguments', async () =
      const id = created.split(' ')[0];
      await tools.automation({action:'subscribe', id, to:'@ultimate'});
      await tools.automation({action:'unsubscribe', id, to:'#${server.root.id}'});
-     const [stored] = await ultimate.action('automations', 'list');
-     return { line: await tools.automation({action:'list'}), subscribers: stored.subscribers };`,
+     const stored = (await ultimate.action('automations', 'list')).find((item) => item.name === 'Probe');
+     const lines = (await tools.automation({action:'list'})).split('\\n');
+     return { line: lines.find((line) => line.includes('Probe')), subscribers: stored.subscribers };`,
   )
+  // @ultimate's start also makes the dream's built-in automations, sooner or later: only the probe's counts (#222319).
   expect(result.data.details.value).toEqual({
     line: 'A1 Probe — Every 1 day — enabled → @ultimate',
     subscribers: ['@ultimate'],
