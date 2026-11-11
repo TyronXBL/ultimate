@@ -263,7 +263,7 @@ function StepLine({
         at={row.at}
         took={duration}
         icon={
-          row.check.result === 'passed' ? (
+          row.check.result === 'passed' || row.check.result === 'reused' ? (
             <CheckIcon className="size-3 shrink-0 text-success" />
           ) : row.check.result === 'flaky' ? (
             <TriangleAlertIcon className="size-3 shrink-0 text-warning" />

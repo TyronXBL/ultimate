@@ -67,7 +67,7 @@ export const WorkspacesApi = defineApi<WorkspaceService>()('workspaces')
 
 export { CheckRan, SubmissionFailed, SubmissionLanded } from './refs.ts'
 export type { LandedData } from './refs.ts'
-export type { FailingTest } from './types.ts'
+export type { FailingTest, Reused } from './types.ts'
 export type BranchesService = {
   /** The conversation that started branch `id`, which hears that its submission landed. */
   starter(id: ConversationId, ctx: Context): Promise<number | undefined>

@@ -35,7 +35,8 @@ the host's error report. It never runs the suites on this machine.
 
 The lander's gate, `.ultimate/scripts/ci-gate.ts`, first looks for a pass it may reuse (#205147): a GitHub run of
 exactly the commit it checks that passed, finished on GitHub at most 6 hours ago (`REUSE_MS`), with no run of that
-commit that failed or was cancelled (`gatePlan`, `reusable` in `github.ts`). A run in progress is never a pass. A
+commit that failed or was cancelled (`gatePlan`, `reusable` in `github.ts`). A run in progress is never a pass: the
+gate waits for it rather than testing the commit again on the PC. This lookup tries GitHub once per call. A
 reuse prints a `lander-reused:` line with the run's origin (runner, URL, commit, finish time, duration), which the
 lander records as a `reused` check on the landing card; otherwise the gate's last line says why it ran fresh ("tip CI
 had failed: <url>", "no CI run of <sha>", the pass's age). Then it tries the same PC (`test`, `test:e2e`) and uses the

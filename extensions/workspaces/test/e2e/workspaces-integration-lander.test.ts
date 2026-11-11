@@ -247,8 +247,11 @@ it.concurrent('records a check that reused a named pass of the landed commit, wi
   const [report] = await submitted(f, id)
   const sha = await git(f.projectRoot, 'rev-parse', 'HEAD')
   expect(report).toContain('landed as')
+  // The report is the stored model message as JSON, so its quotes are escaped.
   expect(report).toContain(
-    `Reused: ${command}: GitHub Actions passed ${sha.slice(0, 7)} in 198 s, finished 2026-11-11T07:10:00.000Z: https://ci.example/runs/4297`,
+    JSON.stringify(
+      `Reused: ${command}: GitHub Actions passed ${sha.slice(0, 7)} in 198 s, finished 2026-11-11T07:10:00.000Z: https://ci.example/runs/4297`,
+    ).slice(1, -1),
   )
   const reused = {
     runner: 'GitHub Actions',

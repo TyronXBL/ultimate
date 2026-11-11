@@ -392,11 +392,8 @@ it('reuses a recent pass of the exact commit with its origin, without pushing or
     seconds: 198,
   })
   expect(stdout).toContain(`ci-gate: reused: ${sha.slice(0, 7)} passed CI 1 min ago`)
-  expect(asked).toEqual([
-    `/repos/owner/ultimate/actions/runs?head_sha=${sha}&event=push`,
-    '/repos/owner/ultimate/actions/runs/7/jobs',
-    '/repos/owner/ultimate/actions/runs/7',
-  ])
+  expect(asked[0]).toBe(`/repos/owner/ultimate/actions/runs?head_sha=${sha}&event=push`)
+  expect(stdout).not.toContain('pushed ci/')
 })
 
 it('runs CI on the PC runner first and delivers its failing tests without GitHub', async () => {

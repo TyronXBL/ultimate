@@ -4,6 +4,7 @@
  * Git credential when there is one. The token goes only into the request header: no output, error or log carries it.
  */
 import { execFile } from 'node:child_process'
+import type { Reused } from '../../../extensions/workspaces/api.ts'
 import type { Failure, JobResult } from './refs.ts'
 
 /** The API base; tests point it at a local listener. */
@@ -171,9 +172,14 @@ export const runsOf = async (
   ).workflow_runs
 
 /** A run as it is now, with its jobs. */
-export async function runState(cwd: string, repo: string, id: number) {
-  const { jobs } = await call<{ jobs: Job[] }>(cwd, repo, `/repos/${repo}/actions/runs/${id}/jobs`)
-  const run = await call<Run>(cwd, repo, `/repos/${repo}/actions/runs/${id}`)
+export async function runState(cwd: string, repo: string, id: number, tries?: number) {
+  const { jobs } = await call<{ jobs: Job[] }>(
+    cwd,
+    repo,
+    `/repos/${repo}/actions/runs/${id}/jobs`,
+    tries,
+  )
+  const run = await call<Run>(cwd, repo, `/repos/${repo}/actions/runs/${id}`, tries)
   return { run, jobs }
 }
 
@@ -212,9 +218,7 @@ export function reusable(
   jobs: Job[],
   sha: string,
   now: number,
-):
-  | { origin: { runner: string; url: string; sha: string; completedAt: number; seconds: number } }
-  | { origin?: undefined; why: string } {
+): { origin: Reused } | { origin?: undefined; why: string } {
   const starts = jobs.flatMap((job) => (job.started_at ? [Date.parse(job.started_at)] : []))
   const ends = jobs.flatMap((job) => (job.completed_at ? [Date.parse(job.completed_at)] : []))
   if (!starts.length || ends.length < jobs.length)
