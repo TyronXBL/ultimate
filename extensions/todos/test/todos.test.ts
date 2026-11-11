@@ -4,6 +4,7 @@ import { expect, it } from 'vitest'
 import todosExtension, { add, DONE_LIMIT, mark, noteFor, Todos } from '../server.ts'
 import { isDone } from '../../../lib/todos.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
+import type { TodosService } from '../api.ts'
 
 const ULTIMATE = 5 as ConversationId
 
@@ -40,6 +41,23 @@ it('adds to-dos by owner and refuses empty text or an unknown owner', async () =
   await expect(add(tx, ' ', 'user')).rejects.toThrow('nonempty')
   await expect(add(tx, 'x', 'lander')).rejects.toThrow('owner')
   expect((await list(tx)).map((todo) => todo.id)).toEqual([1, 2])
+})
+
+it('adds through TodosApi once per key, even after the to-do left the list', async () => {
+  const { tx } = fakeTx()
+  let service: TodosService | undefined
+  todosExtension({
+    implement: (_api: unknown, value: TodosService) => (service = value),
+    harness: () => ({ commit: (fn: (tx: Tx) => unknown) => fn(tx) }),
+  } as unknown as ExtensionHost)
+  const first = await service!.add({ text: 'Call back', owner: 'user', key: 'mail-42' })
+  expect(first).toMatchObject({ id: 1, text: 'Call back', owner: 'user' })
+  expect(await service!.add({ text: 'Call back', owner: 'user', key: 'mail-42' })).toEqual(first)
+  expect((await list(tx)).map((todo) => todo.id)).toEqual([1])
+  // Ticked out of the list: the key still returns the to-do as it was added, and adds nothing.
+  ;(await tx.doc(Todos, 1 as ConversationId)).items = []
+  expect(await service!.add({ text: 'Call back', owner: 'user', key: 'mail-42' })).toEqual(first)
+  expect(await list(tx)).toEqual([])
 })
 
 it('ticks and reopens a to-do, keeping only the newest done ones', async () => {
@@ -81,7 +99,10 @@ it('tells @ultimate the open list only when it changed', async () => {
 it("keeps the todo tool to @ultimate and the note to @ultimate's inputs", async () => {
   const { tx } = fakeTx()
   // No side-chat extension installed: every caller acts as itself.
-  const extension = todosExtension({ doc: () => undefined } as unknown as ExtensionHost)
+  const extension = todosExtension({
+    doc: () => undefined,
+    implement: () => {},
+  } as unknown as ExtensionHost)
   const tool = extension.tools!.find((candidate) => candidate.name === 'todo')!
   const run = (conversationId: number, args: object) =>
     tool.execute(
