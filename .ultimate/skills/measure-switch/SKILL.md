@@ -46,8 +46,17 @@ node .ultimate/skills/measure-switch/profile-summary.ts $TMPDIR/switch-perf/a.cp
   shapes: a long conversation, a lander, @ultimate, one with many subagents
   (`sqlite3 <copy> "select conversation_id, count(*) from entries group by 1 order by 2 desc limit 10"`).
 - Round 0 is cold (never shown in the tab), later rounds warm (`store.show` paints the kept replica first).
-- `settledMs` and `longMs` are the user-facing numbers; `eventKb` shows what the server sends. A tab keeps one event
-  stream and a switch only resubscribes on it, so `streams` (new streams during the switch) should stay 0.
+- `paintMs` (the conversation's rows on screen), `settledMs` and `longMs` are the user-facing numbers; `eventKb` shows
+  what the server sends. A tab keeps one event stream and a switch only resubscribes on it, so `streams` (new streams
+  during the switch) should stay 0.
+- `viewMs` is when the server's view arrives, which means something else per round: a cold switch has nothing to show
+  before it, a warm one has painted the kept replica already and only refreshes it. Compare cold and warm on `paintMs`,
+  never on `viewMs` (#202077: warm `viewMs` was twice the cold one while warm painted in half the time).
+- `viewMs` splits into `askMs` (click until the page asks the server: it asks only after React has drawn the change,
+  the whole kept transcript on a warm switch), `queueMs` (until the request leaves: a free connection), `serverMs`
+  (until the server has sent the view) and `handleMs` (until the page handles the event: a busy main thread). `subs`
+  counts how often the page asked for the view; each one makes the server read and send it whole. `-1` is a part that
+  could not be measured.
 - The first line, `identity`, is what was measured: the preview checkout's full `sha` and `uncommitted` files, the
   server build (`serverBuild`), the web bundle the page ran (`webBundle`, a digest of its files), Chromium and machine
   load. `switch.ts` refuses a run unless the page and server agree on a bundle that built whole (no build error, no
