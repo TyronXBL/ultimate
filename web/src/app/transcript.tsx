@@ -421,14 +421,15 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
           follows({ entry: row.entry, calls: shownCalls(row) }),
       )
     : grouped.map((row) => row)
-  // #205147: a switch drew every loaded row in one long task. The newest rows draw first, the earlier ones a few at a
-  // time after each frame, or at once when the reader nears them or a reveal needs one: a switch costs about a screen.
+  // #205147: a switch drew every loaded row in one long task. The newest rows draw first, the earlier ones a few each
+  // frame, or down to a row at once when a reveal needs it: a switch costs about a screen.
   const [hide, setHide] = useState<number>()
   const batch = useRef(4)
   if (hide === undefined && threaded.length > 0) setHide(threaded.length - firstRows)
   const hidden = Math.max(0, Math.min(hide ?? threaded.length - firstRows, threaded.length))
+  /** Draws the next batch of earlier rows; whether any are left after it. */
   const drawEarlier = useEffectEvent(() => {
-    if (hidden === 0) return
+    if (hidden === 0) return false
     // A reader who scrolled up keeps the first row on screen in place while rows go in above it, also where the browser
     // does not anchor (Safari). At the bottom the view follows the bottom anyway, and finding the row would lay out the
     // whole transcript for every batch.
@@ -446,12 +447,14 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
         top: row.getBoundingClientRect().top,
       }
     // Drawn and placed before the reader's next scroll, so the anchor taken above still holds.
+    const still = Math.max(0, hidden - batch.current)
     const started = performance.now()
-    flushSync(() => setHide(Math.max(0, hidden - batch.current)))
+    flushSync(() => setHide(still))
     // A row costs from well under a millisecond (a divider) to tens (a long answer with code): a few per frame.
     const took = performance.now() - started
     if (took > 12) batch.current = Math.max(1, batch.current >> 1)
     else if (took < 4) batch.current = Math.min(32, batch.current * 2)
+    return still > 0
   })
   useLayoutEffect(() => restoreAnchor(), [hidden])
   // Rows that go in render whole once, so the browser keeps their height (`contain-intrinsic-size: auto` in
@@ -474,28 +477,27 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
       ),
     )
   }, [top, bottom, seen])
+  // A batch a frame from the frame after the switch painted, drawn in the frame before its layout: scroll events go out
+  // at the start of a frame, so one still on its way (a row settling shorter clamps the view) never finds the view a
+  // batch away from the bottom, which would read as the reader leaving it. The frame's layout and the bottom pin then
+  // place the rows before paint.
   useEffect(() => {
-    if (hidden === 0 || loading) return undefined
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const frame = requestAnimationFrame(() => (timer = setTimeout(drawEarlier)))
-    return () => {
-      cancelAnimationFrame(frame)
-      clearTimeout(timer)
+    if (loading) return undefined
+    const step = () => {
+      if (drawEarlier()) frame = requestAnimationFrame(step)
     }
-  }, [hidden, loading])
-  // Draw earlier rows, then page in earlier history, while the top comes within a viewport. A new observer after each
-  // draw or page reports at once whether the top is still that close.
-  const nearTop = useEffectEvent(() => {
-    if (hidden > 0) drawEarlier()
-    // oxlint-disable-next-line typescript/no-floating-promises -- loadEarlier catches history failures and reports them as failed.
-    else void earlier()
-  })
+    let frame = requestAnimationFrame(() => (frame = requestAnimationFrame(step)))
+    return () => cancelAnimationFrame(frame)
+  }, [loading])
+  // Page in earlier history while the top comes within a viewport, once every loaded row is drawn. A new observer after
+  // each page reports at once whether the top is still that close.
   useEffect(() => {
     const root = scrollRef.current
-    if (!root || !sentinel.current || loading || !(canLoad || hidden > 0)) return undefined
+    if (!root || !sentinel.current || loading || !canLoad || hidden > 0) return undefined
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry?.isIntersecting) nearTop()
+        // oxlint-disable-next-line typescript/no-floating-promises -- loadEarlier catches history failures and reports them as failed.
+        if (entry?.isIntersecting) void earlier()
       },
       { root, rootMargin: '100% 0px 0px 0px' },
     )
