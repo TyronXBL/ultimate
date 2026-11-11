@@ -154,6 +154,17 @@ it('delivers FIRE once, investigates exits only in the owning agent, recovers, a
     once: false,
   })) as Automation
   await script(recurring.id, 'echo FIRE tick; exit 0')
+  // Its brief's turn must be over first: this script exits at once, and a failure delivered while that turn runs waits as
+  // a follow-up, which the turn's failure here (no scripted answer) keeps queued. Faster definition reads (#222319)
+  // made that order the usual one; it is the line 158 timeout of #185880.
+  await until(
+    async () =>
+      (await entries(recurring.script!.conversationId, 'automations.writing')).length === 1,
+  )
+  await (await app.harness.conversation(
+    recurring.script!.conversationId as ConversationId,
+    context,
+  ))!.waitForIdle(context)
   await invoke('resume', { id: recurring.id })
   await until(
     async () =>

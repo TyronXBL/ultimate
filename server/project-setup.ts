@@ -94,13 +94,19 @@ export function projectDecision(projectRoot: string, userHome = homedir()) {
   const key = `${projectRoot}\0${userHome}`
   const kept = decisions.get(key)
   if (kept !== undefined) {
+    // Kept only from a read that succeeded, which cleared it; another project's failed read may have set it since.
     errors.delete(path)
     return kept
   }
   const since = Date.now()
   try {
     const { root, paths } = decisionInputs(projectRoot)
-    const entry = new ProjectTrustStore(join(userHome, '.ultimate')).getEntry(root)
+    // No decisions yet: Pi's lookup would still make and remove its lock folder beside the file, and that change to
+    // `~/.ultimate` would keep every memo of a missing path there from being kept (a missing path counts its folder's
+    // change time).
+    const entry = existsSync(path)
+      ? new ProjectTrustStore(join(userHome, '.ultimate')).getEntry(root)
+      : undefined
     errors.delete(path)
     const decision = entry?.path === root ? entry.decision : null
     decisions.set(key, decision, [path, ...paths], since)
