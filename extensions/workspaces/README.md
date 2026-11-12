@@ -173,7 +173,9 @@ the root's landing note; its one-line `Subject` heads each submission in the lan
 lander's sidebar row shows the feature it lands or landed last.
 
 1. Resets its own detached checkout, `<home>/lander/<hash of source>`, to the target branch tip. `isolates.worktree.setup`
-   runs once when the checkout is created. With `lander.push`, it fetches the remote branch and merges it when it is ahead.
+   runs once when the checkout is created. With `lander.push`, it fetches the remote branch; when the remote has commits
+   the target lacks, the submission fails and lists them (up to 30) instead of merging them, so nobody's push to the
+   remote reaches the host unreviewed (this fork's change after the wfx-loot audit, #261309).
 2. Merges the submitted tip. A conflict aborts the merge and reports the conflicting paths to the submitter.
 3. Runs `lander.checks` in order. Each check is stopped after 2 minutes without output or 10 minutes total, or at
    its own `timeout` (seconds, which also caps the no-output limit), killing its whole process group. Watchdog
@@ -198,7 +200,8 @@ lander's sidebar row shows the feature it lands or landed last.
    every project whose setup is declined or undecided.
 4. Fast-forwards the target branch in the source checkout (`merge --ff-only` when it is checked out). If the target
    moved meanwhile it starts again, at most three attempts.
-5. With `lander.push`, pushes the target branch (never forced); a rejection integrates again once, then is reported.
+5. With `lander.push`, pushes the target branch (never forced); a rejection integrates again once (step 1 then reports
+   the remote's new commits), then is reported.
 6. Records `landed`, emitting `workspaces.landed` in the same commit, then reports (request id `lander:<submission>`
    for each write): the landed commit and commits, flaky checks, whether it pushed, "Needs restart." for `server/`,
    `shared/`, `patches/` or `pnpm-lock.yaml` changes to the running clone (`needsRestart` in `lib/layers.ts`), and the lander conversation id for the full log.

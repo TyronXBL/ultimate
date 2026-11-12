@@ -835,17 +835,18 @@ export function createLander(
                 ) {
                   await remote(path, signal, 'fetch', '-q', settings.push, target)
                   const fetched = await git(path, 'rev-parse', 'FETCH_HEAD')
+                  // Fork-only change to upstream's lander, made after the wfx-loot audit (#261309): upstream merges
+                  // the remote branch here when it is ahead. Then whoever can push to it (a stolen push token, a
+                  // hijacked GitHub session) gets their commits into this host's target unreviewed, and the setup,
+                  // the checks and the live reload of the landed clone run them. Commits the remote has and the
+                  // target lacks stop the landing instead, listed, for a person or @ultimate to review and merge.
                   if (!(await contains(path, fetched, 'HEAD'))) {
-                    await step(`merging ${settings.push}/${target}`)
-                    if (
-                      await merge(
-                        fetched,
-                        `Merge ${settings.push}/${target}`,
-                        `${settings.push}/${target} conflicts with local ${target} in`,
-                        `Reconcile ${settings.push}/${target} with local ${target}, then submit again.`,
-                      )
+                    await fail(
+                      `${settings.push}/${target} has commits local ${target} lacks`,
+                      await git(path, 'log', '-30', '--format=%h %an: %s', `HEAD..${fetched}`),
+                      `Review them and merge ${settings.push}/${target} into local ${target} by hand, then submit again.`,
                     )
-                      return
+                    return
                   }
                 }
               }

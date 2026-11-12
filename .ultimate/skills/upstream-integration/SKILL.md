@@ -15,8 +15,15 @@ In your branch worktree:
 ```bash
 git fetch origin --quiet
 git log --oneline HEAD..origin/main      # what upstream brings
+node scripts/incoming-check.ts HEAD..origin/main   # what of it runs by itself
 git merge origin/main -m 'Merge origin/main: <the few things it brings>'
 ```
+
+Upstream is another person's account, and what lands here runs on this host. `incoming-check` lists what in the
+range runs by itself: workflows, install scripts, build permissions, patches, editor tasks and the wfx-loot and
+GhostAction indicators (#261309). Read each flagged diff before anything installs; put the list and your verdict in
+the report. A flag you cannot explain (an install script, an unknown address, a wfx-loot commit title) stops the
+merge: report it to @ultimate instead of going on.
 
 A normal merge only: never rebase, reset, cherry-pick upstream's commits or force anything. A merge that goes
 wrong is aborted (`git merge --abort`) and started again, not rewritten.
@@ -55,8 +62,9 @@ For each file in `git diff --name-only --diff-filter=U`:
 ## 4. Lockfile and patches
 
 - Never hand-merge `pnpm-lock.yaml`: resolve `package.json` and `pnpm-workspace.yaml`, take either lockfile side,
-  then regenerate it with `pnpm install --no-frozen-lockfile` (through `background`; `--offline` first, which
-  fails only when a new package is not in the store yet).
+  then regenerate it with `pnpm install --no-frozen-lockfile --ignore-scripts` (through `background`; `--offline`
+  first, which fails only when a new package is not in the store yet). `--ignore-scripts` keeps install scripts of
+  the merged `package.json` and dependencies from running here, as the worktree setup does.
 - A patched package (`patchedDependencies` in `pnpm-workspace.yaml`) whose version upstream moved fails the install:
   drop the patch when upstream ships the fix, else redo it on the new version (`pnpm patch <pkg>@<version>`, apply
   the change, `pnpm patch-commit`), and update its entry in `docs/pi-upstream.md`.

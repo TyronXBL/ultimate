@@ -663,7 +663,7 @@ it.concurrent('resumes a landing interrupted before its push: pushes and reports
   expect(steps.slice(steps.lastIndexOf('started'))).toEqual(['started', 'pushing to origin'])
   expect(await messageLog(f)).toEqual([])
 })
-it.concurrent('reports a local landing whose push retry conflicts as landed locally', async () => {
+it.concurrent('lists commits the push remote gained during a landing instead of merging them', async () => {
   const { paths, bare } = await withRemote()
   const f = await lander({ push: 'origin' }, paths)
   const id = await f.create()
@@ -674,7 +674,7 @@ it.concurrent('reports a local landing whose push retry conflicts as landed loca
   const push = await holdPush(f)
   await f.service.submit(id, 'None', context)
   await push.started()
-  // The remote moves with a conflicting change while the lander pushes.
+  // Someone else pushes to the remote while the lander pushes: a stolen push token looks the same (#261309).
   const other = join(f.directory, 'other')
   await git(f.directory, 'clone', '-q', bare, other)
   await writeFile(join(other, 'base.txt'), 'remote')
@@ -684,7 +684,17 @@ it.concurrent('reports a local landing whose push retry conflicts as landed loca
   const [report] = await submitted(f, id)
   const landed = await git(f.projectRoot, 'rev-parse', 'main')
   expect(report).toContain(`landed locally as ${landed.slice(0, 7)} on main.`)
-  expect(report).toContain('Push failed: origin/main conflicts with local main in:')
+  const pushedElsewhere = await git(other, 'rev-parse', '--short', 'HEAD')
+  expect(report).toContain(
+    `Push failed: origin/main has commits local main lacks:\n${pushedElsewhere} T: remote`,
+  )
+  // Unreviewed: the remote's commit stays out of local main.
+  expect(
+    await git(f.projectRoot, 'merge-base', '--is-ancestor', pushedElsewhere, landed).then(
+      () => true,
+      () => false,
+    ),
+  ).toBe(false)
   expect(report).not.toContain('was not landed')
   expect(
     await git(f.projectRoot, 'merge-base', '--is-ancestor', tip, landed).then(() => true),

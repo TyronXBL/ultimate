@@ -39,8 +39,10 @@ export async function installPackages(
   always = false,
 ): Promise<{ install: 'done' | 'failed' | 'skipped'; installError?: string }> {
   if (!always && !(await installOwed(root))) return { install: 'skipped' }
+  // --ignore-scripts (fork-only, after the wfx-loot audit #261309): a landed package.json or dependency gets no
+  // lifecycle script run on the host as it restarts; esbuild, the only dependency allowed to build, works without it.
   const install = (offline: string[]) =>
-    exec('pnpm', ['install', '--frozen-lockfile', ...offline], {
+    exec('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', ...offline], {
       cwd: root,
       timeout: 10 * 60_000,
     })

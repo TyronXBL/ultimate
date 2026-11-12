@@ -5,7 +5,9 @@ work, and changes its own code while you talk to it.
 
 Every built-in is already on; this setup adds how the repository is landed and reviewed:
 
-- `settings.json`: each worktree isolate installs its dependencies, and the lander runs `pnpm check`, then
+- `settings.json`: each worktree isolate installs its dependencies with `--ignore-scripts`, so no lifecycle script a
+  merged `package.json` or a dependency brings runs on this host (the wfx-loot audit, #261309; esbuild, the only
+  dependency allowed to build, works without its script), and the lander runs `pnpm check`, then
   `scripts/ci-gate.ts`, and pushes to `fork`. The gate pushes the merged commit to `fork:ci/<sha>` and waits for its
   GitHub Actions run (`.github/workflows/ci.yml`); it refuses commits that look like they carry a secret, and runs
   `pnpm test` and `pnpm test:e2e` here instead, saying so, when GitHub cannot be reached.

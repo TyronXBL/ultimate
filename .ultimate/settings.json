@@ -19,7 +19,7 @@
   },
   "isolates": {
     "worktree": {
-      "setup": ["pnpm install --frozen-lockfile --prefer-offline"]
+      "setup": ["pnpm install --frozen-lockfile --prefer-offline --ignore-scripts"]
     }
   },
   "lander": {
