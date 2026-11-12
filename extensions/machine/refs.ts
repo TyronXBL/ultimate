@@ -52,7 +52,7 @@ export type WaitReason =
   | { kind: 'full'; running: number; places: number }
   /**
    * First in line, but the load gate holds it (`cpu.maxLoadPerCore`): the one-minute load or CPU pressure (%) is at or
-   * above what it allows.
+   * above what it allows, or (`settling`) a job started too recently for the load to show it yet.
    */
   | {
       kind: 'cpu'
@@ -61,6 +61,7 @@ export type WaitReason =
       pressure: number
       belowLoad: number
       belowPressure?: number
+      settling?: true
     }
   /** First in line, but RAM would drop below the floor. */
   | { kind: 'ram'; availableMiB: number; needMiB: number; floorMiB: number; reservedMiB?: number }

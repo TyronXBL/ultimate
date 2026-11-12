@@ -66,9 +66,26 @@ describe('queueView', () => {
       1,
       { kind: 'cpu', load: 7.2, cores: 6, pressure: 31, belowLoad: 6, belowPressure: 20 },
     ])
+    // Review of #231847: a gate that waits only for a fresh job's load to show says so.
+    expect(first({ gate: { ...gate, load: 3, pressure: 4, settling: true } })).toEqual([
+      1,
+      {
+        kind: 'cpu',
+        load: 3,
+        cores: 6,
+        pressure: 4,
+        belowLoad: 6,
+        belowPressure: 20,
+        settling: true,
+      },
+    ])
     expect(first({ short: cap })).toEqual([
       1,
       { kind: 'cap', usedMiB: 5400, highMiB: 5632, needMiB: 1024 },
+    ])
+    expect(first({ short: { kind: 'floor', available: 3500, need: 1536, floor: 3072 } })).toEqual([
+      1,
+      { kind: 'ram', availableMiB: 3500, needMiB: 1536, floorMiB: 3072 },
     ])
     expect(first({ gate: { kind: 'go' } })).toEqual([1, { kind: 'next' }])
   })

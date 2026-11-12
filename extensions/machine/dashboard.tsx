@@ -168,6 +168,11 @@ function reasonOf(reason: WaitReason, now: number): { text: string; held: boolea
         held: false,
       }
     case 'cpu':
+      if (reason.settling)
+        return {
+          text: 'waiting for CPU: a job just started; its load shows within a minute',
+          held: false,
+        }
       return {
         text: `waiting for CPU: load ${reason.load.toFixed(1)} on ${reason.cores} cores, pressure ${Math.round(reason.pressure)} %; starts below load ${reason.belowLoad.toFixed(1)}${reason.belowPressure === undefined ? '' : ` and ${reason.belowPressure} %`}`,
         held: true,

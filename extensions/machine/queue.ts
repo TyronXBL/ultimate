@@ -38,11 +38,12 @@ export type QueueFacts = {
 
 /** Why the first waiter has not started: the queue settling, every place taken, then CPU and memory admission. */
 function headReason(queue: SlotQueue, held: number, facts: QueueFacts): WaitReason {
+  // In `slotTurn`'s order: every place taken, then the queue settling.
+  if (held >= facts.places) return { kind: 'full', running: held, places: facts.places }
   if (queue.settleUntil !== undefined && queue.settleUntil > facts.now)
     return { kind: 'settling', until: queue.settleUntil }
-  if (held >= facts.places) return { kind: 'full', running: held, places: facts.places }
   if (facts.gate?.kind === 'wait') {
-    const { load, cores, pressure, below } = facts.gate
+    const { load, cores, pressure, below, settling } = facts.gate
     return {
       kind: 'cpu',
       load,
@@ -50,6 +51,7 @@ function headReason(queue: SlotQueue, held: number, facts: QueueFacts): WaitReas
       pressure,
       belowLoad: below.load,
       ...(below.pressure !== undefined && { belowPressure: below.pressure }),
+      ...(settling && { settling: true }),
     }
   }
   const short = facts.short
