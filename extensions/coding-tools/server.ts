@@ -285,13 +285,20 @@ function watchHeavy(
         }
         stopping = decided
       }
-      // Ours: its shell's environment holds this call's marker, checked again right before the signals; a session id is
-      // never reused while its leader lives.
-      if ((await sessionMarked(marker)) === sid) {
-        await signalSession(sid, 'SIGTERM')
+      // Ours, checked right before each signal: its shell's environment holds this call's marker, or its shell is gone
+      // while processes of its session live on, and a session id is never given to another session before all of them
+      // have ended (review of #227574).
+      const session = sid
+      const ours = async () => {
+        if ((await sessionMarked(marker)) === session) return true
+        const members = await sessionMembers(session)
+        return members.length > 0 && !members.includes(session)
+      }
+      if (await ours()) {
+        await signalSession(session, 'SIGTERM')
         const deadline = Date.now() + KILL_GRACE_MS
-        while ((await sessionMembers(sid)).length && Date.now() < deadline) await sleep(100)
-        await signalSession(sid, 'SIGKILL')
+        while ((await sessionMembers(session)).length && Date.now() < deadline) await sleep(100)
+        if (await ours()) await signalSession(session, 'SIGKILL')
       }
       stopping()
       done = true

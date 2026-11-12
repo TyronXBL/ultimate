@@ -6,6 +6,7 @@ import {
   heavySlot,
   holdSlot,
   readSlot,
+  reclaimSlot,
   releaseSlot,
   SETTLE_MS,
   slotStep,
@@ -397,6 +398,20 @@ const look = (
     parent,
     pressureSince,
   })
+
+it('lets a running job that turns heavy take a free place before any waiter, never one beyond the limit', async () => {
+  const parent = await temp('ultimate-slot-')
+  const two = (asking: SlotClaim) => enter(parent, asking, true, 2)
+  expect(await two(claim('first', 100))).toMatchObject({ kind: 'started' })
+  // A job light at its probation, running without a place, is measured heavy: a place is free, waiter or not.
+  expect(await enter(parent, claim('waiter', 50), true, 1)).toMatchObject({ kind: 'waiting' })
+  expect(await reclaimSlot(unknown('busy', 10), thisProcess(), 2, parent)).toBe(true)
+  // Both places taken now: the next one that turns heavy gets none, and its owner ends it.
+  expect(await reclaimSlot(unknown('later', 20), thisProcess(), 2, parent)).toBe(false)
+  expect(
+    (await readSlot(parent)).queue.entries.map(({ id, state }) => `${id} ${state}`).toSorted(),
+  ).toEqual(['busy running', 'first running', 'waiter waiting'])
+})
 
 it('takes turns with jobs it does not know: one measured at a time, a heavy one holding the slot', async () => {
   const parent = await temp('ultimate-slot-')

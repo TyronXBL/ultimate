@@ -31,6 +31,7 @@ import {
   observe,
   PROBATION_MS,
   LIGHT_FOR_MS,
+  sessionMembers,
 } from '../../lib/cpu.ts'
 import type { Observation } from '../../lib/cpu.ts'
 import {
@@ -86,6 +87,8 @@ type Checkpoint =
         queued: number
         observed?: Observation
         forced?: string
+        /** Why the queue ends it: decided and recorded at one look, done at the next. */
+        stopping?: string
       }
     }
   | { phase: 'deliver'; result: BackgroundResult }
@@ -155,6 +158,17 @@ export const jobs: UnderwaySource = {
       kind: 'job',
       delivering: (task.state as { checkpoint?: Checkpoint }).checkpoint?.phase === 'deliver',
     })),
+}
+
+/**
+ * What of a stopped command's session still runs outside its group (`timeout` and `setsid` start groups of their own,
+ * which a group stop does not reach), said on its card: the queue no longer counts it (review of #227574).
+ */
+async function survivors(sid: number) {
+  const left = await sessionMembers(sid)
+  return left.length
+    ? `${left.length} of its processes run on outside its group (started under timeout or setsid), so the heavy-work queue no longer counts them; check them with ps -s ${sid} -o pid,pgid,etime,args before stopping anything.`
+    : undefined
 }
 
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
@@ -320,10 +334,10 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
          */
         const stop = () =>
           stopGroup(pid, { pidFile: files.pid }).then(
-            () =>
+            async () =>
               groupAlive(pid)
                 ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
-                : undefined,
+                : await survivors(pid),
             (error: unknown) => (error instanceof Error ? error.message : String(error)),
           )
         const result = async (
@@ -348,7 +362,15 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         let next
         // The code first: once it is recorded, stopping the group is the end of a finished run, not of a running one.
         const code = await exitCode(files.status)
-        if (code !== undefined) next = await result('finished', code, await stop())
+        // The queue decided to end it at an earlier look, recorded before anything was signalled: replayed after a crash, it
+        // ends the same way and says why.
+        if (slot?.stopping)
+          next = await result(
+            'stopped',
+            code ?? null,
+            [await stop(), slot.stopping].filter(Boolean).join('\n'),
+          )
+        else if (code !== undefined) next = await result('finished', code, await stop())
         else if (now - began >= task.input.timeout * 1000)
           next = await result('timeout', null, await stop())
         else if (!groupAlive(pid)) {
@@ -374,17 +396,22 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             (await reclaimSlot(claim, holder, await maxHeavyJobs(host.userHome)))
           )
             observed = observe(observed, sample, PROBATION_MS, true)
-          if (observed?.kind === 'reclaiming') {
-            next = await result(
-              'stopped',
-              null,
-              [
-                `Stopped by the heavy-work queue: it used more than a core without a place in the queue (it gave its place back after ${LIGHT_FOR_MS / 60_000} min idle, or was light at first) while every place was taken. Partial output is above; files it was writing may be incomplete. Run it again with the same call: it waits in line for a place.`,
-                await stop(),
-              ]
-                .filter(Boolean)
-                .join('\n'),
-            )
+          if (observed?.kind === 'reclaiming' && slot) {
+            // Recorded first, ended at the next look a second later: a crash between the two ends it the same way.
+            next = {
+              status: 'sleeping' as const,
+              until: now + 1000,
+              checkpoint: {
+                phase: 'poll' as const,
+                pid,
+                began,
+                slot: {
+                  ...slot,
+                  observed,
+                  stopping: `Stopped by the heavy-work queue: it used more than a core without a place in the queue (it gave its place back after ${LIGHT_FOR_MS / 60_000} min idle, or was light at first) while every place was taken. Partial output is above; files it was writing may be incomplete. Run it again with the same call: it waits in line for a place.`,
+                },
+              },
+            }
           } else {
             // Said again at every look: after the queue's file was removed, this puts the job back before anyone starts.
             if (claim && holder) {

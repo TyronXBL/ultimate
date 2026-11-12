@@ -21,6 +21,7 @@ import { UiState } from '../../../../server/ui-state.ts'
 import type { BackgroundResult } from '../../refs.ts'
 import codingTools from '../../../coding-tools/server.ts'
 import { writeJson } from '../../../../lib/json-file.ts'
+import { readSlot } from '../../../../lib/slot.ts'
 import { temp, until } from '../../../../test/helpers.ts'
 
 const run = promisify(execFile)
@@ -250,8 +251,9 @@ it('steers the calling run and wakes an interruptible wait when the command fini
  * each `RUN <command>` input as a background command. Every project of a test file shares the file's TMPDIR, so their
  * heavy commands share one heavy-work queue.
  */
-async function project(name: string) {
+async function project(name: string, settings?: object) {
   const root = await temp(`ultimate-background-${name}-`)
+  if (settings) await writeJson(join(root, 'user/.ultimate/settings.json'), settings)
   const prepared = await prepareHarness({
     ultimateRoot: root,
     userHome: await temp(),
@@ -370,6 +372,31 @@ it('starts the next heavy command in line once the conversation running one is c
   await until(async () => (await b.results()).length === 1)
   expect(await lines(log)).toEqual(['a-start', 'b-start', 'b-end'])
   expect(await a.results()).toEqual([])
+})
+
+// #227574: a command light at its probation that turns heavy later must not run beside a full queue.
+it('ends a command that turns heavy without a place while every place is taken, and says why', async () => {
+  const shared = await temp('ultimate-background-queue-')
+  const log = join(shared, 'order')
+  // Measured, one place, and no load ever keeps a job back: only places decide.
+  const a = await project('a', { cpu: { maxLoadPerCore: 1000 }, heavyWork: { maxJobs: 1 } })
+  // Above a core takes more than one loop.
+  const loops = Array.from({ length: 3 }, () => `bash -c 'while :; do :; done' &`).join(' ')
+  const late = `echo late-start >> ${log}; until [ -f ${join(shared, 'burn')} ]; do sleep 0.1; done; ${loops} wait`
+  await a.run(late)
+  await until(async () => (await lines(log)).includes('late-start'))
+  // Light through its probation, it gives its place back; a heavy command takes it.
+  await until(async () => (await readSlot()).queue.entries.length === 0, 60_000)
+  await a.run(heavy(log, 'hold', { hold: join(shared, 'go') }))
+  await until(async () => (await lines(log)).includes('hold-start'))
+  await writeFile(join(shared, 'burn'), '')
+  await until(async () => (await a.results()).length === 1, 90_000)
+  const [stopped] = await a.results()
+  expect(stopped).toMatchObject({ command: late, outcome: 'stopped' })
+  expect(stopped.note).toContain('Stopped by the heavy-work queue')
+  expect(stopped.note).toContain('Run it again with the same call')
+  await writeFile(join(shared, 'go'), '')
+  await until(async () => (await a.results()).length === 2)
 })
 
 it('keeps a running and a waiting heavy command through a restart: each runs once, in order', async () => {
