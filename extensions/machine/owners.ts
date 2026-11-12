@@ -68,9 +68,11 @@ function parse(argv: string[], name: string): string {
     const rest = words.slice(start + 1)
     let next = 0
     if (wrappers.test(program)) {
-      while (next < rest.length && (rest[next] === '-n' || /^\d+(\.\d+)?[smhd]?$/.test(rest[next])))
-        next += rest[next] === '-n' ? 2 : 1
-      if (rest[next]?.startsWith('-')) return program
+      // Each wrapper's own operands: `timeout` one duration, `nice` an optional `-n N`; the others none.
+      if (program === 'timeout' && /^\d+(\.\d+)?[smhd]?$/.test(rest[0] ?? '')) next = 1
+      else if (program === 'timeout') return program
+      if (program === 'nice' && rest[0] === '-n' && /^-?\d+$/.test(rest[1] ?? '')) next = 2
+      if (!rest[next] || rest[next].startsWith('-')) return program
       known = program
       words = rest.slice(next)
       continue
