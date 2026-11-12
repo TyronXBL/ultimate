@@ -316,8 +316,12 @@ async function fixture(
         (text.startsWith('Message from #') && text.includes(' works on ')))
     )
       return fauxAssistantMessage([fauxToolCall('hold', {})], { stopReason: 'toolUse' })
-    // @ultimate answers a branch's reply with only a message to the user.
-    if (last.role === 'user' && text.startsWith('Reply from #') && text.includes('TELLUSER'))
+    // @ultimate answers a branch's reply or report with only a message to the user.
+    if (
+      last.role === 'user' &&
+      /^(Reply|Message) from #(?!1 )/.test(text) &&
+      text.includes('TELLUSER')
+    )
       return fauxAssistantMessage(
         [fauxToolCall('message', { to: 'user', text: 'Correction', reply: false })],
         { stopReason: 'toolUse' },
@@ -1034,7 +1038,11 @@ import { Workspaces } from ${JSON.stringify(resolve('extensions/workspaces/works
 export default (host) => {
   host.implement(SubagentsApi, { residents: async () => [] })
   host.implement(WorkspacesApi, { doc: Workspaces })
-  host.implement(ConversationsApi, { concludedIn: async () => new Set() })
+  host.implement(ConversationsApi, {
+    concludedIn: async () => new Set(),
+    underway: async () => [],
+    registerUnderway: () => () => {},
+  })
   return { name: 'core-stand-ins' }
 }
 `,
@@ -1351,7 +1359,8 @@ async function openBranch(f: Awaited<ReturnType<typeof fixture>>, prompt: string
 }
 async function branched(f: Awaited<ReturnType<typeof fixture>>, prompt = 'Explore') {
   const { reports, before } = await openBranch(f, prompt)
-  await until(async () => (await reports()) === before + 1)
+  // At least: a branch answering a routed answer reports again (an echo), possibly before this poll sees the first.
+  await until(async () => (await reports()) >= before + 1)
   await f.opened.root.waitForIdle(context)
   const id = (await f.log())!.messages.findLast((m) => m.from === 1 && m.to !== 'user')!
     .to as number
