@@ -341,8 +341,10 @@ export default function prompt(host: ExtensionHost) {
         const rest = scope
           ? ` Your role lists only these; a skill your task names is still yours to read: read \`<name>/SKILL.md\` and the read tool answers with its location.`
           : ''
+        // Skills written for Claude Code (mattpocock/skills, ten of them) say "Call the Skill tool with X"; without this
+        // line an agent looks for a tool that does not exist (#259675). Upstream leaves harness differences to the harness.
         return listed
-          ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name.${rest}`
+          ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name. There is no Skill tool: a skill that says to call it with a name means read that skill's SKILL.md.${rest}`
           : undefined
       }),
       // Empty, not undefined, when nothing is off: the slot keeps its place, so coming back patches only this section
