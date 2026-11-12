@@ -90,7 +90,8 @@ cores). With it set:
   holds one (a test run idle for an hour held the queue on 2026-11-11; a real e2e run idles at 0.25 cores over its
   quietest minute). A job without a place that turns heavy (busy again after giving its place back, or light from its
   probation and above one core for 20 s later) takes a free place, before any waiter, or is paused (SIGSTOP, each of
-  its processes recorded by identity so they resume even if its leader is killed) until one is free: nothing measured
+  its processes recorded by identity in the task's checkpoint before it is stopped, so they resume after a crash or
+  once its leader is killed) until one is free: nothing measured
   runs beyond the limit. Its result card says how long it was paused; a dev server compiling while every place is
   taken waits too. Light jobs started together begin about 20 s apart each per place, and wait while every place is
   taken.

@@ -3,12 +3,13 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
 import {
-  pauseSession,
   resumeProcesses,
+  sessionIdentities,
   sessionCpuMs,
   sessionMarked,
   sessionMembers,
   signalSession,
+  stopProcesses,
 } from '../../lib/cpu.ts'
 import { until } from '../helpers.ts'
 
@@ -45,7 +46,9 @@ it('measures, pauses, resumes and stops a whole session, its timeout subgroups a
     await until(async () => (await sessionMembers(sid)).length >= 4)
     expect(await coresOver(sid, 1500)).toBeGreaterThan(0.5)
 
-    const stopped = await pauseSession(sid)
+    // Recorded first, then stopped, as the background task does.
+    const stopped = await sessionIdentities(sid)
+    stopProcesses(stopped)
     await sleep(200)
     expect(await coresOver(sid, 1000)).toBeLessThan(0.05)
     resumeProcesses(stopped)
@@ -53,7 +56,8 @@ it('measures, pauses, resumes and stops a whole session, its timeout subgroups a
 
     // Its leader killed from outside while paused (review of #227574): nothing of it stays stopped. What survives runs
     // again by its recorded identity; a group orphaned by the kill may instead end on the kernel's own SIGHUP.
-    const again = await pauseSession(sid)
+    const again = await sessionIdentities(sid)
+    stopProcesses(again)
     process.kill(sid, 'SIGKILL')
     await until(async () => !(await sessionMembers(sid)).includes(sid))
     resumeProcesses(again)

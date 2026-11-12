@@ -321,24 +321,25 @@ function send(pid: number, signal: NodeJS.Signals) {
 export type Known = { pid: number; identity: string }
 
 /**
- * Stop every process of session `sid` (verified the caller's own) and return them by identity, so they can be resumed
- * even once the session's leader is gone (review of #227574: a leader killed from outside left its paused children
- * stopped for good).
+ * The processes of session `sid` by identity. A caller that pauses them records these first, durably, and only then
+ * stops them (`stopProcesses`), so whatever it stopped can be resumed even once the session's leader is gone or the
+ * host crashed in between (review of #227574: a leader killed from outside left its paused children stopped for good).
  */
-export async function pauseSession(sid: number): Promise<Known[]> {
-  const stopped: Known[] = []
-  for (const pid of await sessionMembers(sid)) {
+export async function sessionIdentities(sid: number): Promise<Known[]> {
+  return (await sessionMembers(sid)).flatMap((pid) => {
     const identity = identify(pid)
-    if (!identity) continue
-    send(pid, 'SIGSTOP')
-    stopped.push({ pid, identity })
-  }
-  return stopped
+    return identity ? [{ pid, identity }] : []
+  })
 }
 
-/** Resume the processes `pauseSession` stopped, each only while it is still the process it was. */
-export function resumeProcesses(stopped: Known[]) {
-  for (const { pid, identity } of stopped) if (identify(pid) === identity) send(pid, 'SIGCONT')
+/** Stop the recorded processes, each only while it is still the process it was. */
+export function stopProcesses(recorded: Known[]) {
+  for (const { pid, identity } of recorded) if (identify(pid) === identity) send(pid, 'SIGSTOP')
+}
+
+/** Resume the recorded processes, each only while it is still the process it was. */
+export function resumeProcesses(recorded: Known[]) {
+  for (const { pid, identity } of recorded) if (identify(pid) === identity) send(pid, 'SIGCONT')
 }
 
 /** The session whose leader's environment holds `marker` (`NAME=value`), as a bash call marks its shell. */
