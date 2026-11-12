@@ -69,7 +69,16 @@ describe('owners', () => {
     [300, top(`${home}/my-app-1a2b3c4d/worktrees/12`, '/bin/bash', '-c', 'pnpm check')],
     [301, top(`${home}/my-app-1a2b3c4d/worktrees/12`, 'node', 'tsc')],
     [400, top(`${home}/my-app-1a2b3c4d/worktrees/14`, '/bin/bash', '-c', 'bash slice.sh')],
-    [500, top(`${home}/notes-3c4d5e6f/worktrees/22`, '/usr/bin/node', 'audit.mjs', '--key=abc123')],
+    [
+      500,
+      top(
+        `${home}/notes-3c4d5e6f/worktrees/22`,
+        '/usr/bin/node',
+        'audit.mjs',
+        'hunter2',
+        '--key=abc123',
+      ),
+    ],
     [501, top(`${home}/notes-3c4d5e6f/worktrees/22`, '/usr/lib/chromium/chromium')],
     [600, top(`${home}/my-app-1a2b3c4d/worktrees/15`, '/usr/bin/node', 'server/main.ts')],
     [601, top(`${home}/my-app-1a2b3c4d/worktrees/15`, '/usr/lib/chromium/chromium')],
@@ -187,7 +196,7 @@ describe('owners', () => {
   })
 
   test('shows no argument values, only program names', () => {
-    expect(JSON.stringify(list)).not.toContain('abc123')
+    expect(JSON.stringify(list)).not.toMatch(/abc123|hunter2/)
     expect(find('job', 12)?.job).toBe('my-app:background:7')
   })
 })

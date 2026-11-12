@@ -37,12 +37,14 @@ export function fromOf(from: string) {
   return found ? { conversation: Number(found[1]), project: found[2] } : {}
 }
 
+/** Why the first waiter, with nothing holding the slot, has not started: each as its admission decides it. */
 export type QueueFacts = {
-  now: number
-  load: number
-  cores: number
-  /** What RAM the first waiter falls short by, per `lib/memory.ts`'s admission (`checkRam`), if it does. */
+  /** Its own turn is settling (the queue's file was removed) until then: `peekSlot` for its claim. */
+  settling?: number
+  /** What RAM it falls short by, per `lib/memory.ts`'s admission (`checkRam`), if it does. */
   short?: RamShort
+  /** The load, when the load gate (`cpu.maxLoadPerCore`, #227574) is on and holds it back. */
+  load?: { load: number; cores: number }
   /** CPU and memory of a holder's processes, by its job id. */
   usage: Map<string, { cpu: number; rssMiB: number }>
 }
@@ -68,8 +70,7 @@ export function queueView(turn: Turn, facts: QueueFacts): QueueJob[] {
   const reasonAt = (index: number): WaitReason => {
     const before = index > 0 ? ahead[index - 1] : holders.at(-1)
     if (before) return { kind: 'behind', label: before.label, from: before.from }
-    if (turn.kind === 'settling' && turn.until !== undefined)
-      return { kind: 'settling', until: turn.until }
+    if (facts.settling !== undefined) return { kind: 'settling', until: facts.settling }
     if (facts.short)
       return {
         kind: 'ram',
@@ -78,7 +79,7 @@ export function queueView(turn: Turn, facts: QueueFacts): QueueJob[] {
         floorMiB: facts.short.floor,
         ...(facts.short.reserved && { reservedMiB: facts.short.reserved }),
       }
-    if (facts.load >= facts.cores) return { kind: 'load', load: facts.load, cores: facts.cores }
+    if (facts.load) return { kind: 'load', ...facts.load }
     return { kind: 'next' }
   }
   const waiting: QueueJob[] = ahead.map((job, index) => ({

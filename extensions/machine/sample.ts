@@ -8,12 +8,14 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { readFile, readlink, statfs } from 'node:fs/promises'
 import { availableParallelism, loadavg, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import type { JsonObject } from '@earendil-works/pi-durable'
 import { checkRam, commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
+import { readSettings, userSettingsPath } from '../../lib/settings.ts'
 import { peekSlot, queueTmpdir, slotLabel } from '../../lib/slot.ts'
 import { cpuByKind, homeOf, owners } from './owners.ts'
 import type { OwnerContext, Proc, Top } from './owners.ts'
 import { END_OF_LINE, fromOf, holdersOf, queueView } from './queue.ts'
-import type { Turn } from './queue.ts'
+import type { QueueFacts, Turn } from './queue.ts'
 import type { MachineState, Owner, Pressure, Sample, TempUse } from './refs.ts'
 
 /** What carries over from one look to the next: CPU counters and the tops' command lines, by pid and start time. */
@@ -269,6 +271,39 @@ async function namesOf(tops: Iterable<Top>, homes: Map<string, string>) {
   return homes
 }
 
+/**
+ * Why the first waiter has not started while nothing holds the slot, each from its own admission: its own turn (the
+ * queue may be settling), RAM (`checkRam`), and the load gate, which is on only with `cpu.maxLoadPerCore` set (#227574;
+ * read here until its reader exposes the gate).
+ */
+async function headFacts(
+  first: { id: string; at: number; label: string },
+  userHome: string,
+  floorMiB: number | undefined,
+  load: number,
+  cores: number,
+): Promise<Omit<QueueFacts, 'usage'>> {
+  const [own, short, settings] = await Promise.all([
+    peekSlot({ id: first.id, at: first.at }),
+    checkRam(floorMiB, commandNeedMiB(first.label), queueTmpdir()),
+    readSettings(userSettingsPath(userHome)).catch(
+      // Unreadable settings: the setup status reports them; the gate is off meanwhile.
+      (): JsonObject => ({}),
+    ),
+  ])
+  const cpu = settings.cpu
+  const limit =
+    cpu && typeof cpu === 'object' && !Array.isArray(cpu) ? cpu.maxLoadPerCore : undefined
+  const turn: Turn = own
+  return {
+    ...(turn.kind === 'settling' && turn.until !== undefined && { settling: turn.until }),
+    ...(short && { short }),
+    ...(typeof limit === 'number' &&
+      limit > 0 &&
+      load >= limit * cores && { load: { load, cores } }),
+  }
+}
+
 /** How many owners the state lists; the rest add up in `more`. */
 const LISTED = 12
 
@@ -332,15 +367,10 @@ export async function look(
   const cores = availableParallelism()
   const load = Math.round(loadavg()[0] * 100) / 100
   const first = turn.ahead?.[0]
-  const short =
-    first && !holders.length
-      ? await checkRam(floorMiB, commandNeedMiB(first.label), queueTmpdir())
-      : undefined
+  const head =
+    first && !holders.length ? await headFacts(first, host.userHome, floorMiB, load, cores) : {}
   const queue = queueView(turn, {
-    now,
-    load,
-    cores,
-    ...(short && { short }),
+    ...head,
     usage: new Map(
       all
         .filter((owner): owner is Owner & { job: string } => owner.job !== undefined)

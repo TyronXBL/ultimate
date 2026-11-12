@@ -34,9 +34,12 @@ export type OwnerContext = {
 type Who = Omit<Owner, 'cpu' | 'rssMiB' | 'processes' | 'since' | 'key'>
 
 const interpreters = /^(node|python3?|bash|sh|dash|zsh|env|exec|nice|nohup|setsid|timeout)$/
+/** Programs whose next word names a script or subcommand (`pnpm test`), never a value. */
+const runners = /^(pnpm|npm|npx|yarn|bun|vp|vite|vitest|playwright|git|cargo|go|make|docker)$/
 /**
  * A short name for what `argv` runs, never its arguments' values: the program, or for an interpreter the script it runs,
- * with a subcommand word after it (`pnpm test`, `vitest`, `chromium`). Basenames only, so no path or secret leaves.
+ * with the subcommand of a known runner (`pnpm test`, `vitest`, `chromium`). Basenames only, so no path or secret
+ * leaves; another program's next word may be a value (`client.js password`), so it is left out.
  */
 function programOf(argv: string[], name: string) {
   let words = argv
@@ -55,7 +58,9 @@ function programOf(argv: string[], name: string) {
   }
   const program = basename(words[index] ?? '').replace(/\.[cm]?js$/, '') || name
   const sub = words[index + 1]
-  return sub && /^[a-z][\w:-]{0,23}$/.test(sub) ? `${program} ${sub}` : program
+  return sub && runners.test(program) && /^[a-z][\w:-]{0,23}$/.test(sub)
+    ? `${program} ${sub}`
+    : program
 }
 
 /** The project home a folder lies in (`~/.ultimate/projects/<name>-<hash>`), and the path inside it. */

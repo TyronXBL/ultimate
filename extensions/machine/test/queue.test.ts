@@ -8,7 +8,7 @@ const claim = (n: number, label: string) => ({
   label,
   from: `#${n} in my-app`,
 })
-const facts: QueueFacts = { now: 10_000, load: 1.5, cores: 6, usage: new Map() }
+const facts: QueueFacts = { usage: new Map() }
 const reasons = (turn: Turn, more: Partial<QueueFacts> = {}) =>
   queueView(turn, { ...facts, ...more }).map((job) =>
     job.state === 'waiting' ? [job.position, job.reason] : [job.state, job.label],
@@ -29,13 +29,16 @@ describe('queueView', () => {
     expect(queueView(turn, facts)[0]).toMatchObject({ project: 'my-app', conversation: 1 })
   })
 
-  test('the first waiter with nothing running waits for RAM, then for load, else starts at its next look', () => {
+  test('the first waiter with nothing running waits for the queue to settle, then RAM, else starts at its next look', () => {
+    // The end-of-line turn says `behind` while anyone waits, so it never tells a settling queue (review of #231847).
     const turn: Turn = { kind: 'behind', ahead: [claim(2, 'pnpm test')] }
     const short = { available: 3500, need: 1536, floor: 3072 }
+    expect(reasons(turn, { settling: 40_000, short })).toEqual([
+      [1, { kind: 'settling', until: 40_000 }],
+    ])
     expect(reasons(turn, { short })).toEqual([
       [1, { kind: 'ram', availableMiB: 3500, needMiB: 1536, floorMiB: 3072 }],
     ])
-    expect(reasons(turn, { load: 7.2 })).toEqual([[1, { kind: 'load', load: 7.2, cores: 6 }]])
     expect(reasons(turn)).toEqual([[1, { kind: 'next' }]])
   })
 

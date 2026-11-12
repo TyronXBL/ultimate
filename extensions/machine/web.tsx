@@ -8,7 +8,6 @@ import {
   provide,
   useAction,
   useDialog,
-  useNow,
   useUiState,
   useUltimate,
 } from '@/sdk'
@@ -94,18 +93,12 @@ function Machine() {
  * nothing is wrong. A click opens the Machine tab.
  */
 function Chip() {
-  const { data, refetch } = useAction(
-    SummaryAction,
-    null,
+  const { data } = useAction(SummaryAction, null, {
+    every: 15_000,
     // A failed poll keeps the last summary; the next one asks again.
-    { onError: () => {} },
-  )
-  const now = useNow(15_000)
+    onError: () => {},
+  })
   const open = useOpenMachine()
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [now, refetch])
   if (!data) return null
   const queued = data.running + data.waiting
   const attention = data.pressure.length > 0
