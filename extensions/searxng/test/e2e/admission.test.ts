@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { promisify } from 'node:util'
 import { afterEach, expect, it } from 'vitest'
 import { reserveSearch } from '../../budget.ts'
@@ -30,11 +32,25 @@ it('shares two search slots between independent callers and admits a waiter afte
   await second()
 })
 
+it('drops claims of processes that are gone', async () => {
+  home = await temp()
+  await (
+    await admitSearch(home)
+  )()
+  const db = new DatabaseSync(join(home, '.ultimate/web-search-admission.sqlite'))
+  // Two claims left by a crashed host: a pid that does not exist, and a reused pid with another start time.
+  db.prepare('INSERT INTO holders VALUES (?, ?, ?)').run('crashed', 2 ** 22 + 1, 'gone')
+  db.prepare('INSERT INTO holders VALUES (?, ?, ?)').run('reused', process.pid, 'other start')
+  db.close()
+  const release = await admitSearch(home, AbortSignal.timeout(1000))
+  const after = new DatabaseSync(join(home, '.ultimate/web-search-admission.sqlite'))
+  expect(after.prepare('SELECT count(*) AS n FROM holders').get()).toEqual({ n: 1 })
+  after.close()
+  await release()
+})
+
 it('reserves distinct monthly credits across concurrent host processes', async () => {
   home = await temp()
-  // Admission normally creates the user directory before a reservation.
-  const release = await admitSearch(home)
-  await release()
   expect(await reserveSearch(home)).toBe(1)
   const moduleUrl = new URL('../../budget.ts', import.meta.url).href
   const script = `import { reserveSearch } from ${JSON.stringify(moduleUrl)}; console.log(await reserveSearch(process.argv[1]))`

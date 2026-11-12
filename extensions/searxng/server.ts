@@ -426,11 +426,15 @@ export default function searxng(host: ExtensionHost) {
     return { results: parseResults(payload, base), unresponsive: parseUnresponsive(payload) }
   }
 
-  /** Only explicit failures of all eligible web engines prove an outage; config cannot prove an empty response. */
+  /**
+   * Whether every web engine SearXNG would ask (its `/config`: enabled, in a selected category and in `web`, with
+   * time-range support when one is set) reported a failure and none of them contributed a result. Only explicit
+   * failures prove an outage; SearXNG does not report engines that answered with nothing.
+   */
   async function allWebDown(
     query: string,
     options: { categories?: string; time_range?: string; signal?: AbortSignal },
-    unresponsive: UnresponsiveEngine[],
+    { results, unresponsive }: { results: SearchResult[]; unresponsive: UnresponsiveEngine[] },
   ) {
     if (!unresponsive.length || /(?:^|\s)[!@]/.test(query)) return false
     try {
@@ -456,18 +460,12 @@ export default function searxng(host: ExtensionHost) {
         if (!e.enabled || !e.categories.some((category: string) => selected.includes(category)))
           continue
         if (options.time_range && e.time_range_support !== true) continue
-        // An unclassified general-only engine makes the set unknown (#229140).
         if (e.categories.includes('web')) engines.push(e.name)
-        else if (
-          e.categories.length === 1 &&
-          e.categories[0] === 'general' &&
-          !['wikipedia', 'wikidata'].includes(e.name)
-        )
-          return false
       }
       return (
         engines.length > 0 &&
-        engines.every((engine) => unresponsive.some((failed) => failed.engine === engine))
+        engines.every((engine) => unresponsive.some((failed) => failed.engine === engine)) &&
+        !results.some((result) => result.engine !== null && engines.includes(result.engine))
       )
     } catch {
       // Config is advisory; an unavailable or unknown selection cannot prove an outage.
@@ -658,20 +656,15 @@ export default function searxng(host: ExtensionHost) {
             })
             let { results } = primary
             const { unresponsive } = primary
-            const contributedWeb = results.some((result) =>
-              ['brave', 'google cse', 'yahoo'].includes(result.engine ?? ''),
+            const down = await allWebDown(
+              args.query,
+              {
+                categories: args.categories,
+                time_range: args.time_range,
+                signal: context.abortSignal,
+              },
+              primary,
             )
-            const down =
-              !contributedWeb &&
-              (await allWebDown(
-                args.query,
-                {
-                  categories: args.categories,
-                  time_range: args.time_range,
-                  signal: context.abortSignal,
-                },
-                unresponsive,
-              ))
             context.abortSignal?.throwIfAborted()
             let outcome = results.length
               ? unresponsive.length
@@ -701,6 +694,8 @@ export default function searxng(host: ExtensionHost) {
               }
               if (key) {
                 let reservation: number | null | undefined
+                // A search cancelled by now must not spend a counted call.
+                context.abortSignal?.throwIfAborted()
                 try {
                   reservation = await reserveSearch(stateHome, context.abortSignal)
                   if (reservation === null) {
@@ -721,8 +716,10 @@ export default function searxng(host: ExtensionHost) {
                       fallback = 'answered'
                       fallbackNote = `\n\nResults from Tavily (fallback ${reservation}/${TAVILY_CAP.toLocaleString('en')} this month); SearXNG category and time filters do not apply.${(args.count ?? 10) > 20 ? ' Tavily returns at most 20 results.' : ''}`
                     } else {
+                      // Tavily answered: a real empty result, whatever SearXNG's engines did.
+                      outcome = 'empty'
                       fallback = 'no-results'
-                      reason = 'Tavily found nothing either.'
+                      fallbackNote = '\n\nTavily (the fallback) found nothing either.'
                     }
                   } catch (error) {
                     context.abortSignal?.throwIfAborted()
@@ -784,7 +781,11 @@ export default function searxng(host: ExtensionHost) {
               ),
             )
           } finally {
-            await release?.()
+            // A claim that cannot be deleted stays until this process exits, when the next admission drops it;
+            // the search's own result matters more than that slot (#228360 review).
+            await release?.().catch((error: unknown) =>
+              host.notice(`web_search: could not release its search slot: ${String(error)}`),
+            )
           }
         },
       }),

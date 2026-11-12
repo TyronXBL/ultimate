@@ -89,11 +89,11 @@ When SearXNG returns no results, or every web engine it would ask (those in the 
 - **The key:** `TAVILY_API_KEY` in the Secrets panel (⌘K → Secrets); a free account needs no card. Without it, search works as before, the setup item offers the key, and a search that needed the fallback says it is not configured.
 - **The cap:** 1,000 calls per calendar month (UTC), one budget for every project and preview on the machine, the free tier's size, so it costs nothing. Each call is counted before it is sent, also when it fails, in `~/.ultimate/tavily-budget.sqlite`; when it is used up the tool says so until the 1st. Tavily resets its free credits on the 1st too, and stops (it does not bill) when they run out. Deleting the file resets the local count; an unreadable file stops the fallback until it is repaired or removed.
 - **What leaves the machine:** only the query text, plus fixed options (basic search, 20 results), and only for searches SearXNG failed, to `https://api.tavily.com`. Tavily's terms (§6.5) may let it train on what it receives.
-- **Outages are errors:** when every SearXNG web engine failed and the fallback cannot answer (no key, cap used up, a Tavily error), the call is a tool error naming each cause: `Web search is down: every SearXNG web engine failed (…). …`. An empty result otherwise stays a success. SearXNG does not report which engines answered with nothing, so the text says so rather than claiming a real empty result.
+- **Outages are errors:** when every SearXNG web engine failed and the fallback cannot answer (no key, cap used up, a Tavily error), the call is a tool error naming each cause: `Web search is down: every SearXNG web engine failed (…). …`. An empty result otherwise stays a success. When Tavily answered with nothing too, that is a real empty result; without its answer the text says it may not be, since SearXNG does not report which engines answered with nothing.
 
 ### Measuring
 
-Every `web_search` result's `details.outcome` is one of `good` (results, no engine down), `partial` (results, some engines down), `fallback` (answered by Tavily), `unknown-empty` (no results, no proven outage), `outage` (the error above) or `cancelled`; `details.fallback` says what the fallback did when it was needed (`answered`, `no-results`, `not-configured`, `cap-reached`, `budget-unavailable`, `secrets-unreadable`, `failed`). The weekly count, in codemode across the running projects:
+Every `web_search` result's `details.outcome` is one of `good` (results, no engine down), `partial` (results, some engines down), `fallback` (answered by Tavily), `empty` (Tavily answered with nothing too), `unknown-empty` (no results, no proven outage, no answer from Tavily), `outage` (the error above) or `cancelled`; `details.fallback` says what the fallback did when it was needed (`answered`, `no-results`, `not-configured`, `cap-reached`, `budget-unavailable`, `secrets-unreadable`, `failed`). The weekly count, in codemode across the running projects. A forked conversation's history repeats its ancestors' entries, so each entry counts once by its id; a project that hits the 1,000-entry limit says so (count it by conversation then):
 
 ```js
 const since = Date.now() - 7 * 86_400_000
@@ -106,12 +106,17 @@ for (const { name, running } of await ultimate.projects()) {
     limit: 1000,
     project: name,
   })
-  for (const { model } of hits)
+  if (hits.length === 1000) counts[`${name}: limit reached, incomplete`] = 1
+  const seen = new Set()
+  for (const { id, model } of hits) {
+    if (seen.has(id)) continue
+    seen.add(id)
     for (const result of model ?? []) {
       if (result.toolName !== 'web_search' || result.timestamp < since) continue
       const key = `${result.details?.outcome ?? 'untagged'}${result.details?.fallback ? `/${result.details.fallback}` : ''}`
       counts[key] = (counts[key] ?? 0) + 1
     }
+  }
 }
 return counts
 ```

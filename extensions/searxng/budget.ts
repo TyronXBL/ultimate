@@ -1,4 +1,4 @@
-import { open } from 'node:fs/promises'
+import { mkdir, open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -13,6 +13,7 @@ export async function reserveSearch(
 ): Promise<number | null> {
   const dir = join(userHome, '.ultimate')
   const path = join(dir, 'tavily-budget.sqlite')
+  await mkdir(dir, { recursive: true })
   let created = false
   try {
     const file = await open(path, 'wx', 0o600)

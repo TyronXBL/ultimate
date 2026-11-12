@@ -76,7 +76,8 @@ it('web_search asks SearXNG for JSON and returns its results with unresponsive e
     )
   })
   const result = await (await tools(instance.base)).search({ query: 'a b', time_range: 'week' })
-  expect(instance.requests).toEqual(['/search?q=a+b&format=json&time_range=week'])
+  // An engine was down, so it reads /config to tell whether every web engine was.
+  expect(instance.requests).toEqual(['/search?q=a+b&format=json&time_range=week', '/config'])
   expect(result.isError).toBeUndefined()
   expect(result.text).toContain('1. A page\nURL: https://www.example.com/a\nAbout A')
   expect(result.text).toContain('1 upstream engine was unresponsive (duckduckgo: CAPTCHA)')
