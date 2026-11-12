@@ -77,9 +77,12 @@ export function programOf(argv: string[], name: string): string {
       shell = program
       // Split on whitespace only up to the first quote, escape or expansion: past it a word may be part of a quoted value
       // (`TOKEN="a b" curl`, `--require "a b.js"`, review of #231847).
-      const plain = line.replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '')
-      const quoted = plain.search(/['"`\\$]/)
-      words = (quoted < 0 ? plain : plain.slice(0, quoted)).trim().split(/\s+/).filter(Boolean)
+      const quoted = line.search(/['"`\\$]/)
+      words = (quoted < 0 ? line : line.slice(0, quoted))
+        .replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
       continue
     }
     const script = rest[next]
