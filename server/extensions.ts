@@ -905,11 +905,14 @@ function validateSecrets(
     }
     if (item.provider !== undefined && (typeof item.provider !== 'string' || !item.provider))
       throw new Error('secret providers must be non-empty strings')
+    if (item.optional !== undefined && typeof item.optional !== 'boolean')
+      throw new Error('secret optional must be a boolean')
     return {
       name: item.name,
       description: item.description,
       ...(item.url === undefined ? {} : { url: item.url }),
       ...(item.provider === undefined ? {} : { provider: item.provider }),
+      ...(item.optional ? { optional: true } : {}),
     }
   })
 }

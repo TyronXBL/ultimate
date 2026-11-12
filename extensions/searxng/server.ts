@@ -10,7 +10,19 @@ import { parse } from 'parse5'
 import { Agent, fetch } from 'undici'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { readSettings, userSettingsPath } from '../../lib/settings.ts'
+import { readSecret } from '../../lib/secrets.ts'
 import { truncateToolOutput } from '../../lib/tool-output.ts'
+import { admitSearch } from './admission.ts'
+import { reserveSearch, TAVILY_CAP } from './budget.ts'
+
+export const secrets = [
+  {
+    name: 'TAVILY_API_KEY',
+    description: 'Tavily API key: web_search falls back to it when SearXNG finds nothing',
+    url: 'https://app.tavily.com',
+    optional: true,
+  },
+]
 
 const DEFAULT_URL = 'http://127.0.0.1:8888'
 const SEARCH_TIMEOUT_MS = 15_000
@@ -18,7 +30,7 @@ const FETCH_TIMEOUT_MS = 15_000
 const MAX_BODY_BYTES = 5 * 1024 * 1024
 const MAX_REDIRECTS = 5
 const USER_AGENT = 'Mozilla/5.0 (compatible; Ultimate web_fetch)'
-const guidance = `Use web_search to discover pages, verify current facts, or locate documentation. It queries the user's own SearXNG instance, which aggregates public search engines; results may be incomplete when upstream engines are unresponsive, and the tool says which.
+const guidance = `Use web_search to discover pages, verify current facts, or locate documentation. It queries the user's own SearXNG instance, which aggregates public search engines; results may be incomplete when upstream engines are unresponsive, and the tool says which. When SearXNG finds nothing or all its web engines fail, it falls back to Tavily and says so; an error means web search itself is down, not that nothing exists.
 Use web_fetch to read a public web page as text, for example a promising search result.
 web_fetch refuses localhost and private networks, and reads only HTML and text; use curl for raw files, binary downloads, APIs and local URLs.`
 
@@ -117,6 +129,16 @@ function parseUnresponsive(payload: unknown): UnresponsiveEngine[] {
       ? [{ engine: item[0], message: item[1] }]
       : [],
   )
+}
+
+/** A Tavily HTTP error as the agent reads it (https://docs.tavily.com/documentation/api-reference/endpoint/search). */
+function tavilyStatus(status: number) {
+  if (status === 401)
+    return 'Tavily rejected TAVILY_API_KEY (HTTP 401); replace it in the Secrets panel (⌘K → Secrets).'
+  if (status === 429) return 'Tavily is rate limiting (HTTP 429).'
+  if (status === 432 || status === 433)
+    return `the Tavily account's plan or monthly credit limit is reached (HTTP ${status}).`
+  return `Tavily answered HTTP ${status}.`
 }
 
 const nullable = (value: unknown) => (typeof value === 'string' && value ? value : null)
@@ -348,8 +370,11 @@ async function body(response: Awaited<ReturnType<typeof fetch>>, contentType: st
 }
 
 export default function searxng(host: ExtensionHost) {
+  // A preview has private user settings but shares search admission and budget with its parent.
+  const stateHome = process.env.ULTIMATE_WEB_SEARCH_STATE_HOME ?? host.userHome
   // Unreachable or misconfigured instance: a tool error every call, one process-local notice ever.
   const notices = host.resource('searxng:notice', () => ({ sent: false }))
+  const missingKey = host.resource('searxng:tavily-notice', () => ({ sent: false }))
   const agent = host.resource('searxng:fetch-agent', () => {
     const created = new Agent({ connect: { lookup: publicLookup } })
     host.onClose(() => created.close())
@@ -399,6 +424,97 @@ export default function searxng(host: ExtensionHost) {
       throw new WebError(`SearXNG at ${base} returned a response that is not JSON.`)
     }
     return { results: parseResults(payload, base), unresponsive: parseUnresponsive(payload) }
+  }
+
+  /**
+   * Whether every web engine SearXNG would ask (its `/config`: enabled, in a selected category and in `web`, with
+   * time-range support when one is set) reported a failure and none of them contributed a result. Only explicit
+   * failures prove an outage; SearXNG does not report engines that answered with nothing.
+   */
+  async function allWebDown(
+    query: string,
+    options: { categories?: string; time_range?: string; signal?: AbortSignal },
+    { results, unresponsive }: { results: SearchResult[]; unresponsive: UnresponsiveEngine[] },
+  ) {
+    if (!unresponsive.length || /(?:^|\s)[!@]/.test(query)) return false
+    try {
+      const base = await searxngUrl(host)
+      const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
+      const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
+      const response = await globalThis.fetch(`${base}/config`, { signal })
+      if (!response.ok) return false
+      const config = (await response.json()) as { engines?: unknown }
+      if (!Array.isArray(config.engines)) return false
+      const selected = (options.categories ?? 'general').split(',').map((s) => s.trim())
+      const engines: string[] = []
+      for (const engine of config.engines) {
+        if (!engine || typeof engine !== 'object') return false
+        const e = engine as Record<string, unknown>
+        if (
+          typeof e.name !== 'string' ||
+          typeof e.enabled !== 'boolean' ||
+          !Array.isArray(e.categories) ||
+          !e.categories.every((category: unknown) => typeof category === 'string')
+        )
+          return false
+        if (!e.enabled || !e.categories.some((category: string) => selected.includes(category)))
+          continue
+        if (options.time_range && e.time_range_support !== true) continue
+        if (e.categories.includes('web')) engines.push(e.name)
+      }
+      return (
+        engines.length > 0 &&
+        engines.every((engine) => unresponsive.some((failed) => failed.engine === engine)) &&
+        !results.some((result) => result.engine !== null && engines.includes(result.engine))
+      )
+    } catch {
+      // Config is advisory; an unavailable or unknown selection cannot prove an outage.
+      return false
+    }
+  }
+
+  async function tavily(query: string, key: string, signal?: AbortSignal): Promise<SearchResult[]> {
+    const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+    let response: Response
+    try {
+      response = await globalThis.fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        redirect: 'error',
+        signal: combined,
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          search_depth: 'basic',
+          auto_parameters: false,
+          max_results: 20,
+        }),
+      })
+    } catch {
+      throw new Error(
+        timeout.aborted
+          ? `api.tavily.com did not answer within ${SEARCH_TIMEOUT_MS / 1000} seconds.`
+          : 'could not reach api.tavily.com.',
+      )
+    }
+    if (!response.ok) throw new Error(tavilyStatus(response.status))
+    const payload = (await response.json()) as { results?: unknown }
+    if (!Array.isArray(payload.results)) throw new Error('Tavily returned an invalid response.')
+    return payload.results.flatMap((item: unknown) => {
+      if (!item || typeof item !== 'object') return []
+      const r = item as Record<string, unknown>
+      if (typeof r.url !== 'string' || !/^https?:\/\//i.test(r.url)) return []
+      return [
+        {
+          url: r.url,
+          title: typeof r.title === 'string' ? r.title : '',
+          snippet: typeof r.content === 'string' ? r.content : '',
+          publishedDate: nullable(r.published_date),
+          domain: prettyDomain(r.url),
+          engine: 'tavily',
+        },
+      ]
+    })
   }
 
   async function read(address: string, signal?: AbortSignal) {
@@ -499,10 +615,10 @@ export default function searxng(host: ExtensionHost) {
     tools: [
       defineTool({
         name: 'web_search',
-        // Repeating a search only reads public web results; it changes no project state.
-        replay: 'safe',
+        // A fallback spends a credit and must not be repeated after an interruption.
+        replay: 'unsafe',
         description:
-          "Search the public web through the user's own SearXNG instance. Returns ranked pages with titles, URLs, domains, snippets and publication dates, plus a note when upstream engines were unresponsive. Use this to discover sources or find current information; read a result with web_fetch. Output is limited to 50KB or 2,000 lines.",
+          "Search the public web through the user's own SearXNG instance. Returns ranked pages with titles, URLs, domains, snippets and publication dates, plus a note when upstream engines were unresponsive; falls back to Tavily when SearXNG finds nothing. Use this to discover sources or find current information; read a result with web_fetch. Output is limited to 50KB or 2,000 lines.",
         parameters: obj({
           query: str({
             minLength: 1,
@@ -530,14 +646,125 @@ export default function searxng(host: ExtensionHost) {
           ),
         }),
         async execute(args, api, context) {
+          let release: (() => Promise<void>) | undefined
           try {
-            const { results, unresponsive } = await search(args.query, {
+            release = await admitSearch(stateHome, context.abortSignal)
+            const primary = await search(args.query, {
               signal: context.abortSignal,
               categories: args.categories,
               time_range: args.time_range,
             })
+            let { results } = primary
+            const { unresponsive } = primary
+            const down = await allWebDown(
+              args.query,
+              {
+                categories: args.categories,
+                time_range: args.time_range,
+                signal: context.abortSignal,
+              },
+              primary,
+            )
+            context.abortSignal?.throwIfAborted()
+            let outcome = results.length
+              ? unresponsive.length
+                ? 'partial'
+                : 'good'
+              : 'unknown-empty'
+            /** What the Tavily fallback did, for the weekly count; absent when it was not needed. */
+            let fallback: string | undefined
+            let fallbackNote = ''
+            if (!results.length || down) {
+              let reason = ''
+              let key: string | undefined
+              try {
+                key = await readSecret(host.userHome, 'TAVILY_API_KEY')
+              } catch {
+                fallback = 'secrets-unreadable'
+                reason = 'Tavily fallback: the secret store could not be read.'
+              }
+              if (!key && !reason) {
+                fallback = 'not-configured'
+                reason =
+                  'Tavily fallback is not configured; add TAVILY_API_KEY in the Secrets panel (⌘K → Secrets).'
+                if (!missingKey.sent) {
+                  missingKey.sent = true
+                  host.notice(reason)
+                }
+              }
+              if (key) {
+                let reservation: number | null | undefined
+                // A search cancelled by now must not spend a counted call.
+                context.abortSignal?.throwIfAborted()
+                try {
+                  reservation = await reserveSearch(stateHome, context.abortSignal)
+                  if (reservation === null) {
+                    fallback = 'cap-reached'
+                    reason = `Tavily fallback: the monthly limit of ${TAVILY_CAP.toLocaleString('en')} calls is used up until the 1st (UTC).`
+                  }
+                } catch {
+                  fallback = 'budget-unavailable'
+                  reason = `Tavily fallback: its call counter in ${stateHome}/.ultimate/tavily-budget.sqlite is unreadable, so no request was sent.`
+                }
+                context.abortSignal?.throwIfAborted()
+                if (reservation) {
+                  try {
+                    const found = await tavily(args.query, key, context.abortSignal)
+                    if (found.length) {
+                      results = found
+                      outcome = 'fallback'
+                      fallback = 'answered'
+                      fallbackNote = `\n\nResults from Tavily (fallback ${reservation}/${TAVILY_CAP.toLocaleString('en')} this month); SearXNG category and time filters do not apply.${(args.count ?? 10) > 20 ? ' Tavily returns at most 20 results.' : ''}`
+                    } else {
+                      // Tavily answered: a real empty result, whatever SearXNG's web engines did.
+                      fallback = 'no-results'
+                      if (results.length)
+                        fallbackNote =
+                          '\n\nEvery SearXNG web engine failed; these results come from the other engines. Tavily (the fallback) found nothing.'
+                      else {
+                        outcome = 'empty'
+                        fallbackNote = '\n\nTavily (the fallback) found nothing either.'
+                      }
+                    }
+                  } catch (error) {
+                    context.abortSignal?.throwIfAborted()
+                    fallback = 'failed'
+                    reason = `Tavily fallback failed: ${(error as Error).message}`
+                  }
+                }
+              }
+              context.abortSignal?.throwIfAborted()
+              if (reason && down && !results.length) {
+                const text = `Web search is down: every SearXNG web engine failed (${unresponsive.map((engine) => `${engine.engine}: ${engine.message}`).join('; ')}). ${reason}`
+                await api.details(
+                  {
+                    status: 'error',
+                    outcome: 'outage',
+                    error: text,
+                    httpStatus: null,
+                    unresponsive,
+                    fallback: fallback ?? null,
+                  },
+                  context,
+                )
+                return { isError: true, output: [{ type: 'text', text: truncateToolOutput(text) }] }
+              }
+              if (reason)
+                fallbackNote = results.length
+                  ? `\n\nEvery SearXNG web engine failed; these results come from the other engines. ${reason}`
+                  : `\n\n${reason} SearXNG does not report whether its engines answered, so this may be a real empty result or engines silently skipped.`
+            }
             const shown = results.slice(0, args.count ?? 10)
-            await api.details({ status: 'success', results: shown, unresponsive }, context)
+            await api.details(
+              {
+                status: 'success',
+                outcome,
+                results: shown,
+                unresponsive,
+                ...(fallback && { fallback }),
+              },
+              context,
+            )
             const note = unresponsive.length
               ? `\n\nNote: ${unresponsive.length} upstream ${unresponsive.length === 1 ? 'engine was' : 'engines were'} unresponsive (${unresponsive.map((engine) => `${engine.engine}: ${engine.message}`).join('; ')}); the result set may be incomplete.`
               : ''
@@ -548,11 +775,22 @@ export default function searxng(host: ExtensionHost) {
               )
               .join('\n\n---\n\n')
             const text = shown.length
-              ? `Found ${shown.length} results for: ${args.query}\n\n${list}${note}`
-              : `No results for: ${args.query}${note}`
+              ? `Found ${shown.length} results for: ${args.query}\n\n${list}${note}${fallbackNote}`
+              : `No results for: ${args.query}${note}${fallbackNote}`
             return { output: [{ type: 'text', text: truncateToolOutput(text) }] }
           } catch (error) {
-            return failure(error, 'web_search failed.', (value) => api.details(value, context))
+            return failure(error, 'web_search failed.', (value) =>
+              api.details(
+                { ...value, outcome: context.abortSignal?.aborted ? 'cancelled' : 'outage' },
+                context,
+              ),
+            )
+          } finally {
+            // A claim that cannot be deleted stays until this process exits, when the next admission drops it;
+            // the search's own result matters more than that slot (#228360 review).
+            await release?.().catch((error: unknown) =>
+              host.notice(`web_search: could not release its search slot: ${String(error)}`),
+            )
           }
         },
       }),

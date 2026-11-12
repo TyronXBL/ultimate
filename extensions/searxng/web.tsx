@@ -23,6 +23,7 @@ interface Result {
   snippet?: string
   publishedDate?: string | null
   domain?: string
+  engine?: string | null
 }
 interface Unresponsive {
   engine: string
@@ -153,11 +154,13 @@ function Search({ call }: { call: ToolCallView }) {
   // `?? []`: a call made while `parallel` provided web_search has its own details shape.
   const results = (details?.status === 'success' && details.results) || []
   const unresponsive = (details?.status === 'success' && details.unresponsive) || []
+  const tavily = results.some((result) => result.engine === 'tavily')
   return (
     <Card
       call={call}
       meta={
         <>
+          {tavily && <span>via Tavily</span>}
           {unresponsive.length > 0 && (
             <span className="text-warning">{plural(unresponsive.length, 'engine')} down</span>
           )}
