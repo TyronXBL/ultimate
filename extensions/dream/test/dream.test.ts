@@ -520,6 +520,8 @@ it('reads tool numbers from the trace, with unused tools and frequent errors', a
   insert.run('4', 50, 5, 'action', 'dream/stats', 1, null, null, null, null)
   db.close()
   expect(toolStats(file, ['edit', 'read', 'notify'], [])).toEqual({
+    interpretation:
+      'Reads through bash are not traced. Tool durations are wall time, including deliberate waits; tool failure counts exclude model-call failures.',
     since: 100,
     calls: 3,
     tools: [
@@ -536,15 +538,15 @@ it('reads tool numbers from the trace, with unused tools and frequent errors', a
       },
     ],
     skills: [],
-    unusedSkills: [],
+    skillsWithNoTracedUse: [],
   })
   expect(toolStats(join(await temp(), 'none.sqlite'), ['read'], ['ship'])).toMatchObject({
     unused: ['read'],
-    unusedSkills: ['ship'],
+    skillsWithNoTracedUse: ['ship'],
   })
 })
 
-it('counts skill reads and runs from the trace, with failed reads and listed skills never used', async () => {
+it('counts skill reads and runs from the trace, with failed reads and listed skills with no traced use', async () => {
   const file = join(await temp(), 'trace.sqlite')
   const trace = callTrace(file)
   trace.open()
@@ -577,7 +579,7 @@ it('counts skill reads and runs from the trace, with failed reads and listed ski
     { name: 'ship', reads: 2, runs: 1, failed: 0 },
     { name: 'audit', reads: 0, runs: 0, failed: 1 },
   ])
-  expect(stats.unusedSkills).toEqual(['audit', 'tidy'])
+  expect(stats.skillsWithNoTracedUse).toEqual(['audit', 'tidy'])
   expect(stats.tools).toMatchObject([{ name: 'read', calls: 4, failed: 1 }])
   // Only the skill's name is kept, never the path it was read from.
   const db = new DatabaseSync(file, { readOnly: true })

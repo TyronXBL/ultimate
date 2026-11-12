@@ -204,21 +204,25 @@ export function prepare(args: unknown, now: number): Prepared {
 
 /**
  * Tool calls in `trace.sqlite`: per tool, the most frequent errors, and `enabled` tools never called in its window; and
- * per skill its reads, runs and failures, and the `listed` skills never used.
+ * per skill its reads, runs and failures, and the `listed` skills with no traced use. Durations are wall time,
+ * including waits; tool failure counts exclude model calls, and bash reads of skills are not traced.
  */
 export function toolStats(
   database: string,
   enabled: readonly string[],
   listed: readonly string[],
 ): ToolStats {
+  const interpretation =
+    'Reads through bash are not traced. Tool durations are wall time, including deliberate waits; tool failure counts exclude model-call failures.'
   if (!existsSync(database))
     return {
+      interpretation,
       calls: 0,
       tools: [],
       unused: [...enabled].toSorted(),
       errors: [],
       skills: [],
-      unusedSkills: [...listed].toSorted(),
+      skillsWithNoTracedUse: [...listed].toSorted(),
     }
   const db = new DatabaseSync(database, { readOnly: true })
   try {
@@ -264,13 +268,14 @@ export function toolStats(
       skills.filter((skill) => skill.reads + skill.runs > 0).map((skill) => skill.name),
     )
     return {
+      interpretation,
       ...(window.since === null ? {} : { since: window.since }),
       calls: window.calls,
       tools,
       unused: enabled.filter((name) => !used.has(name)).toSorted(),
       errors,
       skills,
-      unusedSkills: listed.filter((name) => !usedSkills.has(name)).toSorted(),
+      skillsWithNoTracedUse: listed.filter((name) => !usedSkills.has(name)).toSorted(),
     }
   } finally {
     db.close()

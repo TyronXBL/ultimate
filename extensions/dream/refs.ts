@@ -93,9 +93,10 @@ export const SwitchAction = actionRef<{ chapter: string }, never>('dream', 'swit
 /**
  * Calls per tool over the trace's window: how often, how often failing, how slow; and enabled tools never called. Uses
  * per skill over the same window: reads of its SKILL.md, the user's `/skill:` runs and failed ones of either; and listed
- * skills never used.
+ * skills with no traced use. Bash reads are not traced; durations include waits; tool failures exclude model calls.
  */
 export type ToolStats = {
+  interpretation: string
   since?: number
   calls: number
   tools: { name: string; calls: number; failed: number; avgMs: number }[]
@@ -108,7 +109,7 @@ export type ToolStats = {
     examples: { at: string; args: string }[]
   }[]
   skills: { name: string; reads: number; runs: number; failed: number }[]
-  unusedSkills: string[]
+  skillsWithNoTracedUse: string[]
 }
 /** No arguments → tool statistics from `trace.sqlite`, no model involved. */
 export const StatsAction = actionRef<null, ToolStats>('dream', 'stats')
