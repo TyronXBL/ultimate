@@ -79,8 +79,12 @@ export function compactEntry(entry: EntryRecord) {
     ...(tools.length > 0 && { tools }),
     ...(stop && stop !== 'stop' && stop !== 'toolUse' && { stopReason: stop }),
     ...(error !== undefined && { error }),
+    // Whole when the entry has no message: its data is all it says, like a root's tally abstracts (up to 1.3 KB),
+    // which agents are told to read with `ultimate.entries(root)` (#255679).
     ...(entry.data !== undefined &&
-      !entry.kind.startsWith('pi.') && { data: cut(JSON.stringify(entry.data), 500) }),
+      !entry.kind.startsWith('pi.') && {
+        data: message ? cut(JSON.stringify(entry.data), 500) : JSON.stringify(entry.data),
+      }),
   }
 }
 

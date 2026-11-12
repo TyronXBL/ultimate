@@ -72,3 +72,10 @@ it('reads string and block content alike, keeping message text whole and tool ou
   expect(result.text!.length).toBeLessThan(1100)
   expect(result).not.toHaveProperty('data')
 })
+
+it('keeps the data of an entry without a message whole, as a tally abstract is', () => {
+  const text = 'abstract '.repeat(150)
+  expect(
+    compactEntry(entry({ kind: 'lineage.abstract', data: { conversation: 9, text } })).data,
+  ).toBe(JSON.stringify({ conversation: 9, text }))
+})
