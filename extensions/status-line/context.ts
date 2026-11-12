@@ -1,5 +1,5 @@
 import type { UsageState } from '@earendil-works/pi-durable'
-import type { Spend, TreeSpend } from './refs.ts'
+import type { Spend, Tokens, TreeSpend } from './refs.ts'
 
 /** A conversation's own spend: every model and tool bucket of its `pi.usage`, added up. */
 export function usageTotals(usage: Readonly<UsageState>) {
@@ -15,21 +15,31 @@ export function usageTotals(usage: Readonly<UsageState>) {
   )
 }
 
+const kinds = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
+const pick = (value: Tokens): Tokens => ({
+  input: value.input,
+  output: value.output,
+  cacheRead: value.cacheRead,
+  cacheWrite: value.cacheWrite,
+})
+const none = (): Tokens => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+
 /** No spend yet. */
-export const empty = (): Spend => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
+export const empty = (): Spend => ({ ...none(), cost: 0, costs: none() })
 
 /** Add `spend` into `sum`. */
 export function add(sum: Spend, spend: Spend) {
-  sum.input += spend.input
-  sum.output += spend.output
-  sum.cacheRead += spend.cacheRead
-  sum.cacheWrite += spend.cacheWrite
+  for (const kind of kinds) {
+    sum[kind] += spend[kind]
+    sum.costs[kind] += spend.costs[kind]
+  }
   sum.cost += spend.cost
 }
 
 /**
- * Each top-level conversation's spend with everything it owns, at any depth, from every conversation's owner and
- * `pi.usage`. A fork starts its `pi.usage` empty, so a branch never counts its root's spend.
+ * Each top-level conversation's tree, every conversation it owns at any depth with its own spend, from every
+ * conversation's owner and `pi.usage`; a tree that spent nothing is left out. A fork starts its `pi.usage` empty, so a
+ * branch never counts its root's spend.
  */
 export function treeSpend(
   owners: ReadonlyMap<number, number | undefined>,
@@ -45,9 +55,12 @@ export function treeSpend(
     return top
   }
   const trees: Record<string, TreeSpend> = {}
-  for (const id of owners.keys()) {
-    const tree = (trees[topOf(id)] ??= { conversations: 0, models: {} })
-    tree.conversations++
+  const spent = new Set<string>()
+  for (const [id, owner] of owners) {
+    const top = String(topOf(id))
+    const models: Record<string, Spend> = {}
+    ;(trees[top] ??= { agents: {} }).agents[id] =
+      owner === undefined ? { models } : { owner, models }
     const usage = usages.get(id)
     if (!usage) continue
     const buckets = [
@@ -55,10 +68,11 @@ export function treeSpend(
       ...Object.entries(usage.tools).map(([name, bucket]) => [`tools/${name}`, bucket] as const),
     ]
     // Every key has a `/`, so none is an inherited property such as `__proto__`.
-    for (const [key, bucket] of buckets)
-      add((tree.models[key] ??= empty()), { ...bucket, cost: bucket.cost.total })
+    for (const [key, bucket] of buckets) {
+      models[key] = { ...pick(bucket), cost: bucket.cost.total, costs: pick(bucket.cost) }
+      spent.add(top)
+    }
   }
-  for (const [id, tree] of Object.entries(trees))
-    if (Object.keys(tree.models).length === 0) delete trees[id]
+  for (const id of Object.keys(trees)) if (!spent.has(id)) delete trees[id]
   return trees
 }

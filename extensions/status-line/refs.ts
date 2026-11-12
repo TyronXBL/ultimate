@@ -14,13 +14,21 @@ export const RatesAction = actionRef<null, RateSample | null>('status-line', 'ra
   global: true,
 })
 
-/** What one model used, with its cost in dollars at the model's API price (0 when it has none). */
-export type Spend = Tokens & { cost: number }
 /**
- * What a top-level conversation and everything it owns (its subagents and theirs) used: how many conversations, and
- * the spend per `provider/model`; tools that report usage count under `tools/<name>`.
+ * What one model used, with its cost in dollars at the model's API price (0 when it has none): `cost` in all, `costs`
+ * per token kind.
  */
-export type TreeSpend = { conversations: number; models: Record<string, Spend> }
+export type Spend = Tokens & { cost: number; costs: Tokens }
+/**
+ * One conversation's own spend per `provider/model`, tools that report usage under `tools/<name>`; `owner` is the
+ * conversation that owns it, absent for the tree's top.
+ */
+export type AgentSpend = { owner?: number; models: Record<string, Spend> }
+/**
+ * What a top-level conversation and everything it owns (its subagents and theirs) used: each conversation of the tree
+ * by id, also those that have not spent anything yet.
+ */
+export type TreeSpend = { agents: Record<string, AgentSpend> }
 
 /**
  * No arguments → each top-level conversation's tree spend that has any, by conversation id; null until the server has

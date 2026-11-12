@@ -18,6 +18,7 @@ import {
   ToolSection,
 } from '@/components/ai/tool'
 import { Button } from '@/components/ui/button'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import {
   api,
   cn,
@@ -35,7 +36,7 @@ import {
   useUltimate,
 } from '@/sdk'
 import type { ToolCallView } from '@/sdk'
-import { ConversationTask } from '../conversations/ui.tsx'
+import { AgentSpend, ConversationTask } from '../conversations/ui.tsx'
 import { lastLanded, stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
 import type { Workspace as Isolate, LandResult } from '../workspaces/types.ts'
 import { agentsPanel } from '../models/ui.tsx'
@@ -84,6 +85,31 @@ function IsolateBadge({ childId }: { childId: number }) {
       <GitBranchIcon className="size-3 shrink-0" />
       <StateTag isolate={isolate} />
     </span>
+  )
+}
+
+/** What child `id` itself cost so far, with its card on hover; nothing before it spent anything. */
+function ChildSpend({ id }: { id: number }) {
+  return (
+    <Provided input={id} point={AgentSpend}>
+      {(spend) =>
+        spend && (
+          <HoverCard closeDelay={100} openDelay={300}>
+            <HoverCardTrigger asChild>
+              <span className="cursor-default hover:text-foreground">{spend.figure}</span>
+            </HoverCardTrigger>
+            <HoverCardContent
+              align="end"
+              className="w-80 p-0"
+              collisionPadding={8}
+              data-agent-spend-card={id}
+            >
+              {spend.card}
+            </HoverCardContent>
+          </HoverCard>
+        )
+      }
+    </Provided>
   )
 }
 
@@ -140,6 +166,7 @@ function SubagentCall({ call }: { call: ToolCallView }) {
                 </span>
               )}
               {duration && <span>{duration}</span>}
+              {childId !== undefined && action === 'start' && <ChildSpend id={childId} />}
             </>
           }
           name="subagent"

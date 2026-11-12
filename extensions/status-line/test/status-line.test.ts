@@ -21,9 +21,18 @@ const message = (output: number) => {
     ...value.usage,
     ...counters(output),
     reasoning: output * 5,
-    cost: { ...value.usage.cost, total: output / 1000 },
+    cost: { ...value.usage.cost, ...counters(output / 1000), total: output / 1000 },
   }
   return value
+}
+/** One conversation's spend as `settled` records it, per `provider/model` or tool. */
+const own = (output: number) => {
+  const spend = (value: number) => ({
+    ...counters(value),
+    cost: value / 1000,
+    costs: counters(value / 1000),
+  })
+  return { 'faux/model': spend(output), 'tools/expensive': spend(50000) }
 }
 const anchor = defineTask<null, { phase: 'done' }, null>({
   name: 'status-line.fixture',
@@ -181,7 +190,7 @@ describe('instance commit collector', () => {
     }
   })
 
-  it("sums each top-level conversation's spend with its subagents at any depth, as they appear", async () => {
+  it("keeps each top-level conversation's subagents at any depth with their owners, as they appear", async () => {
     const f = await fixture()
     try {
       const root = f.root.id
@@ -201,22 +210,27 @@ describe('instance commit collector', () => {
         await settled(tx, child, 250)
         await settled(tx, grandchild, 500)
         await settled(tx, other.id, 400)
-        return { child, other: other.id }
+        return { child, grandchild, other: other.id }
       }, context)
       expect(f.trees()).toBeNull()
       await f.open()
       expect(f.trees()?.[root]).toEqual({
-        conversations: 3,
-        models: {
-          'faux/model': { ...counters(1000), cost: 1 },
-          'tools/expensive': { ...counters(150000), cost: 150 },
+        agents: {
+          [root]: { models: own(250) },
+          [ids.child]: { owner: root, models: own(250) },
+          [ids.grandchild]: { owner: ids.child, models: own(500) },
         },
       })
-      expect(f.trees()?.[ids.other]?.models['faux/model']).toEqual({ ...counters(400), cost: 0.4 })
+      expect(f.trees()?.[ids.other]).toEqual({ agents: { [ids.other]: { models: own(400) } } })
       expect(f.trees()?.[ids.child]).toBeUndefined()
-      await f.harness.commit(async (tx) => settled(tx, await spawn(tx, ids.child), 125), context)
-      expect(f.trees()?.[root]?.conversations).toBe(4)
-      expect(f.trees()?.[root]?.models['faux/model']).toEqual({ ...counters(1125), cost: 1.125 })
+      const [late, fresh] = await f.harness.commit(async (tx) => {
+        const spawned = await spawn(tx, ids.child)
+        await settled(tx, spawned, 125)
+        return [spawned, await spawn(tx, root)]
+      }, context)
+      expect(f.trees()?.[root]?.agents[late]).toEqual({ owner: ids.child, models: own(125) })
+      // A subagent that has not spent anything yet is in its tree already.
+      expect(f.trees()?.[root]?.agents[fresh]).toEqual({ owner: root, models: {} })
     } finally {
       await f.cleanup()
     }
