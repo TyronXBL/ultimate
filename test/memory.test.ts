@@ -17,26 +17,60 @@ it.each([
 ])(
   'decides whether $need MiB fits with $available MiB available ($reserved reserved) above a $floor MiB floor',
   ({ available, need, floor, reserved, short }) => {
-    expect(ramShort(available, need, floor, reserved)).toEqual(
-      short ? { available, need, floor, ...(reserved && { reserved }) } : undefined,
+    expect(ramShort({ available, cap: undefined }, need, floor, reserved)).toEqual(
+      short ? { kind: 'floor', available, need, floor, ...(reserved && { reserved }) } : undefined,
     )
   },
 )
 
+/** The service's cap on 2026-11-12 (#227574): 5632 MiB soft cap. */
+const cap = (used: number) => ({ used, high: 5632, pressure: { some: 0, full: 0 } })
+it.each<[string, Parameters<typeof ramShort>, ReturnType<typeof ramShort>]>([
+  ['fits under both', [{ available: 8000, cap: cap(3000) }, 2200, 3072], undefined],
+  [
+    'blocked by the floor, whatever the cap leaves',
+    [{ available: 5000, cap: cap(1000) }, 2200, 3072],
+    { kind: 'floor', available: 5000, need: 2200, floor: 3072 },
+  ],
+  [
+    'blocked by the cap with RAM to spare (01:23 UTC: a second `pnpm check` beside one)',
+    [{ available: 8000, cap: cap(3500) }, 2200, 3072],
+    { kind: 'cap', used: 3500, high: 5632, need: 2200 },
+  ],
+  [
+    'jobs admitted in the last minute count against the cap too',
+    [{ available: 9000, cap: cap(3000) }, 1536, 3072, 1536],
+    { kind: 'cap', used: 3000, high: 5632, need: 1536, reserved: 1536 },
+  ],
+  [
+    'no cap present: the floor alone decides',
+    [{ available: 8000, cap: undefined }, 2200, 3072],
+    undefined,
+  ],
+  [
+    'admission off: no floor, no cap rule either',
+    [{ available: 8000, cap: cap(5600) }, 2200, undefined],
+    undefined,
+  ],
+])('cap: %s', (_name, args, short) => {
+  expect(ramShort(...args)).toEqual(short)
+})
+
 it('reserves what it admits, so concurrent starters cannot both pass on the same RAM', async () => {
   const dir = await temp('ultimate-memory-')
-  // Room for exactly one 2000 MiB job above the floor, while available RAM moves less than 1000 MiB during the test.
-  const floor = (await availableMiB())! - 3000
-  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(floor, 2000, dir)))
+  // Room for exactly one 2000 MiB job above the floor.
+  const read = async () => ({ available: 10_000, cap: undefined })
+  const admitted = await Promise.all([1, 2, 3].map(() => admitRam(7000, 2000, dir, read)))
   expect(admitted.filter((short) => short === undefined)).toHaveLength(1)
-  expect(admitted.find(Boolean)).toMatchObject({ need: 2000, reserved: 2000 })
+  expect(admitted.find(Boolean)).toMatchObject({ kind: 'floor', need: 2000, reserved: 2000 })
 })
 
 it.each([
   ['cd app && pnpm test', 1536],
   ['nice -n 15 pnpm exec vitest run test/memory.test.ts', 1536],
   ['node server/main.ts', 1536],
-  ['pnpm fix', 1024],
+  ['pnpm fix', 2200],
+  ['pnpm check', 2200],
   ['pnpm install --frozen-lockfile --offline', 1024],
   ['rg -n "pnpm test" docs', 0],
   ["git commit -m 'run pnpm check'", 0],

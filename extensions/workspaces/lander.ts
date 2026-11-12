@@ -12,11 +12,11 @@ import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/p
 import { git } from '../../lib/git.ts'
 import { needsRestart as restartNeeded } from '../../lib/layers.ts'
 import { liveTasks } from '../../lib/tasks.ts'
+import { describeLoad } from '../../lib/cpu.ts'
 import {
   commandNeedMiB,
   describeShort,
   listUsers,
-  memoryFloor,
   memoryUsers,
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
@@ -28,6 +28,8 @@ import {
   releaseSlot,
   SLOT_POLL_MS,
   SLOT_TMPDIR_ENV,
+  heavyJobsSetting,
+  slotLimits,
   thisProcess,
 } from '../../lib/slot.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
@@ -421,7 +423,8 @@ type State =
   | { phase: 'next' }
   /**
    * A rejected push integrates again once. `slotSince`: since when its checks wait in the heavy-work queue; `ramSince`:
-   * since when they are next in line but wait for RAM above the floor.
+   * since when they are next in line but wait for RAM above the floor; `cpuSince`: for the load; `pressureSince`: for
+   * load the queue does not cause, which bounds that wait (`lib/cpu.ts`).
    */
   | {
       phase: 'land'
@@ -430,6 +433,8 @@ type State =
       pushRetried?: boolean
       slotSince?: number
       ramSince?: number
+      cpuSince?: number
+      pressureSince?: number
     }
   | {
       phase: 'report'
@@ -510,7 +515,8 @@ export function createLander(
           return { status: 'running', checkpoint: { phase: 'land', id: entry.id, attempt: 1 } }
         }, context),
       land: async (task, runtime, context) => {
-        const { id, attempt, pushRetried, slotSince, ramSince } = task.state.checkpoint
+        const { id, attempt, pushRetried, slotSince, ramSince, cpuSince, pressureSince } =
+          task.state.checkpoint
         /** Lets the heavy-work slot go, while this landing holds it. */
         let release: (() => Promise<void>) | undefined
         const { signal } = runtime
@@ -878,6 +884,7 @@ export function createLander(
               const now = runtime.now()
               const claim = {
                 id: `${host.home}:lander:${id}:${attempt}`,
+                kind: 'heavy' as const,
                 at: slotSince ?? now,
                 label: `lander checks: ${
                   settings.checks
@@ -889,12 +896,15 @@ export function createLander(
                 from: `the landing of #${entry.conversationId} in ${basename(source)}`,
               }
               const entered = await enterSlot(claim, {
-                floor: await memoryFloor(host.userHome),
+                limits: await slotLimits(host.userHome),
+                pressureSince,
                 need,
                 start: thisProcess,
               })
               if (entered.kind !== 'started') {
                 const ramFrom = entered.kind === 'ram' ? (ramSince ?? now) : undefined
+                // Only load the queue does not cause counts towards starting anyway (#227574).
+                const pressureFrom = entered.kind === 'cpu' ? entered.pressureSince : undefined
                 if (entered.kind === 'ram' && now - ramFrom! >= RAM_WAIT_MS) {
                   await releaseSlot(claim.id)
                   return await fail(
@@ -903,8 +913,12 @@ export function createLander(
                     'Stop what uses RAM, then submit again.',
                   )
                 }
-                // Logged when it starts waiting, and again when the wait turns into one for RAM.
-                if (slotSince === undefined || (ramFrom !== undefined && ramSince === undefined))
+                // Logged when it starts waiting, and again when the wait turns into one for RAM or for CPU.
+                if (
+                  slotSince === undefined ||
+                  (ramFrom !== undefined && ramSince === undefined) ||
+                  (entered.kind === 'cpu' && cpuSince === undefined)
+                )
                   await step(`waiting: ${describeWait(entered, now)}`)
                 return await runtime.commit(
                   () => ({
@@ -917,12 +931,20 @@ export function createLander(
                       ...(pushRetried ? { pushRetried } : {}),
                       slotSince: slotSince ?? now,
                       ...(ramFrom !== undefined ? { ramSince: ramFrom } : {}),
+                      ...(entered.kind === 'cpu' ? { cpuSince: cpuSince ?? now } : {}),
+                      ...(pressureFrom !== undefined ? { pressureSince: pressureFrom } : {}),
                     },
                   }),
                   context,
                 )
               }
               release = keepHeld(claim)
+              const { warning } = await heavyJobsSetting(host.userHome)
+              if (warning) await warn(warning)
+              if (entered.forced)
+                await step(
+                  `started under pressure (${describeLoad(entered.forced)}) after ${Math.round(entered.forced.waited / 60_000)} min waiting for load the heavy-work queue did not cause`,
+                )
             }
             // Setup prepares the merged revision, for example installs its lockfile.
             await step('setting up')
