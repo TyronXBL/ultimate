@@ -12,9 +12,15 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename } from 'node:path'
-import { cpuLimit } from '../../lib/cpu.ts'
-import { commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
-import { describeWait, enterSlot, keepHeld, SLOT_POLL_MS, thisProcess } from '../../lib/slot.ts'
+import { commandNeedMiB } from '../../lib/memory.ts'
+import {
+  describeWait,
+  enterSlot,
+  keepHeld,
+  SLOT_POLL_MS,
+  slotLimits,
+  thisProcess,
+} from '../../lib/slot.ts'
 import type { SlotClaim } from '../../lib/slot.ts'
 import {
   failuresOf,
@@ -181,8 +187,7 @@ async function onPc(sha: string, why: string) {
  * slot, and the returned function lets it go. Undefined when RAM stayed short at the head of the line for `RAM_WAIT_MS`.
  */
 async function admitted(command: string[]) {
-  const floor = await memoryFloor(homedir())
-  const cpu = await cpuLimit(homedir())
+  const limits = await slotLimits(homedir())
   const need = commandNeedMiB(command.join(' '))
   const claim: SlotClaim = {
     id: `ci-gate:${process.pid}:${command.join(' ')}`,
@@ -194,7 +199,7 @@ async function admitted(command: string[]) {
   let ramSince: number | undefined
   let pressureSince: number | undefined
   for (let polls = 0; ; polls++) {
-    const entered = await enterSlot(claim, { floor, need, cpu, pressureSince, start: thisProcess })
+    const entered = await enterSlot(claim, { limits, need, pressureSince, start: thisProcess })
     if (entered.kind === 'started') return keepHeld(claim)
     ramSince = entered.kind === 'ram' ? (ramSince ?? Date.now()) : undefined
     pressureSince =

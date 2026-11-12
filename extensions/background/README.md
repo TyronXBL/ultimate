@@ -19,8 +19,8 @@ durable `background.run` task then:
    the conversations service's `resultIn` decides it in the commit that submits.
 
 A heavy command (tests, checks, installs, builds, a server: `commandNeedMiB` in `lib/memory.ts`) waits before step 1
-in the machine's heavy-work queue (`lib/slot.ts`, `extensions/memory/README.md`): one heavy command at a time across
-every Ultimate on the machine, in the order they asked. The task sleeps durably, looks again every 5 s and starts the
+in the machine's heavy-work queue (`lib/slot.ts`, `extensions/memory/README.md`): up to the machine's limit of heavy
+commands at once (`heavyWork.maxJobs`, default one) across every Ultimate on the machine, in the order they asked. The task sleeps durably, looks again every 5 s and starts the
 command by itself once its turn comes and RAM above the floor (`memory.minAvailableMiB`) admits it; RAM short at the
 head of the line gives up after 30 min with a `not-started` card listing what uses RAM. The tool's answer says its
 place and what it waits for ("Queued, 2nd in line for the heavy-work slot, behind `pnpm check` from #12 in my-app

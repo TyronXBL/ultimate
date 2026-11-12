@@ -29,13 +29,15 @@ import {
 import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
-import { commandNeedMiB, listUsers, memoryFloor, memoryUsers } from '../../lib/memory.ts'
+import { commandNeedMiB, listUsers, memoryUsers } from '../../lib/memory.ts'
 import {
   describeBehind,
   describeWait,
   enterSlot,
   keepHeld,
+  maxHeavyJobs,
   slotLabel,
+  slotLimits,
   thisProcess,
 } from '../../lib/slot.ts'
 import {
@@ -47,6 +49,7 @@ import {
   sessionCpuMs,
   sessionMarked,
   sessionMembers,
+  signalSession,
 } from '../../lib/cpu.ts'
 import type { CpuSample, Observation } from '../../lib/cpu.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
@@ -237,17 +240,6 @@ const coresOver = (samples: CpuSample[]) => {
   return Math.max(0, last.cpuMs - first.cpuMs) / Math.max(1, last.at - first.at)
 }
 
-/** Send `signal` to each of `pids`; one that ended meanwhile is skipped. */
-function signalEach(pids: number[], signal: NodeJS.Signals) {
-  for (const pid of pids)
-    try {
-      process.kill(pid, signal)
-    } catch (error) {
-      // It ended between the listing and the signal.
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-    }
-}
-
 /**
  * Watch a running bash call's session (its shell's, found by `marker` in its environment; `lib/cpu.ts` says why not
  * its process group): once it uses more than a core for `BASH_WINDOW_MS`, it is heavy work beside the tool call. It
@@ -257,7 +249,7 @@ function signalEach(pids: number[], signal: NodeJS.Signals) {
  * queue ran its own heavy job. Returns the function that ends the watch.
  */
 function watchHeavy(
-  host: Pick<ExtensionHost, 'projectRoot'>,
+  host: Pick<ExtensionHost, 'projectRoot' | 'userHome'>,
   api: Pick<ToolExecutionApi, 'conversationId'>,
   command: string,
   marker: string,
@@ -286,9 +278,10 @@ function watchHeavy(
         label: slotLabel(command),
         from: `#${api.conversationId} in ${basename(host.projectRoot)} (bash, measured)`,
       }
-      // Taken only when nobody holds it or waits for it: a bash command never jumps the line.
+      // Taken only when a place is free and nobody waits for one: a bash command never jumps the line. It already runs,
+      // so neither RAM nor load are asked.
       const entered = await enterSlot(claim, {
-        floor: undefined,
+        limits: { floor: undefined, cpu: undefined, max: await maxHeavyJobs(host.userHome) },
         need: 0,
         start: thisProcess,
         queue: false,
@@ -303,16 +296,16 @@ function watchHeavy(
           : 'the heavy-work queue settled after its file was removed'
       const cancel = halt(
         `Stopped by the heavy-work queue: it used ${coresOver(samples).toFixed(1)} cores over the last ${Math.round((now - samples[0].at) / 1000)} s while ${holders}`,
-        `Every process it started got TERM, then KILL after 3 s, so files it was writing may be incomplete. Heavy work runs in the queue, one job at a time, in order; it starts by itself and its result steers or wakes you, so never sleep, poll or retry it in bash:\nbackground ${JSON.stringify({ command })}`,
+        `Every process it started got TERM, then KILL after 3 s, so files it was writing may be incomplete. Heavy work runs in the queue, up to the machine's limit at once, in order; it starts by itself and its result steers or wakes you, so never sleep, poll or retry it in bash:\nbackground ${JSON.stringify({ command })}`,
       )
       if (!cancel) return
       // Ours: its shell's environment holds this call's marker, checked again right before the signals; a session id is
       // never reused while its leader lives.
       if ((await sessionMarked(marker)) === sid) {
-        signalEach(await sessionMembers(sid), 'SIGTERM')
+        await signalSession(sid, 'SIGTERM')
         const deadline = Date.now() + 3000
         while ((await sessionMembers(sid)).length && Date.now() < deadline) await sleep(100)
-        signalEach(await sessionMembers(sid), 'SIGKILL')
+        await signalSession(sid, 'SIGKILL')
       }
       cancel()
     }
@@ -571,8 +564,7 @@ export default function codingTools(
           from: `#${api.conversationId} in ${basename(host.projectRoot)} (bash)`,
         }
         const entered = await enterSlot(claim, {
-          floor: await memoryFloor(host.userHome),
-          cpu: await cpuLimit(host.userHome),
+          limits: await slotLimits(host.userHome),
           need,
           start: thisProcess,
           queue: false,

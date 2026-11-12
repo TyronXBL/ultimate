@@ -12,12 +12,11 @@ import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/p
 import { git } from '../../lib/git.ts'
 import { needsRestart as restartNeeded } from '../../lib/layers.ts'
 import { liveTasks } from '../../lib/tasks.ts'
-import { cpuLimit, describeLoad } from '../../lib/cpu.ts'
+import { describeLoad } from '../../lib/cpu.ts'
 import {
   commandNeedMiB,
   describeShort,
   listUsers,
-  memoryFloor,
   memoryUsers,
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
@@ -29,6 +28,8 @@ import {
   releaseSlot,
   SLOT_POLL_MS,
   SLOT_TMPDIR_ENV,
+  heavyJobsSetting,
+  slotLimits,
   thisProcess,
 } from '../../lib/slot.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
@@ -895,8 +896,7 @@ export function createLander(
                 from: `the landing of #${entry.conversationId} in ${basename(source)}`,
               }
               const entered = await enterSlot(claim, {
-                floor: await memoryFloor(host.userHome),
-                cpu: await cpuLimit(host.userHome),
+                limits: await slotLimits(host.userHome),
                 pressureSince,
                 need,
                 start: thisProcess,
@@ -940,6 +940,8 @@ export function createLander(
                 )
               }
               release = keepHeld(claim)
+              const { warning } = await heavyJobsSetting(host.userHome)
+              if (warning) await warn(warning)
               if (entered.forced)
                 await step(
                   `started under pressure (${describeLoad(entered.forced)}) after ${Math.round(entered.forced.waited / 60_000)} min waiting for load the heavy-work queue did not cause`,

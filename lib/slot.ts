@@ -1,5 +1,6 @@
 /**
- * The machine's heavy-work queue: one heavy job at a time (tests, checks, installs, builds, the lander's checks), taken
+ * The machine's heavy-work queue: up to the machine's limit of heavy jobs at once (`heavyWork.maxJobs`, default one:
+ * tests, checks, installs, builds, the lander's checks), taken
  * in the order the jobs asked, by every Ultimate on the machine and its previews. Its state lives beside the RAM
  * admission's (`lib/memory.ts`), in the same folder and under the same lock, so the job at the head of the line also
  * waits for RAM above the floor, in the same step that grants it the slot.
@@ -14,15 +15,25 @@
  *   every running job had the time to say so again (`SETTLE_MS`).
  *
  * With CPU admission on (`lib/cpu.ts`, #227574), every background job queues, not only those whose command text says
- * heavy: one it does not know runs on probation (`measuring`) while it is measured, one such job at a time, and holds
- * the slot like a heavy one once it uses more than a core (`heavy`). The job at the head of the line also waits for load.
+ * heavy: one it does not know takes a place on probation (`measuring`) while it is measured, keeps it like a heavy one
+ * once it uses more than a core (`heavy`) and gives it back when it is light. The head of the line also waits for load.
  */
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cpuGate, describeLoad, machineLoad, PRESSURE_WAIT_MS, PROBATION_MS } from './cpu.ts'
+import type { JsonObject } from '@earendil-works/pi-durable'
+import {
+  cpuGate,
+  cpuLimit,
+  describeLoad,
+  LOAD_SHOWS_MS,
+  machineLoad,
+  PRESSURE_WAIT_MS,
+  PROBATION_MS,
+} from './cpu.ts'
 import type { CpuGate } from './cpu.ts'
 import { readJson, writeJson } from './json-file.ts'
-import { admitIn, describeShort, locked, stateDir } from './memory.ts'
+import { admitIn, describeShort, locked, memoryCap, memoryFloor, stateDir } from './memory.ts'
+import { readSettings, userSettingsPath } from './settings.ts'
 import type { RamShort } from './memory.ts'
 import { identify } from './process-group.ts'
 
@@ -46,7 +57,7 @@ export type SlotClaim = {
 type SlotHolder = { pid: number; identity: string }
 export type SlotEntry =
   | (SlotClaim & { state: 'waiting'; seen: number })
-  /** An unknown job on probation until `until`: nothing else starts meanwhile, except beside a running heavy job. */
+  /** An unknown job on probation until `until`: it takes a place until it is measured light. */
   | (SlotClaim & { state: 'measuring'; since: number; until: number; holder: SlotHolder })
   | (SlotClaim & { state: 'running'; since: number; holder: SlotHolder })
 type Holding = Extract<SlotEntry, { state: 'measuring' | 'running' }>
@@ -88,7 +99,7 @@ export const SLOT_TMPDIR_ENV = 'ULTIMATE_SLOT_TMPDIR'
 /** Where the machine's queue lives for this process. */
 export const queueTmpdir = () => process.env[SLOT_TMPDIR_ENV] ?? tmpdir()
 
-const order = (a: SlotClaim, b: SlotClaim) =>
+const order = (a: Pick<SlotClaim, 'at' | 'id'>, b: Pick<SlotClaim, 'at' | 'id'>) =>
   a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 const claimOf = ({ id, kind, at, label, from }: SlotClaim): SlotClaim => ({
   id,
@@ -166,35 +177,36 @@ export function slotStep(queue: SlotQueue, event: SlotEvent): SlotQueue {
 type SlotTurn =
   /** Its turn: nothing else runs, nobody earlier waits, and the queue is settled. */
   | { kind: 'next' }
-  /** It waits behind the jobs that hold the slot (`holders`, running or measured) and the earlier waiters `ahead`. */
-  | { kind: 'behind'; holders: Holding[]; ahead: SlotClaim[] }
+  /**
+   * It waits behind the jobs that hold a place (`holders`, running or on probation) and the earlier waiters `ahead`.
+   * `limit`: how many heavy jobs the machine runs at once.
+   */
+  | { kind: 'behind'; holders: Holding[]; ahead: SlotClaim[]; limit: number }
   /** The file was removed lately: nobody gets the slot before `until`. */
   | { kind: 'settling'; until: number }
 
 /**
- * Where `claim` stands in `queue` (expired already): the one derivation every reader uses. A heavy job waits for every
- * holder; an unknown one only for a job on probation, so a server or a poll starts beside a running heavy job (the load
- * gate still decides), and it passes earlier heavy waiters while a job runs that they wait for anyway.
+ * Where `claim` stands in `queue` (expired already): the one derivation every reader uses. A job waits while `limit`
+ * jobs hold a place (running, or on probation) and behind every job that asked earlier, whatever its kind: an unknown
+ * job's probation takes a place too, since it may turn out heavy and cannot be un-started then (#227574: three wrapper
+ * scripts allowed beside each other by load alone ran together, load 8.1 and CPU pressure 58 % on 6 cores).
  */
 export function slotTurn(
   queue: SlotQueue,
-  claim: Pick<SlotClaim, 'id' | 'at' | 'kind'>,
+  claim: Pick<SlotClaim, 'id' | 'at'>,
   now: number,
+  limit = 1,
 ): SlotTurn {
   if (queue.entries.some((entry) => entry.id === claim.id && holding(entry)))
     return { kind: 'next' }
   const others = queue.entries.filter((entry) => entry.id !== claim.id)
-  const running = others.some((entry) => entry.state === 'running')
-  const holders = others
-    .filter(holding)
-    .filter((entry) => claim.kind === 'heavy' || entry.state === 'measuring')
+  const holders = others.filter(holding)
   const ahead = others
     .filter((entry) => entry.state === 'waiting')
-    .filter((entry) => order(entry, { ...claim, label: '', from: '' }) < 0)
-    .filter((entry) => !(claim.kind === 'unknown' && running && entry.kind === 'heavy'))
+    .filter((entry) => order(entry, claim) < 0)
     .toSorted(order)
     .map(claimOf)
-  if (holders.length || ahead.length) return { kind: 'behind', holders, ahead }
+  if (holders.length >= limit || ahead.length) return { kind: 'behind', holders, ahead, limit }
   if (queue.settleUntil !== undefined && queue.settleUntil > now)
     return { kind: 'settling', until: queue.settleUntil }
   return { kind: 'next' }
@@ -256,9 +268,79 @@ async function update<T>(
   })
 }
 
-/** Where `claim` would stand now, without joining the line. */
-export function peekSlot(claim: Pick<SlotClaim, 'id' | 'at' | 'kind'>, parent = queueTmpdir()) {
-  return update<SlotTurn>(parent, async (queue, now) => [queue, slotTurn(queue, claim, now)])
+/** The load gate for job `id` at the head of `queue` (`cpuGate`), `pressureSince` its outside wait. */
+async function gateFor(
+  queue: SlotQueue,
+  id: string,
+  now: number,
+  limits: SlotLimits,
+  pressureSince: number,
+) {
+  const held = queue.entries.filter((entry) => entry.id !== id).filter(holding)
+  return cpuGate(await machineLoad(), limits.cpu, now, {
+    running: held.length,
+    settled: held.every((entry) => now - entry.since >= LOAD_SHOWS_MS),
+    ...(held.length === 0 && { outsideSince: pressureSince }),
+  })
+}
+
+/** The load gate a job at the head of the line would meet now, without joining it: for a tool's answer. */
+export function peekGate(limits: SlotLimits, parent = queueTmpdir()) {
+  return update<CpuGate>(parent, async (queue, now) => [
+    queue,
+    await gateFor(queue, '', now, limits, now),
+  ])
+}
+
+/** Where `claim` would stand now, with `limit` heavy jobs at once, without joining the line. */
+export function peekSlot(claim: Pick<SlotClaim, 'id' | 'at'>, limit = 1, parent = queueTmpdir()) {
+  return update<SlotTurn>(parent, async (queue, now) => [queue, slotTurn(queue, claim, now, limit)])
+}
+
+/** The queue now, expired: who holds a place (`running`, `measuring`) and who waits, for a reader that shows it. */
+export async function readSlot(parent = queueTmpdir()) {
+  const queue = await update<SlotQueue>(parent, async (found) => [found, found])
+  const [load, memory] = await Promise.all([machineLoad(), memoryCap()])
+  // The machine as admission sees it: load and CPU pressure, and the service's memory cap with its pressure.
+  return { queue, load, memory }
+}
+
+/** What a job is admitted against: the RAM floor, CPU admission and how many heavy jobs run at once. */
+export type SlotLimits = { floor: number | undefined; cpu: number | undefined; max: number }
+
+/**
+ * How many heavy jobs this machine runs at once: `heavyWork.maxJobs` in `~/.ultimate/settings.json`, a whole number of
+ * at least 1, default 1. A machine setting, read at every look, so a change applies without a restart.
+ */
+export async function maxHeavyJobs(userHome: string) {
+  return (await heavyJobsSetting(userHome)).max
+}
+
+/** `maxHeavyJobs` and, when the setting is there but not a whole number of at least 1, what to tell about it. */
+export async function heavyJobsSetting(userHome: string) {
+  const settings = await readSettings(userSettingsPath(userHome)).catch(
+    // Unreadable settings: the setup status reports them; the default holds meanwhile.
+    (): JsonObject => ({}),
+  )
+  const work = settings.heavyWork
+  const max = work && typeof work === 'object' && !Array.isArray(work) ? work.maxJobs : undefined
+  if (typeof max === 'number' && Number.isInteger(max) && max >= 1) return { max }
+  return {
+    max: 1,
+    ...(max !== undefined && {
+      warning: `heavyWork.maxJobs in ~/.ultimate/settings.json is ${JSON.stringify(max)}, not a whole number of at least 1, so the queue runs one heavy job at a time.`,
+    }),
+  }
+}
+
+/** This machine's limits for a job, read now. */
+export async function slotLimits(userHome: string): Promise<SlotLimits> {
+  const [floor, cpu, max] = await Promise.all([
+    memoryFloor(userHome),
+    cpuLimit(userHome),
+    maxHeavyJobs(userHome),
+  ])
+  return { floor, cpu, max }
 }
 
 /**
@@ -271,39 +353,53 @@ export function peekSlot(claim: Pick<SlotClaim, 'id' | 'at' | 'kind'>, parent = 
 export async function enterSlot(
   claim: SlotClaim,
   options: {
-    floor: number | undefined
+    limits: SlotLimits
     need: number
     start: () => SlotHolder | Promise<SlotHolder>
     queue?: boolean
     parent?: string
-    cpu?: number
     pressureSince?: number
   },
 ): Promise<SlotEntered> {
-  const { floor, need, start, queue: joins = true, parent = queueTmpdir() } = options
+  const { limits, need, start, queue: joins = true, parent = queueTmpdir() } = options
   if (process.env[SLOT_ENV]) return { kind: 'started', holder: await start() }
   return update<SlotEntered>(parent, async (queue, now, dir) => {
-    const turn = slotTurn(queue, claim, now)
+    const turn = slotTurn(queue, claim, now, limits.max)
     const wait = (result: SlotEntered): [SlotQueue, SlotEntered] => [
       joins ? slotStep(queue, { type: 'wait', claim, now }) : queue,
       result,
     ]
     if (turn.kind !== 'next') return wait({ kind: 'waiting', turn })
     const outside = !queue.entries.some((entry) => entry.id !== claim.id && holding(entry))
-    const gate = cpuGate(
-      await machineLoad(),
-      options.cpu,
-      outside ? (options.pressureSince ?? now) : undefined,
-      now,
-    )
+    const gate = await gateFor(queue, claim.id, now, limits, options.pressureSince ?? now)
     if (gate.kind === 'wait') return wait({ kind: 'cpu', gate, outside })
-    const short = await admitIn(dir, floor, need)
+    const short = await admitIn(dir, limits.floor, need)
     if (short) return wait({ kind: 'ram', short })
     const holder = await start()
     return [
       slotStep(queue, { type: 'start', claim, holder, now }),
       { kind: 'started', holder, ...(gate.kind === 'forced' && { forced: gate }) },
     ]
+  })
+}
+
+/**
+ * A running job that gave its place back is busy again: it takes a place if fewer than `limit` are held, before any
+ * waiter (it runs already), and says whether it got one. Without one its owner keeps it paused: it never runs as one
+ * more than the limit (#227574).
+ */
+export function reclaimSlot(
+  claim: SlotClaim,
+  holder: SlotHolder,
+  limit: number,
+  parent = queueTmpdir(),
+) {
+  if (process.env[SLOT_ENV]) return Promise.resolve(true)
+  return update<boolean>(parent, async (queue, now) => {
+    const held = queue.entries.filter((entry) => entry.id !== claim.id && holding(entry))
+    return held.length < limit
+      ? [slotStep(queue, { type: 'heavy', claim, holder, now }), true]
+      : [queue, false]
   })
 }
 
@@ -377,13 +473,17 @@ const minutes = (ms: number) =>
  */
 export function describeWait(entered: Exclude<SlotEntered, { kind: 'started' }>, now = Date.now()) {
   if (entered.kind === 'ram')
-    return `next in line for the heavy-work slot, waiting for RAM: ${describeShort(entered.short)}`
+    return `next in line for the heavy-work slot, waiting for memory: ${describeShort(entered.short)}`
   if (entered.kind === 'cpu')
     return `next in line, waiting for CPU: ${describeLoad(entered.gate)}${entered.outside ? ` (from work the queue does not run: it starts anyway after ${minutes(PRESSURE_WAIT_MS)})` : ''}`
   const { turn } = entered
   if (turn.kind === 'settling')
     return `the heavy-work queue's file was removed; running jobs announce themselves again, so nothing starts for ${minutes(turn.until - now)}`
-  return `${ordinal(turn.ahead.length + 1)} in line for the heavy-work slot, behind ${describeBehind(turn, now)}`
+  const taken =
+    turn.holders.length >= turn.limit
+      ? `${turn.holders.length} of ${turn.limit} heavy jobs running, `
+      : ''
+  return `${ordinal(turn.ahead.length + 1)} in line for the heavy-work slot, ${taken}behind ${describeBehind(turn, now)}`
 }
 
 /** The jobs a job waits behind: "`pnpm check` from #12 in my-app (running 3 min); `pnpm test` from #14 in my-app (waiting)". */

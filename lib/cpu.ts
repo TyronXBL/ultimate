@@ -19,17 +19,23 @@ import { readSettings, userSettingsPath } from './settings.ts'
  * well above one core (vitest with 8 workers, Stryker with 2, each Chromium audit), and the light ones beside them
  * (postgres, `next start`, a seed) idled under it.
  */
-export const HEAVY_CORES = 1
+const HEAVY_CORES = 1
 /**
- * How long a job the command text does not know is measured before it counts as light, one job at a time. vitest and
- * Stryker start their workers within seconds, so 20 s shows them (the incident's `slice.sh` used several cores within
- * its first poll); it is also the most a light job started beside another waits per job ahead of it.
+ * How long a job the command text does not know is measured, holding a place in the heavy-work queue, before it counts
+ * as light and gives the place back. vitest and Stryker start their workers within seconds, so 20 s shows them (the
+ * incident's `slice.sh` used several cores within its first poll); a job using a whole probation's CPU sooner counts
+ * as heavy at once.
  */
 export const PROBATION_MS = 20_000
-/** Below this many cores for `LIGHT_FOR_MS`, a job that counted as heavy lets the slot go: a dev server that compiled. */
-export const LIGHT_CORES = 0.5
-/** Long enough that a test run between two files never drops out; the incident's jobs never paused that long. */
-export const LIGHT_FOR_MS = 60_000
+/**
+ * Below this many cores for `LIGHT_FOR_MS`, a heavy job gives its place back: a dev server that compiled, or a run that
+ * hangs. Measured on this machine (#227574): a lander integration e2e run idles at 0.25 cores over its quietest 60 s
+ * (half its 60 s windows are below 0.5), `pnpm check` at 0.87; the knowledgebase test run that hung held its place for
+ * an hour at next to nothing. So well below the quietest real run, and for minutes, not seconds.
+ */
+const LIGHT_CORES = 0.1
+/** Five times the longest quiet stretch measured in a real run; a job busy again after it reclaims a place or pauses. */
+export const LIGHT_FOR_MS = 5 * 60_000
 /**
  * A plain bash command above `HEAVY_CORES` for this long is heavy work beside the tool call (the incident's two
  * `C-flow.mjs` audits, one sent to the background with `&`). Longer than probation: a build step or an `rg` over a
@@ -91,44 +97,85 @@ export const machineLoad = async (): Promise<MachineLoad> => ({
 /** Whether a job may start now, by load. */
 export type CpuGate =
   | { kind: 'go' }
-  /** The load is at or above `limit` times the cores, or the pressure at or above `PRESSURE_PCT`. */
-  | { kind: 'wait'; load: number; cores: number; pressure: number; limit: number }
+  /**
+   * The load or the pressure is at or above what `below` allows (`pressure` unset: not counted); `settling` while a
+   * running queue job started too recently for the load to show it.
+   */
+  | {
+      kind: 'wait'
+      load: number
+      cores: number
+      pressure: number
+      below: { load: number; pressure: number | undefined }
+      settling: boolean
+    }
   /** It was, for `waited` ms with nothing of the queue running: it starts anyway. */
   | { kind: 'forced'; load: number; cores: number; pressure: number; waited: number }
 
 /**
- * The gate for a job at the head of the line. `outsideSince`: since when it has waited for CPU while the queue ran
- * nothing, so the load is not the queue's own; undefined while a job of the queue runs, which never forces a start.
+ * How long a job runs before the one-minute load shows it: the average's own time constant. Until then a job that
+ * starts beside it cannot tell how much it uses.
+ */
+export const LOAD_SHOWS_MS = 60_000
+
+/** What the queue runs when a job at the head of the line has a free place. */
+export type GateContext = {
+  /** Queue jobs that hold a place now (running or on probation), fewer than the machine's limit. */
+  running: number
+  /** Every one of them started at least `LOAD_SHOWS_MS` ago. */
+  settled: boolean
+  /** Since when it has waited for CPU while the queue ran nothing; unset while a queue job runs. */
+  outsideSince?: number
+}
+
+/**
+ * The gate for a job at the head of the line, with `limit` the load per core (`cpu.maxLoadPerCore`):
+ * - nothing of the queue runs: load below `limit` × cores and pressure below `PRESSURE_PCT`; load the queue does not
+ *   cause delays it at most `PRESSURE_WAIT_MS`;
+ * - queue jobs run and a place is free (`heavyWork.maxJobs` above one, a second job beside one): load below twice
+ *   that, once the running jobs show in the load. One job already fills the machine's pressure (40 % with every core
+ *   busy), so only the load can say there is room for another; the user allows two at once, and one 8-worker test run
+ *   alone reaches load 14.6 on 6 cores, where a second must wait.
  */
 export function cpuGate(
   { load, cores, pressure }: MachineLoad,
   limit: number | undefined,
-  outsideSince: number | undefined,
   now: number,
+  context: GateContext,
 ): CpuGate {
-  if (limit === undefined || (load < limit * cores && pressure < PRESSURE_PCT))
+  if (limit === undefined) return { kind: 'go' }
+  const beside = context.running > 0
+  const below = beside
+    ? { load: 2 * limit * cores, pressure: undefined }
+    : { load: limit * cores, pressure: PRESSURE_PCT }
+  const settling = beside && !context.settled
+  if (!settling && load < below.load && (below.pressure === undefined || pressure < below.pressure))
     return { kind: 'go' }
-  const waited = outsideSince === undefined ? 0 : now - outsideSince
+  const waited = context.outsideSince === undefined ? 0 : now - context.outsideSince
   return waited >= PRESSURE_WAIT_MS
     ? { kind: 'forced', load, cores, pressure, waited }
-    : { kind: 'wait', load, cores, pressure, limit }
+    : { kind: 'wait', load, cores, pressure, below, settling }
 }
 
 const round = (value: number) => Math.round(value * 10) / 10
-/** "load 27.6 on 6 cores, CPU pressure 36 %; starts below load 6 and 20 %". */
-export const describeLoad = ({
-  load,
-  cores,
-  pressure,
-  limit,
-}: Extract<CpuGate, { kind: 'wait' | 'forced' }> & { limit?: number }) =>
-  `load ${round(load)} on ${cores} cores, CPU pressure ${Math.round(pressure)} %${limit === undefined ? '' : `; starts below load ${round(limit * cores)} and ${PRESSURE_PCT} %`}`
+/**
+ * "load 27.6 on 6 cores, CPU pressure 36 %", and for a wait what it waits for: "; starts below load 6 and 20 %" or
+ * "; starts below load 12 once the running jobs show in the load".
+ */
+export const describeLoad = (gate: Extract<CpuGate, { kind: 'wait' | 'forced' }>) =>
+  `load ${round(gate.load)} on ${gate.cores} cores, CPU pressure ${Math.round(gate.pressure)} %${
+    gate.kind === 'wait'
+      ? `; starts below load ${round(gate.below.load)}${gate.below.pressure === undefined ? '' : ` and ${gate.below.pressure} %`}${gate.settling ? ` once the running jobs show in the load (${LOAD_SHOWS_MS / 1000} s after each started)` : ''}`
+      : ''
+  }`
 
 /** The CPU time a job used so far, in ms, at `at`. */
 export type CpuSample = { at: number; cpuMs: number }
 /**
  * What a running job's measured CPU says about it. `measuring`: on probation since `started`; `climbing` and `cooling`
- * are on their way to `heavy` and `light` since `since`. Each carries the last sample, which the next is compared with.
+ * are on their way to `heavy` and `released` since `since`. `released`: it was heavy and gave its place back;
+ * `reclaiming`: busy again since then, waiting for a place, so its owner pauses it meanwhile (it must never run beside
+ * a full queue). Each carries the last sample, which the next is compared with.
  */
 export type Observation =
   | { kind: 'measuring'; started: number; last: CpuSample }
@@ -136,6 +183,8 @@ export type Observation =
   | { kind: 'climbing'; since: number; last: CpuSample }
   | { kind: 'heavy'; last: CpuSample }
   | { kind: 'cooling'; since: number; last: CpuSample }
+  | { kind: 'released'; last: CpuSample }
+  | { kind: 'reclaiming'; last: CpuSample }
 
 /** A job that just started, on probation: its group is new, so it has used no CPU yet. */
 export const measuring = (at: number): Observation => ({
@@ -143,16 +192,24 @@ export const measuring = (at: number): Observation => ({
   started: at,
   last: { at, cpuMs: 0 },
 })
+/**
+ * A job its command shows heavy, just started: it holds its place from the start, and gives it back like any heavy job
+ * once it idles (one that hangs: a test run waiting on nothing held the queue for 50 min on 2026-11-11, #227574).
+ */
+export const heavyNow = (at: number): Observation => ({ kind: 'heavy', last: { at, cpuMs: 0 } })
 
 /**
  * The observation after `sample`: the only writer of `Observation`. A job on probation is decided by its average since it
- * started, as soon as it is certain; after that a job turns heavy above `HEAVY_CORES` for `heavyAfter` ms and light
- * again below `LIGHT_CORES` for `LIGHT_FOR_MS`. CPU time that left the group (a member reaped outside it) counts as none.
+ * started, as soon as it is certain; after that a light job turns heavy above `HEAVY_CORES` for `heavyAfter` ms, and a
+ * heavy one is released below `LIGHT_CORES` for `LIGHT_FOR_MS`. A released job busy again (above `HEAVY_CORES` between
+ * two samples) reclaims a place: it is heavy with `place` (its owner got one for it), else it waits reclaiming. CPU
+ * time that left the session (a member reaped outside it) counts as none.
  */
 export function observe(
   observation: Observation,
   sample: CpuSample,
   heavyAfter = PROBATION_MS,
+  place = false,
 ): Observation {
   const last = observation.last
   const cores = Math.max(0, sample.cpuMs - last.cpuMs) / Math.max(1, sample.at - last.at)
@@ -179,9 +236,15 @@ export function observe(
       if (cores >= LIGHT_CORES) return { kind: 'heavy', last: sample }
       const since = observation.kind === 'cooling' ? observation.since : last.at
       return sample.at - since >= LIGHT_FOR_MS
-        ? { kind: 'light', last: sample }
+        ? { kind: 'released', last: sample }
         : { kind: 'cooling', since, last: sample }
     }
+    case 'released':
+      if (cores <= HEAVY_CORES) return { kind: 'released', last: sample }
+      return place ? { kind: 'heavy', last: sample } : { kind: 'reclaiming', last: sample }
+    case 'reclaiming':
+      // Paused while it waits, so its samples say nothing: only a place moves it on.
+      return place ? { kind: 'heavy', last: sample } : { kind: 'reclaiming', last: sample }
     default:
       return observation satisfies never
   }
@@ -235,6 +298,17 @@ export async function sessionCpuMs(sid: number) {
 /** The processes of session `sid` now. */
 export async function sessionMembers(sid: number) {
   return (await stats()).filter((stat) => stat.sid === sid).map((stat) => stat.pid)
+}
+
+/** Send `signal` to every process of session `sid`, which the caller has verified is its own; one that ended is skipped. */
+export async function signalSession(sid: number, signal: NodeJS.Signals) {
+  for (const pid of await sessionMembers(sid))
+    try {
+      process.kill(pid, signal)
+    } catch (error) {
+      // It ended between the listing and the signal.
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
 }
 
 /** The session whose leader's environment holds `marker` (`NAME=value`), as a bash call marks its shell. */

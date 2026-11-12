@@ -494,7 +494,11 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
     label: 'pnpm test',
     from: '#7 in my-app',
   }
-  const start = { floor: undefined, need: 1536, start: thisProcess }
+  const start = {
+    limits: { floor: undefined, cpu: undefined, max: 1 },
+    need: 1536,
+    start: thisProcess,
+  }
   expect(await enterSlot(other, start)).toMatchObject({ kind: 'started' })
   const id = await f.create()
   await f.service.ready(id, context)
@@ -512,7 +516,7 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
   await light.started()
   // The heavy check ran, and the light one runs with the slot free for the next job in line.
   await access(ran)
-  expect(await peekSlot({ id: 'next-job', kind: 'heavy', at: Date.now() })).toEqual({
+  expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({
     kind: 'next',
   })
   await light.release()
@@ -563,7 +567,7 @@ it("queues a check's own heavy work in the machine's queue, not in the check's p
   await writeFile(
     script,
     `import { enterSlot, thisProcess } from '${resolve('lib/slot.ts')}'\n` +
-      `const look = await enterSlot({ id: 'gate', kind: 'heavy', at: Date.now(), label: 'pnpm test', from: 'the gate' }, { floor: undefined, need: 1536, start: thisProcess, queue: false })\n` +
+      `const look = await enterSlot({ id: 'gate', kind: 'heavy', at: Date.now(), label: 'pnpm test', from: 'the gate' }, { limits: { floor: undefined, cpu: undefined, max: 1 }, need: 1536, start: thisProcess, queue: false })\n` +
       `process.exit(look.kind === 'waiting' ? 0 : 1)\n`,
   )
   f.host.projectSettings = async () => ({ lander: { checks: [`node '${script}'`] } })
@@ -575,7 +579,11 @@ it("queues a check's own heavy work in the machine's queue, not in the check's p
     from: '#7 in my-app',
   }
   expect(
-    await enterSlot(other, { floor: undefined, need: 1536, start: thisProcess }),
+    await enterSlot(other, {
+      limits: { floor: undefined, cpu: undefined, max: 1 },
+      need: 1536,
+      start: thisProcess,
+    }),
   ).toMatchObject({ kind: 'started' })
   const id = await f.create()
   await f.service.ready(id, context)
