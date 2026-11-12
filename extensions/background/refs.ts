@@ -4,9 +4,9 @@ export type BackgroundResult = {
   cwd: string
   /**
    * `not-started`: it waited for RAM above the floor (`memory.minAvailableMiB`), alone or at the head of the heavy-work
-   * queue, and gave up.
+   * queue, and gave up. `stopped`: the heavy-work queue ended it, as `note` says.
    */
-  outcome: 'finished' | 'timeout' | 'lost' | 'not-started'
+  outcome: 'finished' | 'timeout' | 'lost' | 'not-started' | 'stopped'
   exitCode: number | null
   /** How long it ran; for `not-started`, how long it waited. */
   seconds: number

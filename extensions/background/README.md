@@ -19,8 +19,8 @@ durable `background.run` task then:
    the conversations service's `resultIn` decides it in the commit that submits.
 
 A heavy command (tests, checks, installs, builds, a server: `commandNeedMiB` in `lib/memory.ts`) waits before step 1
-in the machine's heavy-work queue (`lib/slot.ts`, `extensions/memory/README.md`): one heavy command at a time across
-every Ultimate on the machine, in the order they asked. The task sleeps durably, looks again every 5 s and starts the
+in the machine's heavy-work queue (`lib/slot.ts`, `extensions/memory/README.md`): up to the machine's limit of heavy
+commands at once (`heavyWork.maxJobs`, default one) across every Ultimate on the machine, in the order they asked. The task sleeps durably, looks again every 5 s and starts the
 command by itself once its turn comes and RAM above the floor (`memory.minAvailableMiB`) admits it; RAM short at the
 head of the line gives up after 30 min with a `not-started` card listing what uses RAM. The tool's answer says its
 place and what it waits for ("Queued, 2nd in line for the heavy-work slot, behind `pnpm check` from #12 in my-app
@@ -28,6 +28,11 @@ place and what it waits for ("Queued, 2nd in line for the heavy-work slot, behin
 holds the slot while its group runs and lets it go once the group is stopped, when it is concluded, or when it gives
 up. A light command starts at once, or, when the floor is already breached, waits for RAM, looking every 10 s for up
 to 30 min.
+
+With CPU admission on (`cpu.maxLoadPerCore`, `extensions/memory/README.md`), every command queues and the head of the
+line waits for load too. A command the list does not know starts on probation: the task measures its group's CPU at
+each look, its answer says it is being measured, and it holds the slot while it uses more than a core. A start that
+waited out load the queue did not cause says so on its result card.
 
 The shell, not the host, writes the log and the code, so a command keeps running through a host restart and its
 result still arrives. The command keeps running across the caller's turns and its Stop button; concluding the

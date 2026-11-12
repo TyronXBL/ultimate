@@ -47,15 +47,12 @@ export type BackupWait = {
 
 /**
  * The line in @ultimate's transcript: which conversation switched to which model, and why; or, with `until`, that it
- * waits for its primary `to` until then.
+ * waits for its primary `to` until then; or, with `resumed`, that its wait since `since` ended with an answer of that
+ * model. One line when a wait starts and one when it ends, none for its tries.
  */
-export type BackupNotice = {
-  conversation: number
-  from: string
-  to: string
-  reason: string
-  until?: number
-}
+export type BackupNotice =
+  | { conversation: number; from: string; to: string; reason: string; until?: number }
+  | { conversation: number; resumed: string; since: number }
 
 /** The divider where a conversation returned to its primary: the backup it leaves and the model it goes back to. */
 export type BackupReturned = { from: string; to: string }

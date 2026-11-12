@@ -163,12 +163,13 @@ type Answered = { type: 'answered'; model: string }
  * What an event did, beside the new state: `none` changed nothing (a failure that is not this model's, no backup model
  * at all, a reset past `WAIT_LIMIT`, no record, or a backup kept for the cooldown or until the primary has a login);
  * `earlier` is a limit of a model already switched away from; `held` a limit of the primary during its wait, which
- * changes nothing; `switched` runs on `to` at `level`; `returned` puts `primary` back; `waiting` waits for the primary
- * as the new state says, every backup `skipped` and why; `gave-up` ends a wait that would outlast `WAIT_LIMIT`;
- * `resumed` ends a wait the primary answered.
+ * changes nothing; `switched` runs on `to` at `level`, a try of a wait when the new state keeps one; `returned` puts
+ * `primary` back; `waiting` waits for the primary as the new state says, every backup `skipped` and why; `gave-up` ends
+ * a wait that would outlast `WAIT_LIMIT`; `resumed` ends a wait that `on` answered, the primary or a try's backup.
  */
 export type BackupOutcome =
-  | { kind: 'none' | 'earlier' | 'held' | 'gave-up' | 'resumed' }
+  | { kind: 'none' | 'earlier' | 'held' | 'gave-up' }
+  | { kind: 'resumed'; on: string; since: number }
   | { kind: 'switched'; from: string; to: Candidate; level?: ModelThinkingLevel; reason: string }
   | {
       kind: 'returned'
@@ -229,9 +230,17 @@ export function backupStep(
   event: Limit | Run | Answered,
 ): { state: BackupState; outcome: BackupOutcome } {
   if (event.type === 'answered') {
-    if (state.kind !== 'waiting' || event.model !== name(state.primary))
-      return { state, outcome: { kind: 'none' } }
-    return { state: { kind: 'primary' }, outcome: { kind: 'resumed' } }
+    if (state.kind === 'waiting' && event.model === name(state.primary))
+      return {
+        state: { kind: 'primary' },
+        outcome: { kind: 'resumed', on: event.model, since: state.since },
+      }
+    // A try's backup answered: the conversation runs on it as on any backup, back to its primary after the cooldown.
+    if (state.kind === 'backup' && state.wait && event.model === name(state.to)) {
+      const { wait, ...record } = state
+      return { state: record, outcome: { kind: 'resumed', on: event.model, since: wait.since } }
+    }
+    return { state, outcome: { kind: 'none' } }
   }
   if (event.type === 'run') {
     if (state.kind !== 'backup') return { state, outcome: { kind: 'none' } }
@@ -250,7 +259,14 @@ export function backupStep(
   }
   const { current, failed, now } = event
   const waiting = state.kind === 'waiting' ? state : undefined
-  // A wait's earlier chain is over once its time came: the next limit starts a new one.
+  // The wait this limit belongs to, on the primary or on a try's backup: only an answer ends it, never a hop (#251493:
+  // each try began the wait again at try 1, so its backoff never grew and every try sent its notices again).
+  const wait = waiting
+    ? { since: waiting.since, attempt: waiting.attempt }
+    : state.kind === 'backup'
+      ? state.wait
+      : undefined
+  // A try asks the backups again once the wait's time came: one may have room before the primary has.
   const tried = state.kind === 'primary' || (waiting && now >= waiting.until) ? [] : state.tried
   // A switch made after this response was asked for: the conversation already left the model that failed here.
   if (failed !== name(current))
@@ -275,6 +291,7 @@ export function backupStep(
         tried: [...tried, failed],
         reason: event.reason,
         ...(thinking ? { thinking } : {}),
+        ...(wait ? { wait } : {}),
       },
       outcome: {
         kind: 'switched',
@@ -287,11 +304,11 @@ export function backupStep(
   }
   // Without a backup model the limit goes where it always went: the host pauses, or the run fails.
   if (event.candidates.length === 0) return { state, outcome: { kind: 'none' } }
-  const attempt = waiting ? waiting.attempt + 1 : 1
-  const since = waiting ? waiting.since : now
+  const attempt = wait ? wait.attempt + 1 : 1
+  const since = wait ? wait.since : now
   const until = waitUntil(now, attempt, event.jitter, event.reset)
   if (until - since > WAIT_LIMIT)
-    return waiting
+    return wait
       ? { state: { kind: 'primary' }, outcome: { kind: 'gave-up' } }
       : { state, outcome: { kind: 'none' } }
   const skipped = event.candidates.map((candidate) => ({

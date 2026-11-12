@@ -9,6 +9,7 @@ const labels = {
   timeout: 'Command timed out',
   lost: 'Command lost',
   'not-started': 'Command not started',
+  stopped: 'Command stopped by the heavy-work queue',
 } as const
 function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const result = entry.data as BackgroundResult
