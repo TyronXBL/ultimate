@@ -2,13 +2,17 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import searxng from '../server.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import { removeTemp, temp } from '../../../test/helpers.ts'
 
 const cleanup: (() => Promise<void>)[] = []
+beforeEach(() => {
+  vi.stubEnv('ULTIMATE_WEB_SEARCH_STATE_HOME', undefined)
+})
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const close of cleanup.splice(0)) await close()
 })
 
@@ -72,12 +76,14 @@ it('web_search asks SearXNG for JSON and returns its results with unresponsive e
     )
   })
   const result = await (await tools(instance.base)).search({ query: 'a b', time_range: 'week' })
-  expect(instance.requests).toEqual(['/search?q=a+b&format=json&time_range=week'])
+  // An engine was down, so it reads /config to tell whether every web engine was.
+  expect(instance.requests).toEqual(['/search?q=a+b&format=json&time_range=week', '/config'])
   expect(result.isError).toBeUndefined()
   expect(result.text).toContain('1. A page\nURL: https://www.example.com/a\nAbout A')
   expect(result.text).toContain('1 upstream engine was unresponsive (duckduckgo: CAPTCHA)')
   expect(result.details).toEqual({
     status: 'success',
+    outcome: 'partial',
     results: [
       {
         url: 'https://www.example.com/a',

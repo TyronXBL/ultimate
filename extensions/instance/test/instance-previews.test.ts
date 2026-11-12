@@ -108,6 +108,7 @@ it('isolates preview cloud environment and host identity', () => {
     home: '/preview/state',
     project: '/preview/project',
     userHome: '/preview/user',
+    parentUserHome: '/parent/config',
     ownerPid: 222,
   })
   expect(child).not.toHaveProperty('ULTIMATE_CLOUD_URL')
@@ -119,11 +120,20 @@ it('isolates preview cloud environment and host identity', () => {
     ULTIMATE_PROJECT: '/preview/project',
     HOME: '/preview/user',
     ULTIMATE_USER_HOME: '/preview/user',
+    ULTIMATE_WEB_SEARCH_STATE_HOME: '/parent/config',
     ULTIMATE_PORT: '0',
     ULTIMATE_NO_OPEN: '1',
     ULTIMATE_INSTANCE_OWNER: '222',
   })
   expect(parent).toEqual(before)
+  const nested = previewEnv(child, {
+    home: '/nested/state',
+    project: '/nested/project',
+    userHome: '/nested/user',
+    parentUserHome: '/preview/user',
+    ownerPid: 333,
+  })
+  expect(nested.ULTIMATE_WEB_SEARCH_STATE_HOME).toBe('/parent/config')
 })
 
 // Regression: preview clicks moved an agent in a linked ~/.ultimate/agents/*.md and saved a linked
@@ -173,7 +183,10 @@ it("keeps a preview's ~/.ultimate private while sharing the rest of the home", a
   await seedUserHome(user, copy)
   await linkHome(user, copy)
   await linkHome(user, copy)
-  const { HOME } = previewEnv({}, { home: root, project: root, userHome: copy, ownerPid: 1 })
+  const { HOME } = previewEnv(
+    {},
+    { home: root, project: root, userHome: copy, parentUserHome: user, ownerPid: 1 },
+  )
   await mkdir(join(HOME!, '.ultimate/skills/leak'))
   await writeFile(join(HOME!, '.ultimate/skills/leak/SKILL.md'), 'x')
 

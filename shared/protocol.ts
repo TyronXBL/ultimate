@@ -94,8 +94,17 @@ export interface ExtensionInfo {
     sections: string[]
     hooks: number
     docs: string[]
-    /** `provider`: a model provider whose configured auth stands in for the secret. */
-    secrets?: { name: string; description: string; url?: string; provider?: string }[]
+    /**
+     * `provider`: a model provider whose configured auth stands in for the secret. `optional`: the extension works
+     * without it (a fallback), so setup offers it instead of warning.
+     */
+    secrets?: {
+      name: string
+      description: string
+      url?: string
+      provider?: string
+      optional?: boolean
+    }[]
     error?: string
   }
 }
