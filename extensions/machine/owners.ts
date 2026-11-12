@@ -58,11 +58,17 @@ function parse(argv: string[], name: string): string {
   let words = argv
   /** The program that runs the rest: what names it when the rest cannot be read safely. */
   let known = name
+  /**
+   * Whether `words` are a program's argv (a process's, or a wrapper's operands): their first word is the program, never
+   * an assignment. Only a shell's command line sets variables before its program.
+   */
+  let wrapped = true
   for (;;) {
     // A command line may set variables before its program (`TOKEN=… pnpm test`); a redirection there (`> file`,
     // `<<- END`) has operands this does not read, so the program found so far names it.
+    if (wrapped && words[0]?.includes('=')) return known
     let start = 0
-    while (start < words.length && /^[A-Za-z_]\w*=/.test(words[start])) start++
+    if (!wrapped) while (start < words.length && /^[A-Za-z_]\w*=/.test(words[start])) start++
     if (start >= words.length || /^(\d*[<>]|&)/.test(words[start])) return known
     const program = basename(words[start])
     const rest = words.slice(start + 1)
@@ -74,6 +80,7 @@ function parse(argv: string[], name: string): string {
       if (program === 'nice' && rest[0] === '-n' && /^-?\d+$/.test(rest[1] ?? '')) next = 2
       if (!rest[next] || rest[next].startsWith('-')) return program
       known = program
+      wrapped = true
       words = rest.slice(next)
       continue
     }
@@ -96,6 +103,7 @@ function parse(argv: string[], name: string): string {
     }
     if (line !== undefined) {
       known = program
+      wrapped = false
       // Split on whitespace only up to the first quote, escape, expansion or operator: past it a word may be part of a
       // quoted value or an operand (`TOKEN="a b" curl`, `--require "a b.js"`, `cat<<<value`, review of #231847). A
       // leading `cd <plain path> &&` goes first.

@@ -223,6 +223,7 @@ describe('owners', () => {
     [['bash', '-c', 'cat<<<hunter2'], 'cat'],
     [['bash', '-c', 'x=1;hunter2'], 'bash'],
     [['timeout', '30', '123', 'hunter2'], '123'],
+    [['timeout', '30', 'FOO=bar', 'hunter2'], 'timeout'],
     [['bash', '-xs', 'hunter2.js'], 'bash'],
     [['bash', '-ex', 'script.sh', 'hunter2'], 'script.sh'],
     [['bash', '-o', 'hunter2.sh'], 'bash'],
