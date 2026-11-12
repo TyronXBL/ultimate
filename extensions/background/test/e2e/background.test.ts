@@ -407,7 +407,8 @@ it('ends a command that turns heavy without a place while every place is taken, 
     // Whatever happened, nothing of it holds the queue the next tests share.
     await a.caller.abort(context, { background: true })
   }
-})
+  // Its rules take that long: a 20 s probation, then 20 s above a core, and the looks between (44 s here, more on CI).
+}, 180_000)
 
 it('keeps a running and a waiting heavy command through a restart: each runs once, in order', async () => {
   const shared = await temp('ultimate-background-queue-')
