@@ -391,7 +391,7 @@ export async function enterSlot(
 
 /**
  * A running job that gave its place back is busy again: it takes a place if fewer than `limit` are held, before any
- * waiter (it runs already), and says whether it got one. Without one its owner keeps it paused: it never runs as one
+ * waiter (it runs already), and says whether it got one. Without one its owner ends it: it never runs as one
  * more than the limit (#227574).
  */
 export function reclaimSlot(

@@ -12,7 +12,6 @@ import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-dura
 import type { ConversationId, PhaseHandler } from '@earendil-works/pi-durable'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { setTimeout as sleep } from 'node:timers/promises'
 import {
   admitRam,
   checkRam,
@@ -31,10 +30,7 @@ import {
   measuring,
   observe,
   PROBATION_MS,
-  continueSession,
-  sessionMembers,
-  signalSession,
-  stopSession,
+  LIGHT_FOR_MS,
 } from '../../lib/cpu.ts'
 import type { Observation } from '../../lib/cpu.ts'
 import {
@@ -90,10 +86,6 @@ type Checkpoint =
         queued: number
         observed?: Observation
         forced?: string
-        /** Why the queue ended it, when it did. */
-        notice?: string
-        /** How long it was paused, reclaiming a place. */
-        pausedMs?: number
       }
     }
   | { phase: 'deliver'; result: BackgroundResult }
@@ -164,9 +156,6 @@ export const jobs: UnderwaySource = {
       delivering: (task.state as { checkpoint?: Checkpoint }).checkpoint?.phase === 'deliver',
     })),
 }
-
-/** How long a command the queue ends gets between TERM and KILL. */
-const KILL_GRACE_MS = 3000
 
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
@@ -325,32 +314,18 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       poll: async (task, runtime, ctx) => {
         const { pid, began, slot } = task.state.checkpoint
         const files = paths(task)
-        /** Whether the command's leader is still the process this task started: only then is its session listed. */
-        const ours = async (held: typeof slot) =>
-          held !== undefined &&
-          (identify(pid) === held.identity ||
-            // Its leader gone, its session is still its own while any of it lives: a session id is never given to
-            // another session before every process of it has ended (review of #227574).
-            (identify(pid) === undefined && (await sessionMembers(pid)).length > 0))
-        /** Resume what this task may have paused: its session, while its committed checkpoint says reclaiming. */
-        const resume = async (held: typeof slot) => {
-          if (held?.observed?.kind === 'reclaiming') await continueSession(pid)
-        }
         /**
          * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
          * proves nothing any more, and a group id may since name another group: nothing is signalled, the card says so.
          */
-        const stop = async () =>
-          // A paused group gets TERM only once it runs again.
-          resume(slot)
-            .then(() => stopGroup(pid, { pidFile: files.pid }))
-            .then(
-              () =>
-                groupAlive(pid)
-                  ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
-                  : undefined,
-              (error: unknown) => (error instanceof Error ? error.message : String(error)),
-            )
+        const stop = () =>
+          stopGroup(pid, { pidFile: files.pid }).then(
+            () =>
+              groupAlive(pid)
+                ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
+                : undefined,
+            (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          )
         const result = async (
           outcome: BackgroundResult['outcome'],
           code: number | null,
@@ -365,16 +340,8 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             ...(slot && { queued: Math.round(slot.queued / 1000) }),
             tail: await tail(files.log),
             log: files.log,
-            ...((note || slot?.forced || slot?.pausedMs || slot?.notice) && {
-              note: [
-                slot?.forced,
-                slot?.notice,
-                slot?.pausedMs &&
-                  `It was paused ${Math.round(slot.pausedMs / 1000)} s: it gave its place in the heavy-work queue back while idle, and when it was busy again every place was taken.`,
-                note,
-              ]
-                .filter(Boolean)
-                .join('\n'),
+            ...((note || slot?.forced) && {
+              note: [slot?.forced, note].filter(Boolean).join('\n'),
             }),
           })
         const now = runtime.now()
@@ -396,8 +363,10 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
           const sample = { at: now, cpuMs: cpuMs ?? 0 }
           let observed =
             slot?.observed && cpuMs !== undefined ? observe(slot.observed, sample) : slot?.observed
-          // Busy again after it gave its place back: it runs on only with a place, paused meanwhile, so it never runs
-          // as one more than the machine's limit (#227574).
+          // Heavy without a place (busy again after it gave its place back, or light from probation and heavy later): it
+          // takes a free one, before any waiter, or it ends, like a heavy bash command beside a full queue, so nothing
+          // measured runs as one more than the machine's limit (#227574). Ending it is the existing, leader-verified stop
+          // of its group; pausing it instead could not be made safe against crashes, lost leaders and forking chains.
           if (
             claim &&
             holder &&
@@ -405,53 +374,39 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             (await reclaimSlot(claim, holder, await maxHeavyJobs(host.userHome)))
           )
             observed = observe(observed, sample, PROBATION_MS, true)
-          // A pause is committed before it is signalled: the look that first finds it reclaiming only records that, and the
-          // next, a second later, stops its session; a look that finds it no longer reclaiming resumes it first. So a
-          // stopped session is always one whose committed checkpoint says reclaiming, whatever crashes in between.
-          const committed = slot?.observed?.kind === 'reclaiming'
-          const recording = observed?.kind === 'reclaiming' && !committed
-          let notice = slot?.notice
           if (observed?.kind === 'reclaiming') {
-            if (committed && (await ours(slot)) && !(await stopSession(pid))) {
-              // It starts processes faster than it can be paused: it must not run beside a full queue, so it ends.
-              notice = `Stopped by the heavy-work queue: it was busy again without a place while every place was taken, and it started processes faster than it could be paused, so every process it started got TERM, then KILL after ${KILL_GRACE_MS / 1000} s.`
-              await signalSession(pid, 'SIGTERM')
-              await sleep(KILL_GRACE_MS)
-              await signalSession(pid, 'SIGKILL')
+            next = await result(
+              'stopped',
+              null,
+              [
+                `Stopped by the heavy-work queue: it used more than a core without a place in the queue (it gave its place back after ${LIGHT_FOR_MS / 60_000} min idle, or was light at first) while every place was taken. Partial output is above; files it was writing may be incomplete. Run it again with the same call: it waits in line for a place.`,
+                await stop(),
+              ]
+                .filter(Boolean)
+                .join('\n'),
+            )
+          } else {
+            // Said again at every look: after the queue's file was removed, this puts the job back before anyone starts.
+            if (claim && holder) {
+              if (!observed || observed.kind === 'measuring') await holdSlot(claim, holder)
+              else if (holdsSlot(observed)) await heavySlot(claim, holder)
+              else await releaseSlot(claim.id)
             }
-          } else await resume(slot)
-          const pausedMs =
-            (slot?.pausedMs ?? 0) +
-            (slot?.observed?.kind === 'reclaiming' ? now - slot.observed.last.at : 0)
-          // Said again at every look: after the queue's file was removed, this puts the job back before anyone starts.
-          if (claim && holder) {
-            if (!observed || observed.kind === 'measuring') await holdSlot(claim, holder)
-            else if (holdsSlot(observed)) await heavySlot(claim, holder)
-            else await releaseSlot(claim.id)
-          }
-          next = {
-            status: 'sleeping' as const,
-            // On probation it is looked at again right when its probation ends.
-            until:
-              now +
-              (recording
-                ? 1000
-                : observed?.kind === 'measuring'
+            next = {
+              status: 'sleeping' as const,
+              // On probation it is looked at again right when its probation ends.
+              until:
+                now +
+                (observed?.kind === 'measuring'
                   ? Math.min(pollMs(now - began), Math.max(1000, began + PROBATION_MS - now))
                   : pollMs(now - began)),
-            checkpoint: {
-              phase: 'poll' as const,
-              pid,
-              began,
-              ...(slot && {
-                slot: {
-                  ...slot,
-                  ...(observed && { observed }),
-                  ...(pausedMs && { pausedMs }),
-                  ...(notice && { notice }),
-                },
-              }),
-            },
+              checkpoint: {
+                phase: 'poll' as const,
+                pid,
+                began,
+                ...(slot && { slot: { ...slot, ...(observed && { observed }) } }),
+              },
+            }
           }
         }
         // Its group is stopped: the next job in line may start.
@@ -488,15 +443,6 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     abort: async (task, runtime, ctx) => {
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
-      const { checkpoint } = task.state as { checkpoint?: Checkpoint }
-      // A group this task paused gets TERM only once it runs again: it pauses only once its checkpoint says reclaiming.
-      if (
-        recorded &&
-        checkpoint?.phase === 'poll' &&
-        checkpoint.pid === recorded &&
-        checkpoint.slot?.observed?.kind === 'reclaiming'
-      )
-        await continueSession(recorded)
       if (recorded) await stopGroup(recorded, { pidFile: pid })
       // Whether it waited in line or ran: the next job may start. A command that never queued has nothing to release.
       await releaseSlot(slotId(task))

@@ -11,7 +11,6 @@
  */
 import { readdir, readFile } from 'node:fs/promises'
 import { availableParallelism, loadavg } from 'node:os'
-import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readSettings, userSettingsPath } from './settings.ts'
 
@@ -35,7 +34,7 @@ export const PROBATION_MS = 20_000
  * an hour at next to nothing. So well below the quietest real run, and for minutes, not seconds.
  */
 const LIGHT_CORES = 0.1
-/** Five times the longest quiet stretch measured in a real run; a job busy again after it reclaims a place or pauses. */
+/** Five times the longest quiet stretch measured in a real run; a job busy again after it takes a free place or ends. */
 export const LIGHT_FOR_MS = 5 * 60_000
 /**
  * A plain bash command above `HEAVY_CORES` for this long is heavy work beside the tool call (the incident's two
@@ -175,7 +174,7 @@ export type CpuSample = { at: number; cpuMs: number }
 /**
  * What a running job's measured CPU says about it. `measuring`: on probation since `started`; `climbing` and `cooling`
  * are on their way to `heavy` and `released` since `since`. `released`: it was heavy and gave its place back;
- * `reclaiming`: busy again since then, waiting for a place, so its owner pauses it meanwhile (it must never run beside
+ * `reclaiming`: heavy without a place, which its owner takes if one is free and otherwise ends it (it must never run beside
  * a full queue). Each carries the last sample, which the next is compared with.
  */
 export type Observation =
@@ -203,7 +202,7 @@ export const heavyNow = (at: number): Observation => ({ kind: 'heavy', last: { a
  * The observation after `sample`: the only writer of `Observation`. A job on probation is decided by its average since it
  * started, as soon as it is certain; after that a light job turns heavy above `HEAVY_CORES` for `heavyAfter` ms, and a
  * heavy one is released below `LIGHT_CORES` for `LIGHT_FOR_MS`. A released job busy again (above `HEAVY_CORES` between
- * two samples) reclaims a place: it is heavy with `place` (its owner got one for it), else it waits reclaiming. CPU
+ * two samples) reclaims a place: it is heavy with `place` (its owner got one for it), else reclaiming. CPU
  * time that left the session (a member reaped outside it) counts as none.
  */
 export function observe(
@@ -245,7 +244,7 @@ export function observe(
       if (cores <= HEAVY_CORES) return { kind: 'released', last: sample }
       return place ? { kind: 'heavy', last: sample } : { kind: 'reclaiming', last: sample }
     case 'reclaiming':
-      // Paused while it waits, so its samples say nothing: only a place moves it on.
+      // Its owner ends it unless it gets a place: only a place moves it on.
       return place ? { kind: 'heavy', last: sample } : { kind: 'reclaiming', last: sample }
     default:
       return observation satisfies never
@@ -257,7 +256,7 @@ export const holdsSlot = (observation: Observation) =>
 
 /** Linux's clock tick, `getconf CLK_TCK`: 100 on every architecture Node runs on there. */
 const TICK_MS = 10
-type Stat = { pid: number; pgid: number; sid: number; state: string; ticks: number }
+type Stat = { pid: number; sid: number; ticks: number }
 /**
  * Every process's session and CPU time (its own and its reaped children's, in ticks); empty where there is no /proc.
  * By session, not process group: `timeout`, which agents wrap long commands in, moves its command into a group of its
@@ -279,9 +278,7 @@ async function stats() {
             const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
             return {
               pid: Number(name),
-              pgid: Number(fields[2]),
               sid: Number(fields[3]),
-              state: fields[0],
               ticks: fields.slice(11, 15).reduce((sum, field) => sum + Number(field), 0),
             }
           },
@@ -317,46 +314,6 @@ function send(pid: number, signal: NodeJS.Signals) {
     // It ended between the listing and the signal.
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
   }
-}
-
-/**
- * Stop every process of session `sid` (verified the caller's own), in passes until none runs: each running member and
- * its whole process group (a group signal also reaches a child it is starting), then looks again. Stopped means two
- * looks in a row, `STOP_SETTLE_MS` apart, found the same members and all of them stopped: a process that started one
- * and ended between a look's listing and its read leaves that child to be found by the next look, which then differs
- * (review of #227574). False when it did not get there in `passes` passes: the caller must not let the job run on.
- */
-export async function stopSession(sid: number, passes = 50) {
-  let previous: string | undefined
-  let stable = 0
-  for (let pass = 0; pass < passes; pass++) {
-    const members = (await stats()).filter((stat) => stat.sid === sid)
-    const running = members.filter((stat) => !held.has(stat.state))
-    // Groups never span sessions, so a member's group is the session's own.
-    for (const pgid of new Set(running.map((stat) => stat.pgid))) send(-pgid, 'SIGSTOP')
-    for (const { pid } of running) send(pid, 'SIGSTOP')
-    const seen = members
-      .map((stat) => stat.pid)
-      .toSorted((a, b) => a - b)
-      .join(',')
-    stable = !running.length && seen === previous ? stable + 1 : 0
-    if (stable >= 2) return true
-    previous = seen
-    await sleep(STOP_SETTLE_MS)
-  }
-  return false
-}
-/** Between two looks of `stopSession`: longer than a look itself takes (about 16 ms for 250 processes). */
-const STOP_SETTLE_MS = 20
-/** States in which a process runs no more: stopped (`T`), stopped by a tracer (`t`), dead (`X`, `Z`). */
-const held = new Set(['T', 't', 'X', 'Z'])
-
-/**
- * Resume every process of session `sid`. Safe without its leader: a session id stays in use, so it is never given to
- * another session, while any process of it lives; and a SIGCONT to a process that runs changes nothing.
- */
-export function continueSession(sid: number) {
-  return signalSession(sid, 'SIGCONT')
 }
 
 /** The session whose leader's environment holds `marker` (`NAME=value`), as a bash call marks its shell. */

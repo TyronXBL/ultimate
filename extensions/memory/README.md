@@ -89,11 +89,11 @@ cores). With it set:
   its command, or measured) gives its place back below 0.1 core for 5 min, so an idle server or a run that hangs never
   holds one (a test run idle for an hour held the queue on 2026-11-11; a real e2e run idles at 0.25 cores over its
   quietest minute). A job without a place that turns heavy (busy again after giving its place back, or light from its
-  probation and above one core for 20 s later) takes a free place, before any waiter, or is paused (SIGSTOP to its whole
-  session, in passes until nothing of it runs, only once its checkpoint says so, and resumed by session id, which no
-  other session can take while one of its processes lives, so a crash or a killed leader strands nothing) until one is free: nothing measured
-  runs beyond the limit. Its result card says how long it was paused; a dev server compiling while every place is
-  taken waits too. Light jobs started together begin about 20 s apart each per place, and wait while every place is
+  probation and above one core for 20 s later) takes a free place, before any waiter, or is ended like a heavy bash
+  command beside a full queue (its group stopped, TERM then KILL; the card says why and to run it again): nothing
+  measured runs beyond the limit, a dev server compiling while every place is taken included. Pausing it instead
+  was tried and dropped: no pause by signals stayed safe against crashes, lost leaders and processes that keep
+  starting others. Light jobs started together begin about 20 s apart each per place, and wait while every place is
   taken.
 - **Plain `bash`.** A command the list does not know runs at once and is measured every 5 s. Above one core for 30 s
   it takes a place if one is free and nobody waits, and holds it to its end; otherwise it is stopped: TERM to every

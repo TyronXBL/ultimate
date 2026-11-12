@@ -148,13 +148,13 @@ it.each<[string, Observation, CpuSample, Observation, boolean?]>([
     { kind: 'released', last: at(105, 12) },
   ],
   [
-    'released and busy again reclaims a place, waiting paused without one',
+    'released and busy again reclaims a place, which its owner takes or ends it for',
     { kind: 'released', last: at(100, 10) },
     at(105, 20),
     { kind: 'reclaiming', last: at(105, 20) },
   ],
   [
-    'reclaiming stays so while no place is free, whatever its paused samples say',
+    'reclaiming stays so while no place is free',
     { kind: 'reclaiming', last: at(105, 20) },
     at(110, 20),
     { kind: 'reclaiming', last: at(110, 20) },
