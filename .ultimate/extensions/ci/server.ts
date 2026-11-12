@@ -8,7 +8,7 @@
 import { obj } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
-import type { Context } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord/context'
 import { ConversationsApi } from '../../../extensions/conversations/api.ts'
 import type { UnderwaySource } from '../../../extensions/conversations/api.ts'
 import { WorkspacesApi } from '../../../extensions/workspaces/api.ts'

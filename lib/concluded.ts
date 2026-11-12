@@ -4,7 +4,7 @@
  * `ext.conversations.concluded` lists the concluded ids; `concludedAt` stamps when each was last concluded and is kept on
  * resume, so what a conversation reported before then stays settled.
  */
-import type { JsonValue } from '@earendil-works/chord'
+import type { JsonValue } from '@earendil-works/chord/json'
 
 export const concludedKeys = {
   ids: 'ext.conversations.concluded',

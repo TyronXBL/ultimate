@@ -30,7 +30,8 @@ import {
   LiveDoc,
 } from '@earendil-works/pi-durable'
 import type { ConversationId, Extension, Task, ToolRegistration } from '@earendil-works/pi-durable'
-import type { Context, JsonValue } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord/context'
+import type { JsonValue } from '@earendil-works/chord/json'
 import { obj } from '@earendil-works/pi-schema'
 import { CodingTools } from '@earendil-works/pi-durable/tools'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -1526,9 +1527,8 @@ describe('subagents', () => {
             (message) =>
               message.role === 'system' && Object.hasOwn(message.sections ?? {}, 'subagent_state'),
           ),
-      ).toMatchObject({ sections: { subagent_state: null } })
-      // A section appearing mid-conversation reordered the prompt, which re-added every section after removing them
-      // (fixed by the pi-durable planSections patch).
+      ).toMatchObject({ sections: { subagent_state: '' } })
+      // The idle section keeps its empty slot, so its change never removes and re-adds the other sections.
       expect(
         f.requests
           .at(-1)

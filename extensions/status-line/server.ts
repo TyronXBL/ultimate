@@ -1,4 +1,4 @@
-import { copyJson } from '@earendil-works/chord'
+import { copyJson } from '@earendil-works/chord/json'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { onCommit } from '../../lib/commits.ts'
 import { defineExtension, LiveDoc, UsageDoc } from '@earendil-works/pi-durable'

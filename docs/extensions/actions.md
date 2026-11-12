@@ -8,7 +8,7 @@ the UI calls them through a typed ref, JSON in and JSON out.
 
 ```ts
 // server.ts
-import type { JsonValue } from '@earendil-works/chord'
+import type { JsonValue } from '@earendil-works/chord/json'
 import { defineExtension } from '@earendil-works/pi-durable'
 import type { ActionContext } from '../../../server/actions.ts'
 
@@ -43,8 +43,8 @@ An action is `(args, ctx)`; `ctx` has:
 | `host`                                    | The extension host: `projectRoot`, `ultimateRoot`, `system()`, `uiState(context)`, `harness()`, and more (see `AGENTS.md`).                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 The `ActionContext` import is type-only. The path above is right for `.ultimate/extensions/<name>/` in Ultimate's clone
-(built-ins use `../../server/actions.ts`); in another project nothing type-checks it and the import is erased, so it
-runs either way. A project extension keeps its refs in `web.tsx`, from `@/sdk`; built-ins keep them in `refs.ts` and
+(built-ins use `../../server/actions.ts`); in another project the path does not resolve and the import is erased, so it
+runs either way (`scripts/check-extension.ts` reports it there; type `ctx` by hand or leave the import out). A project extension keeps its refs in `web.tsx`, from `@/sdk`; built-ins keep them in `refs.ts` and
 check their handlers against them with `implementAction` (see [contracts](contracts.md#the-browser-side-refsts-and-uitsx)).
 
 - **Arguments are untrusted, from the browser or an agent**: make actions safe to call from an agent and validate args before they reach a command line. `exec` takes an argument list,
