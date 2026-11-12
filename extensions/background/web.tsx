@@ -11,22 +11,26 @@ const labels = {
   'not-started': 'Command not started',
   stopped: 'Command stopped by the heavy-work queue',
 } as const
+const mib = (value: number) => (value < 1024 ? `${value} MiB` : `${(value / 1024).toFixed(1)} GiB`)
 function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const result = entry.data as BackgroundResult
   const failed = result.outcome !== 'finished' || result.exitCode !== 0
   const Icon = failed ? (result.outcome === 'finished' ? XIcon : TriangleAlertIcon) : CheckIcon
   const color = failed ? 'text-error' : 'text-success'
+  const label = result.usage?.oomKilled ? 'Command hit its memory limit' : labels[result.outcome]
+  const usage =
+    result.usage && ` · peak ${mib(result.usage.peakMiB)} · CPU ${result.usage.cpuSeconds}s`
   const meta =
     result.outcome === 'not-started'
       ? `waited ${result.seconds}s`
-      : `${result.queued ? `queued ${result.queued}s · ` : ''}exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s`
+      : `${result.queued ? `queued ${result.queued}s · ` : ''}exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s${usage ?? ''}`
   return (
     <Fold
       card={entry.id}
       summary={
         <>
           <Icon className={cn('size-3 shrink-0', color)} />
-          <span className={color}>{labels[result.outcome]}</span>
+          <span className={color}>{label}</span>
           <span>· {meta}</span>
         </>
       }
@@ -39,7 +43,7 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
       >
         <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
           <Icon className={cn('size-3.5', color)} />
-          <span className={color}>{labels[result.outcome]}</span>
+          <span className={color}>{label}</span>
           <span className="text-muted-foreground">{meta}</span>
         </header>
         <div className="space-y-2 px-3 py-2.5">

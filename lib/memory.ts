@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readJson, writeJson } from './json-file.ts'
+import { jobsSlice } from './job-scope.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /** About what a preview or a scratch server needs: a booted Ultimate with its web build. */
@@ -69,9 +70,16 @@ export function commandNeedMiB(command: string) {
  * what that cgroup uses of it and its memory pressure (`some` and `full` avg10, percent). Every host on the machine and
  * all they start share it (a systemd service cap), so a job that fits in RAM may still not fit under it. `used` is its
  * working set, `memory.current` less the inactive file cache the kernel drops first (on 2026-11-12 about 1 GiB of
- * 3.7), so idle cache never keeps a job out.
+ * 3.7), so idle cache never keeps a job out. `jobs` is the working set of the jobs' own slice (`lib/job-scope.ts`),
+ * outside the service: admission counts it against the cap too, which keeps hosts and jobs together within the budget
+ * the cap was sized for (5.5 GiB, with about 2 GiB outside the service and the 3 GB floor beside it, #231847).
  */
-export type MemoryCap = { used: number; high: number; pressure: { some: number; full: number } }
+export type MemoryCap = {
+  used: number
+  jobs: number
+  high: number
+  pressure: { some: number; full: number }
+}
 /** What admission reads of the machine's memory: `MemAvailable` and the cap, each unset where there is none. */
 export type MemoryReadings = { available: number | undefined; cap: MemoryCap | undefined }
 
@@ -79,7 +87,7 @@ export type MemoryReadings = { available: number | undefined; cap: MemoryCap | u
 export type RamShort =
   /** Available RAM would drop below the floor. */
   | { kind: 'floor'; available: number; need: number; floor: number; reserved?: number }
-  /** The service's memory would rise above its soft cap, where the kernel reclaims from every process in it. */
+  /** The service's memory with its jobs' would rise above the service's soft cap. */
   | { kind: 'cap'; used: number; high: number; need: number; reserved?: number }
 /**
  * The decision: undefined when a job needing `need` MiB fits above the floor and under the cap, with `reserved` MiB
@@ -96,10 +104,10 @@ export function ramShort(
     return { kind: 'floor', available, need, floor, ...(reserved && { reserved }) }
   // #227574: on 2026-11-12 at 01:23 UTC two `pnpm check` runs filled the service to its 5632 MiB soft cap with 5.1 GB
   // of RAM still available: 80 % memory pressure, swap full, checks taking 20 min instead of 30 s.
-  if (cap && cap.used + reserved + need > cap.high)
+  if (cap && cap.used + cap.jobs + reserved + need > cap.high)
     return {
       kind: 'cap',
-      used: cap.used,
+      used: cap.used + cap.jobs,
       high: cap.high,
       need,
       ...(reserved && { reserved }),
@@ -224,12 +232,12 @@ export async function admitIn(
 const gib = (mib: number) => (mib / 1024).toFixed(1)
 /**
  * "4200 MiB available (1536 MiB of it reserved by jobs just started), needs 1536 MiB above the 3072 MiB floor", or
- * "5.6 of 5.5 GiB of the service's memory cap in use, needs 2200 MiB under it".
+ * "5.6 of 5.5 GiB of the service's memory cap in use by hosts and jobs, needs 2200 MiB under it".
  */
 export const describeShort = (short: RamShort) =>
   short.kind === 'floor'
     ? `${short.available} MiB available${short.reserved ? ` (${short.reserved} MiB of it reserved by jobs just started)` : ''}, needs ${short.need ? `${short.need} MiB above ` : 'more than '}the ${short.floor} MiB floor`
-    : `${gib(short.used)} of ${gib(short.high)} GiB of the service's memory cap in use${short.reserved ? ` and ${short.reserved} MiB more reserved by jobs just started` : ''}, needs ${short.need ? `${short.need} MiB under it` : 'room under it'}`
+    : `${gib(short.used)} of ${gib(short.high)} GiB of the service's memory cap in use by hosts and jobs${short.reserved ? ` and ${short.reserved} MiB more reserved by jobs just started` : ''}, needs ${short.need ? `${short.need} MiB under it` : 'room under it'}`
 
 /** The cgroup (v2) path of this process, e.g. `/user.slice/…/ultimate.service`; undefined where there is none. */
 async function ownCgroup() {
@@ -241,6 +249,18 @@ async function ownCgroup() {
   )?.[1]
 }
 
+const mib = (text: string) =>
+  /^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined
+/** The working set of the cgroup at `dir` in MiB: `memory.current` less its inactive file cache. */
+async function workingSet(dir: string) {
+  const [current, stat] = await Promise.all([
+    readFile(join(dir, 'memory.current'), 'utf8').then(mib),
+    readFile(join(dir, 'memory.stat'), 'utf8'),
+  ])
+  const inactive = Number(/^inactive_file (\d+)$/m.exec(stat)?.[1] ?? 0) / 2 ** 20
+  return current === undefined ? undefined : Math.round(current - inactive)
+}
+
 /**
  * The memory cap admission counts (`MemoryCap`): from this process's cgroup up, the nearest with a finite
  * `memory.high`; undefined when none has one (or there are no cgroups).
@@ -248,8 +268,6 @@ async function ownCgroup() {
 export async function memoryCap(): Promise<MemoryCap | undefined> {
   const path = await ownCgroup()
   if (!path) return undefined
-  const mib = (text: string) =>
-    /^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined
   for (let at = path; ; at = dirname(at)) {
     const dir = join('/sys/fs/cgroup', at)
     const high = mib(
@@ -259,20 +277,26 @@ export async function memoryCap(): Promise<MemoryCap | undefined> {
       ),
     )
     if (high !== undefined) {
-      const [current, stat, pressure] = await Promise.all([
-        readFile(join(dir, 'memory.current'), 'utf8').then(mib),
-        readFile(join(dir, 'memory.stat'), 'utf8'),
+      const slice = await jobsSlice()
+      const [used, jobs, pressure] = await Promise.all([
+        workingSet(dir),
+        slice
+          ? workingSet(join('/sys/fs/cgroup', slice)).catch(
+              // No job has run since the slice was last emptied and removed: none use memory.
+              () => 0,
+            )
+          : 0,
         readFile(join(dir, 'memory.pressure'), 'utf8').catch(
           // A kernel without pressure stall information: none to show.
           () => '',
         ),
       ])
-      const inactive = Number(/^inactive_file (\d+)$/m.exec(stat)?.[1] ?? 0) / 2 ** 20
       const avg10 = (line: string) =>
         Number(new RegExp(`^${line} avg10=([\\d.]+)`, 'm').exec(pressure)?.[1] ?? 0)
-      if (current === undefined) return undefined
+      if (used === undefined) return undefined
       return {
-        used: Math.round(current - inactive),
+        used,
+        jobs: jobs ?? 0,
         high,
         pressure: { some: avg10('some'), full: avg10('full') },
       }

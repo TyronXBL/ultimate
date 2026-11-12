@@ -24,7 +24,7 @@ it.each([
 )
 
 /** The service's cap on 2026-11-12 (#227574): 5632 MiB soft cap. */
-const cap = (used: number) => ({ used, high: 5632, pressure: { some: 0, full: 0 } })
+const cap = (used: number, jobs = 0) => ({ used, jobs, high: 5632, pressure: { some: 0, full: 0 } })
 it.each<[string, Parameters<typeof ramShort>, ReturnType<typeof ramShort>]>([
   ['fits under both', [{ available: 8000, cap: cap(3000) }, 2200, 3072], undefined],
   [
@@ -36,6 +36,11 @@ it.each<[string, Parameters<typeof ramShort>, ReturnType<typeof ramShort>]>([
     'blocked by the cap with RAM to spare (01:23 UTC: a second `pnpm check` beside one)',
     [{ available: 8000, cap: cap(3500) }, 2200, 3072],
     { kind: 'cap', used: 3500, high: 5632, need: 2200 },
+  ],
+  [
+    'jobs in their own slice, outside the service, count against its cap (#261381)',
+    [{ available: 8000, cap: cap(1500, 2200) }, 2200, 3072],
+    { kind: 'cap', used: 3700, high: 5632, need: 2200 },
   ],
   [
     'jobs admitted in the last minute count against the cap too',

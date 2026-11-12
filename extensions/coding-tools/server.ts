@@ -30,6 +30,7 @@ import { FileError } from '@earendil-works/pi-durable/env'
 import { createNodePhotonImages } from '@earendil-works/pi-durable/images/node'
 import { git } from '../../lib/git.ts'
 import { commandNeedMiB, listUsers, memoryUsers } from '../../lib/memory.ts'
+import { describeOom, jobScope, readUsage, shellWords } from '../../lib/job-scope.ts'
 import {
   describeBehind,
   describeWait,
@@ -568,16 +569,21 @@ export default function codingTools(
       const log = join(tmpdir(), `ultimate-commits-${randomUUID()}.log`)
       // Marks this call's shell, so its process group can be found and measured (`watchHeavy`).
       const marker = randomUUID()
+      const need = commandNeedMiB(args.command)
+      // A known heavy command runs in a systemd scope of its own with hard limits, like a background command.
+      const usage = join(tmpdir(), `ultimate-usage-${marker}`)
+      const scope = need ? await jobScope(need, usage) : undefined
       const call = createBashTool({
         prepare: (execution) => {
           prepareBash(execution, api, log)
           execution.env[BASH_CALL_ENV] = marker
+          if (scope)
+            execution.command = `${shellWords(scope)} bash -c ${shellWords([execution.command])}`
         },
       })
       const run = (command: Context) => call.execute(args, api, command)
       // A known heavy command (tests, checks, installs, a server) runs here only while the machine's heavy-work slot is
       // free, nobody waits for it and RAM allows, decided under the queue's lock; it holds the slot while it runs.
-      const need = commandNeedMiB(args.command)
       let release: (() => Promise<void>) | undefined
       if (need) {
         const claim = {
@@ -606,8 +612,19 @@ export default function codingTools(
           ? watchHeavy(host, api, args.command, `${BASH_CALL_ENV}=${marker}`)
           : undefined
       try {
-        return await untilStopped(run, api, interruptible, context, watch)
+        const result = await untilStopped(run, api, interruptible, context, watch)
+        const used = scope && (await readUsage(usage, need))
+        return used && used.oomKilled
+          ? {
+              ...result,
+              diagnostics: [
+                ...(result.diagnostics ?? []),
+                { severity: 'warn' as const, code: 'memory_limit', message: describeOom(used) },
+              ],
+            }
+          : result
       } finally {
+        if (scope) await rm(usage, { force: true })
         await release?.()
         // A failed or stopped command may still have committed, so record what it made either way.
         const commits = await madeCommits(log, api.conversationId)
