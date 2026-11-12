@@ -716,10 +716,15 @@ export default function searxng(host: ExtensionHost) {
                       fallback = 'answered'
                       fallbackNote = `\n\nResults from Tavily (fallback ${reservation}/${TAVILY_CAP.toLocaleString('en')} this month); SearXNG category and time filters do not apply.${(args.count ?? 10) > 20 ? ' Tavily returns at most 20 results.' : ''}`
                     } else {
-                      // Tavily answered: a real empty result, whatever SearXNG's engines did.
-                      outcome = 'empty'
+                      // Tavily answered: a real empty result, whatever SearXNG's web engines did.
                       fallback = 'no-results'
-                      fallbackNote = '\n\nTavily (the fallback) found nothing either.'
+                      if (results.length)
+                        fallbackNote =
+                          '\n\nEvery SearXNG web engine failed; these results come from the other engines. Tavily (the fallback) found nothing.'
+                      else {
+                        outcome = 'empty'
+                        fallbackNote = '\n\nTavily (the fallback) found nothing either.'
+                      }
                     }
                   } catch (error) {
                     context.abortSignal?.throwIfAborted()

@@ -79,6 +79,17 @@ const table: [
   ['down', true, false, 'empty', 'empty', 'no-results', 1, 0, undefined],
   ['down', true, false, 'error', 'outage', 'failed', 1, 0, 'HTTP 503'],
   ['down-results', true, false, 'ok', 'fallback', 'answered', 1, 10, undefined],
+  [
+    'down-results',
+    true,
+    false,
+    'empty',
+    'partial',
+    'no-results',
+    1,
+    1,
+    'Tavily (the fallback) found nothing.',
+  ],
   // Other engines' results stay a success when the fallback cannot help.
   ['down-results', true, false, 'error', 'partial', 'failed', 1, 1, 'HTTP 503'],
 ]
