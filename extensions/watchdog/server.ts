@@ -248,8 +248,14 @@ export default function watchdog(host: ExtensionHost) {
           // A backup model takes the failed model's place only if the definition has one for this limit; without that
           // switch the conversation still runs on the model that refused, so there is nothing to continue on.
           const model = backup && (await tx.doc(AgentDoc, child.id)).model
+          // On a backup, not just off the model that failed: a wait that gave up on a try's backup put the primary back,
+          // and continuing it there would start the chain and its wait over (review of #251493).
           const switched =
-            !backup || !!wait || (!!model && `${model.provider}/${model.modelId}` !== backup.model)
+            !backup ||
+            !!wait ||
+            (!!model &&
+              `${model.provider}/${model.modelId}` !== backup.model &&
+              !!(await host.want(ModelsApi)?.backup(tx, child.id)))
           // Concluded since it failed: a retry would resume its tree, so the failure is reported (as a note) instead.
           if (!switched || (await host.need(ConversationsApi).concludedTreeIn(tx, child.id)))
             return { status: 'running', checkpoint: { phase: 'report' } } as const

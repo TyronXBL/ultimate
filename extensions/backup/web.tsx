@@ -104,7 +104,7 @@ function Waiting({ entry }: { entry: EntryRecord }) {
           </span>
         ) : trying ? (
           <span className="text-warning">
-            trying {trying.to.provider}/{trying.to.modelId} · try {trying.wait!.attempt + 1}
+            trying {trying.to.provider}/{trying.to.modelId} · try {trying.wait!.attempt}
           </span>
         ) : (
           <span>wait over</span>

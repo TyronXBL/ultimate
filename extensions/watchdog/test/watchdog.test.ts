@@ -822,6 +822,27 @@ it.each([
   },
 )
 
+/** `next()` waits for the next failure's watchdog task to sleep its 5 seconds, and wakes it to continue the conversation. */
+async function watchdogRetries(f: Awaited<ReturnType<typeof fixture>>, tick: (ms: number) => void) {
+  let tasks = (await f.tasks()).length
+  return async () => {
+    tasks++
+    await until(async () => (await f.tasks()).length === tasks)
+    await until(async () => (await f.tasks()).at(-1)!.state.status === 'sleeping')
+    tick(5_000)
+  }
+}
+const everyLimited = {
+  fallback: ['faux/faux-4', 'faux/faux-2', 'faux/faux-3'],
+  tokens: 165_179,
+  limits: {
+    'faux-1': rateLimit,
+    'faux-4': rateLimit,
+    'faux-2': rateLimit,
+    'faux-3': outOfCredit,
+  },
+}
+
 /**
  * #199140 and its branches, 2026-11-11 22:38 to 2026-11-12 06:10 UTC: every Anthropic model rate limited for hours. Each
  * try of the wait met the primary's limit, switched to a backup that answered with one too, and began the wait again at
@@ -833,14 +854,7 @@ it.each([{ who: 'branch' }, { who: 'ultimate' }] as const)(
   async ({ who }) => {
     const { f, id, tick, limited, answered, owner, wait, inputs } = await incident({
       who,
-      fallback: ['faux/faux-4', 'faux/faux-2', 'faux/faux-3'],
-      tokens: 165_179,
-      limits: {
-        'faux-1': rateLimit,
-        'faux-4': rateLimit,
-        'faux-2': rateLimit,
-        'faux-3': outOfCredit,
-      },
+      ...everyLimited,
     })
     const told = (await inputs()).length
     const shown = async () =>
@@ -851,14 +865,7 @@ it.each([{ who: 'branch' }, { who: 'ultimate' }] as const)(
         )
       ).items.filter((entry) => entry.model?.[0]?.role === 'user').length
     const seen = await shown()
-    let tasks = (await f.tasks()).length
-    // A failure's watchdog task sleeps its 5 seconds, and continues the conversation then.
-    const failed = async () => {
-      tasks++
-      await until(async () => (await f.tasks()).length === tasks)
-      await until(async () => (await f.tasks()).at(-1)!.state.status === 'sleeping')
-      tick(5_000)
-    }
+    const failed = await watchdogRetries(f, tick)
     const waits = [wait]
     for (let attempt = 2; attempt <= 6; attempt++) {
       const last = waits.at(-1)!
@@ -930,6 +937,41 @@ it.each([{ who: 'branch' }, { who: 'ultimate' }] as const)(
     )
   },
 )
+
+// Review of #251493: a give-up on a try's backup put the primary back, which the watchdog took for a switch, so it
+// continued the run into a new chain and a new wait instead of reporting the failure.
+it('reports a wait that gives up on a try’s backup, and continues nothing', async () => {
+  const { f, id, tick, owner, wait, inputs } = await incident({ who: 'branch', ...everyLimited })
+  const failed = await watchdogRetries(f, tick)
+  const told = (await inputs()).length
+  // A try a minute before the day is over: the wait its backups would go on with ends past it.
+  tick(wait.since + 24 * 3600_000 - 60_000 - Date.now())
+  for (const backup of ['faux-4', 'faux-2']) {
+    await until(async () => {
+      const now = await owner()
+      return now?.by === 'backup' && now.to.modelId === backup
+    })
+    await failed()
+  }
+  // The last backup's limit ended the wait: its failure reports.
+  await failed()
+  await until(async () => (await f.entries()).length === 1)
+  // The branch's tasks only: the report is an input to @ultimate, whose own run meets the same limits.
+  await until(async () =>
+    (await f.tasks()).every(
+      (task) =>
+        (task.input as { conversation: number }).conversation !== id ||
+        task.state.status === 'terminal',
+    ),
+  )
+  const [report] = await f.entries()
+  expect(report.data).toMatchObject({ conversation: id, error: expect.stringContaining('429') })
+  expect(await owner()).toEqual({ by: 'default' })
+  expect((await f.harness.snapshot(AgentDoc, id, context))!.model).toEqual(model)
+  expect(await f.entries(id, 'backup.wait')).toHaveLength(1)
+  // The try's three runs, and no fourth.
+  expect((await inputs()).length - told).toBe(3)
+})
 
 // #207552: the compaction's summary no model could write failed the run, and nothing continued it.
 it('continues a run whose compaction no model could summarize once its wait is over', async () => {
