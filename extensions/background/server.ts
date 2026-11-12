@@ -410,7 +410,9 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             )
             stopped = [...known, ...fresh]
             recording = fresh.length > 0
-            if (!recording) stopProcesses(known)
+            // What is recorded already is stopped at every look, so a job that keeps starting processes cannot outrun its
+            // pause: stopped, those can start no more, and the fresh ones are stopped at the next look.
+            stopProcesses(known)
           } else await resume(slot)
           const pausedMs =
             (slot?.pausedMs ?? 0) +
