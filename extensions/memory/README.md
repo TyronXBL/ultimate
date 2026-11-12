@@ -88,11 +88,12 @@ cores). With it set:
   it keeps the place like a known heavy job; otherwise it gives it back and runs on as light. A heavy one (known from
   its command, or measured) gives its place back below 0.1 core for 5 min, so an idle server or a run that hangs never
   holds one (a test run idle for an hour held the queue on 2026-11-11; a real e2e run idles at 0.25 cores over its
-  quietest minute). One that gave its place back and is busy again takes a free place, before any waiter, or is
-  paused (SIGSTOP) until one is free, so it never runs beyond the limit; its result card says how long. A job light
-  from its probation that turns heavy later (above one core for 20 s) takes a place even when none is free: the one
-  way past the limit, kept so a dev server compiling on demand is never frozen. Light jobs started together begin
-  about 20 s apart each per place, and wait while every place is taken.
+  quietest minute). A job without a place that turns heavy (busy again after giving its place back, or light from its
+  probation and above one core for 20 s later) takes a free place, before any waiter, or is paused (SIGSTOP, each of
+  its processes recorded by identity so they resume even if its leader is killed) until one is free: nothing measured
+  runs beyond the limit. Its result card says how long it was paused; a dev server compiling while every place is
+  taken waits too. Light jobs started together begin about 20 s apart each per place, and wait while every place is
+  taken.
 - **Plain `bash`.** A command the list does not know runs at once and is measured every 5 s. Above one core for 30 s
   it takes a place if one is free and nobody waits, and holds it to its end; otherwise it is stopped: TERM to every
   process it started, KILL after 3 s, and the tool result names what held the slot, the CPU it measured, that files

@@ -273,7 +273,8 @@ function watchHeavy(
       const now = Date.now()
       samples.push({ at: now, cpuMs })
       while (samples.length > 2 && now - samples[1].at >= BASH_WINDOW_MS) samples.shift()
-      observation = observe(observation, { at: now, cpuMs }, BASH_WINDOW_MS)
+      // Observed as if a place were free: once heavy, the call takes one below or is stopped.
+      observation = observe(observation, { at: now, cpuMs }, BASH_WINDOW_MS, true)
       if (!holdsSlot(observation)) return
       if (!stopping) {
         const decided = await admit(now)

@@ -111,10 +111,17 @@ it.each<[string, Observation, CpuSample, Observation, boolean?]>([
     { kind: 'climbing', since: 100_000, last: at(105, 20) },
   ],
   [
-    'climbing for a probation turns heavy',
+    'climbing for a probation turns heavy, with a place',
     { kind: 'climbing', since: 100_000, last: at(115, 40) },
     at(100 + probe, 52),
     { kind: 'heavy', last: at(100 + probe, 52) },
+    true,
+  ],
+  [
+    'climbing for a probation without a place reclaims one (a wrapper idle through its probation)',
+    { kind: 'climbing', since: 100_000, last: at(115, 40) },
+    at(100 + probe, 52),
+    { kind: 'reclaiming', last: at(100 + probe, 52) },
   ],
   [
     'climbing that calms is light again',
@@ -185,8 +192,10 @@ it.each<[string, Observation, CpuSample, Observation, boolean?]>([
 it('measures a bash command over its own, longer window', () => {
   let observation: Observation = { kind: 'light', last: at(0, 0) }
   for (let seconds = 5; seconds < BASH_WINDOW_MS / 1000; seconds += 5) {
-    observation = observe(observation, at(seconds, seconds * 2), BASH_WINDOW_MS)
+    observation = observe(observation, at(seconds, seconds * 2), BASH_WINDOW_MS, true)
     expect(observation.kind).toBe('climbing')
   }
-  expect(observe(observation, at(BASH_WINDOW_MS / 1000, 60), BASH_WINDOW_MS).kind).toBe('heavy')
+  expect(observe(observation, at(BASH_WINDOW_MS / 1000, 60), BASH_WINDOW_MS, true).kind).toBe(
+    'heavy',
+  )
 })

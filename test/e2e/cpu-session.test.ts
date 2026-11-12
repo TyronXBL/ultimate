@@ -1,8 +1,24 @@
 import { spawn } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
-import { sessionCpuMs, sessionMarked, sessionMembers, signalSession } from '../../lib/cpu.ts'
+import {
+  pauseSession,
+  resumeProcesses,
+  sessionCpuMs,
+  sessionMarked,
+  sessionMembers,
+  signalSession,
+} from '../../lib/cpu.ts'
 import { until } from '../helpers.ts'
+
+/** A process's state letter (`R`, `S`, `T` for stopped, …); empty once it is gone. */
+const stateOf = (pid: number) =>
+  readFile(`/proc/${pid}/stat`, 'utf8').then(
+    (stat) => stat.slice(stat.lastIndexOf(')') + 2)[0],
+    // Ended since it was listed.
+    () => '',
+  )
 
 /** Cores the session used over `ms`. */
 async function coresOver(sid: number, ms: number) {
@@ -29,12 +45,21 @@ it('measures, pauses, resumes and stops a whole session, its timeout subgroups a
     await until(async () => (await sessionMembers(sid)).length >= 4)
     expect(await coresOver(sid, 1500)).toBeGreaterThan(0.5)
 
-    await signalSession(sid, 'SIGSTOP')
+    const stopped = await pauseSession(sid)
     await sleep(200)
     expect(await coresOver(sid, 1000)).toBeLessThan(0.05)
-
-    await signalSession(sid, 'SIGCONT')
+    resumeProcesses(stopped)
     expect(await coresOver(sid, 1500)).toBeGreaterThan(0.5)
+
+    // Its leader killed from outside while paused (review of #227574): nothing of it stays stopped. What survives runs
+    // again by its recorded identity; a group orphaned by the kill may instead end on the kernel's own SIGHUP.
+    const again = await pauseSession(sid)
+    process.kill(sid, 'SIGKILL')
+    await until(async () => !(await sessionMembers(sid)).includes(sid))
+    resumeProcesses(again)
+    await until(async () =>
+      (await Promise.all((await sessionMembers(sid)).map(stateOf))).every((state) => state !== 'T'),
+    )
 
     await signalSession(sid, 'SIGTERM')
     await until(async () => (await sessionMembers(sid)).length === 0, 5000)

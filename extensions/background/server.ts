@@ -29,10 +29,12 @@ import {
   holdsSlot,
   measuring,
   observe,
+  pauseSession,
   PROBATION_MS,
+  resumeProcesses,
   signalSession,
 } from '../../lib/cpu.ts'
-import type { Observation } from '../../lib/cpu.ts'
+import type { Known, Observation } from '../../lib/cpu.ts'
 import {
   groupAlive,
   identify,
@@ -88,6 +90,8 @@ type Checkpoint =
         forced?: string
         /** How long it was paused, reclaiming a place. */
         pausedMs?: number
+        /** The processes paused while it reclaims a place, by identity: resumed even once its leader is gone. */
+        stopped?: Known[]
       }
     }
   | { phase: 'deliver'; result: BackgroundResult }
@@ -158,6 +162,22 @@ export const jobs: UnderwaySource = {
       delivering: (task.state as { checkpoint?: Checkpoint }).checkpoint?.phase === 'deliver',
     })),
 }
+type Slot = Extract<Checkpoint, { phase: 'poll' }>['slot']
+/**
+ * Resume what this task may have paused: the processes it recorded, each by identity, and, for a pause it could not
+ * record (a crash between the signal and its checkpoint), the session while its leader is `ours`. Paused only from a
+ * state that reclaims a place, so only those are resumed.
+ */
+async function resumePaused(sid: number, slot: Slot, ours: boolean) {
+  if (slot?.stopped) resumeProcesses(slot.stopped)
+  const kind = slot?.observed?.kind
+  if (
+    ours &&
+    (kind === 'released' || kind === 'reclaiming' || kind === 'light' || kind === 'climbing')
+  )
+    await signalSession(sid, 'SIGCONT')
+}
+
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
 
@@ -315,15 +335,9 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       poll: async (task, runtime, ctx) => {
         const { pid, began, slot } = task.state.checkpoint
         const files = paths(task)
-        /** Signal the command's session, but only while its leader is still the process this task started. */
-        const signal = async (held: typeof slot, name: NodeJS.Signals) => {
-          if (held && identify(pid) === held.identity) await signalSession(pid, name)
-        }
-        /** Resume a session this task may have paused (it gave its place back, or waits for one again). */
-        const resume = (held: typeof slot) =>
-          held?.observed?.kind === 'released' || held?.observed?.kind === 'reclaiming'
-            ? signal(held, 'SIGCONT')
-            : Promise.resolve()
+        /** Whether the command's leader is still the process this task started: only then is its session signalled. */
+        const ours = (held: typeof slot) => held !== undefined && identify(pid) === held.identity
+        const resume = (held: typeof slot) => resumePaused(pid, held, ours(held))
         /**
          * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
          * proves nothing any more, and a group id may since name another group: nothing is signalled, the card says so.
@@ -394,7 +408,14 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             observed = observe(observed, sample, PROBATION_MS, true)
           // Reconciled at every look, not only on a change: a crash between a signal and the checkpoint that records it
           // must leave no job stopped, nor one running that should wait.
-          if (observed?.kind === 'reclaiming') await signal(slot, 'SIGSTOP')
+          let stopped: Known[] | undefined
+          if (observed?.kind === 'reclaiming')
+            stopped = [
+              ...(slot?.stopped ?? []),
+              ...(ours(slot) ? await pauseSession(pid) : []),
+            ].filter(
+              (known, index, all) => all.findIndex((other) => other.pid === known.pid) === index,
+            )
           else await resume(slot)
           const pausedMs =
             (slot?.pausedMs ?? 0) +
@@ -418,7 +439,13 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
               pid,
               began,
               ...(slot && {
-                slot: { ...slot, ...(observed && { observed }), ...(pausedMs && { pausedMs }) },
+                // `stopped` only while it is paused: resumed processes are no longer its to resume.
+                slot: {
+                  ...slot,
+                  ...(observed && { observed }),
+                  ...(pausedMs && { pausedMs }),
+                  stopped,
+                },
               }),
             },
           }
@@ -458,17 +485,13 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
       const { checkpoint } = task.state as { checkpoint?: Checkpoint }
-      // A group this task may have paused gets TERM only once it runs again; signalled only while its leader is the one
-      // the task started.
-      const kind = checkpoint?.phase === 'poll' ? checkpoint.slot?.observed?.kind : undefined
-      if (
-        recorded &&
-        checkpoint?.phase === 'poll' &&
-        checkpoint.pid === recorded &&
-        (kind === 'released' || kind === 'reclaiming') &&
-        identify(recorded) === checkpoint.slot?.identity
-      )
-        await signalSession(recorded, 'SIGCONT')
+      // A group this task may have paused gets TERM only once it runs again.
+      if (recorded && checkpoint?.phase === 'poll' && checkpoint.pid === recorded)
+        await resumePaused(
+          recorded,
+          checkpoint.slot,
+          identify(recorded) === checkpoint.slot?.identity,
+        )
       if (recorded) await stopGroup(recorded, { pidFile: pid })
       // Whether it waited in line or ran: the next job may start. A command that never queued has nothing to release.
       await releaseSlot(slotId(task))

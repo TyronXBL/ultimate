@@ -12,6 +12,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { availableParallelism, loadavg } from 'node:os'
 import type { JsonObject } from '@earendil-works/pi-durable'
+import { identify } from './process-group.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /**
@@ -227,9 +228,10 @@ export function observe(
     case 'climbing': {
       if (cores <= HEAVY_CORES) return { kind: 'light', last: sample }
       const since = observation.kind === 'climbing' ? observation.since : last.at
-      return sample.at - since >= heavyAfter
-        ? { kind: 'heavy', last: sample }
-        : { kind: 'climbing', since, last: sample }
+      if (sample.at - since < heavyAfter) return { kind: 'climbing', since, last: sample }
+      // Heavy without a place it may not run on: it reclaims one like a released job (review of #227574: a wrapper
+      // idle through its probation would otherwise run its tests beside a full queue).
+      return place ? { kind: 'heavy', last: sample } : { kind: 'reclaiming', last: sample }
     }
     case 'heavy':
     case 'cooling': {
@@ -302,13 +304,41 @@ export async function sessionMembers(sid: number) {
 
 /** Send `signal` to every process of session `sid`, which the caller has verified is its own; one that ended is skipped. */
 export async function signalSession(sid: number, signal: NodeJS.Signals) {
-  for (const pid of await sessionMembers(sid))
-    try {
-      process.kill(pid, signal)
-    } catch (error) {
-      // It ended between the listing and the signal.
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-    }
+  for (const pid of await sessionMembers(sid)) send(pid, signal)
+}
+
+/** `signal` to `pid`; one that ended meanwhile is skipped. */
+function send(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(pid, signal)
+  } catch (error) {
+    // It ended between the listing and the signal.
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  }
+}
+
+/** A process by its pid and start time (`identify`), so a reused pid never counts as it. */
+export type Known = { pid: number; identity: string }
+
+/**
+ * Stop every process of session `sid` (verified the caller's own) and return them by identity, so they can be resumed
+ * even once the session's leader is gone (review of #227574: a leader killed from outside left its paused children
+ * stopped for good).
+ */
+export async function pauseSession(sid: number): Promise<Known[]> {
+  const stopped: Known[] = []
+  for (const pid of await sessionMembers(sid)) {
+    const identity = identify(pid)
+    if (!identity) continue
+    send(pid, 'SIGSTOP')
+    stopped.push({ pid, identity })
+  }
+  return stopped
+}
+
+/** Resume the processes `pauseSession` stopped, each only while it is still the process it was. */
+export function resumeProcesses(stopped: Known[]) {
+  for (const { pid, identity } of stopped) if (identify(pid) === identity) send(pid, 'SIGCONT')
 }
 
 /** The session whose leader's environment holds `marker` (`NAME=value`), as a bash call marks its shell. */
