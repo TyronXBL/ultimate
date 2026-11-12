@@ -43,8 +43,6 @@ export type QueueFacts = {
   settling?: number
   /** What RAM it falls short by, per `lib/memory.ts`'s admission (`checkRam`), if it does. */
   short?: RamShort
-  /** The load, when the load gate (`cpu.maxLoadPerCore`, #227574) is on and holds it back. */
-  load?: { load: number; cores: number }
   /** CPU and memory of a holder's processes, by its job id. */
   usage: Map<string, { cpu: number; rssMiB: number }>
 }
@@ -79,7 +77,6 @@ export function queueView(turn: Turn, facts: QueueFacts): QueueJob[] {
         floorMiB: facts.short.floor,
         ...(facts.short.reserved && { reservedMiB: facts.short.reserved }),
       }
-    if (facts.load) return { kind: 'load', ...facts.load }
     return { kind: 'next' }
   }
   const waiting: QueueJob[] = ahead.map((job, index) => ({

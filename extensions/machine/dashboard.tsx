@@ -167,11 +167,6 @@ function reasonOf(reason: WaitReason, now: number): { text: string; held: boolea
         text: `RAM short: ${mem(reason.availableMiB)} free${reason.reservedMiB ? ` (${mem(reason.reservedMiB)} reserved by jobs just started)` : ''}, needs ${reason.needMiB ? `${mem(reason.needMiB)} above` : 'more than'} the ${mem(reason.floorMiB)} floor`,
         held: true,
       }
-    case 'load':
-      return {
-        text: `load ${reason.load.toFixed(1)} at or above ${reason.cores} cores`,
-        held: true,
-      }
     case 'next':
       return { text: 'starts at the next look, within 5 s', held: false }
     default:

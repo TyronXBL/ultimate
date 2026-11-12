@@ -12,8 +12,8 @@ alarm: a small swap stays full for days on a healthy machine.
 
 - **The queue** through `lib/slot.ts`'s own derivation: `peekSlot` for a claim at the very end of the line lists every
   job that holds the slot and every waiter in order (`queue.ts`). A waiter waits behind the job just ahead of it; the
-  first one, with nothing running, waits for RAM (`checkRam`, the admission's own computation with its reservations),
-  for load (the one-minute load at or above the cores) or starts at its next look. With #227574's queue a job measured
+  first one, with nothing running, waits for the queue to settle (its own `peekSlot` turn, after the file was removed),
+  for RAM (`checkRam`, the admission's own computation with its reservations), or starts at its next look. With #227574's queue a job measured
   on probation shows as `measuring`. Every Ultimate and preview on the machine shares the queue, so other projects'
   jobs show too, named by project; this project's link to their conversations.
 - **Who uses the machine** from `/proc/<pid>/stat` (CPU, RSS, parent, process group) and, once per process, the command

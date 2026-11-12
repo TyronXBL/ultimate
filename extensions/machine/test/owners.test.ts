@@ -198,5 +198,24 @@ describe('owners', () => {
   test('shows no argument values, only program names', () => {
     expect(JSON.stringify(list)).not.toMatch(/abc123|hunter2/)
     expect(find('job', 12)?.job).toBe('my-app:background:7')
+    // Values found in review of #231847: inline code, a variable before the program, a runner's script name.
+    const cwd = `${home}/my-app-1a2b3c4d/worktrees/30`
+    const commands = [
+      ['node', '-e', 'hunter2'],
+      ['/bin/sh', '-c', 'TOKEN=hunter2 pnpm test'],
+      ['make', 'hunter2'],
+    ]
+    const labels = commands.map(
+      (argv, index) =>
+        owners(
+          [proc(100, 1, 100), proc(10 + index, 101, 10 + index)],
+          new Map([
+            [100, top('/srv/my-app', 'node', '/opt/ultimate/bin/ultimate.ts')],
+            [10 + index, top(cwd, ...argv)],
+          ]),
+          context,
+        ).find((owner) => owner.kind === 'work')?.label,
+    )
+    expect(labels).toEqual(['node', 'pnpm', 'make'])
   })
 })

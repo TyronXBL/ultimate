@@ -33,34 +33,35 @@ export type OwnerContext = {
 
 type Who = Omit<Owner, 'cpu' | 'rssMiB' | 'processes' | 'since' | 'key'>
 
+const shells = /^(bash|sh|dash|zsh)$/
 const interpreters = /^(node|python3?|bash|sh|dash|zsh|env|exec|nice|nohup|setsid|timeout)$/
-/** Programs whose next word names a script or subcommand (`pnpm test`), never a value. */
-const runners = /^(pnpm|npm|npx|yarn|bun|vp|vite|vitest|playwright|git|cargo|go|make|docker)$/
 /**
- * A short name for what `argv` runs, never its arguments' values: the program, or for an interpreter the script it runs,
- * with the subcommand of a known runner (`pnpm test`, `vitest`, `chromium`). Basenames only, so no path or secret
- * leaves; another program's next word may be a value (`client.js password`), so it is left out.
+ * A short name for what `argv` runs, never an argument's value: the program, or for an interpreter the script it runs
+ * (`pnpm`, `vitest`, `chromium`). Only a basename, and only of the program or script: any other word may be a value
+ * (`client.js password`, `node -e …`).
  */
 function programOf(argv: string[], name: string) {
   let words = argv
   let index = 0
   while (index < words.length - 1 && interpreters.test(basename(words[index]))) {
+    const interpreter = basename(words[index])
     index++
-    // A shell's `-c` runs a command line: what it runs is that line's first words.
-    if (words[index] === '-c') {
+    // A shell's `-c` runs a command line: what it runs is that line's first word.
+    if (shells.test(interpreter) && words[index] === '-c') {
       words = words[index + 1]?.trim().split(/\s+/) ?? []
       index = 0
       continue
     }
-    // Flags of the interpreter, some with a value (`--require x.cjs`), come before the script.
-    while (index < words.length - 1 && words[index].startsWith('-'))
+    // Flags of the interpreter, some with a value (`--require x.cjs`), come before the script; code given inline
+    // (`-e`, `-c`) is no script: the interpreter is what runs.
+    while (index < words.length - 1 && words[index].startsWith('-')) {
+      if (/^(-e|--eval|-p|--print|-c)$/.test(words[index])) return interpreter
       index += /^(-r|--require|--import|--loader|-n)$/.test(words[index]) ? 2 : 1
+    }
   }
-  const program = basename(words[index] ?? '').replace(/\.[cm]?js$/, '') || name
-  const sub = words[index + 1]
-  return sub && runners.test(program) && /^[a-z][\w:-]{0,23}$/.test(sub)
-    ? `${program} ${sub}`
-    : program
+  // A command line may set variables before its program (`TOKEN=… pnpm test`).
+  while (index < words.length - 1 && /^[A-Za-z_]\w*=/.test(words[index])) index++
+  return basename(words[index] ?? '').replace(/\.[cm]?js$/, '') || name
 }
 
 /** The project home a folder lies in (`~/.ultimate/projects/<name>-<hash>`), and the path inside it. */

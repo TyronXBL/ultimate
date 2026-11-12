@@ -50,8 +50,6 @@ export type WaitReason =
   | { kind: 'behind'; label: string; from: string }
   /** First in line, but RAM would drop below the floor. */
   | { kind: 'ram'; availableMiB: number; needMiB: number; floorMiB: number; reservedMiB?: number }
-  /** First in line while the one-minute load is at or above the core count. */
-  | { kind: 'load'; load: number; cores: number }
   /** First in line and nothing stops it: it starts at its next look (every 5 s). */
   | { kind: 'next' }
   /** The queue's file was removed: nothing starts until running jobs announce themselves again. */
