@@ -283,13 +283,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             ? (checkpoint.ramSince ?? now)
             : now
           : undefined
-      // Only load the queue does not cause counts towards starting anyway: a wait behind its own work is a turn.
-      const pressureSince =
-        entered.kind === 'cpu' && entered.outside
-          ? checkpoint.phase === 'wait'
-            ? (checkpoint.pressureSince ?? now)
-            : now
-          : undefined
+      const pressureSince = entered.kind === 'cpu' ? entered.pressureSince : undefined
       if (entered.kind === 'ram' && now - ramSince! >= RAM_WAIT_MS) {
         await releaseSlot(claim.id)
         next = await notStarted(
@@ -321,16 +315,22 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       poll: async (task, runtime, ctx) => {
         const { pid, began, slot } = task.state.checkpoint
         const files = paths(task)
+        /** Signal the command's session, but only while its leader is still the process this task started. */
+        const signal = async (held: typeof slot, name: NodeJS.Signals) => {
+          if (held && identify(pid) === held.identity) await signalSession(pid, name)
+        }
+        /** Resume a session this task may have paused (it gave its place back, or waits for one again). */
+        const resume = (held: typeof slot) =>
+          held?.observed?.kind === 'released' || held?.observed?.kind === 'reclaiming'
+            ? signal(held, 'SIGCONT')
+            : Promise.resolve()
         /**
          * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
          * proves nothing any more, and a group id may since name another group: nothing is signalled, the card says so.
          */
         const stop = async () =>
           // A paused group gets TERM only once it runs again.
-          (slot?.observed?.kind === 'reclaiming'
-            ? signalSession(pid, 'SIGCONT')
-            : Promise.resolve()
-          )
+          resume(slot)
             .then(() => stopGroup(pid, { pidFile: files.pid }))
             .then(
               () =>
@@ -392,22 +392,19 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             (await reclaimSlot(claim, holder, await maxHeavyJobs(host.userHome)))
           )
             observed = observe(observed, sample, PROBATION_MS, true)
-          const wasPaused = slot?.observed?.kind === 'reclaiming'
-          const paused = observed?.kind === 'reclaiming'
-          if (paused !== wasPaused) await signalSession(pid, paused ? 'SIGSTOP' : 'SIGCONT')
+          // Reconciled at every look, not only on a change: a crash between a signal and the checkpoint that records it
+          // must leave no job stopped, nor one running that should wait.
+          if (observed?.kind === 'reclaiming') await signal(slot, 'SIGSTOP')
+          else await resume(slot)
           const pausedMs =
-            (slot?.pausedMs ?? 0) + (wasPaused ? now - (slot?.observed?.last.at ?? now) : 0)
+            (slot?.pausedMs ?? 0) +
+            (slot?.observed?.kind === 'reclaiming' ? now - slot.observed.last.at : 0)
           // Said again at every look: after the queue's file was removed, this puts the job back before anyone starts.
-          if (claim && holder && (!observed || observed.kind === 'measuring'))
-            await holdSlot(claim, holder)
-          else if (claim && holder && observed && holdsSlot(observed))
-            await heavySlot(claim, holder)
-          else if (
-            claim &&
-            slot?.observed &&
-            (slot.observed.kind === 'measuring' || holdsSlot(slot.observed))
-          )
-            await releaseSlot(claim.id)
+          if (claim && holder) {
+            if (!observed || observed.kind === 'measuring') await holdSlot(claim, holder)
+            else if (holdsSlot(observed)) await heavySlot(claim, holder)
+            else await releaseSlot(claim.id)
+          }
           next = {
             status: 'sleeping' as const,
             // On probation it is looked at again right when its probation ends.
@@ -461,12 +458,15 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
       const { checkpoint } = task.state as { checkpoint?: Checkpoint }
-      // A paused group gets TERM only once it runs again.
+      // A group this task may have paused gets TERM only once it runs again; signalled only while its leader is the one
+      // the task started.
+      const kind = checkpoint?.phase === 'poll' ? checkpoint.slot?.observed?.kind : undefined
       if (
         recorded &&
         checkpoint?.phase === 'poll' &&
         checkpoint.pid === recorded &&
-        checkpoint.slot?.observed?.kind === 'reclaiming'
+        (kind === 'released' || kind === 'reclaiming') &&
+        identify(recorded) === checkpoint.slot?.identity
       )
         await signalSession(recorded, 'SIGCONT')
       if (recorded) await stopGroup(recorded, { pidFile: pid })
@@ -544,7 +544,7 @@ export default function backgroundExtension(
             turn && turn.kind !== 'next'
               ? `Queued, ${describeWait({ kind: 'waiting', turn })}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
               : gate?.kind === 'wait'
-                ? `Queued: ${describeWait({ kind: 'cpu', gate, outside: false })}. It starts in ${cwd} by itself once the load falls; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
+                ? `Queued: ${describeWait({ kind: 'cpu', gate, pressureSince: undefined })}. It starts in ${cwd} by itself once the load falls; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
                 : short && need
                   ? `Queued: next in line for the heavy-work slot, waiting for memory: ${describeShort(short)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
                   : short

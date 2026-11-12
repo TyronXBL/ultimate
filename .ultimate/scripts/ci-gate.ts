@@ -202,8 +202,7 @@ async function admitted(command: string[]) {
     const entered = await enterSlot(claim, { limits, need, pressureSince, start: thisProcess })
     if (entered.kind === 'started') return keepHeld(claim)
     ramSince = entered.kind === 'ram' ? (ramSince ?? Date.now()) : undefined
-    pressureSince =
-      entered.kind === 'cpu' && entered.outside ? (pressureSince ?? Date.now()) : undefined
+    pressureSince = entered.kind === 'cpu' ? entered.pressureSince : undefined
     if (ramSince !== undefined && Date.now() - ramSince > RAM_WAIT_MS) {
       log(
         `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeWait(entered)}`,

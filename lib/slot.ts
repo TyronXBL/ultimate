@@ -221,10 +221,11 @@ type SlotEntered =
   /** Its turn, but RAM would drop below the floor. */
   | { kind: 'ram'; short: RamShort }
   /**
-   * Its turn, but the load is too high. `outside`: the queue runs nothing, so the load is not its own; its owner keeps
-   * since when (`pressureSince`), and after `PRESSURE_WAIT_MS` of that the job starts anyway.
+   * Its turn, but the load is too high. `pressureSince`: set while the queue runs nothing, so the load is not its own,
+   * to since when it has waited for that; its owner keeps it for its next look, and after `PRESSURE_WAIT_MS` of it the
+   * job starts anyway.
    */
-  | { kind: 'cpu'; gate: Extract<CpuGate, { kind: 'wait' }>; outside: boolean }
+  | { kind: 'cpu'; gate: Extract<CpuGate, { kind: 'wait' }>; pressureSince: number | undefined }
 
 /**
  * Folders this process saw a queue file in: one missing there later was removed. Only a process that saw it can tell a
@@ -348,7 +349,7 @@ export async function slotLimits(userHome: string): Promise<SlotLimits> {
  * returns the process that holds the slot (a background command's leader, or this process); otherwise it waits in line.
  * With `queue: false` (a plain bash command) it starts only when nothing runs and nobody waits, and never joins the
  * line. Inside a slot job (`SLOT_ENV`) it starts at once: the job already holds the slot. With `cpu` (`cpuLimit`) it
- * also waits for the load, as long as `pressureSince` (the start of its last `outside` CPU wait) allows.
+ * also waits for the load, as long as `pressureSince` (what its last look returned) allows.
  */
 export async function enterSlot(
   claim: SlotClaim,
@@ -372,7 +373,12 @@ export async function enterSlot(
     if (turn.kind !== 'next') return wait({ kind: 'waiting', turn })
     const outside = !queue.entries.some((entry) => entry.id !== claim.id && holding(entry))
     const gate = await gateFor(queue, claim.id, now, limits, options.pressureSince ?? now)
-    if (gate.kind === 'wait') return wait({ kind: 'cpu', gate, outside })
+    if (gate.kind === 'wait')
+      return wait({
+        kind: 'cpu',
+        gate,
+        pressureSince: outside ? (options.pressureSince ?? now) : undefined,
+      })
     const short = await admitIn(dir, limits.floor, need)
     if (short) return wait({ kind: 'ram', short })
     const holder = await start()
@@ -475,7 +481,7 @@ export function describeWait(entered: Exclude<SlotEntered, { kind: 'started' }>,
   if (entered.kind === 'ram')
     return `next in line for the heavy-work slot, waiting for memory: ${describeShort(entered.short)}`
   if (entered.kind === 'cpu')
-    return `next in line, waiting for CPU: ${describeLoad(entered.gate)}${entered.outside ? ` (from work the queue does not run: it starts anyway after ${minutes(PRESSURE_WAIT_MS)})` : ''}`
+    return `next in line, waiting for CPU: ${describeLoad(entered.gate)}${entered.pressureSince !== undefined ? ` (from work the queue does not run: it starts anyway after ${minutes(PRESSURE_WAIT_MS)})` : ''}`
   const { turn } = entered
   if (turn.kind === 'settling')
     return `the heavy-work queue's file was removed; running jobs announce themselves again, so nothing starts for ${minutes(turn.until - now)}`

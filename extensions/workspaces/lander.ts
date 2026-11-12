@@ -904,8 +904,7 @@ export function createLander(
               if (entered.kind !== 'started') {
                 const ramFrom = entered.kind === 'ram' ? (ramSince ?? now) : undefined
                 // Only load the queue does not cause counts towards starting anyway (#227574).
-                const pressureFrom =
-                  entered.kind === 'cpu' && entered.outside ? (pressureSince ?? now) : undefined
+                const pressureFrom = entered.kind === 'cpu' ? entered.pressureSince : undefined
                 if (entered.kind === 'ram' && now - ramFrom! >= RAM_WAIT_MS) {
                   await releaseSlot(claim.id)
                   return await fail(

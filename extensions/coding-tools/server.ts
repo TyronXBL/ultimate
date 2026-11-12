@@ -224,6 +224,9 @@ const Cancelled = defineDoc<{ calls: Record<string, number> }>({
 })
 export const docs = [Cancelled]
 
+/** How long a heavy bash command stopped by the queue gets between TERM and KILL. */
+const KILL_GRACE_MS = 3000
+
 /** Set in a bash call's environment to an id of its own: `watchHeavy` finds the call's shell by it. */
 const BASH_CALL_ENV = 'ULTIMATE_BASH_CALL'
 
@@ -260,6 +263,8 @@ function watchHeavy(
     const samples: CpuSample[] = [observation.last]
     let sid: number | undefined
     let release: (() => Promise<void>) | undefined
+    /** Set once it is being stopped: a look that failed half-way finishes the stop at the next one. */
+    let stopping: (() => void) | undefined
     let done = false
     const look = async () => {
       sid ??= await sessionMarked(marker)
@@ -270,7 +275,28 @@ function watchHeavy(
       while (samples.length > 2 && now - samples[1].at >= BASH_WINDOW_MS) samples.shift()
       observation = observe(observation, { at: now, cpuMs }, BASH_WINDOW_MS)
       if (!holdsSlot(observation)) return
+      if (!stopping) {
+        const decided = await admit(now)
+        if (!decided) {
+          // It holds a place now, or the call is already being stopped (the user's cancel, a steer).
+          done = true
+          return
+        }
+        stopping = decided
+      }
+      // Ours: its shell's environment holds this call's marker, checked again right before the signals; a session id is
+      // never reused while its leader lives.
+      if ((await sessionMarked(marker)) === sid) {
+        await signalSession(sid, 'SIGTERM')
+        const deadline = Date.now() + KILL_GRACE_MS
+        while ((await sessionMembers(sid)).length && Date.now() < deadline) await sleep(100)
+        await signalSession(sid, 'SIGKILL')
+      }
+      stopping()
       done = true
+    }
+    /** Take a place for the command now measured heavy (undefined), or prepare its stop: the function that cancels it. */
+    const admit = async (now: number) => {
       const claim = {
         id: `${host.projectRoot}:bash:${randomUUID()}`,
         kind: 'heavy' as const,
@@ -288,26 +314,16 @@ function watchHeavy(
       })
       if (entered.kind === 'started') {
         release = keepHeld(claim)
-        return
+        return undefined
       }
       const holders =
         entered.kind === 'waiting' && entered.turn.kind === 'behind'
           ? `${describeBehind(entered.turn, now)} held or waited for the heavy-work slot`
           : 'the heavy-work queue settled after its file was removed'
-      const cancel = halt(
+      return halt(
         `Stopped by the heavy-work queue: it used ${coresOver(samples).toFixed(1)} cores over the last ${Math.round((now - samples[0].at) / 1000)} s while ${holders}`,
-        `Every process it started got TERM, then KILL after 3 s, so files it was writing may be incomplete. Heavy work runs in the queue, up to the machine's limit at once, in order; it starts by itself and its result steers or wakes you, so never sleep, poll or retry it in bash:\nbackground ${JSON.stringify({ command })}`,
+        `Every process it started got TERM, then KILL after ${KILL_GRACE_MS / 1000} s, so files it was writing may be incomplete. Heavy work runs in the queue, up to the machine's limit at once, in order; it starts by itself and its result steers or wakes you, so never sleep, poll or retry it in bash:\nbackground ${JSON.stringify({ command })}`,
       )
-      if (!cancel) return
-      // Ours: its shell's environment holds this call's marker, checked again right before the signals; a session id is
-      // never reused while its leader lives.
-      if ((await sessionMarked(marker)) === sid) {
-        await signalSession(sid, 'SIGTERM')
-        const deadline = Date.now() + 3000
-        while ((await sessionMembers(sid)).length && Date.now() < deadline) await sleep(100)
-        await signalSession(sid, 'SIGKILL')
-      }
-      cancel()
     }
     let looks = Promise.resolve()
     const timer = setInterval(() => {

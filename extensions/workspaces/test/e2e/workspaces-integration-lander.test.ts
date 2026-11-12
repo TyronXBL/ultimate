@@ -507,7 +507,7 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
   await until(async () =>
     (await landerLog(f)).log.some((row) =>
       row.step?.startsWith(
-        'waiting: next in line for the heavy-work slot, behind `pnpm test` from #7 in my-app',
+        'waiting: next in line for the heavy-work slot, 1 of 1 heavy jobs running, behind `pnpm test` from #7 in my-app',
       ),
     ),
   )
@@ -516,14 +516,12 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
   await light.started()
   // The heavy check ran, and the light one runs with the slot free for the next job in line.
   await access(ran)
-  expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({
-    kind: 'next',
-  })
+  expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({ kind: 'next' })
   await light.release()
   const [report] = await submitted(f, id)
   expect(report).toContain('landed as')
 })
-// Not concurrent either: it holds the heavy-work queue too.
+// Not concurrent, like the ones around it: it holds the heavy-work queue this file's tests share.
 it('waits for CPU durably, as a step and without a check limit, and lands once the load falls', async () => {
   const f = await fixture()
   const ran = join(f.directory, 'heavy-ran')

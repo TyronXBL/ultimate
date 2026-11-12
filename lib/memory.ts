@@ -245,13 +245,13 @@ async function ownCgroup() {
  * The memory cap admission counts (`MemoryCap`): from this process's cgroup up, the nearest with a finite
  * `memory.high`; undefined when none has one (or there are no cgroups).
  */
-export async function memoryCap(root = '/sys/fs/cgroup'): Promise<MemoryCap | undefined> {
+export async function memoryCap(): Promise<MemoryCap | undefined> {
   const path = await ownCgroup()
   if (!path) return undefined
   const mib = (text: string) =>
     /^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined
   for (let at = path; ; at = dirname(at)) {
-    const dir = join(root, at)
+    const dir = join('/sys/fs/cgroup', at)
     const high = mib(
       await readFile(join(dir, 'memory.high'), 'utf8').catch(
         // No memory controller here: look further up.

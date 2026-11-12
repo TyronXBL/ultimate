@@ -179,7 +179,7 @@ it('waits for RAM below the floor and starts once the floor allows it', async ()
   const caller = opened.root
   await caller.submit({ type: 'input', requestId: 'wait', content: 'Run tests' }, context)
   await until(async () =>
-    JSON.stringify((await caller.context(context)).entries).includes('waiting for RAM'),
+    JSON.stringify((await caller.context(context)).entries).includes('waiting for memory'),
   )
   expect(existsSync(join(root, 'ran'))).toBe(false)
   await writeJson(settings, {})
@@ -340,7 +340,9 @@ it('runs heavy commands of two projects one at a time, in order; a failed one le
   await b.run(heavy(log, 'b'))
   // Its answer says why it waits: behind which command, from which conversation and project.
   await until(async () =>
-    (await b.transcript()).includes('Queued, next in line for the heavy-work slot, behind'),
+    (await b.transcript()).includes(
+      'Queued, next in line for the heavy-work slot, 1 of 1 heavy jobs running, behind',
+    ),
   )
   expect(await b.transcript()).toMatch(
     /behind `: pnpm test; echo a-start[^`]*` from #\d+ in ultimate-background-a-/,

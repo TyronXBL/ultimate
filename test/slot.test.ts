@@ -430,7 +430,10 @@ it('takes turns with jobs it does not know: one measured at a time, a heavy one 
 it('waits for load it does not cause, then starts anyway and says so', async () => {
   const parent = await temp('ultimate-slot-')
   machine.load = { load: 9, cores: 6, pressure: 0 }
-  expect(await look(parent, claim('heavy'))).toMatchObject({ kind: 'cpu', outside: true })
+  expect(await look(parent, claim('heavy'))).toMatchObject({
+    kind: 'cpu',
+    pressureSince: expect.any(Number),
+  })
   expect(await look(parent, claim('heavy'), Date.now() - PRESSURE_WAIT_MS + 60_000)).toMatchObject({
     kind: 'cpu',
   })
