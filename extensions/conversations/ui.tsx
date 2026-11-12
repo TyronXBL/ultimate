@@ -21,6 +21,14 @@ export const ConversationPhase = definePoint<
 >('conversations.phase')
 /** What top-level conversation `id` and its subagents cost (`status-line` provides it): a chip, or nothing. */
 export const ConversationSpend = definePoint<number, ReactNode>('conversations.spend')
+/**
+ * What conversation `id` itself cost, without its subagents (`status-line` provides it): a quiet `figure` for its row
+ * and the `card` body its hover card shows; undefined until it has spent anything.
+ */
+export const AgentSpend = definePoint<
+  number | undefined,
+  { figure: ReactNode; card: ReactNode } | undefined
+>('conversations.agent-spend')
 /** Whether conversation `id` gets no summaries, so its transcript hides older summary lines (lineage: a root). */
 export const Unsummarized = definePoint<number, boolean>('conversations.unsummarized')
 /** The plan task conversation `id` works on (`plan` provides it): its chip and title. */

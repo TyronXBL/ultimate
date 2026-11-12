@@ -52,7 +52,8 @@ never falls back; the error lists the usable families.
 `label`, `family`, `model` and `thinking` also apply over a named `agent`, for example a worker on the review family;
 `tools` and `instructions` need `agent` left out. The root's `subagents.runs` document (`RunsDoc`, `{ [childId]:
 { model?, adhoc? } }`) records each start's model and whether it was made on the fly; the sidebar and call card show
-`label · model` with a wand for those.
+`label · model` with a wand for those. A `start` call card also shows what the child itself has cost so far
+(`conversations.agent-spend`, from status-line), with its breakdown on hover.
 
 ### History forks
 

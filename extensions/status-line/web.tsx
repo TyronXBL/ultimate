@@ -20,10 +20,10 @@ import {
 } from '@/sdk'
 import type { AssistantMessage, EntryRecord, Usage } from '@/sdk'
 import { useWorkspaces } from '../workspaces/ui.tsx'
-import { ContextDoc, ConversationSpend } from '../conversations/ui.tsx'
+import { AgentSpend, ContextDoc, ConversationSpend } from '../conversations/ui.tsx'
 import { lastAssistant, promptTokens as prompt } from '../../lib/context-usage.ts'
 import { usageTotals } from './context.ts'
-import { HeaderSpend, useSpendChip } from './spend.tsx'
+import { HeaderSpend, useAgentSpend, useSpendChip } from './spend.tsx'
 import { RatesAction } from './refs.ts'
 import type { RateSample } from './refs.ts'
 import { responseAfter, turnOf } from './turns.ts'
@@ -373,7 +373,10 @@ function Connection() {
 
 export default defineWebExtension({
   messageDetails: [MessageUsage],
-  provides: [provide(ConversationSpend, (id) => useSpendChip(id))],
+  provides: [
+    provide(ConversationSpend, (id) => useSpendChip(id)),
+    provide(AgentSpend, (id) => useAgentSpend(id)),
+  ],
   slots: {
     'header.right': [HeaderSpend],
     'composer.status': [Cwd, Tokens, Context],

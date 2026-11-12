@@ -80,6 +80,12 @@ section of the `sidebar.top` slot draws the same heading. Top to bottom:
   epic in the plan panel. Its subagents follow, one line each at any depth (`SubagentLine`, `rows.tsx`): their mark, plan
   chip, role and `#id`, and their state word, with the latest activity or plan task on hover.
 
+Every agent row (a subagent line, a Sub-agents row, @ultimate and the other standing agents) also shows what the agent
+itself cost, from the `conversations.agent-spend` point (status-line provides it): a quiet figure before its state word
+(on a standing row, at the end of its name line), and hovering the row a moment opens a card with the row's name and
+activity over that spend's breakdown, in place of the native tooltip. Touch has no hover: phones show the figure alone.
+A row is one `<button>`, so the figure is plain text and the whole row is the card's trigger.
+
 Landed branches and older conversations that are neither roots nor branches live in the collapsed "Earlier · N" group,
 above "Concluded · N". There, branches nest under their source (`branchOf.conversationId`), with a hairline guide
 and one indent per depth; siblings sort by latest input. Isolated rows carry a short `#<conversationId>` badge;

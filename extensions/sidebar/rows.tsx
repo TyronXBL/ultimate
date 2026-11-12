@@ -10,13 +10,14 @@ import {
   PencilIcon,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, cn, errorMessage, formatAgo, Provided, useDocOf } from '@/sdk'
 import { useShell } from './state.tsx'
@@ -24,6 +25,7 @@ import { store } from '@/sdk/client'
 import { MessagesDoc, conversationState, emptyMessages } from '../messages/ui.tsx'
 import {
   AgentMark,
+  AgentSpend,
   ConversationEpic,
   ConversationPhase,
   ConversationTask,
@@ -362,6 +364,46 @@ export function RowMenu({
   )
 }
 
+/**
+ * An agent's row with its own spend (status-line's `AgentSpend`): `children` places the figure, and hovering the row
+ * a moment opens its card under `title`, which then stands in for the row's native tooltip. Without a provider, or
+ * before the agent spent anything, the row stays as it is. Touch has no hover, so phones show the figure alone.
+ */
+function SpendHover({
+  id,
+  title,
+  children,
+}: {
+  id: number | undefined
+  title: string
+  children: (figure?: ReactNode) => ReactElement
+}) {
+  return (
+    <Provided input={id} point={AgentSpend}>
+      {(spend) => (
+        // Mounted also before there is a card, so the row keeps its focus and hover when its first spend arrives.
+        <HoverCard closeDelay={100} openDelay={500}>
+          <HoverCardTrigger asChild>{children(spend?.figure)}</HoverCardTrigger>
+          {spend && (
+            <HoverCardContent
+              align="start"
+              className="max-h-(--radix-hover-card-content-available-height) w-80 overflow-y-auto p-0"
+              collisionPadding={8}
+              data-agent-spend-card={id}
+              side="right"
+            >
+              <p className="border-b border-border/50 px-3 py-1.5 font-mono text-[10px] break-words whitespace-pre-line text-muted-foreground">
+                {title}
+              </p>
+              {spend.card}
+            </HoverCardContent>
+          )}
+        </HoverCard>
+      )}
+    </Provided>
+  )
+}
+
 /** Saves a conversation's new title; an empty one clears it. Failures show as a notification. */
 export function saveTitle(id: number, value: string) {
   void api
@@ -403,25 +445,32 @@ export function StandingRow({
       data-standing={name}
       data-ui="sidebar-row"
     >
-      <button
-        aria-current={shown ? 'true' : undefined}
-        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md pr-2 pl-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset pointer-coarse:pr-10"
-        onClick={onOpen}
-        type="button"
-      >
-        <AgentMark name={name} presence={presence} />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-baseline gap-1.5">
-            <span className="truncate text-[13px] leading-5 font-semibold text-foreground">
-              {title}
+      <SpendHover id={conversation?.id} title={`@${name} · #${conversation?.id}`}>
+        {(figure) => (
+          <button
+            aria-current={shown ? 'true' : undefined}
+            className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md pr-2 pl-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset pointer-coarse:pr-10"
+            onClick={onOpen}
+            type="button"
+          >
+            <AgentMark name={name} presence={presence} />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="flex min-w-0 items-baseline gap-1.5">
+                <span className="truncate text-[13px] leading-5 font-semibold text-foreground">
+                  {title}
+                </span>
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+                  @{name}
+                </span>
+                {figure && <span className="ml-auto text-[10px]">{figure}</span>}
+              </span>
+              <span className="flex w-full min-w-0 items-center gap-2 pr-5 font-mono text-[10px] leading-4 text-muted-foreground">
+                {children}
+              </span>
             </span>
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">@{name}</span>
-          </span>
-          <span className="flex w-full min-w-0 items-center gap-2 pr-5 font-mono text-[10px] leading-4 text-muted-foreground">
-            {children}
-          </span>
-        </span>
-      </button>
+          </button>
+        )}
+      </SpendHover>
       {conversation && (
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger
@@ -498,42 +547,48 @@ function TaskedSubagentLine({
   )
   const working = state === 'working'
   const known = state in settled ? settled[state as keyof typeof settled] : undefined
+  const title = [
+    `${conversation.label ?? 'Agent'} · #${conversation.id}`,
+    task?.title ?? row?.activity ?? conversation.title,
+  ]
+    .filter(Boolean)
+    .join('\n')
   return (
-    <button
-      aria-current={shown ? 'true' : undefined}
-      className={cn(
-        'mx-2 flex h-6 w-[calc(100%-1rem)] min-w-0 cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left font-mono text-[10.5px] pointer-coarse:h-10 outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
-        shown && 'bg-sidebar-accent',
+    <SpendHover id={conversation.id} title={title}>
+      {(figure) => (
+        <button
+          aria-current={shown ? 'true' : undefined}
+          className={cn(
+            'mx-2 flex h-6 w-[calc(100%-1rem)] min-w-0 cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left font-mono text-[10.5px] pointer-coarse:h-10 outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+            shown && 'bg-sidebar-accent',
+          )}
+          data-child-conversation={conversation.id}
+          data-selected={shown || undefined}
+          data-ui="sidebar-row"
+          onClick={() => actions.switchConversation(conversation.id)}
+          style={{ paddingLeft: 20 + depth * 12 }}
+          title={figure ? undefined : title}
+          type="button"
+        >
+          <span className="w-2 shrink-0 text-muted-foreground/40">└</span>
+          <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
+          {task?.chip}
+          <span className="min-w-0 flex-1 truncate text-foreground/75">
+            <RunName compact id={conversation.id} label={conversation.label ?? 'agent'} />
+            <span className="text-muted-foreground/60"> #{conversation.id}</span>
+          </span>
+          {figure && <span className="text-[10px]">{figure}</span>}
+          <span
+            className={cn(
+              'shrink-0 text-[10px]',
+              working ? 'text-brand' : (known?.tone ?? 'text-muted-foreground/70'),
+            )}
+          >
+            {working ? 'working' : (known?.word.toLowerCase() ?? 'idle')}
+          </span>
+        </button>
       )}
-      data-child-conversation={conversation.id}
-      data-selected={shown || undefined}
-      data-ui="sidebar-row"
-      onClick={() => actions.switchConversation(conversation.id)}
-      style={{ paddingLeft: 20 + depth * 12 }}
-      title={[
-        `${conversation.label ?? 'Agent'} · #${conversation.id}`,
-        task?.title ?? row?.activity ?? conversation.title,
-      ]
-        .filter(Boolean)
-        .join('\n')}
-      type="button"
-    >
-      <span className="w-2 shrink-0 text-muted-foreground/40">└</span>
-      <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
-      {task?.chip}
-      <span className="min-w-0 flex-1 truncate text-foreground/75">
-        <RunName compact id={conversation.id} label={conversation.label ?? 'agent'} />
-        <span className="text-muted-foreground/60"> #{conversation.id}</span>
-      </span>
-      <span
-        className={cn(
-          'shrink-0 text-[10px]',
-          working ? 'text-brand' : (known?.tone ?? 'text-muted-foreground/70'),
-        )}
-      >
-        {working ? 'working' : (known?.word.toLowerCase() ?? 'idle')}
-      </span>
-    </button>
+    </SpendHover>
   )
 }
 
@@ -620,56 +675,66 @@ function TaskedChildRow({
   )
   const working = state === 'working'
   return (
-    <button
-      aria-current={shown ? 'true' : undefined}
-      className={cn(
-        'mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer flex-col gap-1 rounded-md px-2 py-1.5 text-left outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring',
-        shown && 'bg-sidebar-accent',
-      )}
-      data-child-conversation={conversation.id}
-      data-selected={shown || undefined}
-      data-ui="sidebar-row"
-      onClick={() => actions.switchConversation(conversation.id)}
-      title={conversation.title}
-      type="button"
+    <SpendHover
+      id={conversation.id}
+      title={[`${conversation.label ?? 'Agent'} · #${conversation.id}`, conversation.title]
+        .filter(Boolean)
+        .join('\n')}
     >
-      <span className="flex w-full items-center gap-1.5">
-        <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
-        {task?.chip}
-        <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-foreground/80">
-          <RunName compact id={conversation.id} label={conversation.label ?? 'Agent'} /> · #
-          {conversation.id}
-        </span>
-        {conversation.workspace && (
-          <GitBranchIcon
-            aria-label="Isolated checkout"
-            className="size-3 shrink-0 text-muted-foreground"
-          />
-        )}
-        <span
+      {(figure) => (
+        <button
+          aria-current={shown ? 'true' : undefined}
           className={cn(
-            'shrink-0 text-[10px]',
-            working
-              ? 'text-brand'
-              : state in settled
-                ? settled[state as keyof typeof settled].tone
-                : 'text-muted-foreground',
+            'mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer flex-col gap-1 rounded-md px-2 py-1.5 text-left outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring',
+            shown && 'bg-sidebar-accent',
           )}
+          data-child-conversation={conversation.id}
+          data-selected={shown || undefined}
+          data-ui="sidebar-row"
+          onClick={() => actions.switchConversation(conversation.id)}
+          title={figure ? undefined : conversation.title}
+          type="button"
         >
-          {working
-            ? 'Working'
-            : state in settled
-              ? settled[state as keyof typeof settled].word
-              : 'Idle'}
-        </span>
-      </span>
-      <span className="line-clamp-2 pl-[18px] text-[11px] leading-relaxed break-words text-muted-foreground">
-        {task
-          ? task.title
-          : row?.activity
-            ? `${working ? 'Last reply: ' : ''}${row.activity}`
-            : (conversation.title ?? 'No reply yet')}
-      </span>
-    </button>
+          <span className="flex w-full items-center gap-1.5">
+            <Mark state={state} unseen={false} working={working ? 'self' : undefined} />
+            {task?.chip}
+            <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-foreground/80">
+              <RunName compact id={conversation.id} label={conversation.label ?? 'Agent'} /> · #
+              {conversation.id}
+            </span>
+            {conversation.workspace && (
+              <GitBranchIcon
+                aria-label="Isolated checkout"
+                className="size-3 shrink-0 text-muted-foreground"
+              />
+            )}
+            {figure && <span className="text-[10px]">{figure}</span>}
+            <span
+              className={cn(
+                'shrink-0 text-[10px]',
+                working
+                  ? 'text-brand'
+                  : state in settled
+                    ? settled[state as keyof typeof settled].tone
+                    : 'text-muted-foreground',
+              )}
+            >
+              {working
+                ? 'Working'
+                : state in settled
+                  ? settled[state as keyof typeof settled].word
+                  : 'Idle'}
+            </span>
+          </span>
+          <span className="line-clamp-2 pl-[18px] text-[11px] leading-relaxed break-words text-muted-foreground">
+            {task
+              ? task.title
+              : row?.activity
+                ? `${working ? 'Last reply: ' : ''}${row.activity}`
+                : (conversation.title ?? 'No reply yet')}
+          </span>
+        </button>
+      )}
+    </SpendHover>
   )
 }
