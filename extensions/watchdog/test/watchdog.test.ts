@@ -822,6 +822,115 @@ it.each([
   },
 )
 
+/**
+ * #199140 and its branches, 2026-11-11 22:38 to 2026-11-12 06:10 UTC: every Anthropic model rate limited for hours. Each
+ * try of the wait met the primary's limit, switched to a backup that answered with one too, and began the wait again at
+ * try 1: tries about 64 s apart all night, a wait card and two notices to @ultimate each time, and an input to @ultimate's
+ * own run. One wait now lasts until a model answers: its tries go 1, 2, 4, 8, 16, 30 minutes apart.
+ */
+it.each([{ who: 'branch' }, { who: 'ultimate' }] as const)(
+  'keeps one wait across tries whose backups are limited too: $who',
+  async ({ who }) => {
+    const { f, id, tick, limited, answered, owner, wait, inputs } = await incident({
+      who,
+      fallback: ['faux/faux-4', 'faux/faux-2', 'faux/faux-3'],
+      tokens: 165_179,
+      limits: {
+        'faux-1': rateLimit,
+        'faux-4': rateLimit,
+        'faux-2': rateLimit,
+        'faux-3': outOfCredit,
+      },
+    })
+    const told = (await inputs()).length
+    const shown = async () =>
+      (
+        await f.harness.commit(
+          (tx) => tx.scanEntries({ conversationId: id, order: 'ascending' }, 500),
+          context,
+        )
+      ).items.filter((entry) => entry.model?.[0]?.role === 'user').length
+    const seen = await shown()
+    let tasks = (await f.tasks()).length
+    // A failure's watchdog task sleeps its 5 seconds, and continues the conversation then.
+    const failed = async () => {
+      tasks++
+      await until(async () => (await f.tasks()).length === tasks)
+      await until(async () => (await f.tasks()).at(-1)!.state.status === 'sleeping')
+      tick(5_000)
+    }
+    const waits = [wait]
+    for (let attempt = 2; attempt <= 6; attempt++) {
+      const last = waits.at(-1)!
+      tick(last.until - Date.now())
+      // The try: the primary, then each backup that can take the conversation, all limited.
+      for (const backup of ['faux-4', 'faux-2']) {
+        await until(async () => {
+          const now = await owner()
+          return now?.by === 'backup' && now.to.modelId === backup
+        })
+        expect(await owner()).toMatchObject({ wait: { since: wait.since, attempt: attempt - 1 } })
+        await failed()
+      }
+      await until(async () => {
+        const now = await owner()
+        return now?.by === 'limit-wait' && now.until > last.until
+      })
+      waits.push((await owner()) as ModelOwner & { by: 'limit-wait' })
+      await failed()
+    }
+    expect(waits.map(({ since, attempt }) => ({ since, attempt }))).toEqual(
+      [1, 2, 3, 4, 5, 6].map((attempt) => ({ since: wait.since, attempt })),
+    )
+    // Each try began at the last wait's end, and its last backup failed 10 s later: the backoff, plus this conversation's
+    // share of a quarter of it.
+    for (const [index, minutes] of [2, 4, 8, 16, 30].entries()) {
+      const backoff = waits[index + 1].until - waits[index].until - 10_000
+      expect(backoff).toBeGreaterThanOrEqual(minutes * 60_000)
+      expect(backoff).toBeLessThanOrEqual(minutes * 75_000)
+    }
+
+    limited.primary = false
+    tick(waits.at(-1)!.until - Date.now())
+    await until(async () => answered.length === 1)
+    await until(async () => (await f.tasks()).every((task) => task.state.status === 'terminal'))
+    expect(answered[0].model).toBe('faux-1')
+    expect(await owner()).toEqual({ by: 'default' })
+    // One wait card, read live, and no switch card for a try's backups: only the two switches before the wait.
+    expect(await f.entries(id, 'backup.wait')).toHaveLength(1)
+    expect(await f.entries(id, 'backup.switch')).toHaveLength(2)
+    expect({
+      notices: (await f.entries(f.ultimate, 'backup.notice')).map((entry) => {
+        const data = entry.data as Record<string, unknown>
+        const { conversation, to, resumed, since } = data
+        return resumed ? { conversation, resumed, since } : { conversation, to, until: data.until }
+      }),
+      continued: (await inputs()).slice(told).map((input) => input.type),
+      lines: (await shown()) - seen,
+    }).toEqual(
+      who === 'branch'
+        ? {
+            // To @ultimate: the two switches before the wait, its start and its end.
+            notices: [
+              { conversation: id, to: 'faux/faux-4' },
+              { conversation: id, to: 'faux/faux-2' },
+              { conversation: id, to: 'faux/faux-1', until: wait.until },
+              { conversation: id, resumed: 'faux/faux-1', since: wait.since },
+            ],
+            // Its answer reaches its starter only as the answer to an input: each run of a try gets one.
+            continued: Array(16).fill('input'),
+            lines: 16,
+          }
+        : {
+            notices: [],
+            // One line when the wait's first try continues it; every later run continues the context as it is.
+            continued: ['input', ...Array(15).fill('continue')],
+            lines: 1,
+          },
+    )
+  },
+)
+
 // #207552: the compaction's summary no model could write failed the run, and nothing continued it.
 it('continues a run whose compaction no model could summarize once its wait is over', async () => {
   vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 })

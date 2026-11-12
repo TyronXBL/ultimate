@@ -253,12 +253,13 @@ export default function watchdog(host: ExtensionHost) {
           // Concluded since it failed: a retry would resume its tree, so the failure is reported (as a note) instead.
           if (!switched || (await host.need(ConversationsApi).concludedTreeIn(tx, child.id)))
             return { status: 'running', checkpoint: { phase: 'report' } } as const
-          // @ultimate's wait says so once: its later tries run on the context as it is, so a day of tries adds no message
-          // to it (Pi leaves the failed answers out, so it still ends in what is owed). Only @ultimate: a subagent's
-          // report and a branch's final answer reach their parent or starter only as the answer to an input
-          // (subagents' `recover`, messages' `board.route`), so they get one per try.
+          // @ultimate's wait says so once: its later tries, and the backups a try asks, run on the context as it is, so a
+          // day of tries adds no message to it (Pi leaves the failed answers out, so it still ends in what is owed). Only
+          // @ultimate: a subagent's report and a branch's final answer reach their parent or starter only as the answer
+          // to an input (subagents' `recover`, messages' `board.route`), so they get one per run.
           const ultimate = (await tx.doc(Standing, ROOT_CONVERSATION_ID)).ultimate === child.id
-          if (wait && wait.attempt > 1 && ultimate)
+          const trying = !wait && (await host.want(ModelsApi)?.backup(tx, child.id))?.wait
+          if (ultimate && (trying || (wait && wait.attempt > 1)))
             await child.submit(tx, { type: 'continue', requestId })
           else
             await child.submit(tx, {

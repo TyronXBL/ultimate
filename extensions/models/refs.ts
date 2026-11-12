@@ -71,7 +71,9 @@ type OwnerBeforeBackup =
  * One switch away from the primary after a limit, so the next limit can switch again from there: the model and thinking
  * level the conversation runs on otherwise, the backup it runs on now and since when (ms), the models it already left
  * (`provider/modelId`, the last the one whose limit moved it), so a chain of limits tries each backup once, and the
- * limit that moved it (`rate limit`, `quota`).
+ * limit that moved it (`rate limit`, `quota`). With `wait`, the backup is a try of a wait on the primary (`WaitRecord`):
+ * when that wait began and which try it is, so a limit here with no backup left goes on with the same wait, and the
+ * backup's first answer ends it.
  */
 export type BackupRecord = {
   primary: { provider: string; modelId: string }
@@ -80,6 +82,7 @@ export type BackupRecord = {
   since: number
   tried: string[]
   reason: string
+  wait?: { since: number; attempt: number }
 }
 /**
  * A wait on the primary after a limit that no backup could take (each tried, limited or too small for the conversation):

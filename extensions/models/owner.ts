@@ -76,8 +76,14 @@ export function ownerStep(state: ModelOwner, event: ModelEvent): ModelOwner {
         attempt: event.record.attempt,
         under,
       }
-    const { to } = event.record
-    return { by: 'backup', ...shared, to: { provider: to.provider, modelId: to.modelId }, under }
+    const { to, wait } = event.record
+    return {
+      by: 'backup',
+      ...shared,
+      to: { provider: to.provider, modelId: to.modelId },
+      ...(wait ? { wait: { since: wait.since, attempt: wait.attempt } } : {}),
+      under,
+    }
   }
   if (event.type === 'return') return (backupIn(state) ?? limitWaitIn(state))?.under ?? state
   return {

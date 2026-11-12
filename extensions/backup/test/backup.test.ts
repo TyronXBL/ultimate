@@ -483,6 +483,12 @@ const waiting: BackupState = {
   tried: ['faux/a', 'faux/b'],
   reason: 'quota',
 }
+/** A try of `waiting` once its time came: asking the first backup, the wait kept. */
+const trying: BackupState = {
+  ...onBackup,
+  since: SINCE + 60_000,
+  wait: { since: SINCE, attempt: 1 },
+}
 const tooSmall = (model: ModelRef) => (model.modelId === 'b' ? 'too small' : undefined)
 const none = () => 'no login'
 const limit = (
@@ -618,21 +624,43 @@ it.each([
     after: waiting,
   },
   {
-    row: 'once the wait is over a backup takes the next limit afresh',
+    row: 'once the wait is over its try asks the backups again, as a try of the same wait',
     from: waiting,
     current: 'a',
     failed: 'a',
     options: { now: SINCE + 60_000 },
     kind: 'switched',
+    after: trying,
+  },
+  // #251493: the try's backup limited too began the wait again at try 1, every 64 s all night.
+  {
+    row: 'a try whose backups are limited too goes on with the wait, twice as long, from the same start',
+    from: { ...trying, to: ref('c'), tried: ['faux/a', 'faux/b'] },
+    current: 'c',
+    failed: 'c',
+    options: { now: SINCE + 70_000 },
+    kind: 'waiting',
     after: {
-      kind: 'backup',
-      primary: ref('a'),
-      thinking: 'high',
-      to: ref('b'),
-      since: SINCE + 60_000,
-      tried: ['faux/a'],
+      ...waiting,
+      until: SINCE + 70_000 + 120_000,
+      attempt: 2,
+      tried: ['faux/a', 'faux/b', 'faux/c'],
       reason: 'rate limit',
     },
+  },
+  {
+    row: 'a try past a day gives up, also on a backup',
+    from: {
+      ...trying,
+      to: ref('c'),
+      tried: ['faux/a', 'faux/b'],
+      wait: { since: SINCE, attempt: 40 },
+    },
+    current: 'c',
+    failed: 'c',
+    options: { now: SINCE + 23.75 * 3600_000 },
+    kind: 'gave-up',
+    after: primary,
   },
   {
     row: 'once the wait is over with still no backup it waits twice as long, from the same start',
@@ -662,6 +690,20 @@ it.each([
   const { state: next, outcome } = limit(current, failed, structuredClone(from), options)
   expect(outcome.kind).toBe(kind)
   expect(next).toEqual(after)
+})
+
+// The way out of a wait: only an answer ends it; after one, the return to the primary and its limits start afresh.
+it('ends a wait at a try’s answer, and a later return’s limits start a new chain', () => {
+  const answered = backupStep(structuredClone(trying), { type: 'answered', model: 'faux/b' })
+  expect(answered.outcome).toEqual({ kind: 'resumed', on: 'faux/b', since: SINCE })
+  const back = run(SINCE + 60_000 + COOLDOWN_MS, true, answered.state)
+  expect(back.outcome.kind).toBe('returned')
+  const now = SINCE + 60_000 + COOLDOWN_MS
+  const switched = limit('a', 'a', back.state, { now })
+  expect(switched).toMatchObject({ outcome: { kind: 'switched' }, state: { tried: ['faux/a'] } })
+  expect(switched.state).not.toHaveProperty('wait')
+  const again = limit('b', 'b', switched.state, { now, skip: none })
+  expect(again.state).toMatchObject({ kind: 'waiting', since: now, attempt: 1 })
 })
 
 it('says why each backup was skipped when it waits', () => {
@@ -749,10 +791,23 @@ it.each([
   { row: 'the primary’s answer ends the wait', from: waiting, model: 'faux/a', kind: 'resumed' },
   { row: 'another model’s answer leaves it', from: waiting, model: 'faux/z', kind: 'none' },
   { row: 'on a backup an answer changes nothing', from: onBackup, model: 'faux/b', kind: 'none' },
-])('answer: $row', ({ from, model, kind }) => {
+  {
+    row: 'a try’s backup answering ends the wait, and the conversation stays on it',
+    from: trying,
+    model: 'faux/b',
+    kind: 'resumed',
+    after: { ...onBackup, since: SINCE + 60_000 },
+  },
+  {
+    row: 'a try’s backup keeps the wait until it answers',
+    from: trying,
+    model: 'faux/a',
+    kind: 'none',
+  },
+])('answer: $row', ({ from, model, kind, after }) => {
   const { state: next, outcome } = backupStep(structuredClone(from), { type: 'answered', model })
   expect(outcome.kind).toBe(kind)
-  expect(next).toEqual(kind === 'resumed' ? primary : from)
+  expect(next).toEqual(after ?? (kind === 'resumed' ? primary : from))
 })
 
 it.each([

@@ -301,7 +301,8 @@ async function switchNow(
         from: step.from,
         to: name(step.to),
         reason: step.reason,
-      } satisfies Switched & { kind: 'switched' }
+        inWait: state.wait !== undefined,
+      } satisfies Switched & { kind: 'switched'; inWait: boolean }
     }, context),
   )
 }
@@ -315,9 +316,11 @@ async function notify(host: Host, id: ConversationId, entry: number, notice: Bac
   const ultimate = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
   if (ultimate === undefined || ultimate === id) return
   const content =
-    notice.until === undefined
-      ? `Its model ${notice.from} answered with a ${notice.reason} error, so it runs on ${notice.to} until a run starts ${COOLDOWN_MINUTES} minutes from now.`
-      : `Its model ${notice.from} answered with a ${notice.reason} error and no backup model can take it, so it waits and continues on its primary ${notice.to} by itself at ${utc(notice.until)}.`
+    'resumed' in notice
+      ? `Its wait for a model since ${utc(notice.since)} is over: ${notice.resumed} answered, and it continues there.`
+      : notice.until === undefined
+        ? `Its model ${notice.from} answered with a ${notice.reason} error, so it runs on ${notice.to} until a run starts ${COOLDOWN_MINUTES} minutes from now.`
+        : `Its model ${notice.from} answered with a ${notice.reason} error and no backup model can take it, so it waits and continues on its primary ${notice.to} by itself at ${utc(notice.until)}.`
   await (
     await harness.conversation(ultimate, context)
   )?.submit(
@@ -395,7 +398,9 @@ export async function fallBack(
     if (result.attempt === 1) await waitCard(host, id, message, entry, result)
     return true
   }
-  const { kind: _, ...switched } = result
+  // A try of a wait asks its backups quietly: the wait's card reads the try live, and its end says how it went.
+  if (result.inWait) return true
+  const { kind: _, inWait: __, ...switched } = result
   const harness = host.harness()
   const data: BackupSwitch = {
     ...switched,
@@ -453,23 +458,31 @@ async function returned(
 }
 
 /**
- * `message` answered conversation `id`: its model has room again, so no conversation skips it as out of quota, and the
- * primary of a waiting conversation ends the wait, which returns the owner to the one before it.
+ * `message`, entry `entry`, answered conversation `id`: its model has room again, so no conversation skips it as out of
+ * quota, and an answer of a waiting conversation's primary, or of a try's backup, ends the wait with one line in
+ * @ultimate's transcript. The primary's returns the owner to the one before the wait; the backup's keeps it on the backup.
  */
-function resume(host: Host, id: ConversationId, message: AssistantMessage) {
+async function resume(host: Host, id: ConversationId, message: AssistantMessage, entry: number) {
   const model = `${message.provider}/${message.model}`
   // Not in the switches' queue: a read for each answer must not hold up a switch the watchdog waits for. A switch and an
   // answer of one conversation never race, as its run makes one request at a time.
-  return host.harness().commit(async (tx) => {
+  const outcome = await host.harness().commit(async (tx) => {
     const now = Date.now()
     if (exhaustedUntil(await tx.doc(ExhaustedState, ROOT_CONVERSATION_ID), model, now))
       await exhaust(tx, { type: 'answered', model }, now)
     const models = host.need(ModelsApi)
-    const wait = await models.limitWait(tx, id)
-    if (!wait) return
-    const { outcome } = backupStep({ kind: 'waiting', ...wait }, { type: 'answered', model })
-    if (outcome.kind === 'resumed') await models.setModel(tx, id, { type: 'return' })
+    const owner = await models.owner(tx, id)
+    const step = backupStep(backupOf(owner), { type: 'answered', model })
+    if (step.outcome.kind !== 'resumed') return undefined
+    await models.setModel(
+      tx,
+      id,
+      step.state.kind === 'backup' ? { type: 'backup', record: step.state } : { type: 'return' },
+    )
+    return step.outcome
   }, context)
+  if (outcome?.kind === 'resumed')
+    await notify(host, id, entry, { conversation: id, resumed: outcome.on, since: outcome.since })
 }
 
 export default function extension(host: Host) {
@@ -535,10 +548,12 @@ export default function extension(host: Host) {
         const message = change.type === 'entry' ? change.value.model?.[0] : undefined
         if (change.type !== 'entry' || message?.role !== 'assistant') continue
         if (message.stopReason !== 'error' && message.stopReason !== 'aborted') {
-          resume(host, change.value.conversationId, message).catch((error: unknown) => {
-            // The wait stands; the primary's next answer ends it.
-            console.error('backup: ending a wait failed:', error)
-          })
+          resume(host, change.value.conversationId, message, change.value.id).catch(
+            (error: unknown) => {
+              // The wait stands; the primary's next answer ends it.
+              console.error('backup: ending a wait failed:', error)
+            },
+          )
           continue
         }
         if (message.stopReason !== 'error' || !limited(message.errorMessage ?? '')) continue

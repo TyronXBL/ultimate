@@ -60,6 +60,8 @@ function Waiting({ entry }: { entry: EntryRecord }) {
   // As `limitWaitIn` (models/owner.ts), which the browser build does not include.
   const found = owner?.by === 'login-wait' ? owner.under : owner
   const wait = found?.by === 'limit-wait' && found.since === data.since ? found : undefined
+  // A try of this wait asking a backup.
+  const trying = found?.by === 'backup' && found.wait?.since === data.since ? found : undefined
   const now = useNow(1000, !!wait)
   const { runCommand } = useUltimate()
   if (!data.primary || !data.from || data.until === undefined) return null
@@ -100,6 +102,10 @@ function Waiting({ entry }: { entry: EntryRecord }) {
             {wait.until > now && ` · in ${formatDuration(wait.until - now)}`}
             {wait.attempt > 1 && ` · try ${wait.attempt}`}
           </span>
+        ) : trying ? (
+          <span className="text-warning">
+            trying {trying.to.provider}/{trying.to.modelId} · try {trying.wait!.attempt + 1}
+          </span>
         ) : (
           <span>wait over</span>
         )}
@@ -117,9 +123,11 @@ function Waiting({ entry }: { entry: EntryRecord }) {
 
 /** The same switch or wait, one line in @ultimate's transcript. */
 function Notice({ entry }: { entry: EntryRecord }) {
-  const data = (entry.data ?? {}) as Partial<BackupNotice>
+  // Either line of `BackupNotice`, its fields read as stored.
+  const data = (entry.data ?? {}) as Partial<Extract<BackupNotice, { from: string }>> &
+    Partial<Extract<BackupNotice, { resumed: string }>>
   const { switchConversation } = useUltimate()
-  if (data.conversation === undefined || !data.from || !data.to) return null
+  if (data.conversation === undefined || (!data.resumed && (!data.from || !data.to))) return null
   const conversation = data.conversation
   return (
     <div
@@ -136,9 +144,11 @@ function Notice({ entry }: { entry: EntryRecord }) {
           <ConversationRef id={conversation} />
         </button>
         <span className="truncate">
-          {data.until === undefined
-            ? `· ${data.from} → ${data.to} · ${data.reason}`
-            : `· ${data.reason} on ${data.from} · waits for ${data.to} until ${clock(data.until)}`}
+          {data.resumed
+            ? `· wait since ${clock(data.since ?? 0)} over · continues on ${data.resumed}`
+            : data.until === undefined
+              ? `· ${data.from} → ${data.to} · ${data.reason}`
+              : `· ${data.reason} on ${data.from} · waits for ${data.to} until ${clock(data.until)}`}
         </span>
       </span>
     </div>
