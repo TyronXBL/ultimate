@@ -61,13 +61,16 @@ const INSTALL_POLICY = [
   'trustPolicy',
 ]
 
-/** The lines of each top-level key of a YAML file (its own line and the indented ones under it), comments left out. */
+/**
+ * The lines of each top-level key of a YAML file: its own line and those under it, indented or a `- ` list item at the
+ * margin, comments left out. A quoted key reads as the bare one.
+ */
 function sections(yaml = '') {
   const found = new Map<string, Set<string>>()
   let key = ''
   for (const line of yaml.split('\n')) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue
-    if (!/^\s/.test(line)) key = line.split(':')[0]
+    if (/^[^\s-]/.test(line)) key = /^(['"]?)(.*?)\1\s*:/.exec(line)?.[2] ?? line
     found.set(key, (found.get(key) ?? new Set()).add(line.trim()))
   }
   return found
@@ -113,12 +116,18 @@ export function incomingFlags(incoming: Incoming) {
   if (incoming.workspace) {
     const before = sections(incoming.workspace.before)
     const after = sections(incoming.workspace.after)
-    for (const key of INSTALL_POLICY)
+    for (const key of INSTALL_POLICY) {
       for (const line of after.get(key) ?? [])
         if (!before.get(key)?.has(line))
           flags.push(
             `pnpm-workspace.yaml: ${key} gains "${line}", which decides what an install fetches or runs`,
           )
+      for (const line of before.get(key) ?? [])
+        if (!after.get(key)?.has(line))
+          flags.push(
+            `pnpm-workspace.yaml: ${key} loses "${line}", which decides what an install fetches or runs`,
+          )
+    }
   }
   for (const { path, before, after } of incoming.manifests)
     for (const name of LIFECYCLE) {
@@ -137,23 +146,22 @@ if (import.meta.main) {
     execFileSync('git', args, { encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024 })
   const fork = git('merge-base', base, head).trim()
   const files = git('diff', '--name-status', '--no-renames', fork, head)
-  const changed = files.split('\n').flatMap((line) => line.split('\t')[1] ?? [])
-  const text = (revision: string, path: string) => {
-    try {
-      return git('show', `${revision}:${path}`)
-    } catch {
-      // Absent on that side: added or deleted by the range.
-      return undefined
-    }
-  }
+  const status = new Map(
+    files
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split('\t').reverse() as [string, string]),
+  )
+  const changed = [...status.keys()]
+  // Absent only where the range adds or deletes the file; any other failing read throws.
+  const text = (revision: string, path: string) =>
+    status.get(path) === (revision === fork ? 'A' : 'D')
+      ? undefined
+      : git('show', `${revision}:${path}`)
+  // A package.json that does not parse throws too: its scripts are unknown.
   const json = (revision: string, path: string) => {
     const source = text(revision, path)
-    try {
-      return source === undefined ? undefined : (JSON.parse(source) as Manifest)
-    } catch {
-      // Not JSON: no scripts there to compare.
-      return undefined
-    }
+    return source === undefined ? undefined : (JSON.parse(source) as Manifest)
   }
   const flags = incomingFlags({
     commits: git('log', '--format=%h%x09%s', range),

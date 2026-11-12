@@ -27,15 +27,22 @@ it('flags what an incoming range runs by itself, and nothing in ordinary changes
       '+const empty = true',
     ].join('\n'),
     workspace: {
-      before: 'allowBuilds:\n  esbuild: true\nminimumReleaseAgeExclude:\n  - vite-plus@1.5.1\n',
+      // A quoted key with its list at the margin, as YAML allows.
+      before: [
+        'allowBuilds:',
+        '  esbuild: true',
+        'minimumReleaseAge: 1440',
+        "'minimumReleaseAgeExclude':",
+        '- vite-plus@1.5.1',
+      ].join('\n'),
       after: [
         'allowBuilds:',
         '  esbuild: true',
         '  sharp: true',
         '# a comment',
-        'minimumReleaseAgeExclude:',
-        '  - vite-plus@1.5.1',
-        "  - '@scope/fresh@1.0.0'",
+        "'minimumReleaseAgeExclude':",
+        '- vite-plus@1.5.1',
+        "- '@scope/fresh@1.0.0'",
         'packages:',
         '  - web',
       ].join('\n'),
@@ -54,6 +61,7 @@ it('flags what an incoming range runs by itself, and nothing in ordinary changes
     '.github/workflows/ci.yml: runs in GitHub Actions',
     '.github/workflows/ci.yml: adds "toJSON(secrets)", a wfx-loot or GhostAction indicator',
     'pnpm-workspace.yaml: allowBuilds gains "sharp: true", which decides what an install fetches or runs',
+    'pnpm-workspace.yaml: minimumReleaseAge loses "minimumReleaseAge: 1440", which decides what an install fetches or runs',
     'pnpm-workspace.yaml: minimumReleaseAgeExclude gains "- \'@scope/fresh@1.0.0\'", which decides what an install fetches or runs',
     'package.json: scripts.postinstall "sh .ci-x7k2p9.sh" runs on every install',
   ])
