@@ -114,6 +114,57 @@ async function memInfo() {
   }
 }
 
+/** `some avg10` of a pressure file, in %: 0 where the kernel keeps none. */
+const stalled = (path: string) =>
+  readFile(path, 'utf8').then(
+    (text) => Number(/^some avg10=([\d.]+)/m.exec(text)?.[1] ?? 0),
+    // No pressure stall information (not Linux, or a kernel without it).
+    () => 0,
+  )
+
+/** Tasks machine-wide stalled on CPU, IO and memory. */
+async function stalls() {
+  const [cpu, io, memory] = await Promise.all(
+    ['cpu', 'io', 'memory'].map((resource) => stalled(`/proc/pressure/${resource}`)),
+  )
+  return { cpu, io, memory }
+}
+
+/**
+ * The memory controller of the cgroup this process runs in (v2): what it holds, its caps (unset when unlimited) and how
+ * much its tasks stall on memory. Undefined without one.
+ */
+async function cgroup() {
+  const path = /^0::(\/.*)$/m.exec(
+    await readFile('/proc/self/cgroup', 'utf8').catch(
+      // Not Linux: no cgroup.
+      () => '',
+    ),
+  )?.[1]
+  if (!path) return undefined
+  const dir = join('/sys/fs/cgroup', path)
+  const bytes = (name: string) =>
+    readFile(join(dir, name), 'utf8').then(
+      (text) => (/^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined),
+      // No memory controller here; `max` (unlimited) reads as no number too.
+      () => undefined,
+    )
+  const [currentMiB, highMiB, maxMiB, stall] = await Promise.all([
+    bytes('memory.current'),
+    bytes('memory.high'),
+    bytes('memory.max'),
+    stalled(join(dir, 'memory.pressure')),
+  ])
+  if (currentMiB === undefined) return undefined
+  return {
+    name: basename(path),
+    currentMiB,
+    stall,
+    ...(highMiB !== undefined && { highMiB }),
+    ...(maxMiB !== undefined && { maxMiB }),
+  }
+}
+
 /** `statfs`'s type of a RAM file system. */
 const TMPFS = 0x01021994
 async function temp(): Promise<TempUse[]> {
@@ -147,9 +198,25 @@ function pressureOf(state: {
   floorMiB?: number
   temp: TempUse[]
   outside: number
+  stall: Sample['stall']
+  cgroup?: Awaited<ReturnType<typeof cgroup>>
 }): Pressure[] {
   const found: Pressure[] = []
-  const { floorMiB, availableMiB } = state
+  const { floorMiB, availableMiB, cgroup: group } = state
+  if (
+    group &&
+    ((group.highMiB !== undefined && group.currentMiB >= group.highMiB - 256) || group.stall >= 20)
+  )
+    found.push({
+      kind: 'cgroup',
+      name: group.name,
+      currentMiB: group.currentMiB,
+      stall: group.stall,
+      ...(group.highMiB !== undefined && { highMiB: group.highMiB }),
+    })
+  for (const resource of ['memory', 'io'] as const)
+    if (state.stall[resource] >= 20)
+      found.push({ kind: 'stall', resource, pct: state.stall[resource] })
   // Within 1 GiB of the floor, as the memory extension's chip.
   if (floorMiB !== undefined && availableMiB < floorMiB + 1024)
     found.push({ kind: 'ram', availableMiB, floorMiB, below: availableMiB < floorMiB })
@@ -196,7 +263,7 @@ export async function look(
   const now = Date.now()
   const turn: Turn = await peekSlot(END_OF_LINE)
   const holders = holdersOf(turn)
-  const [raw, mem, places, floorMiB, units] = await Promise.all([
+  const [raw, mem, places, floorMiB, units, stall, group] = await Promise.all([
     processes().catch(
       // No /proc: not Linux.
       () => [],
@@ -208,6 +275,8 @@ export async function look(
       // No /proc: not Linux.
       () => ({ tick: 100 }),
     ),
+    stalls(),
+    cgroup(),
   ])
   const seconds = (now - memory.at) / 1000
   const ticks = new Map<string, number>()
@@ -274,6 +343,8 @@ export async function look(
       cpu,
       availableMiB: mem.availableMiB,
       swapUsedMiB: mem.swapUsedMiB,
+      stall,
+      ...(group && { cgroup: { currentMiB: group.currentMiB, stall: group.stall } }),
       running: holders.length,
       waiting: turn.ahead?.length ?? 0,
     },
@@ -283,6 +354,13 @@ export async function look(
       totalMiB: mem.totalMiB,
       swapTotalMiB: mem.swapTotalMiB,
       ...(floorMiB !== undefined && { floorMiB }),
+      ...(group && {
+        cgroup: {
+          name: group.name,
+          ...(group.highMiB !== undefined && { highMiB: group.highMiB }),
+          ...(group.maxMiB !== undefined && { maxMiB: group.maxMiB }),
+        },
+      }),
       queue,
       owners: listed,
       more: {
@@ -298,6 +376,8 @@ export async function look(
         ...(floorMiB !== undefined && { floorMiB }),
         temp: places,
         outside: (cpu.work ?? 0) + (cpu.automation ?? 0),
+        stall,
+        ...(group && { cgroup: group }),
       }),
     },
   }

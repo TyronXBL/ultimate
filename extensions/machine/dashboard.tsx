@@ -32,7 +32,14 @@ const head =
   'flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2 font-mono text-[11px] text-muted-foreground'
 
 /** Worst first: below the floor stops jobs, outside work is what nobody sees. */
-const severity: Record<Pressure['kind'], number> = { ram: 0, outside: 1, load: 2, temp: 3 }
+const severity: Record<Pressure['kind'], number> = {
+  ram: 0,
+  cgroup: 1,
+  stall: 2,
+  outside: 3,
+  load: 4,
+  temp: 5,
+}
 
 /** A pressure in words, and whether it is past a limit (red) rather than near one (amber). */
 export function describePressure(pressure: Pressure): { text: string; error: boolean } {
@@ -41,6 +48,16 @@ export function describePressure(pressure: Pressure): { text: string; error: boo
       return {
         text: `${pressure.below ? 'RAM below the floor' : 'RAM near the floor'}: ${mem(pressure.availableMiB)} free, floor ${mem(pressure.floorMiB)}`,
         error: pressure.below,
+      }
+    case 'cgroup':
+      return {
+        text: `${pressure.name} at its memory cap: ${mem(pressure.currentMiB)}${pressure.highMiB === undefined ? '' : ` of ${mem(pressure.highMiB)}`}, stalled ${Math.round(pressure.stall)} % of the time`,
+        error: pressure.highMiB !== undefined && pressure.currentMiB >= pressure.highMiB,
+      }
+    case 'stall':
+      return {
+        text: `Tasks stalled on ${pressure.resource} ${Math.round(pressure.pct)} % of the last 10 s`,
+        error: false,
       }
     case 'outside':
       return {
@@ -276,6 +293,15 @@ const bands: { name: string; kinds: OwnerKind[]; className: string }[] = [
   { name: 'queue', kinds: ['job', 'lander'], className: 'text-foreground/80' },
   { name: 'outside the queue', kinds: ['work', 'automation'], className: 'text-warning' },
 ]
+/**
+ * The stall lines: the share of time some task waited for a resource. Memory stall is reclaim (tonight's "load 30" at the
+ * cgroup's cap); IO follows it as pages are read back in.
+ */
+const stallLines: { resource: keyof Sample['stall']; className: string }[] = [
+  { resource: 'cpu', className: 'text-muted-foreground/50' },
+  { resource: 'io', className: 'text-muted-foreground' },
+  { resource: 'memory', className: 'text-foreground/85' },
+]
 const bandCpu = (sample: Sample, kinds: OwnerKind[]) =>
   kinds.reduce((sum, kind) => sum + (sample.cpu[kind] ?? 0), 0)
 
@@ -393,6 +419,55 @@ function Resources({ state, samples }: { state: MachineState; samples: Sample[] 
             ]}
             title="Available RAM"
           />
+          {state.cgroup && (
+            <Chart
+              {...charts}
+              marks={[
+                ...(state.cgroup.highMiB === undefined
+                  ? []
+                  : [{ value: state.cgroup.highMiB, className: 'text-warning/70' }]),
+                ...(state.cgroup.maxMiB === undefined
+                  ? []
+                  : [{ value: state.cgroup.maxMiB, className: 'text-error/70' }]),
+              ]}
+              max={Math.max(
+                state.cgroup.maxMiB ?? state.cgroup.highMiB ?? 0,
+                ...samples.map((sample) => sample.cgroup?.currentMiB ?? 0),
+              )}
+              reading={
+                shown.cgroup ? (
+                  <span>
+                    <span
+                      className={cn(
+                        state.cgroup.highMiB !== undefined &&
+                          shown.cgroup.currentMiB >= state.cgroup.highMiB - 256 &&
+                          'text-warning',
+                      )}
+                    >
+                      {mem(shown.cgroup.currentMiB)}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {state.cgroup.highMiB !== undefined && ` of ${mem(state.cgroup.highMiB)} cap`}
+                      {' · stall '}
+                    </span>
+                    <span className={cn(shown.cgroup.stall >= 20 && 'text-warning')}>
+                      {Math.round(shown.cgroup.stall)} %
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">no reading</span>
+                )
+              }
+              series={[
+                {
+                  value: (sample) => sample.cgroup?.currentMiB ?? 0,
+                  className: 'text-foreground/70',
+                  fill: true,
+                },
+              ]}
+              title={`${state.cgroup.name} memory`}
+            />
+          )}
           <Chart
             {...charts}
             max={Math.max(state.swapTotalMiB, 1)}
@@ -418,6 +493,35 @@ function Resources({ state, samples }: { state: MachineState; samples: Sample[] 
               },
             ]}
             title="Swap used"
+          />
+          <Chart
+            {...charts}
+            max={100}
+            reading={
+              <span className="flex flex-wrap justify-end gap-x-2">
+                {stallLines.map((line) => {
+                  const value = shown.stall[line.resource] ?? 0
+                  return (
+                    <span className="flex items-baseline gap-1" key={line.resource}>
+                      <span
+                        className={cn(
+                          'inline-block size-1.5 translate-y-[-1px] rounded-full bg-current',
+                          line.className,
+                        )}
+                      />
+                      <span className={cn(value >= 20 && 'text-warning')}>
+                        {line.resource} {Math.round(value)} %
+                      </span>
+                    </span>
+                  )
+                })}
+              </span>
+            }
+            series={stallLines.map((line) => ({
+              value: (sample) => sample.stall[line.resource] ?? 0,
+              className: line.className,
+            }))}
+            title="Stalled"
           />
         </div>
       )}

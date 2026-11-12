@@ -100,6 +100,13 @@ export type Sample = {
   cpu: Partial<Record<OwnerKind, number>>
   availableMiB: number
   swapUsedMiB: number
+  /**
+   * Share of the last 10 s in which some task stalled on CPU, IO or memory (`/proc/pressure/*`, `some avg10`, in %;
+   * 0 where the kernel does not report it).
+   */
+  stall: { cpu: number; io: number; memory: number }
+  /** The memory of the cgroup this host runs in (every project's host and what it starts, under systemd). */
+  cgroup?: { currentMiB: number; stall: number }
   /** Jobs holding the slot, and waiting for it. */
   running: number
   waiting: number
@@ -114,6 +121,14 @@ export type Pressure =
   /** The one-minute load is at least one and a half times the cores: more than one heavy job's worth. */
   | { kind: 'load'; load: number; cores: number }
   | { kind: 'temp'; name: string; usedMiB: number; sizeMiB: number }
+  /**
+   * The host's cgroup is within 256 MiB of its soft cap (`memory.high`) or stalls on memory: the kernel reclaims and
+   * re-reads pages of everything in it, whatever free RAM the machine shows (#231847, 2026-11-12: load 30 at the cap
+   * with 5 GB available).
+   */
+  | { kind: 'cgroup'; name: string; currentMiB: number; highMiB?: number; stall: number }
+  /** Tasks machine-wide stalled on memory or IO for at least 20 % of the last 10 s. */
+  | { kind: 'stall'; resource: 'memory' | 'io'; pct: number }
   /** Work outside the queue uses more than a core. */
   | { kind: 'outside'; cores: number }
 
@@ -126,6 +141,8 @@ export type MachineState = {
   swapTotalMiB: number
   /** `memory.minAvailableMiB`; unset while the floor is off. */
   floorMiB?: number
+  /** The cgroup this host runs in, when it limits memory: its soft cap (`memory.high`) and hard cap (`memory.max`). */
+  cgroup?: { name: string; highMiB?: number; maxMiB?: number }
   /** Samples after `since` (the last hour without it), oldest first. History lives in the host's memory only. */
   samples: Sample[]
   queue: QueueJob[]

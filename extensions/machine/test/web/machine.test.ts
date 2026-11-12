@@ -33,6 +33,7 @@ const state: MachineState = {
       cpu: { work: 4.2, job: 1, host: 0.3 },
       availableMiB: 3500,
       swapUsedMiB: 4000,
+      stall: { cpu: 60, io: 30, memory: 70 },
       running: 1,
       waiting: 2,
     },

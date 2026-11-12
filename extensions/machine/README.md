@@ -3,8 +3,9 @@ Shows the machine: the heavy-work queue (what runs, what waits and why), CPU loa
 ## Where
 
 The **Machine** tab of the System surface (⌘K "Open Machine"), and a status-line chip that shows the queue's length,
-turns amber when something needs attention (RAM within 1 GiB of the floor, load at 1.5 times the cores or more, a temp
-folder 90 % full, work outside the queue using more than a core) and opens the tab. A nearly full swap alone is no
+turns amber when something needs attention (RAM within 1 GiB of the floor, the host's cgroup at its memory cap, tasks
+stalled on memory or IO 20 % of the time, load at 1.5 times the cores or more, a temp folder 90 % full, work outside
+the queue using more than a core) and opens the tab. A nearly full swap alone is no
 alarm: a small swap stays full for days on a healthy machine.
 
 ## What it reads
@@ -21,7 +22,12 @@ alarm: a small swap stays full for days on a healthy machine.
   holder leads, and what it starts), a preview (`server/main.ts`), a Chromium, an automation, a landing's checks, a
   conversation's work outside the queue (by its worktree), or a system program. Only program names are shown, never
   argument values; other users' processes show by program name.
-- **Resources**: `/proc/loadavg`, `/proc/meminfo`, `statfs` of `$TMPDIR` and `/tmp` (a RAM file system is marked).
+- **Resources**: `/proc/loadavg`, `/proc/meminfo`, `statfs` of `$TMPDIR` and `/tmp` (a RAM file system is marked),
+  the stall shares in `/proc/pressure/{cpu,io,memory}`, and the memory controller of the cgroup this host runs in
+  (`memory.current` against `memory.high` and `memory.max`, and its `memory.pressure`). Under systemd that cgroup holds
+  every project's host and everything they start: at its soft cap the kernel reclaims and re-reads pages of all of
+  them, so the machine crawls while `MemAvailable`, and the RAM floor, still show gigabytes free. The chip and the
+  header call it out from 256 MiB below the cap or 20 % memory stall.
 
 ## Cost and history
 
