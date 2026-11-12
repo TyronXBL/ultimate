@@ -49,7 +49,12 @@ const valueless =
  * wrapper's priority or timeout, an interpreter's file and listed valueless options); at any other word that could be a
  * value (`node -e …`, `env -u NAME`, `bash -o …`, a redirection) the program found so far names it. Review of #231847.
  */
-export function programOf(argv: string[], name: string): string {
+export function programOf(argv: string[], name: string) {
+  const label = parse(argv, name)
+  // Whatever the parse missed, a label is one plain name: nothing with an operator, quote or space in it.
+  return /^[\w.@+-]+$/.test(label) ? label : name
+}
+function parse(argv: string[], name: string): string {
   let words = argv
   /** The program that runs the rest: what names it when the rest cannot be read safely. */
   let known = name
@@ -89,14 +94,13 @@ export function programOf(argv: string[], name: string): string {
     }
     if (line !== undefined) {
       known = program
-      // Split on whitespace only up to the first quote, escape or expansion: past it a word may be part of a quoted value
-      // (`TOKEN="a b" curl`, `--require "a b.js"`, review of #231847).
-      const quoted = line.search(/['"`\\$]/)
-      words = (quoted < 0 ? line : line.slice(0, quoted))
-        .replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
+      // Split on whitespace only up to the first quote, escape, expansion or operator: past it a word may be part of a
+      // quoted value or an operand (`TOKEN="a b" curl`, `--require "a b.js"`, `cat<<<value`, review of #231847). A
+      // leading `cd <plain path> &&` goes first.
+      const special = /['"`\\$<>|&;()]/
+      const plain = line.replace(/^\s*cd\s+[^\s'"`\\$<>|&;()]+\s*(&&|;)\s*/, '')
+      const cut = plain.search(special)
+      words = (cut < 0 ? plain : plain.slice(0, cut)).trim().split(/\s+/).filter(Boolean)
       continue
     }
     const script = rest[next]

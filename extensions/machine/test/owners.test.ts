@@ -220,6 +220,8 @@ describe('owners', () => {
     [['node', '--experimental-loader', 'hunter2.js', 'script.js'], 'node'],
     [['bash', '-r', 'script.sh', 'hunter2.js'], 'bash'],
     [['bash', '-s', 'hunter2.js'], 'bash'],
+    [['bash', '-c', 'cat<<<hunter2'], 'cat'],
+    [['bash', '-c', 'x=1;hunter2'], 'bash'],
     [['bash', '-xs', 'hunter2.js'], 'bash'],
     [['bash', '-ex', 'script.sh', 'hunter2'], 'script.sh'],
     [['bash', '-o', 'hunter2.sh'], 'bash'],
