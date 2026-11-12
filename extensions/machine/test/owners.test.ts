@@ -218,6 +218,7 @@ describe('owners', () => {
     [['sh', '-c', '> hunter2 echo hello'], 'sh'],
     [['sh', '-c', '<<- hunter2 cat'], 'sh'],
     [['node', '--experimental-loader', 'hunter2.js', 'script.js'], 'node'],
+    [['bash', '-r', 'script.sh', 'hunter2.js'], 'script.sh'],
     [['bash', '-o', 'hunter2.sh'], 'bash'],
     [['sh', '-c', 'nice -n 15 node scripts/mutate.ts --changed'], 'mutate.ts'],
     [['nice', '-n', '15', 'python3', '-c', 'hunter2'], 'python3'],

@@ -37,7 +37,7 @@ const shells = /^(bash|sh|dash|zsh)$/
 const interpreters = /^(node|python3?|bash|sh|dash|zsh)$/
 /** Programs that run the program named after their options: `nice -n 15 …`, `timeout 30 …`, `nohup …`. */
 const wrappers = /^(exec|nice|nohup|setsid|timeout)$/
-/** Interpreter options whose value is a file, not code. */
+/** Node options whose value is a file, not code. */
 const fileOptions = /^(-r|--require|--import|--loader)$/
 /** Node's long options that take no value as the next word; `--option=value` carries its value along. */
 const valueless =
@@ -76,8 +76,9 @@ export function programOf(argv: string[], name: string): string {
       const option = rest[next]
       // A shell's `-c` (or `-lc`) runs a command line: what it runs is that line's program, after a `cd … &&`.
       if (shells.test(program) && /^-[a-np-z]*c[a-np-z]*$/.test(option)) line = rest[next + 1] ?? ''
-      else if (fileOptions.test(option)) next += 2
-      else if (valueless.test(option) || /^--[a-z][\w-]*=/.test(option)) {
+      // Node's options: a shell's or Python's `-r` means something else.
+      else if (program === 'node' && fileOptions.test(option)) next += 2
+      else if (program === 'node' && (valueless.test(option) || /^--[a-z][\w-]*=/.test(option))) {
         // `--eval=…` and `--print=…` carry code.
         if (/^--(eval|print)=/.test(option)) return program
         next++
