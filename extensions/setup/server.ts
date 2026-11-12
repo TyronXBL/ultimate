@@ -187,7 +187,7 @@ async function providersArea(host: CheckHost): Promise<SetupIssue | undefined> {
 /**
  * Missing secrets of enabled extensions. One the user turned on (in settings or a project folder) warns; a built-in
  * that is on by default only offers its key, since the rest of Ultimate works without it (voice without
- * `OPENAI_API_KEY`).
+ * `OPENAI_API_KEY`), and so does a secret declared `optional` (searxng's Tavily fallback).
  */
 async function secretsArea(host: CheckHost): Promise<SetupIssue[]> {
   const set = new Set((await secretMetadata(host.userHome)).map((secret) => secret.name))
@@ -195,10 +195,11 @@ async function secretsArea(host: CheckHost): Promise<SetupIssue[]> {
   const optional = new Map<string, string[]>()
   for (const extension of host.extensions()) {
     if (!extension.enabled || !extension.server || extension.server.error) continue
-    const missing = extension.layer === 'default' ? optional : chosen
-    for (const { name, provider } of extension.server.secrets ?? [])
+    for (const { name, provider, optional: offered } of extension.server.secrets ?? []) {
+      const missing = extension.layer === 'default' || offered ? optional : chosen
       if (!set.has(name) && !(provider && configured(host, provider)))
         missing.set(name, [...(missing.get(name) ?? []), extension.name])
+    }
   }
   for (const name of chosen.keys()) optional.delete(name)
   if (!chosen.size && !optional.size) return [{ area: 'Secrets', status: 'ok', summary: 'all set' }]

@@ -19,36 +19,54 @@ afterEach(async () => {
   for (const home of homes.splice(0)) await removeTemp(home)
 })
 
-it.each([
-  { primary: 'results', key: false, cap: false, tavily: 'error', outcome: 'good', calls: 0 },
-  { primary: 'empty', key: false, cap: false, tavily: 'error', outcome: 'unknown-empty', calls: 0 },
-  { primary: 'empty', key: true, cap: false, tavily: 'ok', outcome: 'fallback', calls: 1 },
-  {
-    primary: 'empty',
-    key: true,
-    cap: false,
-    tavily: 'ok',
-    outcome: 'fallback',
-    calls: 1,
-    count: 15,
-  },
-  {
-    primary: 'empty',
-    key: true,
-    cap: false,
-    tavily: 'ok',
-    outcome: 'fallback',
-    calls: 1,
-    count: 25,
-  },
-  { primary: 'empty', key: true, cap: false, tavily: 'error', outcome: 'unknown-empty', calls: 1 },
-  { primary: 'down', key: false, cap: false, tavily: 'ok', outcome: 'outage', calls: 0 },
-  { primary: 'down', key: true, cap: true, tavily: 'ok', outcome: 'outage', calls: 0 },
-  { primary: 'down', key: true, cap: 'corrupt', tavily: 'ok', outcome: 'outage', calls: 0 },
-  { primary: 'down', key: true, cap: false, tavily: 'ok', outcome: 'fallback', calls: 1 },
-  { primary: 'down', key: true, cap: false, tavily: 'error', outcome: 'outage', calls: 1 },
-  { primary: 'down-results', key: true, cap: false, tavily: 'ok', outcome: 'fallback', calls: 1 },
-])('search decision: $primary, key=$key cap=$cap Tavily=$tavily', async (scenario) => {
+type Scenario = {
+  primary: 'results' | 'empty' | 'down' | 'down-results'
+  key: boolean
+  cap: boolean | 'corrupt'
+  tavily: 'ok' | 'error'
+  outcome: string
+  fallback?: string
+  calls: number
+  count?: number
+}
+const table: [
+  Scenario['primary'],
+  Scenario['key'],
+  Scenario['cap'],
+  Scenario['tavily'],
+  string,
+  string | undefined,
+  number,
+  number?,
+][] = [
+  // primary, key, cap used up, Tavily, outcome, fallback, Tavily calls, count
+  ['results', false, false, 'error', 'good', undefined, 0],
+  ['empty', false, false, 'error', 'unknown-empty', 'not-configured', 0],
+  ['empty', true, false, 'ok', 'fallback', 'answered', 1],
+  ['empty', true, false, 'ok', 'fallback', 'answered', 1, 15],
+  ['empty', true, false, 'ok', 'fallback', 'answered', 1, 25],
+  ['empty', true, false, 'error', 'unknown-empty', 'failed', 1],
+  ['down', false, false, 'ok', 'outage', 'not-configured', 0],
+  ['down', true, true, 'ok', 'outage', 'cap-reached', 0],
+  ['down', true, 'corrupt', 'ok', 'outage', 'budget-unavailable', 0],
+  ['down', true, false, 'ok', 'fallback', 'answered', 1],
+  ['down', true, false, 'error', 'outage', 'failed', 1],
+  ['down-results', true, false, 'ok', 'fallback', 'answered', 1],
+  // Other engines' results stay a success when the fallback cannot help.
+  ['down-results', true, false, 'error', 'partial', 'failed', 1],
+]
+it.each<Scenario>(
+  table.map(([primary, key, cap, tavily, outcome, fallback, calls, count]) => ({
+    primary,
+    key,
+    cap,
+    tavily,
+    outcome,
+    fallback,
+    calls,
+    count,
+  })),
+)('search decision: $primary, key=$key cap=$cap Tavily=$tavily', async (scenario) => {
   const userHome = await temp()
   homes.push(userHome)
   await mkdir(join(userHome, '.ultimate'))
@@ -69,7 +87,12 @@ it.each([
       if (url.includes('/config'))
         return Response.json({
           engines: [
-            { name: 'yahoo', enabled: true, categories: ['general'], time_range_support: true },
+            {
+              name: 'yahoo',
+              enabled: true,
+              categories: ['general', 'web'],
+              time_range_support: true,
+            },
           ],
         })
       if (url.includes('/search') && !url.includes('tavily.com'))
@@ -110,7 +133,7 @@ it.each([
   } as unknown as ExtensionHost
   const tool = searxng(host).tools![0]
   const details = vi.fn<(value: unknown) => Promise<void>>(async () => {})
-  const count = 'count' in scenario ? scenario.count : undefined
+  const { count } = scenario
   const result = (await tool.execute(
     { query: 'test', count },
     { details } as never,
@@ -119,14 +142,16 @@ it.each([
     isError?: boolean
     output: { text: string }[]
   }
-  expect((details.mock.calls[0][0] as { outcome: string }).outcome).toBe(scenario.outcome)
+  const recorded = details.mock.calls[0][0] as { outcome: string; fallback?: string | null }
+  expect(recorded.outcome).toBe(scenario.outcome)
+  expect(recorded.fallback ?? undefined).toBe(scenario.fallback)
   expect(Boolean(result.isError)).toBe(scenario.outcome === 'outage')
   expect(calls).toBe(scenario.calls)
   const stored = details.mock.calls[0][0] as { results?: unknown[] }
   expect(stored.results?.length ?? 0).toBe(
     scenario.outcome === 'fallback'
       ? Math.min(count ?? 10, 20)
-      : scenario.primary === 'results'
+      : scenario.primary === 'results' || scenario.primary === 'down-results'
         ? 1
         : 0,
   )
@@ -136,20 +161,23 @@ it.each([
   expect(result.output[0].text.includes('Results from Tavily')).toBe(
     scenario.outcome === 'fallback',
   )
-  expect(result.output[0].text.includes('status is unknown')).toBe(
+  expect(result.output[0].text.includes('may be a real empty result')).toBe(
     scenario.outcome === 'unknown-empty',
   )
   expect(result.output[0].text.includes('yahoo: timeout')).toBe(scenario.primary.startsWith('down'))
   const failure = !scenario.key
     ? 'not configured'
     : scenario.cap === true
-      ? 'monthly limit'
+      ? 'monthly limit of 1,000 calls is used up'
       : scenario.cap === 'corrupt'
-        ? 'budget is unavailable'
-        : 'Tavily request failed'
+        ? 'call counter'
+        : 'Tavily fallback failed: Tavily answered HTTP 503.'
   expect(result.output[0].text.includes(failure)).toBe(
-    scenario.outcome === 'outage' || scenario.outcome === 'unknown-empty',
+    ['outage', 'unknown-empty', 'partial'].includes(scenario.outcome) && !!scenario.fallback,
   )
+  expect(
+    result.output[0].text.startsWith('Web search is down: every SearXNG web engine failed'),
+  ).toBe(scenario.outcome === 'outage')
 })
 
 it('shares a host budget with a preview while keeping private user homes isolated', async () => {

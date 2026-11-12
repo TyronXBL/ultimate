@@ -234,6 +234,26 @@ it('warns only about the login on a fresh install, and offers default-on secrets
     extensions: () => [{ ...voice, layer: 'user' }] as never,
   })
   expect(chosen.find((issue) => issue.area === 'Secrets')?.status).toBe('warn')
+  // A key the user-enabled extension declares optional is only offered; its required one still warns.
+  const searxng = {
+    ...voice,
+    name: 'searxng',
+    layer: 'user',
+    server: {
+      ...voice.server,
+      secrets: [
+        { name: 'TAVILY_API_KEY', description: '', optional: true },
+        { name: 'REQUIRED_API_KEY', description: '' },
+      ],
+    },
+  }
+  const both = (await check({ ...host, extensions: () => [searxng] as never })).filter(
+    (issue) => issue.area === 'Secrets',
+  )
+  expect(both).toMatchObject([
+    { status: 'warn', summary: 'REQUIRED_API_KEY missing' },
+    { status: 'info', summary: 'optional: TAVILY_API_KEY for searxng' },
+  ])
 })
 
 it('names each file that replaces a built-in definition whole, but not an overlay', async () => {

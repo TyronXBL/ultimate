@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-const LIMIT = 1000
+/** Tavily calls per calendar month (UTC), all projects on the machine together: the free tier, so spend stays $0. */
+export const TAVILY_CAP = 1000
 
 /** Reserve a Tavily call before sending it. A failed or interrupted call still spends its reservation. */
 export async function reserveSearch(
@@ -73,13 +74,13 @@ export async function reserveSearch(
                 !/^\d{4}-(0[1-9]|1[0-2])$/.test(row.month) ||
                 !Number.isInteger(row.used) ||
                 row.used < 1 ||
-                row.used > LIMIT,
+                row.used > TAVILY_CAP,
             )
           )
             throw new Error('Invalid Tavily budget state.')
           const month = new Date().toISOString().slice(0, 7)
           const used = rows.find((row) => row.month === month)?.used ?? 0
-          if (used >= LIMIT) {
+          if (used >= TAVILY_CAP) {
             db.exec('COMMIT')
             return null
           }
