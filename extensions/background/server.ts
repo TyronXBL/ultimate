@@ -12,6 +12,7 @@ import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-dura
 import type { ConversationId, PhaseHandler } from '@earendil-works/pi-durable'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import {
   admitRam,
   checkRam,
@@ -31,6 +32,8 @@ import {
   observe,
   PROBATION_MS,
   continueSession,
+  sessionMembers,
+  signalSession,
   stopSession,
 } from '../../lib/cpu.ts'
 import type { Observation } from '../../lib/cpu.ts'
@@ -87,6 +90,8 @@ type Checkpoint =
         queued: number
         observed?: Observation
         forced?: string
+        /** Why the queue ended it, when it did. */
+        notice?: string
         /** How long it was paused, reclaiming a place. */
         pausedMs?: number
       }
@@ -159,6 +164,9 @@ export const jobs: UnderwaySource = {
       delivering: (task.state as { checkpoint?: Checkpoint }).checkpoint?.phase === 'deliver',
     })),
 }
+
+/** How long a command the queue ends gets between TERM and KILL. */
+const KILL_GRACE_MS = 3000
 
 /** Look often at first, then every 15 s: a long run costs few checkpoints. */
 const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10))
@@ -318,7 +326,12 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         const { pid, began, slot } = task.state.checkpoint
         const files = paths(task)
         /** Whether the command's leader is still the process this task started: only then is its session listed. */
-        const ours = (held: typeof slot) => held !== undefined && identify(pid) === held.identity
+        const ours = async (held: typeof slot) =>
+          held !== undefined &&
+          (identify(pid) === held.identity ||
+            // Its leader gone, its session is still its own while any of it lives: a session id is never given to
+            // another session before every process of it has ended (review of #227574).
+            (identify(pid) === undefined && (await sessionMembers(pid)).length > 0))
         /** Resume what this task may have paused: its session, while its committed checkpoint says reclaiming. */
         const resume = async (held: typeof slot) => {
           if (held?.observed?.kind === 'reclaiming') await continueSession(pid)
@@ -352,9 +365,10 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             ...(slot && { queued: Math.round(slot.queued / 1000) }),
             tail: await tail(files.log),
             log: files.log,
-            ...((note || slot?.forced || slot?.pausedMs) && {
+            ...((note || slot?.forced || slot?.pausedMs || slot?.notice) && {
               note: [
                 slot?.forced,
+                slot?.notice,
                 slot?.pausedMs &&
                   `It was paused ${Math.round(slot.pausedMs / 1000)} s: it gave its place in the heavy-work queue back while idle, and when it was busy again every place was taken.`,
                 note,
@@ -396,8 +410,15 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
           // stopped session is always one whose committed checkpoint says reclaiming, whatever crashes in between.
           const committed = slot?.observed?.kind === 'reclaiming'
           const recording = observed?.kind === 'reclaiming' && !committed
+          let notice = slot?.notice
           if (observed?.kind === 'reclaiming') {
-            if (committed && ours(slot)) await stopSession(pid)
+            if (committed && (await ours(slot)) && !(await stopSession(pid))) {
+              // It starts processes faster than it can be paused: it must not run beside a full queue, so it ends.
+              notice = `Stopped by the heavy-work queue: it was busy again without a place while every place was taken, and it started processes faster than it could be paused, so every process it started got TERM, then KILL after ${KILL_GRACE_MS / 1000} s.`
+              await signalSession(pid, 'SIGTERM')
+              await sleep(KILL_GRACE_MS)
+              await signalSession(pid, 'SIGKILL')
+            }
           } else await resume(slot)
           const pausedMs =
             (slot?.pausedMs ?? 0) +
@@ -423,7 +444,12 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
               pid,
               began,
               ...(slot && {
-                slot: { ...slot, ...(observed && { observed }), ...(pausedMs && { pausedMs }) },
+                slot: {
+                  ...slot,
+                  ...(observed && { observed }),
+                  ...(pausedMs && { pausedMs }),
+                  ...(notice && { notice }),
+                },
               }),
             },
           }

@@ -11,6 +11,7 @@
  */
 import { readdir, readFile } from 'node:fs/promises'
 import { availableParallelism, loadavg } from 'node:os'
+import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readSettings, userSettingsPath } from './settings.ts'
 
@@ -256,7 +257,7 @@ export const holdsSlot = (observation: Observation) =>
 
 /** Linux's clock tick, `getconf CLK_TCK`: 100 on every architecture Node runs on there. */
 const TICK_MS = 10
-type Stat = { pid: number; sid: number; state: string; ticks: number }
+type Stat = { pid: number; pgid: number; sid: number; state: string; ticks: number }
 /**
  * Every process's session and CPU time (its own and its reaped children's, in ticks); empty where there is no /proc.
  * By session, not process group: `timeout`, which agents wrap long commands in, moves its command into a group of its
@@ -278,6 +279,7 @@ async function stats() {
             const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
             return {
               pid: Number(name),
+              pgid: Number(fields[2]),
               sid: Number(fields[3]),
               state: fields[0],
               ticks: fields.slice(11, 15).reduce((sum, field) => sum + Number(field), 0),
@@ -318,18 +320,34 @@ function send(pid: number, signal: NodeJS.Signals) {
 }
 
 /**
- * Stop every process of session `sid` (verified the caller's own), in passes until none runs: a stopped process
- * starts no other, and a pass catches what started during the one before, so a job that keeps starting processes
- * cannot outrun it (review of #227574). Whether every member is stopped after at most `passes` passes.
+ * Stop every process of session `sid` (verified the caller's own), in passes until none runs: each running member and
+ * its whole process group (a group signal also reaches a child it is starting), then looks again. Stopped means two
+ * looks in a row, `STOP_SETTLE_MS` apart, found the same members and all of them stopped: a process that started one
+ * and ended between a look's listing and its read leaves that child to be found by the next look, which then differs
+ * (review of #227574). False when it did not get there in `passes` passes: the caller must not let the job run on.
  */
 export async function stopSession(sid: number, passes = 50) {
+  let previous: string | undefined
+  let stable = 0
   for (let pass = 0; pass < passes; pass++) {
-    const running = (await stats()).filter((stat) => stat.sid === sid && !held.has(stat.state))
-    if (!running.length) return true
+    const members = (await stats()).filter((stat) => stat.sid === sid)
+    const running = members.filter((stat) => !held.has(stat.state))
+    // Groups never span sessions, so a member's group is the session's own.
+    for (const pgid of new Set(running.map((stat) => stat.pgid))) send(-pgid, 'SIGSTOP')
     for (const { pid } of running) send(pid, 'SIGSTOP')
+    const seen = members
+      .map((stat) => stat.pid)
+      .toSorted((a, b) => a - b)
+      .join(',')
+    stable = !running.length && seen === previous ? stable + 1 : 0
+    if (stable >= 2) return true
+    previous = seen
+    await sleep(STOP_SETTLE_MS)
   }
   return false
 }
+/** Between two looks of `stopSession`: longer than a look itself takes (about 16 ms for 250 processes). */
+const STOP_SETTLE_MS = 20
 /** States in which a process runs no more: stopped (`T`), stopped by a tracer (`t`), dead (`X`, `Z`). */
 const held = new Set(['T', 't', 'X', 'Z'])
 
