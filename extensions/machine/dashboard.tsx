@@ -17,7 +17,7 @@ import type {
 } from './refs.ts'
 
 /** 512 MB, 3.4 GB. */
-export const mem = (mib: number) =>
+const mem = (mib: number) =>
   mib >= 1024 ? `${(mib / 1024).toFixed(1)} GB` : `${Math.round(mib)} MB`
 const cores = (n: number) => (n >= 10 ? n.toFixed(0) : n.toFixed(1))
 
@@ -32,7 +32,7 @@ const head =
   'flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2 font-mono text-[11px] text-muted-foreground'
 
 /** Worst first: below the floor stops jobs, outside work is what nobody sees. */
-const severity: Record<Pressure['kind'], number> = { ram: 0, outside: 1, load: 2, swap: 3, temp: 4 }
+const severity: Record<Pressure['kind'], number> = { ram: 0, outside: 1, load: 2, temp: 3 }
 
 /** A pressure in words, and whether it is past a limit (red) rather than near one (amber). */
 export function describePressure(pressure: Pressure): { text: string; error: boolean } {
@@ -50,11 +50,6 @@ export function describePressure(pressure: Pressure): { text: string; error: boo
     case 'load':
       return {
         text: `Load ${pressure.load.toFixed(1)} on ${pressure.cores} cores`,
-        error: false,
-      }
-    case 'swap':
-      return {
-        text: `Swap ${mem(pressure.usedMiB)} of ${mem(pressure.totalMiB)} used`,
         error: false,
       }
     default:
@@ -118,13 +113,13 @@ function Status({ state, latest }: { state: MachineState; latest?: Sample }) {
       </div>
       {found.length > 0 && (
         <ul className="flex flex-col gap-0.5 text-[13px]">
-          {found.map((pressure, index) => {
+          {found.map((pressure) => {
             const { text, error } = describePressure(pressure)
             return (
               <li
                 className={cn('flex items-baseline gap-2', error ? 'text-error' : 'text-warning')}
                 data-pressure={pressure.kind}
-                key={index}
+                key={pressure.kind === 'temp' ? `temp:${pressure.name}` : pressure.kind}
               >
                 <span
                   className={cn(

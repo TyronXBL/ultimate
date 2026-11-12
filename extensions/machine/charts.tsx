@@ -56,7 +56,7 @@ function bandPath(
 /** One series: a line, or a band stacked on the series before it. */
 export type Series = {
   value: (sample: Sample) => number
-  /** A theme text colour (`text-warning`), drawn with `currentColor`. */
+  /** A theme text colour (`text-warning`), drawn with `currentColor`; unique within its chart. */
   className: string
   /** Fill the area under it (stacked on the series before it when `stacked`). */
   fill?: boolean
@@ -127,7 +127,7 @@ export function Chart({
           y2={H}
         />
         {series.map((item, index) => (
-          <g className={item.className} key={index}>
+          <g className={item.className} key={item.className}>
             {item.fill && (
               <path
                 d={bandPath(samples, bands[index].low, bands[index].high, frame)}

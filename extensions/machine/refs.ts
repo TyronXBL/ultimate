@@ -105,11 +105,14 @@ export type Sample = {
   waiting: number
 }
 
-/** Something that needs attention, for the status-line chip and the dashboard's header. */
+/**
+ * Something that needs attention, for the status-line chip and the dashboard's header. Swap is no pressure of its own:
+ * a small swap sits nearly full for days on a healthy machine; the RAM and load it comes with are.
+ */
 export type Pressure =
   | { kind: 'ram'; availableMiB: number; floorMiB: number; below: boolean }
+  /** The one-minute load is at least one and a half times the cores: more than one heavy job's worth. */
   | { kind: 'load'; load: number; cores: number }
-  | { kind: 'swap'; usedMiB: number; totalMiB: number }
   | { kind: 'temp'; name: string; usedMiB: number; sizeMiB: number }
   /** Work outside the queue uses more than a core. */
   | { kind: 'outside'; cores: number }
@@ -126,7 +129,7 @@ export type MachineState = {
   /** Samples after `since` (the last hour without it), oldest first. History lives in the host's memory only. */
   samples: Sample[]
   queue: QueueJob[]
-  /** By CPU, then memory; the largest few. `more` counts the rest. */
+  /** By CPU, then memory: the largest few, and every preview and browser. `more` counts the rest. */
   owners: Owner[]
   more: { owners: number; cpu: number; rssMiB: number }
   temp: TempUse[]

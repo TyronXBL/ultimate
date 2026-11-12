@@ -51,7 +51,6 @@ function lookNow(host: ExtensionHost, shared: Shared) {
   shared.looking ??= look(shared.memory, {
     userHome: host.userHome,
     projectRoot: host.projectRoot,
-    projects: () => host.projects(),
   })
     .then(({ sample, state }) => {
       shared.samples = retain(shared.samples, sample)

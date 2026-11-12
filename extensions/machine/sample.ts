@@ -7,10 +7,10 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { readFile, readlink, statfs } from 'node:fs/promises'
 import { availableParallelism, loadavg, tmpdir } from 'node:os'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import { checkRam, commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
 import { peekSlot, queueTmpdir } from '../../lib/slot.ts'
-import { cpuByKind, owners } from './owners.ts'
+import { cpuByKind, homeOf, owners } from './owners.ts'
 import type { OwnerContext, Proc, Top } from './owners.ts'
 import { END_OF_LINE, fromOf, holdersOf, queueView } from './queue.ts'
 import type { Turn } from './queue.ts'
@@ -21,13 +21,14 @@ export type Memory = {
   at: number
   ticks: Map<string, number>
   tops: Map<string, Top>
-  projects: { at: number; context: Omit<OwnerContext, 'jobs'> }
+  /** Project homes' names (`homeOf`), read once each. */
+  homes: Map<string, string>
 }
 export const emptyMemory = (): Memory => ({
   at: 0,
   ticks: new Map(),
   tops: new Map(),
-  projects: { at: 0, context: { supervisors: new Map(), homes: new Map(), roots: new Map() } },
+  homes: new Map(),
 })
 
 /** `getconf`'s answer, read once: clock ticks per second and the page size, 100 and 4096 on most Linux machines. */
@@ -144,8 +145,6 @@ function pressureOf(state: {
   cores: number
   availableMiB: number
   floorMiB?: number
-  swapUsedMiB: number
-  swapTotalMiB: number
   temp: TempUse[]
   outside: number
 }): Pressure[] {
@@ -154,9 +153,9 @@ function pressureOf(state: {
   // Within 1 GiB of the floor, as the memory extension's chip.
   if (floorMiB !== undefined && availableMiB < floorMiB + 1024)
     found.push({ kind: 'ram', availableMiB, floorMiB, below: availableMiB < floorMiB })
-  if (state.load >= state.cores) found.push({ kind: 'load', load: state.load, cores: state.cores })
-  if (state.swapTotalMiB > 0 && state.swapUsedMiB >= state.swapTotalMiB * 0.8)
-    found.push({ kind: 'swap', usedMiB: state.swapUsedMiB, totalMiB: state.swapTotalMiB })
+  // A heavy job alone keeps the load near the cores; well above, more runs than the machine has.
+  if (state.load >= state.cores * 1.5)
+    found.push({ kind: 'load', load: state.load, cores: state.cores })
   for (const use of state.temp)
     if (use.usedMiB >= use.sizeMiB * 0.9)
       found.push({ kind: 'temp', name: use.name, usedMiB: use.usedMiB, sizeMiB: use.sizeMiB })
@@ -164,19 +163,26 @@ function pressureOf(state: {
   return found
 }
 
-/** The projects on this machine, read again every minute: running hosts, homes and checkouts by name. */
-async function projectsOf(
-  list: () => Promise<{ root?: string; name: string; home: string; running?: { pid: number } }[]>,
-): Promise<Omit<OwnerContext, 'jobs'>> {
-  const context = { supervisors: new Map(), homes: new Map(), roots: new Map() }
-  for (const project of await list()) {
+/**
+ * The name of each project home a process runs in, from its `project.json`, read once per home. Found from the
+ * processes, not this host's project list: a preview has a list of its own and still sees the whole machine.
+ */
+async function namesOf(tops: Iterable<Top>, homes: Map<string, string>) {
+  for (const top of tops) {
+    const home = top.cwd && homeOf(top.cwd)?.home
+    if (!home || homes.has(home)) continue
+    const root = await readFile(join(home, 'project.json'), 'utf8').then(
+      (text) => (JSON.parse(text) as { root?: unknown }).root,
+      // No readable manifest: the home's folder name stands in.
+      () => undefined,
+    )
     // The queue names a project by its checkout's folder: `#12 in my-app`.
-    const name = project.root ? basename(project.root) : project.name
-    context.homes.set(project.home, name)
-    if (project.root) context.roots.set(project.root, name)
-    if (project.running) context.supervisors.set(project.running.pid, name)
+    homes.set(
+      home,
+      typeof root === 'string' ? basename(root) : basename(home).replace(/-[0-9a-f]{8}$/, ''),
+    )
   }
-  return context
+  return homes
 }
 
 /** How many owners the state lists; the rest add up in `more`. */
@@ -185,11 +191,9 @@ const LISTED = 12
 /** Look at the machine once; `memory` carries the counters to the next look. */
 export async function look(
   memory: Memory,
-  host: { userHome: string; projectRoot: string; projects: Parameters<typeof projectsOf>[0] },
+  host: { userHome: string; projectRoot: string },
 ): Promise<{ sample: Sample; state: Omit<MachineState, 'samples' | 'now'> }> {
   const now = Date.now()
-  if (now - memory.projects.at > 60_000)
-    memory.projects = { at: now, context: await projectsOf(host.projects) }
   const turn: Turn = await peekSlot(END_OF_LINE)
   const holders = holdersOf(turn)
   const [raw, mem, places, floorMiB, units] = await Promise.all([
@@ -237,7 +241,8 @@ export async function look(
   const jobs: OwnerContext['jobs'] = new Map(
     holders.map((job) => [job.holder.pid, { job: job.id, label: job.label, ...fromOf(job.from) }]),
   )
-  const all = owners(procs, tops, { ...memory.projects.context, jobs })
+  const homes = await namesOf(tops.values(), memory.homes)
+  const all = owners(procs, tops, { homes, jobs })
   const cores = availableParallelism()
   const load = Math.round(loadavg()[0] * 100) / 100
   const first = turn.ahead?.[0]
@@ -257,7 +262,11 @@ export async function look(
     ),
   })
   const cpu = cpuByKind(all)
-  const rest = all.slice(LISTED)
+  // Previews and browsers hold memory jobs wait for: they are listed however idle.
+  const listed = all.filter(
+    (owner, index) => index < LISTED || owner.kind === 'preview' || owner.kind === 'browser',
+  )
+  const rest = all.filter((owner) => !listed.includes(owner))
   return {
     sample: {
       at: now,
@@ -275,7 +284,7 @@ export async function look(
       swapTotalMiB: mem.swapTotalMiB,
       ...(floorMiB !== undefined && { floorMiB }),
       queue,
-      owners: all.slice(0, LISTED),
+      owners: listed,
       more: {
         owners: rest.length,
         cpu: Math.round(rest.reduce((sum, owner) => sum + owner.cpu, 0) * 100) / 100,
@@ -287,8 +296,6 @@ export async function look(
         cores,
         availableMiB: mem.availableMiB,
         ...(floorMiB !== undefined && { floorMiB }),
-        swapUsedMiB: mem.swapUsedMiB,
-        swapTotalMiB: mem.swapTotalMiB,
         temp: places,
         outside: (cpu.work ?? 0) + (cpu.automation ?? 0),
       }),

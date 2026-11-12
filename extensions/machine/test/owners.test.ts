@@ -4,17 +4,9 @@ import type { OwnerContext, Proc, Top } from '../owners.ts'
 
 const home = '/home/me/.ultimate/projects'
 const context: OwnerContext = {
-  supervisors: new Map([
-    [100, 'my-app'],
-    [200, 'notes'],
-  ]),
   homes: new Map([
-    [`${home}/my-app-1a2b`, 'my-app'],
-    [`${home}/notes-3c4d`, 'notes'],
-  ]),
-  roots: new Map([
-    ['/srv/my-app', 'my-app'],
-    ['/srv/notes', 'notes'],
+    [`${home}/my-app-1a2b3c4d`, 'my-app'],
+    [`${home}/notes-3c4d5e6f`, 'notes'],
   ]),
   jobs: new Map([[300, { job: 'my-app:background:7', label: 'pnpm check', conversation: 12 }]]),
 }
@@ -74,13 +66,13 @@ describe('owners', () => {
     [1, top('/', '/sbin/init')],
     [100, top('/srv/my-app', '/usr/bin/node', '/opt/ultimate/bin/ultimate.ts')],
     [200, top('/srv/notes', '/usr/bin/node', '/opt/ultimate/bin/ultimate.ts', '/srv/notes')],
-    [300, top(`${home}/my-app-1a2b/worktrees/12`, '/bin/bash', '-c', 'pnpm check')],
-    [301, top(`${home}/my-app-1a2b/worktrees/12`, 'node', 'tsc')],
-    [400, top(`${home}/my-app-1a2b/worktrees/14`, '/bin/bash', '-c', 'bash slice.sh')],
-    [500, top(`${home}/notes-3c4d/worktrees/22`, '/usr/bin/node', 'audit.mjs', '--key=abc123')],
-    [501, top(`${home}/notes-3c4d/worktrees/22`, '/usr/lib/chromium/chromium')],
-    [600, top(`${home}/my-app-1a2b/worktrees/15`, '/usr/bin/node', 'server/main.ts')],
-    [601, top(`${home}/my-app-1a2b/worktrees/15`, '/usr/lib/chromium/chromium')],
+    [300, top(`${home}/my-app-1a2b3c4d/worktrees/12`, '/bin/bash', '-c', 'pnpm check')],
+    [301, top(`${home}/my-app-1a2b3c4d/worktrees/12`, 'node', 'tsc')],
+    [400, top(`${home}/my-app-1a2b3c4d/worktrees/14`, '/bin/bash', '-c', 'bash slice.sh')],
+    [500, top(`${home}/notes-3c4d5e6f/worktrees/22`, '/usr/bin/node', 'audit.mjs', '--key=abc123')],
+    [501, top(`${home}/notes-3c4d5e6f/worktrees/22`, '/usr/lib/chromium/chromium')],
+    [600, top(`${home}/my-app-1a2b3c4d/worktrees/15`, '/usr/bin/node', 'server/main.ts')],
+    [601, top(`${home}/my-app-1a2b3c4d/worktrees/15`, '/usr/lib/chromium/chromium')],
     [700, top('/srv/my-app', '/usr/lib/chromium/chromium', '--headless')],
     [800, top('/home/me', 'node', '/home/me/.ultimate/automations/my-app@main/A8/run')],
     [900, top('/', '/venv/bin/python3', '/venv/bin/searxng-run')],
@@ -141,7 +133,7 @@ describe('owners', () => {
         kind: 'host',
         project: 'my-app',
         conversation: undefined,
-        label: 'Ultimate',
+        label: 'server',
         cpu: 0.2,
         rssMiB: 650,
         processes: 3,
@@ -150,7 +142,7 @@ describe('owners', () => {
         kind: 'host',
         project: 'notes',
         conversation: undefined,
-        label: 'Ultimate',
+        label: 'server',
         cpu: 0.1,
         rssMiB: 490,
         processes: 2,

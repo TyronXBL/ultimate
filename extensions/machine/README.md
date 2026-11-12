@@ -3,8 +3,9 @@ Shows the machine: the heavy-work queue (what runs, what waits and why), CPU loa
 ## Where
 
 The **Machine** tab of the System surface (⌘K "Open Machine"), and a status-line chip that shows the queue's length,
-turns amber when something needs attention (RAM near the floor, load at or above the cores, swap or a temp folder
-nearly full, work outside the queue using more than a core) and opens the tab.
+turns amber when something needs attention (RAM within 1 GiB of the floor, load at 1.5 times the cores or more, a temp
+folder 90 % full, work outside the queue using more than a core) and opens the tab. A nearly full swap alone is no
+alarm: a small swap stays full for days on a healthy machine.
 
 ## What it reads
 
