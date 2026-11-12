@@ -35,46 +35,59 @@ type Who = Omit<Owner, 'cpu' | 'rssMiB' | 'processes' | 'since' | 'key'>
 
 const shells = /^(bash|sh|dash|zsh)$/
 const interpreters = /^(node|python3?|bash|sh|dash|zsh)$/
-/** Programs that run the program named after their options: `nice -n 15 …`, `timeout 30 …`, `env -i …`. */
-const wrappers = /^(env|exec|nice|nohup|setsid|timeout)$/
+/** Programs that run the program named after their options: `nice -n 15 …`, `timeout 30 …`, `nohup …`. */
+const wrappers = /^(exec|nice|nohup|setsid|timeout)$/
 /** Interpreter options whose value is a file, not code. */
 const fileOptions = /^(-r|--require|--import|--loader)$/
+/** Node's long options that take no value as the next word; `--option=value` carries its value along. */
+const valueless =
+  /^--((experimental|no|enable|disable|trace|expose|frozen|preserve)-[\w-]+|inspect|watch)$/
 
 /**
  * A short name for what `argv` runs, never an argument's value: the program, or for an interpreter the script file it
- * runs (`pnpm`, `vitest`, `chromium`), as a basename. Any other word may be a value (`client.js password`, `node -e …`,
- * `bash -lc '…'`): an interpreter with an option it does not know as harmless, or with no script file, is named itself.
+ * runs (`pnpm`, `vitest`, `chromium`), as a basename. It skips only words it knows the meaning of (assignments,
+ * redirections, a wrapper's priority or timeout, an interpreter's file and valueless options); at any other word that
+ * could be a value (`node -e …`, `env -u NAME`, `bash -o …`) the program found so far names it. Review of #231847.
  */
 export function programOf(argv: string[], name: string): string {
   let words = argv
-  /** The shell whose command line `words` was split from. */
-  let shell: string | undefined
+  /** The program that runs the rest: what names it when the rest cannot be read safely. */
+  let known = name
   for (;;) {
-    // A command line may set variables and redirect output before its program (`TOKEN=… pnpm test`, `exec >>log`).
-    const start = words.findIndex((word) => !/^([A-Za-z_]\w*=|\d*[<>]|&>)/.test(word))
-    if (start < 0) return shell ?? name
+    // A command line may set variables and redirect output before its program (`TOKEN=… pnpm test`, `exec >>log`); a
+    // bare redirection operator takes the next word as its target.
+    let start = 0
+    while (start < words.length && /^([A-Za-z_]\w*=|\d*[<>]|&>)/.test(words[start]))
+      start += /^(\d*[<>]+|&>>?)$/.test(words[start]) ? 2 : 1
+    if (start >= words.length) return known
     const program = basename(words[start])
     const rest = words.slice(start + 1)
     let next = 0
     if (wrappers.test(program)) {
-      while (next < rest.length && /^(-|\d)/.test(rest[next])) next += rest[next] === '-n' ? 2 : 1
+      while (next < rest.length && (rest[next] === '-n' || /^\d+(\.\d+)?[smhd]?$/.test(rest[next])))
+        next += rest[next] === '-n' ? 2 : 1
+      if (rest[next]?.startsWith('-')) return program
+      known = program
       words = rest.slice(next)
       continue
     }
-    if (!interpreters.test(program)) return program || name
+    if (!interpreters.test(program)) return program || known
     let line: string | undefined
     while (line === undefined && next < rest.length && rest[next].startsWith('-')) {
       const option = rest[next]
       // A shell's `-c` (or `-lc`) runs a command line: what it runs is that line's program, after a `cd … &&`.
-      if (shells.test(program) && /^-[a-z]*c[a-z]*$/.test(option)) line = rest[next + 1] ?? ''
+      if (shells.test(program) && /^-[a-np-z]*c[a-np-z]*$/.test(option)) line = rest[next + 1] ?? ''
       else if (fileOptions.test(option)) next += 2
-      else if (/^--[a-z][\w-]*$/.test(option) && !/^--(eval|print)$/.test(option)) next++
-      else if (shells.test(program) && /^-[a-z]+$/.test(option)) next++
-      // Anything else may carry code or a value (`-e`, `--eval=…`, `-m`).
+      else if (valueless.test(option) || /^--[a-z][\w-]*=/.test(option)) {
+        // `--eval=…` and `--print=…` carry code.
+        if (/^--(eval|print)=/.test(option)) return program
+        next++
+      } else if (shells.test(program) && /^-[a-np-z]+$/.test(option)) next++
+      // Anything else may carry code or take a value (`-e`, `-m`, `--conditions x`, `bash -o x`).
       else return program
     }
     if (line !== undefined) {
-      shell = program
+      known = program
       // Split on whitespace only up to the first quote, escape or expansion: past it a word may be part of a quoted value
       // (`TOKEN="a b" curl`, `--require "a b.js"`, review of #231847).
       const quoted = line.search(/['"`\\$]/)

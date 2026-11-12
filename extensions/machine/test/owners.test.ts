@@ -213,6 +213,11 @@ describe('owners', () => {
     [['sh', '-c', 'TOKEN="hello hunter2" curl https://example.com'], 'sh'],
     [['sh', '-c', 'node --require "hello hunter2.js secret" script.js'], 'node'],
     [['sh', '-c', "cd 'x && hunter2' ; node script.js"], 'cd'],
+    [['env', '-u', 'hunter2', 'node', 'script.js'], 'env'],
+    [['node', '--conditions', 'hunter2.js', 'script.js'], 'node'],
+    [['sh', '-c', '> hunter2 echo hello'], 'echo'],
+    [['bash', '-o', 'hunter2.sh'], 'bash'],
+    [['sh', '-c', 'nice -n 15 node scripts/mutate.ts --changed'], 'mutate.ts'],
     [['nice', '-n', '15', 'python3', '-c', 'hunter2'], 'python3'],
     [['node', '--require', '/x/preflight.cjs', '/x/vitest.mjs', 'run'], 'vitest'],
   ])('names %j by its program only: %s', (argv, label) => {
