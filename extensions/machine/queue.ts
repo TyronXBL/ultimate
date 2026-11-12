@@ -1,35 +1,18 @@
 /**
- * The heavy-work queue as the dashboard shows it: the jobs that hold the slot, then the line in order, each waiter with
- * why it waits. It reads `lib/slot.ts`'s own derivation (`slotTurn`, through `peekSlot`) for a claim at the very end of
- * the line, which lists every holder and every waiter ahead of it.
+ * The heavy-work queue as the dashboard shows it: the jobs that hold a place, then the line in order, each waiter with
+ * why it waits. It reads the queue through `lib/slot.ts`'s own reader (`readSlot`), the line's order and the reasons
+ * through the admission's own derivations (`peekGate`, `checkRam`), never the file.
  */
+import type { CpuGate } from '../../lib/cpu.ts'
 import type { RamShort } from '../../lib/memory.ts'
+import type { SlotEntry, SlotQueue } from '../../lib/slot.ts'
 import type { QueueJob, WaitReason } from './refs.ts'
 
-type Claim = { id: string; at: number; label: string; from: string }
-type Held = Claim & { state: string; since: number; until?: number; holder: { pid: number } }
-/**
- * `peekSlot`'s answer, wide enough for both shapes of `lib/slot.ts`: today one `running` job holds the slot; with
- * #227574 `holders` lists every job that holds it, running or `measuring` (an unknown command on probation). Reading
- * both keeps this view working across that landing; drop `running` once it has landed.
- */
-export type Turn = {
-  kind: string
-  running?: Held
-  holders?: Held[]
-  ahead?: Claim[]
-  until?: number
-}
-
-/** The claim whose turn lists the whole queue: it asked last of all, so every waiter is ahead of it. */
-export const END_OF_LINE = {
-  id: 'machine:end-of-line',
-  at: Number.MAX_SAFE_INTEGER,
-  kind: 'heavy' as const,
-}
-
-/** The jobs that hold the slot, either shape. */
-export const holdersOf = (turn: Turn) => turn.holders ?? (turn.running ? [turn.running] : [])
+type Holding = Extract<SlotEntry, { state: 'running' | 'measuring' }>
+const holding = (entry: SlotEntry): entry is Holding => entry.state !== 'waiting'
+/** The line's order, as `lib/slot.ts` keeps it: who asked first, then by id. */
+const order = (a: SlotEntry, b: SlotEntry) =>
+  a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
 /** "#202077 in ultimate", "the landing of #12 in my-app" → its project and conversation. */
 export function fromOf(from: string) {
@@ -37,20 +20,62 @@ export function fromOf(from: string) {
   return found ? { conversation: Number(found[1]), project: found[2] } : {}
 }
 
-/** Why the first waiter, with nothing holding the slot, has not started: each as its admission decides it. */
+/** The jobs that hold a place, running or on probation. */
+export const holdersOf = (queue: SlotQueue) => queue.entries.filter(holding)
+
+/** What the first waiter meets when a place is free, each from its admission. */
 export type QueueFacts = {
-  /** Its own turn is settling (the queue's file was removed) until then: `peekSlot` for its claim. */
-  settling?: number
-  /** What RAM it falls short by, per `lib/memory.ts`'s admission (`checkRam`), if it does. */
+  now: number
+  /** How many heavy jobs run at once (`heavyWork.maxJobs`). */
+  places: number
+  /** The load gate it would meet (`peekGate`). */
+  gate?: CpuGate
+  /** What memory it falls short by, under the floor or the service's cap (`checkRam`). */
   short?: RamShort
   /** CPU and memory of a holder's processes, by its job id. */
   usage: Map<string, { cpu: number; rssMiB: number }>
 }
 
+/** Why the first waiter has not started: the queue settling, every place taken, then CPU and memory admission. */
+function headReason(queue: SlotQueue, held: number, facts: QueueFacts): WaitReason {
+  if (queue.settleUntil !== undefined && queue.settleUntil > facts.now)
+    return { kind: 'settling', until: queue.settleUntil }
+  if (held >= facts.places) return { kind: 'full', running: held, places: facts.places }
+  if (facts.gate?.kind === 'wait') {
+    const { load, cores, pressure, below } = facts.gate
+    return {
+      kind: 'cpu',
+      load,
+      cores,
+      pressure,
+      belowLoad: below.load,
+      ...(below.pressure !== undefined && { belowPressure: below.pressure }),
+    }
+  }
+  const short = facts.short
+  if (short?.kind === 'floor')
+    return {
+      kind: 'ram',
+      availableMiB: short.available,
+      needMiB: short.need,
+      floorMiB: short.floor,
+      ...(short.reserved && { reservedMiB: short.reserved }),
+    }
+  if (short?.kind === 'cap')
+    return {
+      kind: 'cap',
+      usedMiB: short.used,
+      highMiB: short.high,
+      needMiB: short.need,
+      ...(short.reserved && { reservedMiB: short.reserved }),
+    }
+  return { kind: 'next' }
+}
+
 /** The queue, holders first, then the waiters in order with their reasons. */
-export function queueView(turn: Turn, facts: QueueFacts): QueueJob[] {
-  const holders = holdersOf(turn)
-  const ahead = turn.ahead ?? []
+export function queueView(queue: SlotQueue, facts: QueueFacts): QueueJob[] {
+  const holders = holdersOf(queue).toSorted(order)
+  const waiters = queue.entries.filter((entry) => entry.state === 'waiting').toSorted(order)
   const held: QueueJob[] = holders.map((job) => {
     const usage = facts.usage.get(job.id)
     return {
@@ -59,27 +84,18 @@ export function queueView(turn: Turn, facts: QueueFacts): QueueJob[] {
       from: job.from,
       ...fromOf(job.from),
       at: job.at,
-      state: job.state === 'measuring' ? 'measuring' : 'running',
-      since: job.since,
-      ...(job.until !== undefined && { until: job.until }),
+      ...(job.state === 'measuring'
+        ? { state: 'measuring', since: job.since, until: job.until }
+        : // An unknown command that runs was measured heavy: it holds its place like a known one.
+          {
+            state: 'running',
+            since: job.since,
+            ...(job.kind === 'unknown' && { observed: true }),
+          }),
       ...(usage && { cpu: usage.cpu, rssMiB: usage.rssMiB }),
     }
   })
-  const reasonAt = (index: number): WaitReason => {
-    const before = index > 0 ? ahead[index - 1] : holders.at(-1)
-    if (before) return { kind: 'behind', label: before.label, from: before.from }
-    if (facts.settling !== undefined) return { kind: 'settling', until: facts.settling }
-    if (facts.short)
-      return {
-        kind: 'ram',
-        availableMiB: facts.short.available,
-        needMiB: facts.short.need,
-        floorMiB: facts.short.floor,
-        ...(facts.short.reserved && { reservedMiB: facts.short.reserved }),
-      }
-    return { kind: 'next' }
-  }
-  const waiting: QueueJob[] = ahead.map((job, index) => ({
+  const waiting: QueueJob[] = waiters.map((job, index) => ({
     id: job.id,
     label: job.label,
     from: job.from,
@@ -87,7 +103,10 @@ export function queueView(turn: Turn, facts: QueueFacts): QueueJob[] {
     at: job.at,
     state: 'waiting',
     position: index + 1,
-    reason: reasonAt(index),
+    reason:
+      index > 0
+        ? { kind: 'behind', label: waiters[index - 1].label, from: waiters[index - 1].from }
+        : headReason(queue, holders.length, facts),
   }))
   return [...held, ...waiting]
 }

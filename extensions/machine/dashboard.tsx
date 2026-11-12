@@ -51,8 +51,8 @@ export function describePressure(pressure: Pressure): { text: string; error: boo
       }
     case 'cgroup':
       return {
-        text: `${pressure.name} at its memory cap: ${mem(pressure.currentMiB)}${pressure.highMiB === undefined ? '' : ` of ${mem(pressure.highMiB)}`}, stalled ${Math.round(pressure.stall)} % of the time`,
-        error: pressure.highMiB !== undefined && pressure.currentMiB >= pressure.highMiB,
+        text: `Ultimate's service at its memory cap: ${mem(pressure.usedMiB)} of ${mem(pressure.highMiB)}, stalled ${Math.round(pressure.stall)} % of the time`,
+        error: pressure.usedMiB >= pressure.highMiB,
       }
     case 'stall':
       return {
@@ -162,9 +162,24 @@ function reasonOf(reason: WaitReason, now: number): { text: string; held: boolea
   switch (reason.kind) {
     case 'behind':
       return undefined
+    case 'full':
+      return {
+        text: `waits for a place: ${reason.running} of ${reason.places} heavy jobs running`,
+        held: false,
+      }
+    case 'cpu':
+      return {
+        text: `waiting for CPU: load ${reason.load.toFixed(1)} on ${reason.cores} cores, pressure ${Math.round(reason.pressure)} %; starts below load ${reason.belowLoad.toFixed(1)}${reason.belowPressure === undefined ? '' : ` and ${reason.belowPressure} %`}`,
+        held: true,
+      }
     case 'ram':
       return {
-        text: `RAM short: ${mem(reason.availableMiB)} free${reason.reservedMiB ? ` (${mem(reason.reservedMiB)} reserved by jobs just started)` : ''}, needs ${reason.needMiB ? `${mem(reason.needMiB)} above` : 'more than'} the ${mem(reason.floorMiB)} floor`,
+        text: `waiting for memory: ${mem(reason.availableMiB)} free${reason.reservedMiB ? ` (${mem(reason.reservedMiB)} reserved by jobs just started)` : ''}, needs ${reason.needMiB ? `${mem(reason.needMiB)} above` : 'more than'} the ${mem(reason.floorMiB)} floor`,
+        held: true,
+      }
+    case 'cap':
+      return {
+        text: `waiting for room under the service's memory cap: ${mem(reason.usedMiB)} of ${mem(reason.highMiB)} in use${reason.reservedMiB ? ` (${mem(reason.reservedMiB)} more reserved)` : ''}, needs ${reason.needMiB ? mem(reason.needMiB) : 'room'}`,
         held: true,
       }
     case 'next':
@@ -185,10 +200,11 @@ function Queue({ state, who }: { state: MachineState; who: ReturnType<typeof use
       <div className={head}>
         <span className="section-label">Queue</span>
         <span className="tabular-nums">
-          {running.length} running · {waiting} waiting
+          {running.length} of {state.places} running · {waiting} waiting
         </span>
         <span className="ml-auto max-md:hidden">
-          heavy work from every project, one turn at a time
+          heavy work from every project,{' '}
+          {state.places === 1 ? 'one at a time' : `up to ${state.places} at once`}
         </span>
       </div>
       {state.queue.length === 0 ? (
@@ -256,9 +272,14 @@ function JobRow({ job, now, who }: { job: QueueJob; now: number; who: ReturnType
           </>
         )}
       </span>
-      {job.state === 'measuring' && job.until !== undefined && (
+      {job.state === 'measuring' && (
         <span className="col-start-2 col-end-4 text-muted-foreground/80">
           on probation: an unknown command, measured until {formatTime(job.until, true)}
+        </span>
+      )}
+      {job.state === 'running' && job.observed && (
+        <span className="col-start-2 col-end-4 text-muted-foreground/80">
+          measured heavy: an unknown command that uses more than a core
         </span>
       )}
       {reason && (
@@ -414,36 +435,24 @@ function Resources({ state, samples }: { state: MachineState; samples: Sample[] 
             ]}
             title="Available RAM"
           />
-          {state.cgroup && (
+          {state.capMiB !== undefined && (
             <Chart
               {...charts}
-              marks={[
-                ...(state.cgroup.highMiB === undefined
-                  ? []
-                  : [{ value: state.cgroup.highMiB, className: 'text-warning/70' }]),
-                ...(state.cgroup.maxMiB === undefined
-                  ? []
-                  : [{ value: state.cgroup.maxMiB, className: 'text-error/70' }]),
-              ]}
+              marks={[{ value: state.capMiB, className: 'text-warning/70' }]}
               max={Math.max(
-                state.cgroup.maxMiB ?? state.cgroup.highMiB ?? 0,
-                ...samples.map((sample) => sample.cgroup?.currentMiB ?? 0),
+                state.capMiB * 1.1,
+                ...samples.map((sample) => sample.cgroup?.usedMiB ?? 0),
               )}
               reading={
                 shown.cgroup ? (
                   <span>
                     <span
-                      className={cn(
-                        state.cgroup.highMiB !== undefined &&
-                          shown.cgroup.currentMiB >= state.cgroup.highMiB - 256 &&
-                          'text-warning',
-                      )}
+                      className={cn(shown.cgroup.usedMiB >= state.capMiB - 256 && 'text-warning')}
                     >
-                      {mem(shown.cgroup.currentMiB)}
+                      {mem(shown.cgroup.usedMiB)}
                     </span>
                     <span className="text-muted-foreground">
-                      {state.cgroup.highMiB !== undefined && ` of ${mem(state.cgroup.highMiB)} cap`}
-                      {' · stall '}
+                      {` of ${mem(state.capMiB)} cap · stall `}
                     </span>
                     <span className={cn(shown.cgroup.stall >= 20 && 'text-warning')}>
                       {Math.round(shown.cgroup.stall)} %
@@ -455,12 +464,12 @@ function Resources({ state, samples }: { state: MachineState; samples: Sample[] 
               }
               series={[
                 {
-                  value: (sample) => sample.cgroup?.currentMiB ?? 0,
+                  value: (sample) => sample.cgroup?.usedMiB ?? 0,
                   className: 'text-foreground/70',
                   fill: true,
                 },
               ]}
-              title={state.cgroup.name}
+              title="Service memory"
             />
           )}
           <Chart

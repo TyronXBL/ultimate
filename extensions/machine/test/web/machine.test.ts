@@ -26,6 +26,7 @@ const state: MachineState = {
   totalMiB: 16_384,
   swapTotalMiB: 4096,
   floorMiB: 3072,
+  places: 1,
   samples: [
     {
       at: ago(3),
@@ -60,7 +61,7 @@ const state: MachineState = {
       at: ago(200),
       state: 'waiting',
       position: 1,
-      reason: { kind: 'behind', label: 'pnpm test', from: '#12 in ultimate' },
+      reason: { kind: 'full', running: 1, places: 1 },
     },
     {
       id: 'c',
@@ -71,7 +72,7 @@ const state: MachineState = {
       at: ago(100),
       state: 'waiting',
       position: 2,
-      reason: { kind: 'ram', availableMiB: 3500, needMiB: 2048, floorMiB: 3072 },
+      reason: { kind: 'behind', label: 'pnpm check', from: '#40 in my-app' },
     },
   ],
   owners: [
@@ -125,12 +126,12 @@ it('shows the running job, then the waiters in order with why each waits', () =>
   expect(rows[0]).toContain('Build the Activity feed #12')
   expect(rows[0]).toContain('running 4m 12s')
   expect(rows[0]).toContain('1.0 cores · 900 MB')
-  // Behind the job above it, said on hover rather than repeated under it.
-  expect(rows[1]).toBe('1 pnpm check #40 in my-app waiting 3m 20s')
-  expect(queue[1].marked).toContain('behind pnpm test (#12 in ultimate)')
-  expect(rows[2]).toMatch(
-    /^2 vitest run Build the Activity feed #12 waiting 1m 40s RAM short: 3\.4 GB free, needs 2\.0 GB above the 3\.0 GB floor$/,
+  expect(rows[1]).toBe(
+    '1 pnpm check #40 in my-app waiting 3m 20s waits for a place: 1 of 1 heavy jobs running',
   )
+  // Behind the job above it, said on hover rather than repeated under it.
+  expect(rows[2]).toBe('2 vitest run Build the Activity feed #12 waiting 1m 40s')
+  expect(queue[2].marked).toContain('behind pnpm check (#40 in my-app)')
 })
 
 it('marks work outside the queue that burns cores, and says so in the head', () => {

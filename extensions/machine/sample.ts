@@ -8,12 +8,13 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { readFile, readlink, statfs } from 'node:fs/promises'
 import { availableParallelism, loadavg, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { checkRam, commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
-import { peekSlot, queueTmpdir } from '../../lib/slot.ts'
+import { checkRam, commandNeedMiB } from '../../lib/memory.ts'
+import type { MemoryCap } from '../../lib/memory.ts'
+import { peekGate, queueTmpdir, readSlot, slotLimits } from '../../lib/slot.ts'
+import type { SlotLimits } from '../../lib/slot.ts'
 import { argvOf, cpuByKind, homeOf, owners, programOf } from './owners.ts'
 import type { OwnerContext, Proc, Top } from './owners.ts'
-import { END_OF_LINE, fromOf, holdersOf, queueView } from './queue.ts'
-import type { QueueFacts, Turn } from './queue.ts'
+import { fromOf, holdersOf, queueView } from './queue.ts'
 import type { MachineState, Owner, Pressure, Sample, TempUse } from './refs.ts'
 
 /** What carries over from one look to the next: CPU counters and the tops' command lines, by pid and start time. */
@@ -146,41 +147,6 @@ async function stalls() {
   return { cpu, io, memory }
 }
 
-/**
- * The memory controller of the cgroup this process runs in (v2): what it holds, its caps (unset when unlimited) and how
- * much its tasks stall on memory. Undefined without one.
- */
-async function cgroup() {
-  const path = /^0::(\/.*)$/m.exec(
-    await readFile('/proc/self/cgroup', 'utf8').catch(
-      // Not Linux: no cgroup.
-      () => '',
-    ),
-  )?.[1]
-  if (!path) return undefined
-  const dir = join('/sys/fs/cgroup', path)
-  const bytes = (name: string) =>
-    readFile(join(dir, name), 'utf8').then(
-      (text) => (/^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined),
-      // No memory controller here; `max` (unlimited) reads as no number too.
-      () => undefined,
-    )
-  const [currentMiB, highMiB, maxMiB, stall] = await Promise.all([
-    bytes('memory.current'),
-    bytes('memory.high'),
-    bytes('memory.max'),
-    stalled(join(dir, 'memory.pressure')),
-  ])
-  if (currentMiB === undefined) return undefined
-  return {
-    name: basename(path),
-    currentMiB,
-    stall,
-    ...(highMiB !== undefined && { highMiB }),
-    ...(maxMiB !== undefined && { maxMiB }),
-  }
-}
-
 /** `statfs`'s type of a RAM file system. */
 const TMPFS = 0x01021994
 async function temp(): Promise<TempUse[]> {
@@ -215,21 +181,12 @@ function pressureOf(state: {
   temp: TempUse[]
   outside: number
   stall: Sample['stall']
-  cgroup?: Awaited<ReturnType<typeof cgroup>>
+  cap?: MemoryCap
 }): Pressure[] {
   const found: Pressure[] = []
-  const { floorMiB, availableMiB, cgroup: group } = state
-  if (
-    group &&
-    ((group.highMiB !== undefined && group.currentMiB >= group.highMiB - 256) || group.stall >= 20)
-  )
-    found.push({
-      kind: 'cgroup',
-      name: group.name,
-      currentMiB: group.currentMiB,
-      stall: group.stall,
-      ...(group.highMiB !== undefined && { highMiB: group.highMiB }),
-    })
+  const { floorMiB, availableMiB, cap } = state
+  if (cap && (cap.used >= cap.high - 256 || cap.pressure.some >= 20))
+    found.push({ kind: 'cgroup', usedMiB: cap.used, highMiB: cap.high, stall: cap.pressure.some })
   for (const resource of ['memory', 'io'] as const)
     if (state.stall[resource] >= 20)
       found.push({ kind: 'stall', resource, pct: state.stall[resource] })
@@ -269,21 +226,15 @@ async function namesOf(tops: Iterable<Top>, homes: Map<string, string>) {
 }
 
 /**
- * Why the first waiter has not started while nothing holds the slot, each from its own admission: its own turn (the
- * queue may be settling) and RAM (`checkRam`).
+ * What the first waiter meets while a place is free, each from its own admission: the load gate (`peekGate`) and memory
+ * under the floor and the service's cap (`checkRam`).
  */
-async function headFacts(
-  first: { id: string; at: number; label: string },
-  floorMiB: number | undefined,
-): Promise<Omit<QueueFacts, 'usage'>> {
-  const [own, short] = await Promise.all([
-    peekSlot({ id: first.id, at: first.at }),
-    checkRam(floorMiB, commandNeedMiB(first.label), queueTmpdir()),
+async function headFacts(label: string, limits: SlotLimits) {
+  const [gate, short] = await Promise.all([
+    peekGate(limits),
+    checkRam(limits.floor, commandNeedMiB(label), queueTmpdir()),
   ])
-  return {
-    ...(own.kind === 'settling' && { settling: own.until }),
-    ...(short && { short }),
-  }
+  return { gate, ...(short && { short }) }
 }
 
 /** How many owners the state lists; the rest add up in `more`. */
@@ -295,22 +246,25 @@ export async function look(
   host: { userHome: string; projectRoot: string },
 ): Promise<{ sample: Sample; state: Omit<MachineState, 'samples' | 'now'> }> {
   const now = Date.now()
-  const turn: Turn = await peekSlot(END_OF_LINE)
-  const holders = holdersOf(turn)
-  const [raw, mem, places, floorMiB, units, stall, group] = await Promise.all([
+  const [{ queue: slot, memory: cap }, limits] = await Promise.all([
+    readSlot(),
+    slotLimits(host.userHome),
+  ])
+  const holders = holdersOf(slot)
+  const waiting = slot.entries.filter((entry) => entry.state === 'waiting')
+  const floorMiB = limits.floor
+  const [raw, mem, places, units, stall] = await Promise.all([
     processes().catch(
       // No /proc: not Linux.
       () => [],
     ),
     memInfo(),
     temp(),
-    memoryFloor(host.userHome),
     unitsOf().catch(
       // No /proc: not Linux.
       () => ({ tick: 100 }),
     ),
     stalls(),
-    cgroup(),
   ])
   const seconds = (now - memory.at) / 1000
   const ticks = new Map<string, number>()
@@ -348,9 +302,12 @@ export async function look(
   const all = owners(procs, tops, { homes, jobs })
   const cores = availableParallelism()
   const load = Math.round(loadavg()[0] * 100) / 100
-  const first = turn.ahead?.[0]
-  const head = first && !holders.length ? await headFacts(first, floorMiB) : {}
-  const queue = queueView(turn, {
+  // The first waiter's own reasons, read only while a place is free for it.
+  const first = waiting.toSorted((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))[0]
+  const head = first && holders.length < limits.max ? await headFacts(first.label, limits) : {}
+  const queue = queueView(slot, {
+    now,
+    places: limits.max,
     ...head,
     usage: new Map(
       all
@@ -372,9 +329,9 @@ export async function look(
       availableMiB: mem.availableMiB,
       swapUsedMiB: mem.swapUsedMiB,
       stall,
-      ...(group && { cgroup: { currentMiB: group.currentMiB, stall: group.stall } }),
+      ...(cap && { cgroup: { usedMiB: cap.used, stall: cap.pressure.some } }),
       running: holders.length,
-      waiting: turn.ahead?.length ?? 0,
+      waiting: waiting.length,
     },
     state: {
       project: basename(host.projectRoot),
@@ -382,13 +339,8 @@ export async function look(
       totalMiB: mem.totalMiB,
       swapTotalMiB: mem.swapTotalMiB,
       ...(floorMiB !== undefined && { floorMiB }),
-      ...(group && {
-        cgroup: {
-          name: group.name,
-          ...(group.highMiB !== undefined && { highMiB: group.highMiB }),
-          ...(group.maxMiB !== undefined && { maxMiB: group.maxMiB }),
-        },
-      }),
+      ...(cap && { capMiB: cap.high }),
+      places: limits.max,
       queue,
       owners: listed,
       more: {
@@ -405,7 +357,7 @@ export async function look(
         temp: places,
         outside: (cpu.work ?? 0) + (cpu.automation ?? 0),
         stall,
-        ...(group && { cgroup: group }),
+        ...(cap && { cap }),
       }),
     },
   }

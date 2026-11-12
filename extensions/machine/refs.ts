@@ -48,8 +48,24 @@ export type Owner = {
 export type WaitReason =
   /** Behind the job just ahead of it, running or waiting. */
   | { kind: 'behind'; label: string; from: string }
+  /** First in line, but every place is taken: `running` of `places` heavy jobs run. */
+  | { kind: 'full'; running: number; places: number }
+  /**
+   * First in line, but the load gate holds it (`cpu.maxLoadPerCore`): the one-minute load or CPU pressure (%) is at or
+   * above what it allows.
+   */
+  | {
+      kind: 'cpu'
+      load: number
+      cores: number
+      pressure: number
+      belowLoad: number
+      belowPressure?: number
+    }
   /** First in line, but RAM would drop below the floor. */
   | { kind: 'ram'; availableMiB: number; needMiB: number; floorMiB: number; reservedMiB?: number }
+  /** First in line, but the service's memory would rise above its soft cap. */
+  | { kind: 'cap'; usedMiB: number; highMiB: number; needMiB: number; reservedMiB?: number }
   /** First in line and nothing stops it: it starts at its next look (every 5 s). */
   | { kind: 'next' }
   /** The queue's file was removed: nothing starts until running jobs announce themselves again. */
@@ -67,15 +83,20 @@ export type QueueJob = {
   /** When it asked for the slot. */
   at: number
 } & (
-  | {
-      /** Holding the slot; `measuring` while an unknown command is measured on probation (#227574) until `until`. */
-      state: 'running' | 'measuring'
-      since: number
-      until?: number
+  | ((
+      | {
+          /** Holding a place; `observed` when the queue did not know its command and measured it heavy. */
+          state: 'running'
+          since: number
+          observed?: true
+        }
+      /** An unknown command on probation until `until`: it holds a place while it is measured. */
+      | { state: 'measuring'; since: number; until: number }
+    ) & {
       /** Its process group now, when it is one of its own. */
       cpu?: number
       rssMiB?: number
-    }
+    })
   | { state: 'waiting'; position: number; reason: WaitReason }
 )
 
@@ -103,8 +124,11 @@ export type Sample = {
    * 0 where the kernel does not report it).
    */
   stall: { cpu: number; io: number; memory: number }
-  /** The memory of the cgroup this host runs in (every project's host and what it starts, under systemd). */
-  cgroup?: { currentMiB: number; stall: number }
+  /**
+   * The service this host runs in, when its memory is capped (every project's host and what it starts, under systemd):
+   * its working set as admission counts it (`memoryCap`) and its memory stall share (`some`, %).
+   */
+  cgroup?: { usedMiB: number; stall: number }
   /** Jobs holding the slot, and waiting for it. */
   running: number
   waiting: number
@@ -124,7 +148,7 @@ export type Pressure =
    * re-reads pages of everything in it, whatever free RAM the machine shows (#231847, 2026-11-12: load 30 at the cap
    * with 5 GB available).
    */
-  | { kind: 'cgroup'; name: string; currentMiB: number; highMiB?: number; stall: number }
+  | { kind: 'cgroup'; usedMiB: number; highMiB: number; stall: number }
   /** Tasks machine-wide stalled on memory or IO for at least 20 % of the last 10 s. */
   | { kind: 'stall'; resource: 'memory' | 'io'; pct: number }
   /** Work outside the queue uses more than a core. */
@@ -139,8 +163,10 @@ export type MachineState = {
   swapTotalMiB: number
   /** `memory.minAvailableMiB`; unset while the floor is off. */
   floorMiB?: number
-  /** The cgroup this host runs in, when it limits memory: its soft cap (`memory.high`) and hard cap (`memory.max`). */
-  cgroup?: { name: string; highMiB?: number; maxMiB?: number }
+  /** The soft memory cap (`memory.high`) of the service this host runs in, when there is one. */
+  capMiB?: number
+  /** How many heavy jobs run at once (`heavyWork.maxJobs`). */
+  places: number
   /** Samples after `since` (the last hour without it), oldest first. History lives in the host's memory only. */
   samples: Sample[]
   queue: QueueJob[]
