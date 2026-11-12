@@ -58,6 +58,7 @@ import {
   slotLabel,
 } from '../../lib/slot.ts'
 import type { SlotClaim } from '../../lib/slot.ts'
+import { describeOom, jobScope, readUsage, shellWords } from '../../lib/job-scope.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { liveTasks } from '../../lib/tasks.ts'
 import type { BackgroundResult } from './refs.ts'
@@ -98,10 +99,11 @@ type Checkpoint =
  * and its own syntax errors land in the log. Once it ends, the leader records the exit code and stays alive, so the pid
  * file still proves the group is ours: the task then stops the whole group, leader included, with TERM and KILL after a
  * grace, before it reports. Should no host come within an hour, the leader drains its group itself, the same way and
- * itself last, so nothing the command started outlives its leader.
+ * itself last, so nothing the command started outlives its leader. `scope` (`jobScope`, as shell words) runs the
+ * command in a systemd scope of its own with hard limits; the leader stays outside it.
  */
-const LEADER = `exec >>"$BACKGROUND_LOG" 2>&1
-bash -c "$BACKGROUND_COMMAND"
+const leader = (scope: string) => `exec >>"$BACKGROUND_LOG" 2>&1
+${scope && `${scope} `}bash -c "$BACKGROUND_COMMAND"
 echo $? > "$BACKGROUND_STATUS"
 sleep 3600
 trap '' TERM
@@ -115,7 +117,12 @@ const deliver = (result: BackgroundResult) => ({
 })
 const paths = (task: { id: number; input: Input }) => {
   const base = join(task.input.home, 'background', String(task.id))
-  return { pid: `${base}.pid`, log: `${base}.log`, status: `${base}.status` }
+  return {
+    pid: `${base}.pid`,
+    log: `${base}.log`,
+    status: `${base}.status`,
+    usage: `${base}.usage`,
+  }
 }
 /** The exit code the leader recorded, or undefined while it has not. */
 const exitCode = (file: string) =>
@@ -204,24 +211,30 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     // was just freed), a heavy one through the queue: in its place when it had waited before, else at the end of the line.
     const left = await readPidFile(files.pid)
     if (left) await stopGroup(left, { pidFile: files.pid })
+    const scope = await jobScope(need, files.usage)
     const spawn = () => {
-      const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', LEADER], {
-        cwd: task.input.cwd,
-        pidFile: files.pid,
-        env: {
-          ...process.env,
-          BACKGROUND_COMMAND: task.input.command,
-          BACKGROUND_LOG: files.log,
-          BACKGROUND_STATUS: files.status,
-          // What it starts belongs to its place: a nested heavy job never queues behind it.
-          ...((need > 0 || limits.cpu !== undefined) && { [SLOT_ENV]: slotId(task) }),
+      const group = spawnGroup(
+        'nice',
+        ['-n', '10', '/bin/sh', '-c', leader(shellWords(scope ?? []))],
+        {
+          cwd: task.input.cwd,
+          pidFile: files.pid,
+          env: {
+            ...process.env,
+            BACKGROUND_COMMAND: task.input.command,
+            BACKGROUND_LOG: files.log,
+            BACKGROUND_STATUS: files.status,
+            // What it starts belongs to its place: a nested heavy job never queues behind it.
+            ...((need > 0 || limits.cpu !== undefined) && { [SLOT_ENV]: slotId(task) }),
+          },
         },
-      })
+      )
       if (!group.child.pid) throw new Error('Could not start the background command')
       return group.child.pid
     }
     await mkdir(join(task.input.home, 'background'), { recursive: true })
     await rm(files.status, { force: true })
+    await rm(files.usage, { force: true })
     const notStarted = async (waited: number, note: string) =>
       deliver({
         command: task.input.command,
@@ -344,20 +357,22 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
           outcome: BackgroundResult['outcome'],
           code: number | null,
           note?: string,
-        ) =>
-          deliver({
+        ) => {
+          const usage = await readUsage(files.usage, commandNeedMiB(task.input.command))
+          const notes = [slot?.forced, usage?.oomKilled && describeOom(usage), note].filter(Boolean)
+          return deliver({
             command: task.input.command,
             cwd: task.input.cwd,
             outcome,
             exitCode: code,
             seconds: Math.round((runtime.now() - began) / 1000),
             ...(slot && { queued: Math.round(slot.queued / 1000) }),
+            ...(usage && { usage }),
             tail: await tail(files.log),
             log: files.log,
-            ...((note || slot?.forced) && {
-              note: [slot?.forced, note].filter(Boolean).join('\n'),
-            }),
+            ...(notes.length && { note: notes.join('\n') }),
           })
+        }
         const now = runtime.now()
         let next
         // The code first: once it is recorded, stopping the group is the end of a finished run, not of a running one.
@@ -446,7 +461,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         const ended =
           result.outcome === 'not-started'
             ? `not started after waiting ${result.seconds} s`
-            : `${result.outcome}${exit} after ${result.seconds} s${result.queued ? ` (and ${result.queued} s in line for the heavy-work slot before it)` : ''}`
+            : `${result.outcome}${exit} after ${result.seconds} s${result.usage ? `, peak ${result.usage.peakMiB} MiB and ${result.usage.cpuSeconds} s of CPU` : ''}${result.queued ? ` (and ${result.queued} s in line for the heavy-work slot before it)` : ''}`
         const to = task.input.to as ConversationId
         const conversation = await runtime.conversation(to, ctx)
         await runtime.commit(async (tx) => {
