@@ -3,13 +3,12 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
 import {
-  resumeProcesses,
-  sessionIdentities,
+  continueSession,
   sessionCpuMs,
   sessionMarked,
   sessionMembers,
   signalSession,
-  stopProcesses,
+  stopSession,
 } from '../../lib/cpu.ts'
 import { until } from '../helpers.ts'
 
@@ -31,10 +30,12 @@ async function coresOver(sid: number, ms: number) {
 
 // #227574: two Playwright audits ran as `(timeout 900 node … &); timeout 1100 node …` from bash. `timeout` gives each
 // a process group of its own, so the queue measures, pauses and stops by session, which only `setsid` leaves.
-it('measures, pauses, resumes and stops a whole session, its timeout subgroups and a job sent away with & included', async () => {
+it('measures, pauses, resumes and stops a whole session, its timeout subgroups, a job sent away with & and a chain of processes', async () => {
   const id = `cpu-session-${process.pid}`
   const loop = 'timeout 60 bash -c "while :; do :; done"'
-  const shell = spawn('bash', ['-c', `(${loop} &); ${loop}`], {
+  // Each link starts its successor and ends: a pause that stopped only what it had seen could never catch up with it.
+  const chain = 'step() { sleep 0.05; (step &); }; step'
+  const shell = spawn('bash', ['-c', `(${loop} &); (${chain}) & ${loop}`], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, ULTIMATE_BASH_CALL: id },
@@ -46,28 +47,24 @@ it('measures, pauses, resumes and stops a whole session, its timeout subgroups a
     await until(async () => (await sessionMembers(sid)).length >= 4)
     expect(await coresOver(sid, 1500)).toBeGreaterThan(0.5)
 
-    // Recorded first, then stopped, as the background task does.
-    const stopped = await sessionIdentities(sid)
-    stopProcesses(stopped)
-    await sleep(200)
+    expect(await stopSession(sid)).toBe(true)
+    const paused = (await sessionMembers(sid)).toSorted((a, b) => a - b)
+    await sleep(500)
+    // Nothing runs and nothing new started: the chain stopped with the rest.
     expect(await coresOver(sid, 1000)).toBeLessThan(0.05)
-    resumeProcesses(stopped)
-    expect(await coresOver(sid, 1500)).toBeGreaterThan(0.5)
+    expect((await sessionMembers(sid)).toSorted((a, b) => a - b)).toEqual(paused)
 
-    // Its leader killed from outside while paused (review of #227574): nothing of it stays stopped. What survives runs
-    // again by its recorded identity; a group orphaned by the kill may instead end on the kernel's own SIGHUP.
-    const again = await sessionIdentities(sid)
-    stopProcesses(again)
+    // Resumed by session, its leader killed from outside meanwhile (review of #227574): nothing stays stopped. A group
+    // the kill orphans may instead end on the kernel's own SIGHUP.
     process.kill(sid, 'SIGKILL')
     await until(async () => !(await sessionMembers(sid)).includes(sid))
-    resumeProcesses(again)
+    await continueSession(sid)
     await until(async () =>
       (await Promise.all((await sessionMembers(sid)).map(stateOf))).every((state) => state !== 'T'),
     )
-
-    await signalSession(sid, 'SIGTERM')
-    await until(async () => (await sessionMembers(sid)).length === 0, 5000)
   } finally {
+    // Stopped first, so no link of the chain starts another while the rest is killed.
+    await stopSession(sid)
     await signalSession(sid, 'SIGKILL')
   }
 })

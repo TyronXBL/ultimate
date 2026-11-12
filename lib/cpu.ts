@@ -12,7 +12,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { availableParallelism, loadavg } from 'node:os'
 import type { JsonObject } from '@earendil-works/pi-durable'
-import { identify } from './process-group.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /**
@@ -257,7 +256,7 @@ export const holdsSlot = (observation: Observation) =>
 
 /** Linux's clock tick, `getconf CLK_TCK`: 100 on every architecture Node runs on there. */
 const TICK_MS = 10
-type Stat = { pid: number; sid: number; ticks: number }
+type Stat = { pid: number; sid: number; state: string; ticks: number }
 /**
  * Every process's session and CPU time (its own and its reaped children's, in ticks); empty where there is no /proc.
  * By session, not process group: `timeout`, which agents wrap long commands in, moves its command into a group of its
@@ -280,6 +279,7 @@ async function stats() {
             return {
               pid: Number(name),
               sid: Number(fields[3]),
+              state: fields[0],
               ticks: fields.slice(11, 15).reduce((sum, field) => sum + Number(field), 0),
             }
           },
@@ -317,29 +317,28 @@ function send(pid: number, signal: NodeJS.Signals) {
   }
 }
 
-/** A process by its pid and start time (`identify`), so a reused pid never counts as it. */
-export type Known = { pid: number; identity: string }
+/**
+ * Stop every process of session `sid` (verified the caller's own), in passes until none runs: a stopped process
+ * starts no other, and a pass catches what started during the one before, so a job that keeps starting processes
+ * cannot outrun it (review of #227574). Whether every member is stopped after at most `passes` passes.
+ */
+export async function stopSession(sid: number, passes = 50) {
+  for (let pass = 0; pass < passes; pass++) {
+    const running = (await stats()).filter((stat) => stat.sid === sid && !held.has(stat.state))
+    if (!running.length) return true
+    for (const { pid } of running) send(pid, 'SIGSTOP')
+  }
+  return false
+}
+/** States in which a process runs no more: stopped (`T`), stopped by a tracer (`t`), dead (`X`, `Z`). */
+const held = new Set(['T', 't', 'X', 'Z'])
 
 /**
- * The processes of session `sid` by identity. A caller that pauses them records these first, durably, and only then
- * stops them (`stopProcesses`), so whatever it stopped can be resumed even once the session's leader is gone or the
- * host crashed in between (review of #227574: a leader killed from outside left its paused children stopped for good).
+ * Resume every process of session `sid`. Safe without its leader: a session id stays in use, so it is never given to
+ * another session, while any process of it lives; and a SIGCONT to a process that runs changes nothing.
  */
-export async function sessionIdentities(sid: number): Promise<Known[]> {
-  return (await sessionMembers(sid)).flatMap((pid) => {
-    const identity = identify(pid)
-    return identity ? [{ pid, identity }] : []
-  })
-}
-
-/** Stop the recorded processes, each only while it is still the process it was. */
-export function stopProcesses(recorded: Known[]) {
-  for (const { pid, identity } of recorded) if (identify(pid) === identity) send(pid, 'SIGSTOP')
-}
-
-/** Resume the recorded processes, each only while it is still the process it was. */
-export function resumeProcesses(recorded: Known[]) {
-  for (const { pid, identity } of recorded) if (identify(pid) === identity) send(pid, 'SIGCONT')
+export function continueSession(sid: number) {
+  return signalSession(sid, 'SIGCONT')
 }
 
 /** The session whose leader's environment holds `marker` (`NAME=value`), as a bash call marks its shell. */

@@ -30,11 +30,10 @@ import {
   measuring,
   observe,
   PROBATION_MS,
-  resumeProcesses,
-  sessionIdentities,
-  stopProcesses,
+  continueSession,
+  stopSession,
 } from '../../lib/cpu.ts'
-import type { Known, Observation } from '../../lib/cpu.ts'
+import type { Observation } from '../../lib/cpu.ts'
 import {
   groupAlive,
   identify,
@@ -90,8 +89,6 @@ type Checkpoint =
         forced?: string
         /** How long it was paused, reclaiming a place. */
         pausedMs?: number
-        /** The processes paused while it reclaims a place, by identity: resumed even once its leader is gone. */
-        stopped?: Known[]
       }
     }
   | { phase: 'deliver'; result: BackgroundResult }
@@ -322,9 +319,9 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         const files = paths(task)
         /** Whether the command's leader is still the process this task started: only then is its session listed. */
         const ours = (held: typeof slot) => held !== undefined && identify(pid) === held.identity
-        /** Resume what this task paused: the processes it recorded before it stopped them, each by identity. */
+        /** Resume what this task may have paused: its session, while its committed checkpoint says reclaiming. */
         const resume = async (held: typeof slot) => {
-          if (held?.stopped) resumeProcesses(held.stopped)
+          if (held?.observed?.kind === 'reclaiming') await continueSession(pid)
         }
         /**
          * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
@@ -394,25 +391,13 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             (await reclaimSlot(claim, holder, await maxHeavyJobs(host.userHome)))
           )
             observed = observe(observed, sample, PROBATION_MS, true)
-          // Reconciled at every look, not only on a change: a crash between a signal and the checkpoint that records it
-          // must leave no job stopped, nor one running that should wait.
-          // A pause is recorded before it is signalled: members not yet in the checkpoint are only recorded at this look,
-          // and stopped at the next one, a second later, so every stopped process is in a committed checkpoint.
-          let stopped: Known[] | undefined
-          let recording = false
+          // A pause is committed before it is signalled: the look that first finds it reclaiming only records that, and the
+          // next, a second later, stops its session; a look that finds it no longer reclaiming resumes it first. So a
+          // stopped session is always one whose committed checkpoint says reclaiming, whatever crashes in between.
+          const committed = slot?.observed?.kind === 'reclaiming'
+          const recording = observed?.kind === 'reclaiming' && !committed
           if (observed?.kind === 'reclaiming') {
-            const known = slot?.stopped ?? []
-            const fresh = (ours(slot) ? await sessionIdentities(pid) : []).filter(
-              (member) =>
-                !known.some(
-                  (other) => other.pid === member.pid && other.identity === member.identity,
-                ),
-            )
-            stopped = [...known, ...fresh]
-            recording = fresh.length > 0
-            // What is recorded already is stopped at every look, so a job that keeps starting processes cannot outrun its
-            // pause: stopped, those can start no more, and the fresh ones are stopped at the next look.
-            stopProcesses(known)
+            if (committed && ours(slot)) await stopSession(pid)
           } else await resume(slot)
           const pausedMs =
             (slot?.pausedMs ?? 0) +
@@ -438,13 +423,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
               pid,
               began,
               ...(slot && {
-                // `stopped` only while it is paused: resumed processes are no longer its to resume.
-                slot: {
-                  ...slot,
-                  ...(observed && { observed }),
-                  ...(pausedMs && { pausedMs }),
-                  stopped,
-                },
+                slot: { ...slot, ...(observed && { observed }), ...(pausedMs && { pausedMs }) },
               }),
             },
           }
@@ -484,9 +463,14 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
       const { pid } = paths(task)
       const recorded = await readPidFile(pid)
       const { checkpoint } = task.state as { checkpoint?: Checkpoint }
-      // A group this task paused gets TERM only once it runs again: every process it stopped is recorded first.
-      if (checkpoint?.phase === 'poll' && checkpoint.slot?.stopped)
-        resumeProcesses(checkpoint.slot.stopped)
+      // A group this task paused gets TERM only once it runs again: it pauses only once its checkpoint says reclaiming.
+      if (
+        recorded &&
+        checkpoint?.phase === 'poll' &&
+        checkpoint.pid === recorded &&
+        checkpoint.slot?.observed?.kind === 'reclaiming'
+      )
+        await continueSession(recorded)
       if (recorded) await stopGroup(recorded, { pidFile: pid })
       // Whether it waited in line or ran: the next job may start. A command that never queued has nothing to release.
       await releaseSlot(slotId(task))
