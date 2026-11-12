@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { owners, programOf } from '../owners.ts'
+import { argvOf, owners, programOf } from '../owners.ts'
 import type { OwnerContext, Proc, Top } from '../owners.ts'
 
 const home = '/home/me/.ultimate/projects'
@@ -232,5 +232,10 @@ describe('owners', () => {
     [['node', '--require', '/x/preflight.cjs', '/x/vitest.mjs', 'run'], 'vitest'],
   ])('names %j by its program only: %s', (argv, label) => {
     expect(programOf(argv, 'proc')).toBe(label)
+  })
+
+  test('reads empty words of a command line where they stand', () => {
+    expect(programOf(argvOf('bash\0-c\0\0hunter2\0'), 'proc')).toBe('bash')
+    expect(argvOf('')).toEqual([])
   })
 })

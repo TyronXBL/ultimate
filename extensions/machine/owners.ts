@@ -33,6 +33,13 @@ export type OwnerContext = {
 
 type Who = Omit<Owner, 'cpu' | 'rssMiB' | 'processes' | 'since' | 'key'>
 
+/**
+ * A process's argv from `/proc/<pid>/cmdline`: NUL-separated, with a NUL after the last word. Empty words stay: dropping
+ * one would move the next into its place (`bash -c '' value`, review of #231847).
+ */
+export const argvOf = (cmdline: string) =>
+  cmdline === '' ? [] : (cmdline.endsWith('\0') ? cmdline.slice(0, -1) : cmdline).split('\0')
+
 const shells = /^(bash|sh|dash|zsh)$/
 const interpreters = /^(node|python3?|bash|sh|dash|zsh)$/
 /** Programs that run the program named after their options: `nice -n 15 …`, `timeout 30 …`, `nohup …`. */
