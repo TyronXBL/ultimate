@@ -41,25 +41,24 @@ const wrappers = /^(exec|nice|nohup|setsid|timeout)$/
 const fileOptions = /^(-r|--require|--import|--loader)$/
 /** Node's long options that take no value as the next word; `--option=value` carries its value along. */
 const valueless =
-  /^--((experimental|no|enable|disable|trace|expose|frozen|preserve)-[\w-]+|inspect|watch)$/
+  /^--(experimental-(import-meta-resolve|strip-types|transform-types|vm-modules)|no-warnings|no-deprecation|enable-source-maps|expose-gc|trace-warnings|preserve-symlinks|inspect|watch)$/
 
 /**
  * A short name for what `argv` runs, never an argument's value: the program, or for an interpreter the script file it
- * runs (`pnpm`, `vitest`, `chromium`), as a basename. It skips only words it knows the meaning of (assignments,
- * redirections, a wrapper's priority or timeout, an interpreter's file and valueless options); at any other word that
- * could be a value (`node -e …`, `env -u NAME`, `bash -o …`) the program found so far names it. Review of #231847.
+ * runs (`pnpm`, `vitest`, `chromium`), as a basename. It skips only words it knows the meaning of (assignments, a
+ * wrapper's priority or timeout, an interpreter's file and listed valueless options); at any other word that could be a
+ * value (`node -e …`, `env -u NAME`, `bash -o …`, a redirection) the program found so far names it. Review of #231847.
  */
 export function programOf(argv: string[], name: string): string {
   let words = argv
   /** The program that runs the rest: what names it when the rest cannot be read safely. */
   let known = name
   for (;;) {
-    // A command line may set variables and redirect output before its program (`TOKEN=… pnpm test`, `exec >>log`); a
-    // bare redirection operator takes the next word as its target.
+    // A command line may set variables before its program (`TOKEN=… pnpm test`); a redirection there (`> file`,
+    // `<<- END`) has operands this does not read, so the program found so far names it.
     let start = 0
-    while (start < words.length && /^([A-Za-z_]\w*=|\d*[<>]|&>)/.test(words[start]))
-      start += /^(\d*[<>]+|&>>?)$/.test(words[start]) ? 2 : 1
-    if (start >= words.length) return known
+    while (start < words.length && /^[A-Za-z_]\w*=/.test(words[start])) start++
+    if (start >= words.length || /^(\d*[<>]|&)/.test(words[start])) return known
     const program = basename(words[start])
     const rest = words.slice(start + 1)
     let next = 0
