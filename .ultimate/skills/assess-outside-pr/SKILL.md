@@ -30,7 +30,7 @@ Anything suspicious ends the assessment there: report it, without running the co
 ```bash
 git fetch origin pull/<n>/head:pr-<n>
 git merge --no-ff --no-edit pr-<n>     # in your own branch's worktree, never the source checkout
-pnpm install --frozen-lockfile --prefer-offline   # only after step 1, and only when the lockfile changed
+pnpm install --frozen-lockfile --prefer-offline --ignore-scripts   # only after step 1, and only when the lockfile changed
 pnpm check
 ```
 

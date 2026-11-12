@@ -35,7 +35,7 @@ One case restarts by itself: an extension's server facet that fails to load (`ho
 
 1. Fetches origin.
 2. Fast-forwards the default branch with `git merge --ff-only`.
-3. Runs `pnpm install --frozen-lockfile` when `pnpm-lock.yaml` differs from the installed `node_modules/.pnpm/lock.yaml`. A failed install is retried by the next update.
+3. Runs `pnpm install --frozen-lockfile --ignore-scripts` when `pnpm-lock.yaml` differs from the installed `node_modules/.pnpm/lock.yaml`. A failed install is retried by the next update.
 
 It refuses, and changes nothing, when:
 

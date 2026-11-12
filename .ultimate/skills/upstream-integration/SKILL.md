@@ -23,7 +23,8 @@ Upstream is another person's account, and what lands here runs on this host. `in
 range runs by itself: workflows, install scripts, build permissions, patches, editor tasks and the wfx-loot and
 GhostAction indicators (#261309). Read each flagged diff before anything installs; put the list and your verdict in
 the report. A flag you cannot explain (an install script, an unknown address, a wfx-loot commit title) stops the
-merge: report it to @ultimate instead of going on.
+merge: report it to @ultimate instead of going on. So does the check itself failing (a nonzero exit, no report): the
+merge waits for a complete report.
 
 A normal merge only: never rebase, reset, cherry-pick upstream's commits or force anything. A merge that goes
 wrong is aborted (`git merge --abort`) and started again, not rewritten.

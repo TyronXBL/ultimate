@@ -25,13 +25,21 @@ it('flags what an incoming range runs by itself, and nothing in ordinary changes
       '@@ -3 +3 @@',
       '-const empty = false',
       '+const empty = true',
-      'diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml',
-      '--- a/pnpm-workspace.yaml',
-      '+++ b/pnpm-workspace.yaml',
-      '@@ -3,0 +4,2 @@',
-      '+  sharp: true',
-      "+  - '@earendil-works/pi-durable@1.5.3'",
     ].join('\n'),
+    workspace: {
+      before: 'allowBuilds:\n  esbuild: true\nminimumReleaseAgeExclude:\n  - vite-plus@1.5.1\n',
+      after: [
+        'allowBuilds:',
+        '  esbuild: true',
+        '  sharp: true',
+        '# a comment',
+        'minimumReleaseAgeExclude:',
+        '  - vite-plus@1.5.1',
+        "  - '@scope/fresh@1.0.0'",
+        'packages:',
+        '  - web',
+      ].join('\n'),
+    },
     manifests: [
       {
         path: 'package.json',
@@ -45,7 +53,8 @@ it('flags what an incoming range runs by itself, and nothing in ordinary changes
     '.ci-x7k2p9.sh: a file name the wfx-loot or GhostAction payload uses',
     '.github/workflows/ci.yml: runs in GitHub Actions',
     '.github/workflows/ci.yml: adds "toJSON(secrets)", a wfx-loot or GhostAction indicator',
-    'pnpm-workspace.yaml: adds "sharp: true" (in allowBuilds, a dependency\'s install script runs)',
+    'pnpm-workspace.yaml: allowBuilds gains "sharp: true", which decides what an install fetches or runs',
+    'pnpm-workspace.yaml: minimumReleaseAgeExclude gains "- \'@scope/fresh@1.0.0\'", which decides what an install fetches or runs',
     'package.json: scripts.postinstall "sh .ci-x7k2p9.sh" runs on every install',
   ])
 })

@@ -685,9 +685,8 @@ it.concurrent('lists commits the push remote gained during a landing instead of 
   const landed = await git(f.projectRoot, 'rev-parse', 'main')
   expect(report).toContain(`landed locally as ${landed.slice(0, 7)} on main.`)
   const pushedElsewhere = await git(other, 'rev-parse', '--short', 'HEAD')
-  expect(report).toContain(
-    `Push failed: origin/main has commits local main lacks:\n${pushedElsewhere} T: remote`,
-  )
+  expect(report).toContain('Push failed: origin/main has commits local main lacks:')
+  expect(report).toContain(`${pushedElsewhere} T: remote`)
   // Unreviewed: the remote's commit stays out of local main.
   expect(
     await git(f.projectRoot, 'merge-base', '--is-ancestor', pushedElsewhere, landed).then(

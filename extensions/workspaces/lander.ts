@@ -843,7 +843,11 @@ export function createLander(
                   if (!(await contains(path, fetched, 'HEAD'))) {
                     await fail(
                       `${settings.push}/${target} has commits local ${target} lacks`,
-                      await git(path, 'log', '-30', '--format=%h %an: %s', `HEAD..${fetched}`),
+                      // Cut, since whoever pushed them wrote these lines, and the report goes to an agent.
+                      (await git(path, 'log', '-30', '--format=%h %an: %s', `HEAD..${fetched}`))
+                        .split('\n')
+                        .map((line) => line.slice(0, 120))
+                        .join('\n'),
                       `Review them and merge ${settings.push}/${target} into local ${target} by hand, then submit again.`,
                     )
                     return
