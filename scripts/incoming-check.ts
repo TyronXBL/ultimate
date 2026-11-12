@@ -15,8 +15,8 @@ type Manifest = { scripts?: Record<string, string> }
 type Incoming = {
   /** `git log --format=%h%x09%s`: one commit a line. */
   commits: string
-  /** `git diff --name-status --no-renames`. */
-  files: string
+  /** Path → status letter, from `git diff --name-status --no-renames -z` (unquoted paths). */
+  files: Map<string, string>
   /** `git diff --unified=0 --no-color`. */
   patch: string
   /** Each changed package.json before and after the range; undefined where it does not exist. */
@@ -96,8 +96,7 @@ export function incomingFlags(incoming: Incoming) {
     const [sha, subject] = line.split('\t')
     if (TITLES.has(subject)) flags.push(`${sha} "${subject}": a wfx-loot commit title`)
   }
-  for (const line of incoming.files.split('\n').filter(Boolean)) {
-    const [status, path] = line.split('\t')
+  for (const [path, status] of incoming.files) {
     const risk = status === 'D' ? undefined : pathRisk(status, path)
     if (risk) flags.push(`${path}: ${risk}`)
   }
@@ -143,15 +142,15 @@ if (import.meta.main) {
   const [base, head] = range.split(/\.{2,3}/)
   // A failing git (a wrong range) throws and exits nonzero with no report: the skill stops the merge then.
   const git = (...args: string[]) =>
-    execFileSync('git', args, { encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024 })
+    execFileSync('git', ['-c', 'core.quotePath=false', ...args], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 1024,
+    })
   const fork = git('merge-base', base, head).trim()
-  const files = git('diff', '--name-status', '--no-renames', fork, head)
-  const status = new Map(
-    files
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => line.split('\t').reverse() as [string, string]),
-  )
+  // NUL-separated: a path with a tab, newline or quote comes through as it is, never in Git's quoted form.
+  const fields = git('diff', '--name-status', '--no-renames', '-z', fork, head).split('\0')
+  const status = new Map<string, string>()
+  for (let i = 0; i + 1 < fields.length; i += 2) status.set(fields[i + 1], fields[i])
   const changed = [...status.keys()]
   // Absent only where the range adds or deletes the file; any other failing read throws.
   const text = (revision: string, path: string) =>
@@ -165,7 +164,7 @@ if (import.meta.main) {
   }
   const flags = incomingFlags({
     commits: git('log', '--format=%h%x09%s', range),
-    files,
+    files: status,
     // Fixed prefixes, whatever diff.noprefix or diff.mnemonicPrefix say: the parser reads `+++ b/<path>`.
     patch: git(
       'diff',

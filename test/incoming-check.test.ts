@@ -5,13 +5,13 @@ it('flags what an incoming range runs by itself, and nothing in ordinary changes
   // wfx-loot's install-hook variant (#261309) beside an ordinary upstream change.
   const flags = incomingFlags({
     commits: 'a1b2c3d\tchore: add ci helper\ne4f5a6b\tPrompt sections: keep an empty slot',
-    files: [
-      'A\t.ci-x7k2p9.sh',
-      'M\t.github/workflows/ci.yml',
-      'M\textensions/prompt/server.ts',
-      'M\tpackage.json',
-      'M\tpnpm-workspace.yaml',
-    ].join('\n'),
+    files: new Map([
+      ['.ci-x7k2p9.sh', 'A'],
+      ['.github/workflows/ci.yml', 'M'],
+      ['extensions/prompt/server.ts', 'M'],
+      ['package.json', 'M'],
+      ['pnpm-workspace.yaml', 'M'],
+    ]),
     patch: [
       'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml',
       '--- a/.github/workflows/ci.yml',
