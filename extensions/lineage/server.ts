@@ -1,4 +1,5 @@
-import type { Context, JsonValue } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord/context'
+import type { JsonValue } from '@earendil-works/chord/json'
 import { onCommit } from '../../lib/commits.ts'
 import { awaitWithContext, BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { arr, bool, int, lit, obj, opt, str, union } from '@earendil-works/pi-schema'
@@ -1597,7 +1598,7 @@ export default function lineageExtension(host: ExtensionHost) {
               api.taskId,
               ctx,
             )
-            // Pi upstream: @earendil-works/pi-durable@1.5.0 — patched `fail` decision: the compaction fails with this
+            // Pi upstream: @earendil-works/pi-durable@1.5.2 — patched `fail` decision: the compaction fails with this
             // message instead of Pi summarizing once more on the limited model. Drop when Pi lets a hook fail one.
             if ('fail' in answer) return answer
             summary = await api.memo(

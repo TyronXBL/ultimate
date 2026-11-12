@@ -212,7 +212,7 @@ export default function prompt(host: ExtensionHost) {
   return defineExtension({
     name: 'prompt',
     hooks: [
-      // Pi upstream: @earendil-works/pi-durable@1.5.0 — patched transactional beforeInput hook.
+      // Pi upstream: @earendil-works/pi-durable@1.5.2 — patched transactional beforeInput hook.
       // The build is a note on the input that starts a run, not a system-prompt section: every hot reload changed that
       // section, and a changed system prompt rewrites the whole prompt cache. A conversation's first run records it.
       hook(GenerationTask, {
@@ -298,7 +298,7 @@ export default function prompt(host: ExtensionHost) {
             ') and test new behaviour before relying on it. An "Instructions changed" or "Docs changed" line means those files changed: your system prompt already carries changed instructions; re-read changed docs before relying on them.',
         ].join('\n')
       }),
-      // Pi upstream: @earendil-works/pi-coding-agent@1.5.0 src/core/system-prompt.ts and src/core/tools/*.ts — copied tool guidance adapted from unexported prompt contributions. Drop when Pi exports buildSystemPromptSections and the per-tool system prompt contributions.
+      // Pi upstream: @earendil-works/pi-coding-agent@1.5.2 src/core/system-prompt.ts and src/core/tools/*.ts — copied tool guidance adapted from unexported prompt contributions. Drop when Pi exports buildSystemPromptSections and the per-tool system prompt contributions.
       section('tools', (input) => {
         const guidance: Record<string, string> = {
           read: '- read: inspect files, with offset/limit for large files.',
@@ -345,27 +345,33 @@ export default function prompt(host: ExtensionHost) {
           ? `${listed}\nWhen a task matches a listed skill, read it before you start; it carries the steps the project expects. Read a skill at its listed location; never guess a skill's folder from its name.${rest}`
           : undefined
       }),
-      section('building_blocks', (input) => {
-        // Enabling one is a settings edit, so a read-only agent is not told about them.
-        const writes = (input.agent.tools ?? []).some(
-          (tool) => tool.name === 'edit' || tool.name === 'write',
-        )
-        if (!writes) return undefined
-        const off = host.extensions().filter((extension) => !extension.enabled)
-        // Always rendered: a section that appears mid-conversation reorders the prompt, which re-adds it whole.
-        if (!off.length) return 'Every building block is on.'
-        return [
-          `Available but off building blocks live in ${host.ultimateRoot}/extensions/:`,
-          ...off.map((extension) => {
-            const sentence = extension.readme
-              ?.trim()
-              .split(/(?<=[.!?])\s/)[0]
-              ?.replace(/\s+/g, ' ')
-            return `- ${extension.name}: ${sentence ?? ''}`
-          }),
-          `Enable names with "extensions": { "enable": [...] } in ~/.ultimate/settings.json (this machine) or ${host.projectRoot}/.ultimate/settings.json (the host project; a copy in a work checkout does not change the running host). Changes apply live with no restart.`,
-        ].join('\n')
-      }),
+      // Empty, not undefined, when nothing is off: the slot keeps its place, so coming back patches only this section
+      // (Pi re-sends every section when one would land out of order, #573861).
+      section(
+        'building_blocks',
+        (input) => {
+          // Enabling one is a settings edit, so a read-only agent is not told about them.
+          const writes = (input.agent.tools ?? []).some(
+            (tool) => tool.name === 'edit' || tool.name === 'write',
+          )
+          const off = host.extensions().filter((extension) => !extension.enabled)
+          if (!writes || !off.length) return ''
+          return [
+            '<building_blocks>',
+            `Available but off building blocks live in ${host.ultimateRoot}/extensions/:`,
+            ...off.map((extension) => {
+              const sentence = extension.readme
+                ?.trim()
+                .split(/(?<=[.!?])\s/)[0]
+                ?.replace(/\s+/g, ' ')
+              return `- ${extension.name}: ${sentence ?? ''}`
+            }),
+            `Enable names with "extensions": { "enable": [...] } in ~/.ultimate/settings.json (this machine) or ${host.projectRoot}/.ultimate/settings.json (the host project; a copy in a work checkout does not change the running host). Changes apply live with no restart.`,
+            '</building_blocks>',
+          ].join('\n')
+        },
+        { tag: false },
+      ),
       section('environment', (input) => {
         const cwd = input.env?.cwd ?? input.agent.cwd ?? host.projectRoot
         const os = process.platform === 'darwin' ? 'macOS' : process.platform

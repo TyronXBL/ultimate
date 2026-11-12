@@ -33,7 +33,7 @@ export function searchDatabase({
   kinds,
   full,
 }: SearchRequest) {
-  // Pi upstream: @earendil-works/pi-durable@1.5.0 src/storage/sqlite/storage.ts writes each entry as
+  // Pi upstream: @earendil-works/pi-durable@1.5.2 src/storage/sqlite/storage.ts writes each entry as
   // `JSON.stringify(entry)` into `entries.record`, so a substring of the stored text is a substring of the entry's JSON,
   // and the excerpt below is cut from the same string the JavaScript scan built.
   // A busy timeout like Pi's own connections, for the rare moment a reader must wait (WAL recovery).
@@ -78,7 +78,7 @@ export function searchDatabase({
  * A conversation's fork-aware history as stored, newest first: the conversation, then each parent up to its fork point,
  * as `{ id, upper }` segments, `upper` the last entry id the segment contributes.
  */
-// Pi upstream: @earendil-works/pi-durable@1.5.0 src/storage/sqlite/storage.ts `readEntries` walks the same chain.
+// Pi upstream: @earendil-works/pi-durable@1.5.2 src/storage/sqlite/storage.ts `readEntries` walks the same chain.
 export function* forkChain(
   conversation: (id: number) => ConversationRecord,
   start: number,

@@ -135,7 +135,7 @@ export function expandSkillCommand(
   text: string,
   skills: readonly Skill[],
 ): { text: string; skill?: { name: string; known: boolean } } {
-  // Pi upstream: @earendil-works/pi-coding-agent@1.5.0 src/core/agent-session.ts _expandSkillCommand — copied block format. Drop when Pi exports the expansion.
+  // Pi upstream: @earendil-works/pi-coding-agent@1.5.2 src/core/agent-session.ts _expandSkillCommand — copied block format. Drop when Pi exports the expansion.
   const match = /^\/skill:(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim())
   if (!match) return { text }
   const skill = skills.find((candidate) => candidate.name === match[1])

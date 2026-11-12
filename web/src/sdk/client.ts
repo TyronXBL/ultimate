@@ -1,6 +1,7 @@
 import { ActionError, actionMessage, createApi } from './api.ts'
 import { createReads } from './reads.ts'
-import { createRegistry } from './registry.ts'
+import { linkedConversation } from './link.ts'
+import { HOME, createRegistry } from './registry.ts'
 import { createStore, shownChoice } from './store.ts'
 import { step } from './selection.ts'
 import type { Selection } from './selection.ts'
@@ -134,6 +135,10 @@ store.subscribe(() => {
         if (id === undefined) uiState.delete('shell.conversation')
         else uiState.set('shell.conversation', id)
       }
+      const navigation = performance.getEntriesByType('navigation')[0] as
+        | PerformanceNavigationTiming
+        | undefined
+      if (linkedConversation(initialUrl, navigation?.type)) uiState.set('shell.surface', HOME)
       const value = uiState.get('shell.conversation')
       dispatchSelection({ type: 'started', id: typeof value === 'number' ? value : undefined })
     } else if (!detached) uiState.receive(shared)

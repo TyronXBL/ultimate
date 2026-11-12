@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import { mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
-import { copyJson } from '@earendil-works/chord'
-import type { Context } from '@earendil-works/chord'
+import { copyJson } from '@earendil-works/chord/json'
+import type { Context } from '@earendil-works/chord/context'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { withAbortSignal } from '@earendil-works/chord/context'
 import { defineEntry, defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
@@ -33,7 +33,7 @@ import {
   thisProcess,
 } from '../../lib/slot.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
-import { weightDelta } from '../../lib/token-weight.ts'
+import { landingWeight } from '../../lib/token-weight.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { CheckRan, SubmissionFailed, SubmissionLanded } from './api.ts'
 import { advance, type QueueEvent } from './queue.ts'
@@ -1116,9 +1116,10 @@ export function createLander(
           }
           // The first fast-forward decides what the submission landed, durably on its queue entry with the target's
           // new tip, so any later lander task reports that landing; a push retry integrates again from there.
-          const [commitLog, changedPaths] = await Promise.all([
+          const [commitLog, changedPaths, weight] = await Promise.all([
             git(source, 'log', '--oneline', `${base}..${integrated}`),
             git(source, 'diff', '--name-only', base, integrated),
+            landingWeight(source, base, integrated),
           ])
           const candidate: Landed = {
             sha: integrated,
@@ -1128,7 +1129,8 @@ export function createLander(
             flaky,
             ...(reused ? { reused } : {}),
             ...(unchecked ? { unchecked } : {}),
-            weight: await weightDelta(source, base, integrated),
+            // Left out, not undefined: documents refuse undefined values.
+            ...(weight ? { weight } : {}),
           }
           let landed = candidate
           await runtime.commit(async (tx) => {

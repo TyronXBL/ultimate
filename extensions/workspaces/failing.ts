@@ -4,7 +4,7 @@
  * outcome), and Vitest names each failed test on a `FAIL <file> > <test>` line.
  */
 import { stripVTControlCharacters } from 'node:util'
-import type { Context } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord/context'
 import type { ConversationId, Cursor, Harness } from '@earendil-works/pi-durable'
 import type { FailingTest, LanderEntry } from './types.ts'
 

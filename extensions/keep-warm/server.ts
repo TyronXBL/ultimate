@@ -6,7 +6,7 @@
  * @ultimate's usage.
  */
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
-import { copyJson } from '@earendil-works/chord'
+import { copyJson } from '@earendil-works/chord/json'
 import {
   defineDoc,
   defineExtension,
@@ -17,7 +17,7 @@ import {
 } from '@earendil-works/pi-durable'
 import type { ConversationId, Cursor, HookApi, ModelRef } from '@earendil-works/pi-durable'
 import type { Api, AssistantMessage, Message, Model } from '@earendil-works/pi-ai'
-import type { Context } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord/context'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { UserInputEvent } from '../../shared/events.ts'
 import { implementAction } from '../../lib/actions.ts'
@@ -235,10 +235,9 @@ async function ping(
   let answer: AssistantMessage
   try {
     // No sessionId: a one-shot Claude Code process, so @ultimate's own warm process never sees this turn.
-    // Pi upstream: @earendil-works/pi-ai@1.5.0 src/api/anthropic-messages.ts — 1.5.0 has no message threads. Unreleased
-    // pi-ai threads every `anthropic` request that carries a sessionId; without one this ping stays a full, unthreaded
-    // request, which must still read the cache @ultimate's turns wrote. Before updating this marker, work through
-    // "On the 1.6 upgrade" in docs/pi-upstream.md.
+    // pi-ai (since 1.5.1) threads an `anthropic` request that carries a sessionId unless the model's
+    // compat.supportsMessageThreads is false; without one this ping stays a full, unthreaded request, which must still
+    // read the cache @ultimate's turns wrote. Threads are off on this host ("Message threads" in docs/pi-upstream.md).
     answer = await host.modelRuntime
       .streamSimple(
         model,
