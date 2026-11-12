@@ -164,10 +164,10 @@ export const jobs: UnderwaySource = {
  * What of a stopped command's session still runs outside its group (`timeout` and `setsid` start groups of their own,
  * which a group stop does not reach), said on its card: the queue no longer counts it (review of #227574).
  */
-async function survivors(sid: number) {
+async function survivors(sid: number, queued: boolean) {
   const left = await sessionMembers(sid)
   return left.length
-    ? `${left.length} of its processes run on outside its group (started under timeout or setsid), so the heavy-work queue no longer counts them; check them with ps -s ${sid} -o pid,pgid,etime,args before stopping anything.`
+    ? `${left.length} of its processes run on outside its group (started under timeout or setsid)${queued ? ', so the heavy-work queue no longer counts them' : ''}; check them with ps -s ${sid} -o pid,pgid,etime,args before stopping anything.`
     : undefined
 }
 
@@ -337,7 +337,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             async () =>
               groupAlive(pid)
                 ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
-                : await survivors(pid),
+                : await survivors(pid, slot !== undefined),
             (error: unknown) => (error instanceof Error ? error.message : String(error)),
           )
         const result = async (
@@ -362,15 +362,15 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         let next
         // The code first: once it is recorded, stopping the group is the end of a finished run, not of a running one.
         const code = await exitCode(files.status)
+        if (code !== undefined) next = await result('finished', code, await stop())
         // The queue decided to end it at an earlier look, recorded before anything was signalled: replayed after a crash, it
-        // ends the same way and says why.
-        if (slot?.stopping)
+        // ends the same way and says why. One that finished meanwhile is finished.
+        else if (slot?.stopping)
           next = await result(
             'stopped',
-            code ?? null,
+            null,
             [await stop(), slot.stopping].filter(Boolean).join('\n'),
           )
-        else if (code !== undefined) next = await result('finished', code, await stop())
         else if (now - began >= task.input.timeout * 1000)
           next = await result('timeout', null, await stop())
         else if (!groupAlive(pid)) {
@@ -408,7 +408,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
                 slot: {
                   ...slot,
                   observed,
-                  stopping: `Stopped by the heavy-work queue: it used more than a core without a place in the queue (it gave its place back after ${LIGHT_FOR_MS / 60_000} min idle, or was light at first) while every place was taken. Partial output is above; files it was writing may be incomplete. Run it again with the same call: it waits in line for a place.`,
+                  stopping: `The heavy-work queue ended it: it used more than a core without a place in the queue (it gave its place back after ${LIGHT_FOR_MS / 60_000} min idle, or was light at first) while every place was taken. Partial output is above; files it was writing may be incomplete. Run it again with the same call: it waits in line for a place.`,
                 },
               },
             }

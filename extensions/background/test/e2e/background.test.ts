@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -22,6 +22,13 @@ import type { BackgroundResult } from '../../refs.ts'
 import codingTools from '../../../coding-tools/server.ts'
 import { writeJson } from '../../../../lib/json-file.ts'
 import { readSlot } from '../../../../lib/slot.ts'
+
+/** The machine's load as the heavy-work queue reads it: idle, so a busy test machine never holds a job back. */
+const machine = vi.hoisted(() => ({ load: { load: 0, cores: 6, pressure: 0 } }))
+vi.mock('../../../../lib/cpu.ts', async (original) => ({
+  ...(await original<typeof import('../../../../lib/cpu.ts')>()),
+  machineLoad: async () => machine.load,
+}))
 import { temp, until } from '../../../../test/helpers.ts'
 
 const run = promisify(execFile)
@@ -378,25 +385,28 @@ it('starts the next heavy command in line once the conversation running one is c
 it('ends a command that turns heavy without a place while every place is taken, and says why', async () => {
   const shared = await temp('ultimate-background-queue-')
   const log = join(shared, 'order')
-  // Measured, one place, and no load ever keeps a job back: only places decide.
-  const a = await project('a', { cpu: { maxLoadPerCore: 1000 }, heavyWork: { maxJobs: 1 } })
+  // Measured, with one place; the machine reads idle here (`machine`), so places alone decide.
+  const a = await project('a', { cpu: { maxLoadPerCore: 1 }, heavyWork: { maxJobs: 1 } })
   // Above a core takes more than one loop.
   const loops = Array.from({ length: 3 }, () => `bash -c 'while :; do :; done' &`).join(' ')
   const late = `echo late-start >> ${log}; until [ -f ${join(shared, 'burn')} ]; do sleep 0.1; done; ${loops} wait`
-  await a.run(late)
-  await until(async () => (await lines(log)).includes('late-start'))
-  // Light through its probation, it gives its place back; a heavy command takes it.
-  await until(async () => (await readSlot()).queue.entries.length === 0, 60_000)
-  await a.run(heavy(log, 'hold', { hold: join(shared, 'go') }))
-  await until(async () => (await lines(log)).includes('hold-start'))
-  await writeFile(join(shared, 'burn'), '')
-  await until(async () => (await a.results()).length === 1, 90_000)
-  const [stopped] = await a.results()
-  expect(stopped).toMatchObject({ command: late, outcome: 'stopped' })
-  expect(stopped.note).toContain('Stopped by the heavy-work queue')
-  expect(stopped.note).toContain('Run it again with the same call')
-  await writeFile(join(shared, 'go'), '')
-  await until(async () => (await a.results()).length === 2)
+  try {
+    await a.run(late)
+    await until(async () => (await lines(log)).includes('late-start'))
+    // Light through its probation, it gives its place back; a heavy command takes it.
+    await until(async () => (await readSlot()).queue.entries.length === 0, 60_000)
+    await a.run(heavy(log, 'hold', { hold: join(shared, 'go') }))
+    await until(async () => (await lines(log)).includes('hold-start'))
+    await writeFile(join(shared, 'burn'), '')
+    await until(async () => (await a.results()).length === 1, 90_000)
+    const [stopped] = await a.results()
+    expect(stopped).toMatchObject({ command: late, outcome: 'stopped' })
+    expect(stopped.note).toContain('The heavy-work queue ended it')
+    expect(stopped.note).toContain('Run it again with the same call')
+  } finally {
+    // Whatever happened, nothing of it holds the queue the next tests share.
+    await a.caller.abort(context, { background: true })
+  }
 })
 
 it('keeps a running and a waiting heavy command through a restart: each runs once, in order', async () => {
