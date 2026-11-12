@@ -23,12 +23,12 @@ export type Spend = Tokens & { cost: number; costs: Tokens }
  * One conversation's own spend per `provider/model`, tools that report usage under `tools/<name>`; `owner` is the
  * conversation that owns it, absent for the tree's top.
  */
-export type AgentSpend = { owner?: number; models: Record<string, Spend> }
+export type OwnSpend = { owner?: number; models: Record<string, Spend> }
 /**
  * What a top-level conversation and everything it owns (its subagents and theirs) used: each conversation of the tree
  * by id, also those that have not spent anything yet.
  */
-export type TreeSpend = { agents: Record<string, AgentSpend> }
+export type TreeSpend = { agents: Record<string, OwnSpend> }
 
 /**
  * No arguments → each top-level conversation's tree spend that has any, by conversation id; null until the server has

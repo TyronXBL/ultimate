@@ -15,7 +15,8 @@ export function usageTotals(usage: Readonly<UsageState>) {
   )
 }
 
-const kinds = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
+/** The token kinds, in the order every breakdown lists them. */
+export const kinds = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
 const pick = (value: Tokens): Tokens => ({
   input: value.input,
   output: value.output,

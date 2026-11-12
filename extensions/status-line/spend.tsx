@@ -15,9 +15,9 @@ import {
   useUltimate,
   useViewport,
 } from '@/sdk'
-import { add, empty } from './context.ts'
+import { add, empty, kinds } from './context.ts'
 import { TreesAction } from './refs.ts'
-import type { AgentSpend, Spend, TreeSpend } from './refs.ts'
+import type { OwnSpend, Spend, TreeSpend } from './refs.ts'
 
 let trees: Record<string, TreeSpend> | undefined
 /** Each conversation's tree top in `trees`, worked out on first use after a read. */
@@ -143,7 +143,7 @@ function walk(tree: TreeSpend, top: string) {
       const owner = String(agent.owner)
       children.set(owner, [...(children.get(owner) ?? []), id])
     }
-  const rows: { id: number; agent: AgentSpend; depth: number }[] = []
+  const rows: { id: number; agent: OwnSpend; depth: number }[] = []
   const visit = (id: string, depth: number) => {
     const agent = tree.agents[id]
     if (agent) rows.push({ id: Number(id), agent, depth })
@@ -155,7 +155,7 @@ function walk(tree: TreeSpend, top: string) {
 }
 
 /** The model an agent spent most on, without its provider, and how many others it used; tools do not count. */
-function mainModel(agent: AgentSpend) {
+function mainModel(agent: OwnSpend) {
   const models = Object.entries(agent.models)
     .filter(([key]) => !key.startsWith('tools/'))
     .toSorted(([, a], [, b]) => order(a, b))
@@ -253,7 +253,7 @@ function AgentLine({
   onOpen,
 }: {
   id: number
-  agent: AgentSpend
+  agent: OwnSpend
   depth: number
   onOpen: (id: number) => void
 }) {
@@ -323,7 +323,15 @@ function SpendChip({ id, tree, className }: { id: number; tree: TreeSpend; class
           {amount(total)}
         </button>
       </HoverCardTrigger>
-      <HoverCardContent align="end" className={cn(card, 'w-[26rem]')} collisionPadding={8}>
+      <HoverCardContent
+        align="end"
+        // A big tree's card scrolls inside the room the viewport has.
+        className={cn(
+          card,
+          'max-h-(--radix-hover-card-content-available-height) w-[26rem] overflow-y-auto',
+        )}
+        collisionPadding={8}
+      >
         <header className="flex flex-wrap items-baseline gap-x-2 border-b border-border/70 px-3 py-2">
           <span className="font-medium text-foreground">#{id}</span>
           <span className="text-muted-foreground">
@@ -357,12 +365,12 @@ function SpendChip({ id, tree, className }: { id: number; tree: TreeSpend; class
   )
 }
 
-const kinds = [
-  ['input', 'input'],
-  ['output', 'output'],
-  ['cacheRead', 'cache read'],
-  ['cacheWrite', 'cache write'],
-] as const
+const kindLabels = {
+  input: 'input',
+  output: 'output',
+  cacheRead: 'cache read',
+  cacheWrite: 'cache write',
+} as const
 
 /**
  * Conversation `id`'s own spend, a hook: a quiet figure for its row and the body of its hover card, its tokens and
@@ -398,7 +406,7 @@ function AgentCard({
   below,
   share,
 }: {
-  agent: AgentSpend
+  agent: OwnSpend
   spend: Spend
   below: number
   share: Spend
@@ -417,9 +425,9 @@ function AgentCard({
         <span className="ml-auto shrink-0 text-foreground tabular-nums">{amount(spend)}</span>
       </header>
       <div className={grid}>
-        {kinds.map(([kind, label]) => (
+        {kinds.map((kind) => (
           <div className="contents" key={kind}>
-            <span className="text-foreground/80">{label}</span>
+            <span className="text-foreground/80">{kindLabels[kind]}</span>
             <span className="text-right text-muted-foreground tabular-nums">
               {formatTokens(spend[kind])}
             </span>

@@ -375,18 +375,19 @@ function SpendHover({
   children,
 }: {
   id: number | undefined
-  title: ReactNode
+  title: string
   children: (figure?: ReactNode) => ReactElement
 }) {
   return (
     <Provided input={id} point={AgentSpend}>
-      {(spend) =>
-        spend ? (
-          <HoverCard closeDelay={100} openDelay={500}>
-            <HoverCardTrigger asChild>{children(spend.figure)}</HoverCardTrigger>
+      {(spend) => (
+        // Mounted also before there is a card, so the row keeps its focus and hover when its first spend arrives.
+        <HoverCard closeDelay={100} openDelay={500}>
+          <HoverCardTrigger asChild>{children(spend?.figure)}</HoverCardTrigger>
+          {spend && (
             <HoverCardContent
               align="start"
-              className="w-80 p-0"
+              className="max-h-(--radix-hover-card-content-available-height) w-80 overflow-y-auto p-0"
               collisionPadding={8}
               data-agent-spend-card={id}
               side="right"
@@ -396,11 +397,9 @@ function SpendHover({
               </p>
               {spend.card}
             </HoverCardContent>
-          </HoverCard>
-        ) : (
-          children()
-        )
-      }
+          )}
+        </HoverCard>
+      )}
     </Provided>
   )
 }

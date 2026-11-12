@@ -100,7 +100,7 @@ function ChildSpend({ id }: { id: number }) {
             </HoverCardTrigger>
             <HoverCardContent
               align="end"
-              className="w-80 p-0"
+              className="max-h-(--radix-hover-card-content-available-height) w-80 overflow-y-auto p-0"
               collisionPadding={8}
               data-agent-spend-card={id}
             >
