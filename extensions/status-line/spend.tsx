@@ -223,13 +223,38 @@ function Models({ models }: { models: Record<string, Spend> }) {
   )
 }
 
-/** Tokens by kind, as the composer's status line writes them. */
+const kindLabels = {
+  input: 'input',
+  output: 'output',
+  cacheRead: 'cache read',
+  cacheWrite: 'cache write',
+} as const
+
+/** Tokens and dollars by kind: input, output, cache read and cache write. */
 function Kinds({ spend }: { spend: Spend }) {
   return (
-    <span className="text-muted-foreground tabular-nums">
-      ↑{formatTokens(spend.input)} ↓{formatTokens(spend.output)} R{formatTokens(spend.cacheRead)} W
-      {formatTokens(spend.cacheWrite)}
-    </span>
+    <div className={grid}>
+      {kinds.map((kind) => (
+        <div className="contents" key={kind}>
+          <span className="text-foreground/80">{kindLabels[kind]}</span>
+          <span className="text-right text-muted-foreground tabular-nums">
+            {formatTokens(spend[kind])}
+          </span>
+          <span
+            className={cn(
+              'text-right tabular-nums',
+              spend.costs[kind] > 0 ? 'text-foreground/80' : 'text-muted-foreground/70',
+            )}
+          >
+            {spend[kind] === 0
+              ? '—'
+              : spend.costs[kind] > 0
+                ? dollars(spend.costs[kind])
+                : 'no price'}
+          </span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -332,17 +357,15 @@ function SpendChip({ id, tree, className }: { id: number; tree: TreeSpend; class
         )}
         collisionPadding={8}
       >
-        <header className="flex flex-wrap items-baseline gap-x-2 border-b border-border/70 px-3 py-2">
+        <header className="flex items-baseline gap-2 border-b border-border/70 px-3 py-2">
           <span className="font-medium text-foreground">#{id}</span>
           <span className="text-muted-foreground">
             {agents.length === 1 ? '1 agent' : `${agents.length} agents`}
           </span>
           <span className="ml-auto text-foreground tabular-nums">{amount(total)}</span>
-          <span className="basis-full">
-            <Kinds spend={total} />
-          </span>
         </header>
-        <div className={grid}>
+        <Kinds spend={total} />
+        <div className={cn(grid, 'border-t border-border/70')}>
           <span className={heading}>By agent</span>
           {agents.map((row) => (
             <AgentLine
@@ -364,13 +387,6 @@ function SpendChip({ id, tree, className }: { id: number; tree: TreeSpend; class
     </HoverCard>
   )
 }
-
-const kindLabels = {
-  input: 'input',
-  output: 'output',
-  cacheRead: 'cache read',
-  cacheWrite: 'cache write',
-} as const
 
 /**
  * Conversation `id`'s own spend, a hook: a quiet figure for its row and the body of its hover card, its tokens and
@@ -424,28 +440,7 @@ function AgentCard({
         </span>
         <span className="ml-auto shrink-0 text-foreground tabular-nums">{amount(spend)}</span>
       </header>
-      <div className={grid}>
-        {kinds.map((kind) => (
-          <div className="contents" key={kind}>
-            <span className="text-foreground/80">{kindLabels[kind]}</span>
-            <span className="text-right text-muted-foreground tabular-nums">
-              {formatTokens(spend[kind])}
-            </span>
-            <span
-              className={cn(
-                'text-right tabular-nums',
-                spend.costs[kind] > 0 ? 'text-foreground/80' : 'text-muted-foreground/70',
-              )}
-            >
-              {spend[kind] === 0
-                ? '—'
-                : spend.costs[kind] > 0
-                  ? dollars(spend.costs[kind])
-                  : 'no price'}
-            </span>
-          </div>
-        ))}
-      </div>
+      <Kinds spend={spend} />
       {Object.keys(agent.models).length > 1 && <Models models={agent.models} />}
       <p className={footnote}>
         Its own model calls at API prices
