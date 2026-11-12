@@ -19,8 +19,8 @@ export type Proc = {
   since: number
 }
 /**
- * What the topmost process of a group runs and where: read only for those. `command`: a background command's own text,
- * cut as the queue cuts it.
+ * What the topmost process of a group runs and where: read only for those. `command`: the program a background command
+ * runs (`programOf` of its own text).
  */
 export type Top = { argv: string[]; cwd?: string; command?: string }
 
@@ -34,34 +34,55 @@ export type OwnerContext = {
 type Who = Omit<Owner, 'cpu' | 'rssMiB' | 'processes' | 'since' | 'key'>
 
 const shells = /^(bash|sh|dash|zsh)$/
-const interpreters = /^(node|python3?|bash|sh|dash|zsh|env|exec|nice|nohup|setsid|timeout)$/
+const interpreters = /^(node|python3?|bash|sh|dash|zsh)$/
+/** Programs that run the program named after their options: `nice -n 15 …`, `timeout 30 …`, `env -i …`. */
+const wrappers = /^(env|exec|nice|nohup|setsid|timeout)$/
+/** Interpreter options whose value is a file, not code. */
+const fileOptions = /^(-r|--require|--import|--loader)$/
+
 /**
- * A short name for what `argv` runs, never an argument's value: the program, or for an interpreter the script it runs
- * (`pnpm`, `vitest`, `chromium`). Only a basename, and only of the program or script: any other word may be a value
- * (`client.js password`, `node -e …`).
+ * A short name for what `argv` runs, never an argument's value: the program, or for an interpreter the script file it
+ * runs (`pnpm`, `vitest`, `chromium`), as a basename. Any other word may be a value (`client.js password`, `node -e …`,
+ * `bash -lc '…'`): an interpreter with an option it does not know as harmless, or with no script file, is named itself.
  */
-function programOf(argv: string[], name: string) {
+export function programOf(argv: string[], name: string): string {
   let words = argv
-  let index = 0
-  while (index < words.length - 1 && interpreters.test(basename(words[index]))) {
-    const interpreter = basename(words[index])
-    index++
-    // A shell's `-c` runs a command line: what it runs is that line's first word.
-    if (shells.test(interpreter) && words[index] === '-c') {
-      words = words[index + 1]?.trim().split(/\s+/) ?? []
-      index = 0
+  for (;;) {
+    // A command line may set variables and redirect output before its program (`TOKEN=… pnpm test`, `exec >>log`).
+    const start = words.findIndex((word) => !/^([A-Za-z_]\w*=|\d*[<>]|&>)/.test(word))
+    if (start < 0) return name
+    const program = basename(words[start])
+    const rest = words.slice(start + 1)
+    let next = 0
+    if (wrappers.test(program)) {
+      while (next < rest.length && /^(-|\d)/.test(rest[next])) next += rest[next] === '-n' ? 2 : 1
+      words = rest.slice(next)
       continue
     }
-    // Flags of the interpreter, some with a value (`--require x.cjs`), come before the script; code given inline
-    // (`-e`, `-c`) is no script: the interpreter is what runs.
-    while (index < words.length - 1 && words[index].startsWith('-')) {
-      if (/^(-e|--eval|-p|--print|-c)$/.test(words[index])) return interpreter
-      index += /^(-r|--require|--import|--loader|-n)$/.test(words[index]) ? 2 : 1
+    if (!interpreters.test(program)) return program || name
+    let line: string | undefined
+    while (line === undefined && next < rest.length && rest[next].startsWith('-')) {
+      const option = rest[next]
+      // A shell's `-c` (or `-lc`) runs a command line: what it runs is that line's program, after a `cd … &&`.
+      if (shells.test(program) && /^-[a-z]*c[a-z]*$/.test(option)) line = rest[next + 1] ?? ''
+      else if (fileOptions.test(option)) next += 2
+      else if (/^--[a-z][\w-]*$/.test(option) && !/^--(eval|print)$/.test(option)) next++
+      else if (shells.test(program) && /^-[a-z]+$/.test(option)) next++
+      // Anything else may carry code or a value (`-e`, `--eval=…`, `-m`).
+      else return program
     }
+    if (line !== undefined) {
+      words = line
+        .replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '')
+        .trim()
+        .split(/\s+/)
+      continue
+    }
+    const script = rest[next]
+    return script && (script.includes('/') || /\.([cm]?[jt]s|py|sh)$/.test(script))
+      ? basename(script).replace(/\.[cm]?js$/, '')
+      : program
   }
-  // A command line may set variables before its program (`TOKEN=… pnpm test`).
-  while (index < words.length - 1 && /^[A-Za-z_]\w*=/.test(words[index])) index++
-  return basename(words[index] ?? '').replace(/\.[cm]?js$/, '') || name
 }
 
 /** The project home a folder lies in (`~/.ultimate/projects/<name>-<hash>`), and the path inside it. */
