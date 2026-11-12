@@ -8,7 +8,10 @@ import { searchChapter } from '../../search.ts'
 
 // #199903: a search over a whole chapter in JavaScript on the main thread froze the host for 1.86 s. In its worker it
 // must leave the event loop free, and the host's writes beside its read connection must neither fail nor wait.
-it('a long search neither stalls the event loop nor fails or delays host writes, and sees them', async () => {
+// The writes prove both: a search on this thread would hold them back. Timer gaps proved nothing more and were noise:
+// the host's own writes are synchronous `node:sqlite` calls on this thread, and a loaded CI runner saw a 159 ms gap
+// in a 283 ms search (#265478).
+it('a long search neither fails nor delays host writes, and sees them', async () => {
   const home = await temp('ultimate-codemode-search-')
   const prepared = await prepareHarness({
     ultimateRoot: home,
@@ -42,14 +45,6 @@ it('a long search neither stalls the event loop nor fails or delays host writes,
   opened = await prepared.open(false)
   try {
     const conversation = (await opened.harness.conversation(id, context))!
-    let longest = 0
-    let last = performance.now()
-    const tick = setInterval(() => {
-      const now = performance.now()
-      longest = Math.max(longest, now - last)
-      last = now
-    }, 1)
-    const started = performance.now()
     const search = { done: false }
     const searching = searchChapter(
       { database, text: 'no such text', count: 100 },
@@ -67,11 +62,8 @@ it('a long search neither stalls the event loop nor fails or delays host writes,
       await sleep(5)
     }
     expect(await searching).toEqual([])
-    const searched = performance.now() - started
-    clearInterval(tick)
-    // A scan on this thread would stall it for the whole search (984 ms of 1.2 s, measured in #214751). Half the search
-    // leaves room for a loaded machine, where an idle process already sees timer gaps of 100–170 ms.
-    expect(longest).toBeLessThan(Math.max(searched / 2, 100))
+    // A scan on this thread would block for the whole search (984 ms of 1.2 s, measured in #214751): no write would
+    // land during it, or each would wait behind it.
     expect(writes.length).toBeGreaterThan(2)
     expect(writes.toSorted((a, b) => a - b)[writes.length >> 1]).toBeLessThan(20)
     expect(Math.max(...writes)).toBeLessThan(250)
