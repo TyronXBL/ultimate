@@ -136,7 +136,7 @@ it('shows the running job, then the waiters in order with why each waits', () =>
 it('marks work outside the queue that burns cores, and says so in the head', () => {
   const owners = read('machine-owners', 'data-owner')
   expect(owners.map((row) => row.text)).toEqual([
-    'node playwright 4.2 cores work outside the queue #40 in my-app 2.1 GB',
+    'node playwright 4.2 cores outside the queue #40 in my-app 2.1 GB',
     'ultimate 0.3 cores Ultimate ultimate 800 MB',
   ])
   expect(owners[0].marked).toContain('data-outside')

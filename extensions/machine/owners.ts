@@ -18,8 +18,11 @@ export type Proc = {
   /** When it started (ms). */
   since: number
 }
-/** What the topmost process of a group runs and where: read only for those. */
-export type Top = { argv: string[]; cwd?: string }
+/**
+ * What the topmost process of a group runs and where: read only for those. `command`: a background command's own text,
+ * cut as the queue cuts it.
+ */
+export type Top = { argv: string[]; cwd?: string; command?: string }
 
 export type OwnerContext = {
   /** Project homes (`~/.ultimate/projects/<name>-<hash>`) → the project's name, from their `project.json`. */
@@ -114,7 +117,7 @@ function classify(
     return { kind: 'browser', ...where, label: 'chromium' }
   const automation = /\/\.ultimate\/automations\/[^/]*\/([^/]+)\//.exec(command)?.[1]
   if (automation) return { kind: 'automation', ...where, label: automation }
-  const label = programOf(top.argv, proc.name)
+  const label = top.command ?? programOf(top.argv, proc.name)
   if (place?.lander) return { kind: 'lander', ...where, label }
   if (place || parent?.kind === 'host') return { kind: 'work', ...where, label }
   return { kind: 'system', label: proc.name }

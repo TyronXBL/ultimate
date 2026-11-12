@@ -465,7 +465,7 @@ function Resources({ state, samples }: { state: MachineState; samples: Sample[] 
                   fill: true,
                 },
               ]}
-              title={`${state.cgroup.name} memory`}
+              title={state.cgroup.name}
             />
           )}
           <Chart
@@ -600,7 +600,7 @@ function OwnerRow({ owner, who }: { owner: Owner; who: ReturnType<typeof useWho>
             outside ? 'text-warning' : 'text-muted-foreground',
           )}
         >
-          {outside ? `${kindWords[owner.kind]} outside the queue` : kindWords[owner.kind]}
+          {outside ? 'outside the queue' : kindWords[owner.kind]}
         </span>
         <span className="min-w-0 truncate text-muted-foreground md:order-3">{where}</span>
       </span>

@@ -9,7 +9,7 @@ import { readFile, readlink, statfs } from 'node:fs/promises'
 import { availableParallelism, loadavg, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { checkRam, commandNeedMiB, memoryFloor } from '../../lib/memory.ts'
-import { peekSlot, queueTmpdir } from '../../lib/slot.ts'
+import { peekSlot, queueTmpdir, slotLabel } from '../../lib/slot.ts'
 import { cpuByKind, homeOf, owners } from './owners.ts'
 import type { OwnerContext, Proc, Top } from './owners.ts'
 import { END_OF_LINE, fromOf, holdersOf, queueView } from './queue.ts'
@@ -84,6 +84,20 @@ async function processes(): Promise<Raw[]> {
   return found
 }
 
+/**
+ * A background command's wrapper (`extensions/background`) runs `bash -c "$BACKGROUND_COMMAND"`: its command is in its
+ * environment, shown as the queue shows it (`slotLabel`: the first line, at most 80 characters). Nothing else of the
+ * environment is kept.
+ */
+async function backgroundCommand(pid: number) {
+  const environment = await readFile(`/proc/${pid}/environ`, 'utf8').catch(
+    // Ended since it was listed.
+    () => '',
+  )
+  const found = environment.split('\0').find((entry) => entry.startsWith('BACKGROUND_COMMAND='))
+  return found && slotLabel(found.slice('BACKGROUND_COMMAND='.length))
+}
+
 async function topOf(pid: number): Promise<Top> {
   const [argv, cwd] = await Promise.all([
     readFile(`/proc/${pid}/cmdline`, 'utf8').then(
@@ -96,7 +110,10 @@ async function topOf(pid: number): Promise<Top> {
       () => undefined,
     ),
   ])
-  return { argv, ...(cwd && { cwd }) }
+  const command = argv.some((word) => word.includes('$BACKGROUND_COMMAND'))
+    ? await backgroundCommand(pid)
+    : undefined
+  return { argv, ...(cwd && { cwd }), ...(command && { command }) }
 }
 
 const mib = (kib: string | undefined) => Math.round(Number(kib ?? 0) / 1024)
