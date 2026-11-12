@@ -111,6 +111,8 @@ see [integration details](docs/worktrees.md#standing-permission-to-push-this-rep
   fix or delete a flaky test rather than skipping it or raising its timeout. Lint enforces this outside the `test/e2e`
   folders (justified exceptions need a `fast-test-reason:` comment); poll with the real-deadline `until` from
   `test/helpers.ts`.
+- Iterating (fork rule, #261292): between commits run `pnpm fix:changed` (or `pnpm check:changed`), which checks the
+  files your branch changed and their direct importers in about half the time and RAM of the full check; run the full `pnpm fix` once before each commit or report.
 - A scratch checkout of your own (a baseline, a throwaway experiment) gets `git worktree add` and its own
   `pnpm install --frozen-lockfile --offline` (seconds: packages hardlink from the store). Never symlink `node_modules`
   from another checkout: pnpm records the checkout it installed for and aborts trying to reinstall the shared folder.
