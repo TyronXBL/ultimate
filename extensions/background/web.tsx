@@ -14,7 +14,8 @@ const labels = {
 const mib = (value: number) => (value < 1024 ? `${value} MiB` : `${(value / 1024).toFixed(1)} GiB`)
 function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const result = entry.data as BackgroundResult
-  const failed = result.outcome !== 'finished' || result.exitCode !== 0
+  // A parent may exit 0 after the kernel killed one of its children at the limit: that is a failure too.
+  const failed = result.outcome !== 'finished' || result.exitCode !== 0 || result.usage?.oomKilled
   const Icon = failed ? (result.outcome === 'finished' ? XIcon : TriangleAlertIcon) : CheckIcon
   const color = failed ? 'text-error' : 'text-success'
   const label = result.usage?.oomKilled ? 'Command hit its memory limit' : labels[result.outcome]

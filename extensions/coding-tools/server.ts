@@ -122,7 +122,8 @@ const killedBy: Record<number, string> = { 137: 'SIGKILL', 143: 'SIGTERM' }
 function killedHint(result: ToolExecutionResult): ToolExecutionResult {
   const exitCode = (result.structuredOutput as { exitCode?: number } | undefined)?.exitCode
   const signal = exitCode === undefined ? undefined : killedBy[exitCode]
-  if (!signal) return result
+  // The job's own scope already said who killed it (`memory_limit`).
+  if (!signal || result.diagnostics?.some((item) => item.code === 'memory_limit')) return result
   const example =
     signal === 'SIGKILL'
       ? 'kill -9, or the out-of-memory killer'

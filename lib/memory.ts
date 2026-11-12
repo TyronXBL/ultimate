@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readJson, writeJson } from './json-file.ts'
-import { jobsSlice } from './job-scope.ts'
+import { JOBS_SLICE } from './job-scope.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /** About what a preview or a scratch server needs: a booted Ultimate with its web build. */
@@ -277,12 +277,13 @@ export async function memoryCap(): Promise<MemoryCap | undefined> {
       ),
     )
     if (high !== undefined) {
-      const slice = await jobsSlice()
+      // The jobs' slice counts once: a capped cgroup that contains it already counts it in its own working set.
+      const outside = at !== '/' && !JOBS_SLICE.startsWith(`${at}/`)
       const [used, jobs, pressure] = await Promise.all([
         workingSet(dir),
-        slice
-          ? workingSet(join('/sys/fs/cgroup', slice)).catch(
-              // No job has run since the slice was last emptied and removed: none use memory.
+        outside
+          ? workingSet(join('/sys/fs/cgroup', JOBS_SLICE)).catch(
+              // No slice: no job has run in one since it was last emptied and removed, or jobs get no scopes here.
               () => 0,
             )
           : 0,

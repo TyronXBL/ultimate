@@ -5,12 +5,15 @@
  * driving every host in the service into reclaim at the service's soft cap (#231847: two `pnpm check` runs, load 30,
  * 2026-11-12; #261381). Linux with a systemd user manager only; elsewhere, CI included, jobs run without a scope.
  */
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { availableParallelism } from 'node:os'
-import { basename, dirname } from 'node:path'
-import { exec } from './exec.ts'
+import { basename, join } from 'node:path'
 
-const SLICE = 'ultimate-jobs.slice'
+const uid = process.getuid?.()
+const manager = `/user.slice/user-${uid}.slice/user@${uid}.service`
+/** The jobs' slice as a cgroup path: where the user's systemd manager puts `ultimate-jobs.slice`. */
+export const JOBS_SLICE = `${manager}/ultimate.slice/ultimate-jobs.slice`
 /**
  * A job's memory limit in MiB: twice its estimated need (`commandNeedMiB`), at least 4 GiB. Admission plans with the
  * estimate; the limit only stops a runaway, so it leaves room for a real run above it (a full `pnpm check`, estimated
@@ -21,37 +24,23 @@ const jobMemoryMiB = (need: number) => Math.max(4096, 2 * need)
 /** Its cgroup path, from the first line of `/proc/<pid>/cgroup` in cgroup v2 ("0::/path"). */
 const cgroupOf = (text: string) => /^0::(\/.*)$/m.exec(text)?.[1]
 
-/**
- * The jobs' slice as a cgroup path ("/user.slice/…/ultimate.slice/ultimate-jobs.slice"), learned from one scope started
- * in it, or undefined where scopes cannot start (no systemd user manager, not Linux). Looked up once per process.
- */
-let probe: Promise<string | undefined> | undefined
-const SCOPE = ['--user', '--scope', '--quiet', '--collect', `--slice=${SLICE}`]
-export function jobsSlice() {
-  probe ??=
-    process.platform === 'linux'
-      ? exec('systemd-run', [...SCOPE, '--', 'cat', '/proc/self/cgroup']).then(
-          ({ stdout }) => {
-            const scope = cgroupOf(stdout)
-            return scope && dirname(scope)
-          },
-          // No systemd-run, or no user manager to reach (a container, CI, a login without one): no scopes.
-          () => undefined,
-        )
-      : Promise.resolve(undefined)
-  return probe
-}
+/** Whether jobs get a scope: on Linux with the user's systemd manager running, found by its private socket. */
+const scopes = () =>
+  process.platform === 'linux' &&
+  existsSync(join(process.env.XDG_RUNTIME_DIR ?? `/run/user/${uid}`, 'systemd', 'private'))
 
-/** The unit this process runs in when it is a service ("ultimate.service"), for a job's scope to stop with it. */
+/**
+ * The user manager's service this process runs in ("ultimate.service"), for a job's scope to stop with it. Not one of
+ * the system manager's (a CI runner's agent), which the user manager cannot bind to.
+ */
 async function ownService() {
   const own = cgroupOf(
     await readFile('/proc/self/cgroup', 'utf8').catch(
-      // jobsSlice found a user manager, so this is Linux; a read failing here leaves the scope unbound.
+      // A user manager runs, so this is Linux; a read failing here leaves the scope unbound.
       () => '',
     ),
   )
-  const unit = own && basename(own)
-  return unit?.endsWith('.service') && !unit.startsWith('user@') ? unit : undefined
+  return own?.startsWith(`${manager}/`) && own.endsWith('.service') ? basename(own) : undefined
 }
 
 /**
@@ -70,7 +59,7 @@ exit $code`
  * in the file `usage` (`readUsage`): the command's own argv follows it. Undefined where scopes cannot start.
  */
 export async function jobScope(need: number, usage: string) {
-  if (!(await jobsSlice())) return undefined
+  if (!scopes()) return undefined
   const service = await ownService()
   const limits = {
     MemoryMax: `${jobMemoryMiB(need)}M`,
@@ -86,7 +75,11 @@ export async function jobScope(need: number, usage: string) {
   }
   return [
     'systemd-run',
-    ...SCOPE,
+    '--user',
+    '--scope',
+    '--quiet',
+    '--collect',
+    '--slice=ultimate-jobs.slice',
     ...Object.entries(limits).flatMap(([name, value]) => ['-p', `${name}=${value}`]),
     '--',
     '/bin/sh',
@@ -98,7 +91,7 @@ export async function jobScope(need: number, usage: string) {
 }
 
 /** What a job used: its peak memory and CPU time, its memory limit, and whether the kernel killed part of it for memory. */
-export type JobUsage = { peakMiB: number; cpuSeconds: number; limitMiB: number; oomKilled: boolean }
+type JobUsage = { peakMiB: number; cpuSeconds: number; limitMiB: number; oomKilled: boolean }
 
 /** The use a job's scope recorded in `usage`, for a job needing `need` MiB; undefined when it recorded none. */
 export async function readUsage(usage: string, need: number): Promise<JobUsage | undefined> {
