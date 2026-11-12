@@ -75,14 +75,15 @@ export function programOf(argv: string[], name: string): string {
     while (line === undefined && next < rest.length && rest[next].startsWith('-')) {
       const option = rest[next]
       // A shell's `-c` (or `-lc`) runs a command line: what it runs is that line's program, after a `cd … &&`.
-      if (shells.test(program) && /^-[a-np-z]*c[a-np-z]*$/.test(option)) line = rest[next + 1] ?? ''
+      // Other shell flags only from those that change nothing about what runs: -e -l -u -v -x.
+      if (shells.test(program) && /^-[eluvx]*c[eluvx]*$/.test(option)) line = rest[next + 1] ?? ''
       // Node's options: a shell's or Python's `-r` means something else.
       else if (program === 'node' && fileOptions.test(option)) next += 2
       else if (program === 'node' && (valueless.test(option) || /^--[a-z][\w-]*=/.test(option))) {
         // `--eval=…` and `--print=…` carry code.
         if (/^--(eval|print)=/.test(option)) return program
         next++
-      } else if (shells.test(program) && /^-[a-np-z]+$/.test(option)) next++
+      } else if (shells.test(program) && /^-[eluvx]+$/.test(option)) next++
       // Anything else may carry code or take a value (`-e`, `-m`, `--conditions x`, `bash -o x`).
       else return program
     }
