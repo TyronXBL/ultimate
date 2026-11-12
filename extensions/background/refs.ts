@@ -12,6 +12,11 @@ export type BackgroundResult = {
   seconds: number
   /** How long it waited in line for the heavy-work slot before it started, when it did. */
   queued?: number
+  /**
+   * What it used in its own systemd scope (`lib/job-scope.ts`): peak memory, CPU time, its memory limit and whether the
+   * kernel killed part of it at that limit. Absent where jobs run without a scope, or when it was stopped.
+   */
+  usage?: { peakMiB: number; cpuSeconds: number; limitMiB: number; oomKilled: boolean }
   tail: string
   /** Empty when it never started. */
   log: string
