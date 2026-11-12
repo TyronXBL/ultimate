@@ -102,7 +102,9 @@ it('uploads a PDF picked with the paperclip and sends its path, not its bytes', 
     )
     .setInputFiles({ name: 'report.pdf', mimeType: 'application/pdf', buffer: pdf })
   await page
-    .locator('#app [data-ui="composer"] [data-ui="file-chip"]', { hasText: 'PDF' })
+    // Wait for the uploaded note (`15 B · PDF`): a string `hasText` matches case-insensitively, so `report.pdf`
+    // already matched while the chip said Uploading…, and Enter during an upload sends nothing (CI, #265478).
+    .locator('#app [data-ui="composer"] [data-ui="file-chip"]', { hasText: /· PDF/ })
     .waitFor()
   await editor.fill('Summarise this')
   await editor.press('Enter')
