@@ -47,14 +47,12 @@ const fileOptions = /^(-r|--require|--import|--loader)$/
  */
 export function programOf(argv: string[], name: string): string {
   let words = argv
-  /** The shell whose command line `words` was split from, on whitespace: quoting there makes the split unreliable. */
+  /** The shell whose command line `words` was split from. */
   let shell: string | undefined
   for (;;) {
     // A command line may set variables and redirect output before its program (`TOKEN=… pnpm test`, `exec >>log`).
     const start = words.findIndex((word) => !/^([A-Za-z_]\w*=|\d*[<>]|&>)/.test(word))
     if (start < 0) return shell ?? name
-    // `TOKEN="a b" curl` splits inside the quotes: a word up to the program with a quote or escape names the shell.
-    if (shell && words.slice(0, start + 1).some((word) => /['"`\\$]/.test(word))) return shell
     const program = basename(words[start])
     const rest = words.slice(start + 1)
     let next = 0
@@ -77,16 +75,15 @@ export function programOf(argv: string[], name: string): string {
     }
     if (line !== undefined) {
       shell = program
-      words = line
-        .replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '')
-        .trim()
-        .split(/\s+/)
+      // Split on whitespace only up to the first quote, escape or expansion: past it a word may be part of a quoted value
+      // (`TOKEN="a b" curl`, `--require "a b.js"`, review of #231847).
+      const plain = line.replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '')
+      const quoted = plain.search(/['"`\\$]/)
+      words = (quoted < 0 ? plain : plain.slice(0, quoted)).trim().split(/\s+/).filter(Boolean)
       continue
     }
     const script = rest[next]
-    return script &&
-      !(shell && /['"`\\$]/.test(script)) &&
-      (script.includes('/') || /\.([cm]?[jt]s|py|sh)$/.test(script))
+    return script && (script.includes('/') || /\.([cm]?[jt]s|py|sh)$/.test(script))
       ? basename(script).replace(/\.[cm]?js$/, '')
       : program
   }
