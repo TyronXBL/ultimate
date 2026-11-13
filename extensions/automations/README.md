@@ -39,7 +39,9 @@ Each automation has one or both:
   start no run (the conversations service's `resultIn`); the watcher's own `writing` and `failed` deliveries always
   wake it. An enabled one-shot (`at` schedule or `once` script) is work under way for each conversation it wakes
   (`wakesOnce` in `types.ts`, the conversations service's `underway`) until it fires, is paused or is deleted, so a
-  branch that stops to wait for its own reminder leaves its starter a note, not a report.
+  branch that stops to wait for its own reminder leaves its starter a note, not a report. Pausing, deleting or
+  retargeting it while the branch is idle wakes nobody: whoever cancelled it decided the branch won't wake, and the
+  starter keeps the note.
 
 Without either, create subscribes the caller; nothing may leave an automation with neither. To be reminded, subscribe:
 a prompt run costs a whole agent turn per fire. The seventh fire within an hour pauses the automation instead,

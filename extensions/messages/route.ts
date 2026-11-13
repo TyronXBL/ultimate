@@ -50,9 +50,9 @@ const isWorking = (reason: Underway) =>
   busy(reason) || reason.kind === 'reply' || reason.kind === 'child'
 /**
  * Whether branch `id` still has work under way that will wake it again: work of its own (`working`), a background
- * command or CI run of its own, a one-shot automation that wakes it, or a submission the lander has not reported yet. While the lander reports a landing it
- * decides, once, whether the branch is done: it concludes it and wakes the starter, or leaves it open to report when it
- * stops. Until then a report waits as a note.
+ * command or CI run of its own, a one-shot automation that wakes it, or a submission the lander has not reported yet.
+ * While the lander reports a landing it decides, once, whether the branch is done: it concludes it and wakes the
+ * starter, or leaves it open to report when it stops. Until then a report waits as a note.
  */
 async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promise<boolean> {
   // A landing concludes the branch in the commit that ends its report and wakes the starter itself; an answer routed

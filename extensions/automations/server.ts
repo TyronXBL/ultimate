@@ -161,7 +161,6 @@ export const Automations = defineDoc<Ledger>({
   },
 })
 type Change = { result: JsonValue; abort?: TaskId; effect?: Effect }
-/** Per tool call, by call id: a codemode script's nested calls share its task, so the task alone does not name a call. */
 /** A conversation's one-shot automations, an `automation` each until it fires (`wakesOnce`). */
 export const oneShots: UnderwaySource = {
   name: 'automations',
@@ -172,6 +171,7 @@ export const oneShots: UnderwaySource = {
     )
   },
 }
+/** Per tool call, by call id: a codemode script's nested calls share its task, so the task alone does not name a call. */
 const Receipts = defineDoc<Record<string, Partial<Change>>>({
   kind: 'ultimate.automation-receipts',
   checkpointWhen: () => false,

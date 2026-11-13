@@ -208,7 +208,7 @@ registers with `registerUnderway({ name, underway })`, so no one else matches it
 - background and ci: `job` per live command or CI run, `delivering` once its `deliver` phase submitted the result;
 - lineage: `notify` per waking `notify` (not `wake: false`), `delivering` likewise;
 - automations: `automation` per enabled one-shot (`at` schedule or `once` script) that `id` subscribes to, until it
-  fires, is paused or is deleted (`wakesOnce`); recurring triggers never count;
+  fires, is paused or is deleted (`wakesOnce`); recurring triggers never count, and cancelling one wakes nobody;
 - subagents: `report` while a reporter is live, `child` while a subagent at any depth runs, has input queued, or has a
   `report` or `notify` (its jobs and open replies do not count);
 - messages: `reply` while a reply-enabled message from `id` waits on its answer;
