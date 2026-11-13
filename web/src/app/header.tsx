@@ -111,7 +111,7 @@ function Trail() {
             {(kind) =>
               (kind ?? summary?.label) && (
                 // On a phone the title needs the room more than the role.
-                <span className="shrink-0 font-mono text-[12px] text-brand max-md:pointer-coarse:hidden">
+                <span className="max-w-1/2 shrink-0 truncate font-mono text-[12px] text-brand max-md:pointer-coarse:hidden">
                   {kind ?? summary?.label}
                 </span>
               )

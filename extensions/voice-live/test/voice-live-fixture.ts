@@ -75,6 +75,7 @@ export async function fixture() {
   const voice = await startSession()
   const requests: string[][] = []
   const answers: string[] = []
+  const announced: string[] = []
   let answer = 'The tests pass.'
   const call = (name: string, args: JsonObject) =>
     fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: 'toolUse' })
@@ -90,7 +91,16 @@ export async function fixture() {
           m.role === 'user' && typeof m.content === 'string' ? [m.content] : [],
         ),
       )
+      if (text.startsWith('A new question for the user arrived')) {
+        announced.push(text)
+        return call('voice_say', { text: 'A branch has a question. Want it now?' })
+      }
+      if (last.role === 'toolResult' && last.toolName === 'voice_answer')
+        return call('voice_say', { text: 'Sent. Nothing else waits.' })
       if (last.role === 'toolResult') return call('voice_say', { text: 'Passing that on.' })
+      const settle = /^.*answer message (\d+): (.+)$/s.exec(text)
+      if (settle)
+        return call('voice_answer', { message: Number(settle[1]), text: settle[2].trim() })
       if (text.startsWith('@ultimate answered')) {
         answers.push(text)
         return call('voice_say', { text: 'The spoken answer. Details are on screen.' })
@@ -151,6 +161,7 @@ export async function fixture() {
     action,
     entries,
     answers,
+    announced,
     waitAnswer,
     setAnswer: (text: string) => {
       answer = text

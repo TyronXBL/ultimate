@@ -35,6 +35,21 @@ const ids = ({ active, tabs }: ReturnType<typeof shownPanels>) => [
 ]
 const component = (label: string) => Object.assign(() => null, { displayName: label })
 const module = (extension: WebExtension) => ({ default: extension })
+type Registry = ReturnType<typeof createRegistry>
+/** Reload `name` with `loaded` (a module, or the error its load throws), the other facets unchanged, as a rebuilt bundle does. */
+const reload = (registry: Registry, name: string, loaded: unknown) =>
+  registry.setLoaders(
+    Object.fromEntries(
+      registry.getSnapshot().map((record) => [
+        path(record.name),
+        async () => {
+          if (record.name !== name) return module(record.extension!)
+          if (loaded instanceof Error) throw loaded
+          return loaded
+        },
+      ]),
+    ),
+  )
 /** A compact row of an entry of `kind`. */
 const row = (kind: string) => ({ entry: { kind } as EntryRecord, calls: [] })
 function deferred<T>() {
@@ -119,14 +134,14 @@ describe('web extension registry', () => {
     await registry.setLoaders({ [path('hello')]: async () => module(extension) })
     expect(registry.getSnapshot()[0]).toBe(installed)
 
-    registry.fail('hello', new Error('Transform failed'))
+    await reload(registry, 'hello', new Error('Transform failed'))
     const failed = registry.getSnapshot()[0]
     expect(failed.error).toBe('Transform failed')
     expect(slotItems(registry.getSnapshot(), 'overlay').map((item) => item.component)).toEqual([
       First,
     ])
 
-    registry.replace('hello', module({ slots: { overlay: Second } }))
+    await reload(registry, 'hello', module({ slots: { overlay: Second } }))
     const recovered = registry.getSnapshot()[0]
     expect(recovered.error).toBeUndefined()
     expect(recovered.version).toBe(2)
@@ -185,7 +200,7 @@ describe('web extension registry', () => {
       [{ documents: [{ kind: 1, title: 'X', component: Good }] }, /^documents must/],
     ]
     for (const [extension, error] of malformed) {
-      registry.replace('hello', { default: extension })
+      await reload(registry, 'hello', { default: extension })
       const records = registry.getSnapshot()
       expect(records[0].error).toMatch(error)
       expect(records[0].extension).toBe(good)
@@ -349,7 +364,7 @@ describe('web extension registry', () => {
     ])
     expect(messageItems(registry.getSnapshot(), 'messageDetails')).toEqual([])
     for (const answerLabels of [First, [42]]) {
-      registry.replace('b', { default: { answerLabels } })
+      await reload(registry, 'b', { default: { answerLabels } })
       expect(registry.getSnapshot()[1]?.error).toBe(
         'answerLabels must be an array of answer label components',
       )
@@ -400,11 +415,11 @@ describe('web extension registry', () => {
     expect(compactTools(records, undefined, {}, report)).toBeUndefined()
     expect(report).toHaveBeenCalledWith('c', new Error('broken'))
     const shape = 'compact must be a { when, tools?, docs?, thread?, summary? } object'
-    registry.replace('b', { default: { compact: { tools: ['workspace'] } } })
+    await reload(registry, 'b', { default: { compact: { tools: ['workspace'] } } })
     expect(registry.getSnapshot()[1]?.error).toBe(shape)
-    registry.replace('b', { default: { compact: { when: () => true, docs: [1] } } })
+    await reload(registry, 'b', { default: { compact: { when: () => true, docs: [1] } } })
     expect(registry.getSnapshot()[1]?.error).toBe(shape)
-    registry.replace('b', { default: { compact: { when: () => true, thread: true } } })
+    await reload(registry, 'b', { default: { compact: { when: () => true, thread: true } } })
     expect(registry.getSnapshot()[1]?.error).toBe(shape)
   })
 
@@ -492,7 +507,7 @@ describe('web extension registry', () => {
       { key: 'builtin-z:1', extension: 'builtin-z', version: 1, component: Second },
       { key: 'project-a:0', extension: 'project-a', version: 1, component: Second },
     ])
-    registry.replace('project-a', { default: { messageActions: [42] } })
+    await reload(registry, 'project-a', { default: { messageActions: [42] } })
     expect(registry.getSnapshot()[1]?.error).toBe(
       'messageActions must be an array of message action components',
     )
@@ -509,7 +524,7 @@ describe('web extension registry', () => {
       { key: 'builtin-z:0', extension: 'builtin-z', version: 1, component: Detail },
     ])
     expect(messageItems(registry.getSnapshot(), 'messageActions')).toEqual([])
-    registry.replace('builtin-z', { default: { messageDetails: {} } })
+    await reload(registry, 'builtin-z', { default: { messageDetails: {} } })
     expect(registry.getSnapshot()[0]?.error).toBe(
       'messageDetails must be an array of message detail components',
     )

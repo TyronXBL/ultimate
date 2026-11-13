@@ -567,7 +567,7 @@ it.concurrent('a persistent branch deletion failure blocks tools with its reason
     `#!/bin/sh
 cat >/dev/null
 [ "$1" = prepared ] || exit 0
-case "$(ps -ww -p "$PPID" -o args=)" in "git branch -D "*) exit 1 ;; esac
+case "$(ps -ww -p "$PPID" -o args=)" in "git branch -D "* | */"git branch -D "*) exit 1 ;; esac
 `,
     { mode: 0o755 },
   )

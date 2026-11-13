@@ -5,7 +5,7 @@ import { Messages } from '../../messages/api.ts'
 import { Standing } from '../../subagents/api.ts'
 import { Summaries } from '../../conversations/summary.ts'
 import type { VoiceAnswer, VoiceLine } from '../refs.ts'
-import { until } from '../../../test/helpers.ts'
+import { post, until } from '../../../test/helpers.ts'
 import { fixture } from './voice-live-fixture.ts'
 
 it('answers a connection check itself in the standing Voice conversation, with its relay tools and codemode', async () => {
@@ -16,9 +16,12 @@ it('answers a connection check itself in the standing Voice conversation, with i
   const agent = await (await f.server.harness.conversation(f.voice, context))!.agent(context)
   expect(agent.tools.map((t) => t.name).toSorted()).toEqual([
     'codemode',
+    'voice_answer',
     'voice_ask_ultimate',
     'voice_note',
+    'voice_question',
     'voice_say',
+    'voice_show',
   ])
   expect((await f.server.harness.snapshot(Summaries, f.voice, context))?.automatic).toBe(false)
   await f.action('heard', { text: 'can you hear me' })
@@ -81,7 +84,8 @@ it('speaks a tool-terminated question and answers it through Messages, without a
   expect(f.answers[0]).toContain('a: Small fix')
   expect(f.answers[0]).toContain('b: Rewrite')
   f.setAnswer('I will use the small fix.')
-  await f.action('heard', { text: 'The small fix please' })
+  // Voice names the card it answers; @ultimate's reply to it comes back to Voice to speak.
+  await f.action('heard', { text: `answer message ${question.id}: The small fix please` })
   await f.waitAnswer(2)
   expect(f.answers[1]).toContain('I will use the small fix.')
   expect(
@@ -93,27 +97,44 @@ it('speaks a tool-terminated question and answers it through Messages, without a
   expect((await f.entries(f.main)).some((e) => e.kind === 'board.message')).toBe(true)
 })
 
-it('answers no question by voice while several are open, since spoken words name no card', async () => {
+it('announces a branch question that opens during a session and settles exactly the card Voice names', async () => {
   const f = await fixture()
-  f.setAnswer('QUESTION')
-  await f.action('heard', { text: 'Please propose an approach' })
-  await f.waitAnswer(1)
   const messages = async () =>
     (await f.server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context))!.messages
-  const first = (await messages()).findLast((m) => m.from === f.main && m.to === 'user')!
-  // A second card is open beside the first.
-  await f.server.harness.commit(async (tx) => {
-    const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
-    log.messages.push({ ...first, id: log.next++, text: 'Another?' })
-  }, context)
-  f.setAnswer('Which one do you mean?')
-  await f.action('heard', { text: 'The small fix please' })
-  await f.waitAnswer(2)
-  expect((await messages()).filter((m) => m.state === 'delivered' && m.to === 'user')).toHaveLength(
-    2,
-  )
-  expect((await messages()).some((m) => m.from === 'user')).toBe(false)
-  expect((await f.entries(f.main)).filter((e) => e.kind === 'voice.utterance')).toHaveLength(2)
+  // Two branch questions are open: the one Voice names is answered, the other stays (#576596: a question that
+  // arrived mid-session went unannounced, and a spoken answer only reached a card when exactly one was open).
+  const ask = (text: string) =>
+    f.server.harness.commit(async (tx) => {
+      const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
+      const id = log.next++
+      log.messages.push({
+        id,
+        from: f.voice,
+        to: 'user',
+        text,
+        at: Date.now(),
+        reply: true,
+        state: 'delivered',
+        questions: [{ ref: '1', text, kind: 'confirm' }],
+      })
+      return id
+    }, context)
+  const first = await ask('Ship it?')
+  const second = await ask('Rename it?')
+  await f.action('asked', { message: second })
+  await f.action('asked', { message: second })
+  await until(() => f.announced.length === 1)
+  expect(f.announced[0]).toContain(`message ${second}`)
+  expect((await f.entries(f.voice)).filter((e) => e.kind === 'voice.question')).toHaveLength(1)
+  await f.action('heard', { text: `answer message ${second}: 1. yes` })
+  await until(async () => (await messages()).find((m) => m.id === second)?.state === 'answered')
+  const states = Object.fromEntries((await messages()).map((m) => [m.id, m.state]))
+  expect([states[first], states[second]]).toEqual(['delivered', 'answered'])
+  expect((await messages()).find((m) => m.from === 'user')).toMatchObject({
+    re: second,
+    text: '1. yes',
+  })
+  expect((await f.entries(f.main)).filter((e) => e.kind === 'voice.utterance')).toHaveLength(0)
 })
 
 it('briefs each session, waits for the brief before the first line, and lets only the newest reach Voice', async () => {
@@ -177,4 +198,45 @@ it('briefs each session, waits for the brief before the first line, and lets onl
   // Voice's request on that line carries the new brief once, and not the old one.
   const seen = f.requests.at(-1)!.filter((m) => m.startsWith('<voice_context>'))
   expect(seen).toEqual([(second.data as { text: string }).text])
+})
+
+it('shows OpenAI’s own reason when it refuses a session, never a bare HTTP status or the key', async () => {
+  const f = await fixture()
+  const original = globalThis.fetch
+  const sessions = 'https://api.openai.com/v1/live/sessions'
+  // OpenAI's real 429 for an account with no credits, whose reason a bare status threw away. The second answer is a
+  // proxy page instead of OpenAI's JSON, which leaves only the status to report.
+  const answers = [
+    () =>
+      Response.json(
+        {
+          error: {
+            message:
+              'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/',
+            type: 'insufficient_quota',
+            code: 'insufficient_quota',
+          },
+        },
+        { status: 429 },
+      ),
+    () => new Response('<html>bad gateway</html>', { status: 502 }),
+  ]
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation((url, init) =>
+      url === sessions ? Promise.resolve(answers.shift()!()) : original(url, init),
+    )
+  const start = () =>
+    post(f.server, '/api/extensions/voice-live/actions/start', { args: { sdp: 'fake-offer' } })
+  try {
+    const refused = await start()
+    expect(refused.status).not.toBe(200)
+    expect(refused.data.error).toContain(
+      'OpenAI live session failed (HTTP 429 insufficient_quota): You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/',
+    )
+    expect(refused.data.error).not.toContain('sk-test-not-real')
+    expect((await start()).data.error).toContain('OpenAI live session failed (HTTP 502)')
+  } finally {
+    fetch.mockRestore()
+  }
 })

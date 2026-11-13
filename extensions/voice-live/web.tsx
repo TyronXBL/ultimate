@@ -1,6 +1,8 @@
 import type { EntryRecord } from '@earendil-works/pi-durable'
 import {
+  ArrowRightIcon,
   AudioLinesIcon,
+  CheckIcon,
   BookOpenIcon,
   ChevronRightIcon,
   CircleAlertIcon,
@@ -21,6 +23,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  api,
   cn,
   column,
   Conversation,
@@ -32,6 +35,7 @@ import {
   provide,
   Provided,
   useAction,
+  useCommands,
   useConversation,
   useConversationSummary,
   useDocOf,
@@ -45,15 +49,24 @@ import {
 } from '@/sdk'
 import type { EntryRenderer, UltimateActions } from '@/sdk'
 import { ConversationPhase } from '../conversations/ui.tsx'
-import { Body, Bubble } from '../messages/ui.tsx'
+import { Body, Bubble, MessagesDoc } from '../messages/ui.tsx'
 import { openSides, SideChatsDoc, useSideChatFront } from '../side-chat/ui.tsx'
 import { UnderUltimate, Unlisted } from '../sidebar/ui.tsx'
 import { openAgentSource, StandingDoc, talkToUltimate } from '../subagents/ui.tsx'
 import * as live from './live.tsx'
 import { stateLabel, waitingOf } from './mode.ts'
 import type { VoiceMode } from './mode.ts'
-import { StatusAction } from './refs.ts'
-import type { VoiceAnswer, VoiceContext, VoiceLine, VoiceSession, VoiceUtterance } from './refs.ts'
+import { openQuestion } from '../../lib/message-state.ts'
+import { AskedAction, LogAction, StatusAction } from './refs.ts'
+import type {
+  VoiceAnswer,
+  VoiceContext,
+  VoiceGo,
+  VoiceLine,
+  VoiceQuestion,
+  VoiceSession,
+  VoiceUtterance,
+} from './refs.ts'
 
 const KEYS = 'alt+v'
 const useMode = () => useSyncExternalStore(live.subscribe, live.voiceMode)
@@ -319,13 +332,106 @@ function Relay() {
   return (
     <ConversationScope id={voice}>
       <SpeakNew voice={voice} />
+      <Announce />
     </ConversationScope>
   )
+}
+
+/** How long the user and GPT-Live must have been quiet before Voice may announce a new question. */
+const QUIET_MS = 2000
+
+/**
+ * Hands each question to the user that opens while voice mode is on to Voice, to announce, once the user and GPT-Live
+ * have been quiet a moment; never one that was open before. The server takes each message once.
+ */
+function Announce() {
+  const log = useDocOf(1, MessagesDoc)
+  const mode = useMode()
+  const seen = useRef<Set<number>>(undefined)
+  const [due, setDue] = useState<number[]>([])
+  const [quietSince, setQuietSince] = useState(Date.now())
+  const busy = mode.phase !== 'live' || mode.floor !== undefined || mode.speaking !== undefined
+  // The quiet starts when the floor frees up.
+  useEffect(() => {
+    if (!busy) setQuietSince(Date.now())
+  }, [busy])
+  useEffect(() => {
+    if (!log) return
+    const open = log.messages.filter(openQuestion).map((m) => m.id)
+    if (seen.current === undefined) {
+      seen.current = new Set(open)
+      return
+    }
+    const fresh = open.filter((id) => !seen.current!.has(id))
+    for (const id of fresh) seen.current.add(id)
+    if (fresh.length) setDue((current) => [...current, ...fresh])
+  }, [log])
+  useEffect(() => {
+    if (!due.length || busy) return undefined
+    const timer = setTimeout(
+      () => {
+        setDue([])
+        for (const message of due)
+          api
+            .action(AskedAction, { message })
+            .catch((error: unknown) => console.warn('Voice announce failed', error))
+      },
+      Math.max(0, quietSince + QUIET_MS - Date.now()),
+    )
+    return () => clearTimeout(timer)
+  }, [due, busy, quietSince])
+  return null
+}
+
+/**
+ * Carries out Voice's navigation `go` with the page's own actions and events, the way a click does; a target this page
+ * cannot show becomes a notice in Voice's transcript.
+ */
+function navigate(
+  go: VoiceGo,
+  actions: UltimateActions,
+  commands: ReturnType<typeof useCommands>,
+  messages: readonly { id: number; from: number | 'user' | 'remote' }[] = [],
+) {
+  live.setFront(false)
+  const notice = (text: string) => {
+    api
+      .action(LogAction, { role: 'notice', text })
+      .catch((error: unknown) => console.warn('Voice notice failed', error))
+  }
+  if (go.message !== undefined) {
+    if (commands.some((command) => command.id === 'ultimate.surface.inbox'))
+      return events.emit('inbox:open', { message: go.message })
+    // The Inbox is off in this fork (`defaultOff` in shared/extension-api.ts): the question opens at its card in the
+    // conversation that asked it, as the composer strip and the To-dos rows open it.
+    const from = messages.find((message) => message.id === go.message)?.from
+    if (typeof from === 'number') {
+      events.emit('messages:open', { conversation: from, message: go.message })
+      actions.showSurface('agent')
+      return actions.switchConversation(from)
+    }
+    return notice(`No question ${go.message} to show here`)
+  }
+  if (go.conversation !== undefined) {
+    actions.showSurface('agent')
+    return actions.switchConversation(go.conversation)
+  }
+  const wanted = go.surface!.trim().toLowerCase()
+  const surface = commands.find(
+    (command) =>
+      command.id === `ultimate.surface.${wanted}` ||
+      command.title.toLowerCase() === `switch to ${wanted}`,
+  )
+  if (surface) return actions.showSurface(surface.id.slice('ultimate.surface.'.length))
+  notice(`No "${go.surface}" to show here`)
 }
 
 function SpeakNew({ voice }: { voice: number }) {
   const entries = useConversation((conversation) => conversation.entries)
   const loading = useConversation((conversation) => conversation.loading)
+  const actions = useUltimate()
+  const commands = useCommands()
+  const messages = useDocOf(1, MessagesDoc)?.messages
   const seen = useRef<number>(undefined)
   useEffect(() => {
     if (loading) return
@@ -349,8 +455,10 @@ function SpeakNew({ voice }: { voice: number }) {
       const line = entry.data as unknown as VoiceLine
       if (line.role === 'ultimate' && line.speech) live.hear(line.text, entry.id)
       else if (line.role === 'note') live.note(line.text)
+      else if (line.role === 'action' && line.go) navigate(line.go, actions, commands, messages)
     }
     seen.current = Math.max(seen.current, last)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- only new entries act; actions and commands are read then.
   }, [entries, loading])
   // A new Voice conversation starts counting afresh.
   useEffect(() => () => (seen.current = undefined), [voice])
@@ -987,6 +1095,20 @@ function LineRow({ entry }: { entry: EntryRecord }) {
         {line.text}
       </div>
     )
+  if (line.role === 'action')
+    return (
+      <div
+        className="mt-2 flex items-center gap-2 font-mono text-[11.5px] text-muted-foreground first:mt-0"
+        data-voice-line="action"
+      >
+        {line.go ? (
+          <ArrowRightIcon className="size-3 shrink-0 text-brand" />
+        ) : (
+          <CheckIcon className="size-3 shrink-0 text-success" />
+        )}
+        <span className="min-w-0 truncate">{line.text}</span>
+      </div>
+    )
   if (line.role === 'live')
     return (
       <div className="mt-2 flex gap-2 first:mt-0" data-voice-line="live">
@@ -1255,6 +1377,9 @@ function ContextRow({ entry }: { entry: EntryRecord }) {
         `memory ${brief.memories}`,
         `${brief.requests} recent request${brief.requests === 1 ? '' : 's'}`,
         `${brief.branches} open branch${brief.branches === 1 ? '' : 'es'}`,
+        ...(brief.questions !== undefined
+          ? [`${brief.questions} open question${brief.questions === 1 ? '' : 's'}`]
+          : []),
       ].join(' · ')
   return (
     <Collapsible
@@ -1382,6 +1507,22 @@ function LiveTurn() {
   )
 }
 
+/** A question that arrived during the session, handed to Voice to announce: one quiet line naming it. */
+function QuestionRow({ entry }: { entry: EntryRecord }) {
+  const question = entry.data as unknown as VoiceQuestion
+  return (
+    <div
+      className="mt-2 flex items-center gap-2 font-mono text-[11.5px] text-warning first:mt-0"
+      data-voice-line="question"
+    >
+      <CircleAlertIcon className="size-3 shrink-0" />
+      <span className="min-w-0 truncate">
+        {question.title} asks · {question.gist}
+      </span>
+    </div>
+  )
+}
+
 /** Normal agent bookkeeping stays out of the spoken transcript; speech already has its own line. */
 const AgentRow: EntryRenderer = ({ core }) => {
   const id = useConversation((conversation) => conversation.id)
@@ -1407,6 +1548,9 @@ export default defineWebExtension({
     voice_say: () => null,
     voice_ask_ultimate: () => null,
     voice_note: () => null,
+    voice_show: () => null,
+    voice_question: () => null,
+    voice_answer: () => null,
   },
   entries: {
     'voice.line': LineRow,
@@ -1416,6 +1560,7 @@ export default defineWebExtension({
     'voice.session': SessionRow,
     'voice.context': ContextRow,
     'voice.utterance': UtteranceRow,
+    'voice.question': QuestionRow,
   },
   commands: [
     {
