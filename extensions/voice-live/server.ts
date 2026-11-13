@@ -801,7 +801,7 @@ export default (host: ExtensionHost) => {
         name: 'voice_show',
         deferred: true,
         description:
-          'Show something on the user’s screen: a surface (`surface`, its id or title: agent, inbox, memory, review, system, pr-triage…), a conversation (`conversation`, its id), or an open question in the Inbox (`message`). Give exactly one. With `say`, also speak that short line and end your turn.',
+          'Show something on the user’s screen: a surface (`surface`, its id or title: agent, inbox, memory, review, system, pr-triage…), a conversation (`conversation`, its id), or an open question’s card (`message`: in the Inbox when it is on, else in the conversation that asked it). Give exactly one. With `say`, also speak that short line and end your turn.',
         parameters: obj({
           surface: opt(str({ minLength: 1 })),
           conversation: opt(int()),
@@ -821,7 +821,7 @@ export default (host: ExtensionHost) => {
             if (gist === undefined)
               throw new Error(`Message ${message} is not an open question to the user`)
             go = { message }
-            label = `Inbox · ${gist}`
+            label = `Question · ${gist}`
           } else if (conversation !== undefined) {
             const found = host.conversations().find((c) => c.id === conversation)
             if (!found) throw new Error(`No conversation #${conversation}`)
@@ -851,7 +851,7 @@ export default (host: ExtensionHost) => {
         name: 'voice_question',
         deferred: true,
         description:
-          'Read the questions waiting on the user. Without `message`: every open one, oldest first (the Inbox order). With `message`: that one in full (who asks, its text, each numbered question with lettered options and the asker’s picks) and, unless `show` is false, its card shown in the Inbox.',
+          'Read the questions waiting on the user. Without `message`: every open one, oldest first (the Inbox order). With `message`: that one in full (who asks, its text, each numbered question with lettered options and the asker’s picks) and, unless `show` is false, its card shown on screen.',
         parameters: obj({ message: opt(int()), show: opt(bool()) }),
         // Reads, and one navigation line under the tool task's stable request id.
         replay: 'safe',
@@ -880,7 +880,7 @@ export default (host: ExtensionHost) => {
               host,
               api.conversationId,
               'voice.line',
-              { role: 'action', text: `Inbox · ${gist}`, go: { message } },
+              { role: 'action', text: `Question · ${gist}`, go: { message } },
               `voice:show:${api.taskId}`,
             )
           return {

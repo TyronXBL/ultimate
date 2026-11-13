@@ -43,11 +43,11 @@ agent uses `openai-codex/gpt-6-luna` through Pi's existing ChatGPT login, low th
      The task follows that specific input receipt, including Messages delivery, not idle or an arbitrary delay.
    - `voice_note {text}` writes a quiet `note` line, forwarded by the browser as `session.thinking.append`.
    - `voice_show {surface | conversation | message, say?}` writes an `action` line with `go`. The page holding the
-     session carries it out the way a click does (`showSurface`, `switchConversation`, `inbox:open` at a question),
+     session carries it out the way a click does (`showSurface`, `switchConversation`, `inbox:open` at a question, or `messages:open` in the asking conversation while the Inbox is off),
      so every tab and device follows the shared UI state; it also sends the Voice sheet back. A surface the page does
      not have becomes a notice. With `say` it also speaks and ends Voice's turn: one tool call per navigation.
    - `voice_question {message?, show?}` lists the open questions, oldest first, or returns one in full (asker, text,
-     numbered questions, lettered options, the asker's picks) and shows its card in the Inbox.
+     numbered questions, lettered options, the asker's picks) and shows its card: in the Inbox, or in the asking conversation while the Inbox is off.
    - `voice_answer {message, text | dismiss}` settles that card after Voice read the answer back and the user said
      yes: `MessagesApi.answer` or `dismiss` for a branch's question; @ultimate's own goes through the answer task
      (below, with `message`), so its reply comes back to speak. No question is ever guessed from spoken words.

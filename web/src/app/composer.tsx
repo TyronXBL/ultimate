@@ -262,7 +262,8 @@ function PlaceholderBridge({
 }
 
 function ConversationComposer({ dock }: { dock?: boolean }) {
-  const { id, busy } = useConversation()
+  const id = useConversation((c) => c.id)
+  const busy = useConversation((c) => c.activity) === 'working'
   const [upload, setUpload] = useState<Upload>()
   const [placeholder, setPlaceholder] = useState<string>()
   return (
