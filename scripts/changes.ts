@@ -19,11 +19,19 @@ export const files = git('ls-files', '--cached', '--others', '--exclude-standard
 const known = new Set(files)
 export const source = new Map(files.map((file) => [file, readFileSync(file, 'utf8')]))
 
-/** Who imports each file: the reverse of every relative `from '…'`, `import('…')` and `import '…'`. */
+/**
+ * Who imports each file: the reverse of every `from '…'`, `import('…')` and `import '…'` that is relative or goes
+ * through the web alias `@/` (`web/src/`, `paths` in `tsconfig.json`), which 206 files use to reach the SDK and the
+ * components (#273712).
+ */
 export const importers = new Map<string, string[]>()
 for (const [file, text] of source)
-  for (const [, specifier] of text.matchAll(/(?:\bfrom|\bimport\s*\(?)\s*['"](\.[^'"]+)['"]/g)) {
-    const base = normalize(join(dirname(file), specifier))
+  for (const [, specifier] of text.matchAll(
+    /(?:\bfrom|\bimport\s*\(?)\s*['"]((?:\.|@\/)[^'"]+)['"]/g,
+  )) {
+    const base = specifier.startsWith('@/')
+      ? join('web/src', specifier.slice(2))
+      : normalize(join(dirname(file), specifier))
     const target = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts')].find((path) =>
       known.has(path),
     )
