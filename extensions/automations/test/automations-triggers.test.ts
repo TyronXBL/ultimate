@@ -15,7 +15,7 @@ import { ContextUsageDoc } from '../../conversations/api.ts'
 import { Standing } from '../../subagents/api.ts'
 import type { SubagentsService } from '../../subagents/api.ts'
 import { createChild } from '../../subagents/children.ts'
-import { resultIn } from '../../conversations/server.ts'
+import { resultIn, underwayService } from '../../conversations/server.ts'
 import automations, { actions, Automations } from '../server.ts'
 import type { Automation } from '../types.ts'
 import { runConversation } from '../state.ts'
@@ -76,7 +76,10 @@ async function fixture() {
     ...apis(
       new Map<string, unknown>([
         ['messages', { send }],
-        ['conversations', { resultIn }],
+        [
+          'conversations',
+          { resultIn, ...underwayService({ resource: (_key, create) => create() }) },
+        ],
         [ModelsApi.name, modelsService(prepared)],
       ]),
     ),

@@ -56,6 +56,7 @@ import { landings } from '../../workspaces/server.ts'
 import { Workspaces } from '../../workspaces/workspaces.ts'
 import { ConversationsApi } from '../../conversations/api.ts'
 import { jobs } from '../../background/server.ts'
+import { Automations, oneShots } from '../../automations/server.ts'
 import { runs } from '../../../.ultimate/extensions/ci/server.ts'
 import { UiState } from '../../../server/ui-state.ts'
 
@@ -193,7 +194,7 @@ async function fixture(
   } as Partial<LineageService> as LineageService)
   // The extensions whose tasks the tests stand in for report them as the real ones do.
   const conversations = services('test').need(ConversationsApi)
-  for (const source of [jobs, runs, notifies, landings, subagentWork(conversations)])
+  for (const source of [jobs, runs, notifies, landings, oneShots, subagentWork(conversations)])
     conversations.registerUnderway(source)
   const host = {
     ...prepared,
@@ -1672,6 +1673,44 @@ it("leaves a branch's answer as a note while its own background command runs, an
   await until(async () => (await b.from()).length === 3)
   expect((await b.from())[2]).toMatchObject({ text: 'Answer: Tests pass', report: true })
   jobDelivered.resolve()
+})
+it("leaves a branch's answer as a note while its own one-shot reminder waits, and reports once it fired", async () => {
+  // knowledgebase #29/79140: a branch waiting on a reminder it scheduled for itself reported, and each answer of its
+  // starter's woke it to report again.
+  const f = await fixture()
+  const b = await branched(f)
+  const reminder = (enabled: boolean) =>
+    f.opened.harness.commit(async (tx) => {
+      ;(await tx.doc(Automations)).automations.A1 = {
+        id: 'A1',
+        name: 'Check CI again',
+        enabled,
+        schedule: { kind: 'at', time: '2099-01-01T00:00:00Z' },
+        subscribers: [b.id],
+        createdAt: 0,
+        updatedAt: 0,
+        runs: [],
+        fires: 0,
+      }
+    }, context)
+  await reminder(true)
+  await b.later('Checking CI again in 30 minutes')
+  await until(async () => (await b.from()).length === 2)
+  const waiting = (await b.from())[1]
+  expect(waiting.report).toBeUndefined()
+  const view = await f.opened.root.context(context)
+  const note = view.entries.find(
+    (e) => e.kind === 'board.message' && (e.data as { id?: number })?.id === waiting.id,
+  )
+  expect([note?.data, note?.input]).toEqual([
+    expect.objectContaining({ delivery: 'note' }),
+    undefined,
+  ])
+  // An `at` schedule disables itself as it fires: the run it wakes ends the branch's work and reports.
+  await reminder(false)
+  await b.later('CI passed')
+  await until(async () => (await b.from()).length === 3)
+  expect((await b.from())[2]).toMatchObject({ text: 'Answer: CI passed', report: true })
 })
 // What else keeps a branch's answer a note, pinned before the rules move into one place (E1.3).
 it.each([

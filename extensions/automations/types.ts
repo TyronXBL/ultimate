@@ -61,6 +61,20 @@ export type Automation = {
   lastFireAt?: number
 }
 export type AutomationListItem = Automation & { alive: boolean }
+/**
+ * Whether `a` will wake conversation `id` once more and then stop: an enabled `at` schedule or one-shot script that `id`
+ * subscribes to, `@name` resolved through `standing`. Its fire wakes `id` (a one-shot script that fails instead wakes it
+ * with the escalation); firing, pausing or deleting ends it. A recurring trigger never counts: it would keep `id` under
+ * way forever. A prompt run wakes a new conversation, not its creator.
+ */
+export function wakesOnce(
+  a: Pick<Automation, 'enabled' | 'schedule' | 'script' | 'subscribers'>,
+  id: number,
+  standing: Record<string, number>,
+): boolean {
+  if (!a.enabled || !(a.script ? a.script.once : a.schedule?.kind === 'at')) return false
+  return a.subscribers.some((s) => (typeof s === 'number' ? s : standing[s.slice(1)]) === id)
+}
 export type CreateArgs = {
   name: string
   schedule?: string | Schedule

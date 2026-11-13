@@ -16,7 +16,8 @@ import { Profile } from '../../subagents/api.ts'
 import automations, { actions, Automations } from '../server.ts'
 import type { Automation } from '../server.ts'
 import { runConversation, runStep } from '../state.ts'
-import type { Run, RunEvent } from '../state.ts'
+import type { Run, RunEvent, Script } from '../state.ts'
+import { wakesOnce } from '../types.ts'
 import type { ActionContext } from '../../../server/actions.ts'
 import type { SubagentsService } from '../../subagents/api.ts'
 import { createChild } from '../../subagents/children.ts'
@@ -554,4 +555,34 @@ it.each<[string, Run[], RunEvent, Run[]]>([
   ],
 ])('runStep: %s', (_, runs, event, expected) => {
   expect(runStep(runs, event)).toEqual(expected)
+})
+
+const script = (state: 'writing' | 'running' | 'investigating' | 'done', once: boolean) => ({
+  script: { ask: 'CI is green', once, conversationId: 9, failures: 0, state } as Script,
+  enabled: state !== 'done',
+})
+const at = { schedule: { kind: 'at', time: '2099-01-01T00:00:00Z' } as const, enabled: true }
+it.each<[string, Parameters<typeof wakesOnce>[0], boolean]>([
+  ['an `at` schedule it subscribes to', { ...at, subscribers: [7] }, true],
+  [
+    'an `at` schedule after it fired or was paused',
+    { ...at, enabled: false, subscribers: [7] },
+    false,
+  ],
+  ['an `at` schedule waking another conversation', { ...at, subscribers: [8] }, false],
+  ['an `at` schedule of a prompt run only', { ...at, subscribers: [] }, false],
+  ['an `at` schedule waking it by its standing name', { ...at, subscribers: ['@scout'] }, true],
+  [
+    'a recurring schedule',
+    { schedule: { kind: 'every', ms: 60_000 }, enabled: true, subscribers: [7] },
+    false,
+  ],
+  ['a one-shot script being written', { ...script('writing', true), subscribers: [7] }, true],
+  ['a one-shot script watching', { ...script('running', true), subscribers: [7] }, true],
+  ['a one-shot script in repair', { ...script('investigating', true), subscribers: [7] }, true],
+  ['a one-shot script that fired', { ...script('done', true), subscribers: [7] }, false],
+  ['a recurring script watching', { ...script('running', false), subscribers: [7] }, false],
+  ['an event trigger', { enabled: true, subscribers: [7] }, false],
+])('wakesOnce: %s is %s', (_, automation, expected) => {
+  expect(wakesOnce(automation, conversation, { scout: conversation })).toBe(expected)
 })

@@ -33,6 +33,8 @@ export type Underway =
   | { kind: 'input' }
   /** A background command or CI run of `id`'s, which wakes it with its result. */
   | { kind: 'job'; delivering: boolean }
+  /** A one-shot automation `id` subscribes to, which wakes it when it fires (automations' `wakesOnce`). */
+  | { kind: 'automation' }
   /** A waking `notify` of `id`'s, which wakes it when another conversation finishes. */
   | { kind: 'notify'; delivering: boolean }
   /** A subagent's report on its way to `id`, until its input is admitted. */

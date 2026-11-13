@@ -50,7 +50,7 @@ const isWorking = (reason: Underway) =>
   busy(reason) || reason.kind === 'reply' || reason.kind === 'child'
 /**
  * Whether branch `id` still has work under way that will wake it again: work of its own (`working`), a background
- * command or CI run of its own, or a submission the lander has not reported yet. While the lander reports a landing it
+ * command or CI run of its own, a one-shot automation that wakes it, or a submission the lander has not reported yet. While the lander reports a landing it
  * decides, once, whether the branch is done: it concludes it and wakes the starter, or leaves it open to report when it
  * stops. Until then a report waits as a note.
  */
@@ -60,10 +60,13 @@ async function underway(host: ExtensionHost, tx: Tx, id: ConversationId): Promis
   const conversations = host.need(ConversationsApi)
   if ((await conversations.concludedIn(tx)).has(id)) return true
   // A job is not part of `working`: a landing still concludes a branch that waits on a job, whose result then arrives as
-  // a note (`resultIn`). A job in its `deliver` phase no longer counts: an answer in between still reports.
+  // a note (`resultIn`). A job in its `deliver` phase no longer counts: an answer in between still reports. A one-shot
+  // automation counts like a job until it fires (knowledgebase #29/79140: a branch waiting on its own reminder reported,
+  // and each answer of the starter's woke it to report again).
   return (await conversations.underway(tx, id)).some(
     (reason) =>
       reason.kind === 'landing' ||
+      reason.kind === 'automation' ||
       (reason.kind === 'job' && !reason.delivering) ||
       isWorking(reason),
   )

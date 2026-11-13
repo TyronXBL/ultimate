@@ -37,7 +37,9 @@ Each automation has one or both:
   `#12` or a standing agent's `@name`, resolved at delivery, so `@ultimate` follows it across chapters. A subscriber
   that is concluded, or under a concluded conversation, gets fires and `automations.escalated` notices as notes that
   start no run (the conversations service's `resultIn`); the watcher's own `writing` and `failed` deliveries always
-  wake it.
+  wake it. An enabled one-shot (`at` schedule or `once` script) is work under way for each conversation it wakes
+  (`wakesOnce` in `types.ts`, the conversations service's `underway`) until it fires, is paused or is deleted, so a
+  branch that stops to wait for its own reminder leaves its starter a note, not a report.
 
 Without either, create subscribes the caller; nothing may leave an automation with neither. To be reminded, subscribe:
 a prompt run costs a whole agent turn per fire. The seventh fire within an hour pauses the automation instead,

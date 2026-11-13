@@ -28,8 +28,10 @@ import { discoverAgents } from '../../lib/agents.ts'
 import { validateName } from '../../lib/secrets.ts'
 import { groupAlive } from '../../lib/process-group.ts'
 import { writeJson } from '../../lib/json-file.ts'
-import { SubagentsApi } from '../subagents/api.ts'
+import { Standing, SubagentsApi } from '../subagents/api.ts'
 import { MessagesApi } from '../messages/api.ts'
+import { ConversationsApi } from '../conversations/api.ts'
+import type { UnderwaySource } from '../conversations/api.ts'
 import { LineageApi } from '../lineage/api.ts'
 import { AutomationsApi } from './api.ts'
 import {
@@ -65,7 +67,7 @@ import type {
   Manifest,
   Subscriber,
 } from './types.ts'
-import { isSlug, STANDING } from './types.ts'
+import { isSlug, STANDING, wakesOnce } from './types.ts'
 export type { Automation, Run } from './types.ts'
 export { launchHandshake } from './supervisor.ts'
 /** A script as stored before version 5: one bag of fields for every state. */
@@ -160,6 +162,16 @@ export const Automations = defineDoc<Ledger>({
 })
 type Change = { result: JsonValue; abort?: TaskId; effect?: Effect }
 /** Per tool call, by call id: a codemode script's nested calls share its task, so the task alone does not name a call. */
+/** A conversation's one-shot automations, an `automation` each until it fires (`wakesOnce`). */
+export const oneShots: UnderwaySource = {
+  name: 'automations',
+  async underway(tx, id) {
+    const standing = await tx.doc(Standing, ROOT_CONVERSATION_ID)
+    return Object.values((await tx.doc(Automations)).automations).flatMap((a) =>
+      wakesOnce(a, id, standing) ? [{ kind: 'automation' as const }] : [],
+    )
+  },
+}
 const Receipts = defineDoc<Record<string, Partial<Change>>>({
   kind: 'ultimate.automation-receipts',
   checkpointWhen: () => false,
@@ -870,11 +882,14 @@ export default function automations(host: ExtensionHost) {
     },
   })
   api.trigger.install()
+  let unregister: (() => void) | undefined
   host.onOpen(async () => {
+    unregister = host.need(ConversationsApi).registerUnderway(oneShots)
     await api.open()
     await api.trigger.open()
   })
   const close = async () => {
+    unregister?.()
     await api.trigger.close()
     await api.close()
   }

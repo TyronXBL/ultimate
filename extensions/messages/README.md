@@ -34,7 +34,7 @@ report.**
   written with `delivery: 'note'`: it starts no run; the recipient reads it with its next request.
 - **Reports.** After each run of a branch, its final answer goes to its starter, unless it already returned as a reply.
   When nothing of the branch is under way (no run, queued input, busy subagent, `background` command or `ci` run of its
-  own still running, pending submission or open reply-enabled message), it goes as a one-way message with `report: true`, which wakes the starter; otherwise as a
+  own still running, one-shot automation that wakes it, pending submission or open reply-enabled message), it goes as a one-way message with `report: true`, which wakes the starter; otherwise as a
   note, since the branch will run again. When the run that ended its work only answered other conversations'
   questions, its last note to the starter goes again as the report, so the starter still wakes. A model failure of any
   branch run reaches @ultimate as a watchdog card. A landing concludes the branch and wakes the starter itself, asking through
