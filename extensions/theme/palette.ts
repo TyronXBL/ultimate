@@ -512,6 +512,9 @@ const hexOf = (lch: Lch) =>
     )
     .join('')}`
 
+/** A token's colour (`#rrggbb` or `oklch(…)` inside sRGB) as `#rrggbb`. */
+export const hexOfToken = (css: string) => hexOf(parse(css).lch)
+
 // Palettes.
 
 const accentLch = (accent: Lch | string): Lch =>
@@ -602,12 +605,16 @@ function settle(
   return checks
 }
 
+/** A custom theme's defaults: Ultimate's own background hue and tint, and the strongest tint it allows. */
+export const ULTIMATE_HUE = 270
+export const DEFAULT_TINT = 0.004
+export const MAX_TINT = 0.04
+
 function custom(choice: ThemeChoice, polarity: Polarity): Tokens {
-  const base = parse(ULTIMATE[polarity].background).lch
   return generate(
     {
-      hue: choice.hue ?? base[2],
-      tint: choice.tint ?? 0.004,
+      hue: choice.hue ?? ULTIMATE_HUE,
+      tint: choice.tint ?? DEFAULT_TINT,
       contrast: choice.contrast ?? 'normal',
       accent: {
         dark: choice.accent ?? ULTIMATE.dark.brand,
@@ -692,7 +699,7 @@ export function parseChoice(value: unknown): ThemeChoice | undefined {
   const choice: ThemeChoice = { preset: preset as string }
   if (accent !== undefined) choice.accent = accent.toLowerCase()
   if (hue !== undefined) choice.hue = round((((hue as number) % 360) + 360) % 360, 1)
-  if (tint !== undefined) choice.tint = round(Math.min(0.04, Math.max(0, tint as number)), 3)
+  if (tint !== undefined) choice.tint = round(Math.min(MAX_TINT, Math.max(0, tint as number)), 3)
   if (level !== undefined) choice.contrast = level
   const ui = known(uiFont, UI_FONTS)
   const code = known(codeFont, CODE_FONTS)

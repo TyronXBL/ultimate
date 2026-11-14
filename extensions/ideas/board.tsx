@@ -251,7 +251,7 @@ function PhoneList({ rows, loading }: { rows: Row[]; loading: boolean }) {
       ? all
       : rows.filter((row) => (filter === 'needs' ? row.asks.length > 0 : row.column === filter))
   ).toSorted(byPhoneOrder)
-  const pills: { id: Filter; label: string; count: number; tone?: string }[] = [
+  const pills: { id: Filter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: all.length },
     ...(needs.length ? [{ id: 'needs' as const, label: 'Needs you', count: needs.length }] : []),
     ...columns

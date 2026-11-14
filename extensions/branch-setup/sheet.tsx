@@ -36,6 +36,7 @@ import { FamilyDot, ModelRow } from '../models/ui.tsx'
 import { DeletePresetAction, SavePresetAction } from './refs.ts'
 import type { Agents } from './refs.ts'
 import {
+  allLevels,
   decode,
   encode,
   modelId,
@@ -201,9 +202,7 @@ function Sheet({
   )
 }
 
-// Pi's levels, for a model the catalogue does not know.
-const allLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-/** The thinking levels `model` supports; none for a model without reasoning. */
+/** The thinking levels `model` supports: none for a model without reasoning, Pi's all for one the catalogue lacks. */
 function levelsOf(models: ReturnType<typeof useModels>, model: string) {
   const found = models?.models.find((item) => `${item.provider}/${item.id}` === model)
   return found ? (found.reasoning ? found.thinkingLevels : []) : allLevels
