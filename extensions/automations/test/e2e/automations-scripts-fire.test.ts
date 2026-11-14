@@ -15,7 +15,14 @@ import { tracked, fixture, writeRun, call } from './automations-scripts-fixture.
 
 it('starts a prompt run from script FIRE with its payload', async () => {
   const { app, folder } = await fixture()
-  app.host.faux!.setResponses(Array.from({ length: 4 }, () => fauxAssistantMessage('Complete')))
+  // An answer for every model call, however many come first. The watcher's turn, the prompt run, the caller's wake-up
+  // and the summaries of each share the one scripted model, in no fixed order: with four answers queued, the run came
+  // fifth on a busy CI shard, got "No more faux responses queued" and was recorded failed (`f669090`, `7629d0d`).
+  const complete = () => {
+    app.host.faux!.appendResponses([complete])
+    return fauxAssistantMessage('Complete')
+  }
+  app.host.faux!.setResponses([complete])
   const caller = await app.harness.createConversation({ ownership: { kind: 'ownerless' } }, context)
   const a = (await app.extensions.invoke(
     'automations',
