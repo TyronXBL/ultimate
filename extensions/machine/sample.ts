@@ -10,6 +10,8 @@ import { availableParallelism, loadavg, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { commandNeedMiB } from '../../lib/memory.ts'
 import type { MemoryCap } from '../../lib/memory.ts'
+import { avg10, bootTime, kernelThread, parseMeminfo, parseStat } from '../../lib/proc.ts'
+import type { ProcStat } from '../../lib/proc.ts'
 import { order, peekEntry, readSlot, slotLimits } from '../../lib/slot.ts'
 import { argvOf, cpuByKind, homeOf, owners, programOf } from './owners.ts'
 import type { OwnerContext, Proc, Top } from './owners.ts'
@@ -42,11 +44,11 @@ const conf = (name: string, fallback: number) => {
 }
 let known: { tick: number; page: number; boot: number } | undefined
 async function unitsOf() {
-  const boot = Number(/^btime (\d+)$/m.exec(await readFile('/proc/stat', 'utf8'))?.[1] ?? 0)
+  const boot = bootTime(await readFile('/proc/stat', 'utf8'))
   return (known ??= { tick: conf('CLK_TCK', 100), page: conf('PAGESIZE', 4096), boot })
 }
 
-type Raw = Omit<Proc, 'cpu'> & { start: string; ticks: number }
+type Raw = Omit<Proc, 'cpu'> & { start: number; ticks: number }
 /**
  * Every process from `/proc/<pid>/stat`, kernel threads left out. Read synchronously: about 6 ms for 300 processes,
  * where the same reads through the thread pool cost four times the CPU.
@@ -56,29 +58,23 @@ async function processes(): Promise<Raw[]> {
   const found: Raw[] = []
   for (const name of readdirSync('/proc')) {
     if (!/^\d+$/.test(name)) continue
-    let stat: string
+    let stat: ProcStat
     try {
-      stat = readFileSync(`/proc/${name}/stat`, 'utf8')
+      stat = parseStat(readFileSync(`/proc/${name}/stat`, 'utf8'))
     } catch {
       // The process ended between the listing and the read.
       continue
     }
-    // The name sits in parentheses and may hold spaces; the fields after it are plain numbers.
-    const close = stat.lastIndexOf(')')
-    const fields = stat.slice(close + 2).split(' ')
-    const pid = Number(name)
-    const ppid = Number(fields[1])
-    // kthreadd (2) and its children: the kernel's own threads, no memory of their own.
-    if (pid === 2 || ppid === 2) continue
+    if (kernelThread(stat)) continue
     found.push({
-      pid,
-      name: stat.slice(stat.indexOf('(') + 1, close),
-      ppid,
-      pgid: Number(fields[2]),
-      ticks: Number(fields[11]) + Number(fields[12]),
-      start: fields[19],
-      since: (boot + Number(fields[19]) / tick) * 1000,
-      rssKiB: (Number(fields[21]) * page) / 1024,
+      pid: Number(name),
+      name: stat.comm,
+      ppid: stat.ppid,
+      pgid: stat.pgrp,
+      ticks: stat.ticks,
+      start: stat.start,
+      since: (boot + stat.start / tick) * 1000,
+      rssKiB: (stat.rssPages * page) / 1024,
     })
   }
   return found
@@ -115,13 +111,13 @@ async function topOf(pid: number): Promise<Top> {
   return { argv, ...(cwd && { cwd }), ...(command && { command }) }
 }
 
-const mib = (kib: string | undefined) => Math.round(Number(kib ?? 0) / 1024)
 async function memInfo() {
   const text = await readFile('/proc/meminfo', 'utf8').catch(
     // Not Linux: nothing to show.
     () => '',
   )
-  const field = (name: string) => mib(new RegExp(`^${name}:\\s+(\\d+) kB$`, 'm').exec(text)?.[1])
+  const kib = parseMeminfo(text)
+  const field = (name: string) => Math.round((kib[name] ?? 0) / 1024)
   return {
     totalMiB: field('MemTotal'),
     availableMiB: field('MemAvailable'),
@@ -133,7 +129,7 @@ async function memInfo() {
 /** `some avg10` of a pressure file, in %: 0 where the kernel keeps none. */
 const stalled = (path: string) =>
   readFile(path, 'utf8').then(
-    (text) => Number(/^some avg10=([\d.]+)/m.exec(text)?.[1] ?? 0),
+    (text) => avg10(text, 'some'),
     // No pressure stall information (not Linux, or a kernel without it).
     () => 0,
   )
