@@ -33,16 +33,26 @@ import {
   PendingAction,
   ProgressAction,
   RecentLandingsAction,
+  RepoAction,
   StatsAction,
   SubmissionLanded,
 } from './refs.ts'
-import { githubRepo } from '../../lib/project-identity.ts'
+import type { GithubRepo } from './refs.ts'
+import { githubRepo, readGithubRepo } from '../../lib/project-identity.ts'
 import { landerSettings, reporting, sweepChecks } from './lander.ts'
 import { Workspaces, workspaces } from './workspaces.ts'
 import { failingTests } from './failing.ts'
 export const order = -200
 export const docs = [Workspaces]
 export const userActions = ['setupGit']
+/** Each repository with its visibility, read once per process: it rarely changes and `gh` asks the network. */
+const repos = new Map<string, Promise<GithubRepo>>()
+function readRepo(key: string) {
+  let repo = repos.get(key)
+  if (!repo) repos.set(key, (repo = readGithubRepo(key)))
+  return repo
+}
+
 const finish = (value: unknown) => ({
   output: [{ type: 'text' as const, text: JSON.stringify(value) }],
 })
@@ -97,6 +107,11 @@ export const actions = {
     GithubAction,
     async (_args, { host }) => (await landingRepo(host)) ?? null,
   ),
+  /** The repository landings go to (`landingRepo`) with its visibility, or null off GitHub: the sidebar's project header. */
+  repo: implementAction(RepoAction, async (_args, { host }) => {
+    const key = await landingRepo(host)
+    return key ? readRepo(key) : null
+  }),
   progress: implementAction(ProgressAction, (args, { host }) => {
     const ids = args && typeof args === 'object' && !Array.isArray(args) ? args.ids : undefined
     if (

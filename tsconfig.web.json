@@ -27,6 +27,7 @@
     "extensions/*/refs.ts",
     ".ultimate/extensions/*/refs.ts",
     "extensions/messages/caller.ts",
+    "extensions/projects/links.ts",
     "extensions/cloud/types.ts",
     "extensions/tailscale/state.ts",
     "extensions/cloud/run.ts",

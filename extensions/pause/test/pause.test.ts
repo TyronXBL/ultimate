@@ -27,15 +27,19 @@ import { PauseApi } from '../api.ts'
 import type { PauseDocState, RateLimit } from '../refs.ts'
 import { autoPlayOf, pauseStep } from '../state.ts'
 import type { PauseEvent } from '../state.ts'
-import { apis, removeTemps, temp, until } from '../../../test/helpers.ts'
+import { apis, removeTemp, temp, until } from '../../../test/helpers.ts'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Standing } from '../../subagents/api.ts'
 
 const hosts: OpenHost[] = []
+const homes: string[] = []
 afterEach(async () => {
-  for (const host of hosts.splice(0)) await host.close()
-  await removeTemps()
+  // removeTemps() after close captured the next test's home when close outlived the hook.
+  const closing = hosts.splice(0)
+  const taken = homes.splice(0)
+  for (const host of closing) await host.close()
+  for (const home of taken) await removeTemp(home)
 })
 
 /** A background task that executes until `released`, as a summary streaming a model response does. */
@@ -59,7 +63,10 @@ const streamTask = (released: Promise<void>) =>
 
 /** A faux harness with the pause extension and a `work` tool that runs until the test releases it, as bash would. */
 async function fixture(home?: string, retry: { maxRetries?: number } = {}) {
-  home ??= await temp('ultimate-pause-')
+  if (home === undefined) {
+    home = await temp('ultimate-pause-')
+    homes.push(home)
+  }
   // Pi's retry backoff in 1 ms, so a retry the pause held runs at once after Play.
   await mkdir(join(home, '.pi'), { recursive: true })
   await writeFile(
@@ -143,8 +150,11 @@ async function fixture(home?: string, retry: { maxRetries?: number } = {}) {
     background,
     stream: streamTask(background.promise),
     async close() {
-      await opened!.close()
-      hosts.splice(hosts.indexOf(opened!), 1)
+      const current = opened!
+      await current.close()
+      // afterEach may have taken the host while close was pending.
+      const index = hosts.indexOf(current)
+      if (index !== -1) hosts.splice(index, 1)
     },
   }
 }

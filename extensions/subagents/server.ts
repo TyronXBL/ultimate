@@ -39,8 +39,6 @@ import type { ExtensionHost } from '../../server/extensions.ts'
 import type { Source } from '../../server/project.ts'
 import {
   agentRoots,
-  definitionAgent,
-  definitionFamily,
   deleteDefinition,
   discoverAgents,
   hasLogin,
@@ -50,7 +48,7 @@ import {
   saveOverlay,
 } from '../../lib/agents.ts'
 import type { AgentDefinition, DefinitionFields } from '../../lib/agents.ts'
-import { createChild, setupFor, started } from './children.ts'
+import { createChild, reconfigure, setupFor, started } from './children.ts'
 import { implementAction } from '../../lib/actions.ts'
 import { exec } from '../../lib/exec.ts'
 import { liveTasks } from '../../lib/tasks.ts'
@@ -701,7 +699,8 @@ export default function subagents(
   // Core services, always on; each handle resolves the current provider at every call.
   const conversations = host.need(ConversationsApi)
   const workspaces = host.need(WorkspacesApi)
-  const models = host.need(ModelsApi)
+  // Resolved where it is called (`reconfigure`, `limitWait`); declared here so the catalogue lists it.
+  host.need(ModelsApi)
   const residentDefinitions = async () =>
     (
       await discoverAgents(host.ultimateRoot, host.projectRoot, host.userHome, host.modelRuntime)
@@ -783,81 +782,61 @@ export default function subagents(
       await started(host, tx, child, options.definition?.name ?? options.label, 'child')
       return child
     },
+    async reconfigure(tx, id, { definition, parentAgent, modelRuntime }) {
+      await reconfigure(host, tx, id, definition, parentAgent, modelRuntime)
+    },
     async residents(_ctx) {
       return (await residentDefinitions()).map(({ name, description }) => ({ name, description }))
     },
     async standing(name, ctx) {
-      const definitions = await residentDefinitions()
-      const definition = definitions.find((item) => item.name === name)
-      if (!definition) {
-        await pruneRetired(ctx)
-        throw new Error(
-          `Unknown standing agent @${name}. Standing agents: ${definitions.map((item) => `@${item.name}`).join(', ') || 'none'}`,
-        )
-      }
       const root = (await host.harness().conversation(ROOT_CONVERSATION_ID, ctx))!
       const main = await root.agent(ctx)
-      return host.harness().commit(async (tx) => {
-        const index = await tx.doc(Standing, ROOT_CONVERSATION_ID)
-        let id = Object.hasOwn(index, name) ? index[name] : undefined
-        let created: ConversationRecord | undefined
-        // A new conversation starts on the default model and thinking level; an existing one keeps those chosen in
-        // it, so a refresh changes them only where the definition pins them.
-        let base = { ...main, ...(await hostDefault(host)) }
-        // One running on a backup (extensions/backup) stays on it: backup returns it later.
-        let backup: Parameters<typeof definitionAgent>[3]
-        if (id !== undefined && (await tx.conversation(id))) {
-          const own = await tx.doc(AgentDoc, id)
-          base = {
-            ...base,
-            ...(own.model ? { model: own.model } : {}),
-            ...(own.thinkingLevel ? { thinkingLevel: own.thinkingLevel } : {}),
+      const result = await host
+        .harness()
+        .commit(async (tx): Promise<{ id: ConversationId } | { missing: string[] }> => {
+          // Read inside the commit: commits run one at a time, so a read made before it could put back instructions that
+          // a turn applying an edited or removed overlay had just replaced.
+          const definitions = await residentDefinitions()
+          const definition = definitions.find((item) => item.name === name)
+          if (!definition) return { missing: definitions.map((item) => `@${item.name}`) }
+          const index = await tx.doc(Standing, ROOT_CONVERSATION_ID)
+          let id = Object.hasOwn(index, name) ? index[name] : undefined
+          let created: ConversationRecord | undefined
+          if (id === undefined || !(await tx.conversation(id))) {
+            // Created and indexed in one commit; a deleted standing conversation is recreated here.
+            created = await tx.createConversation({ ownership: { kind: 'ownerless' } })
+            id = created.id
+            index[name] = id
           }
-          const on = await models.backup(tx, id)
-          if (on)
-            backup = {
-              model: on.to,
-              ...(own.thinkingLevel ? { thinking: own.thinkingLevel } : {}),
-            }
-        } else {
-          // Created and indexed in one commit; a deleted standing conversation is recreated here.
-          created = await tx.createConversation({ ownership: { kind: 'ownerless' } })
-          id = created.id
-          index[name] = id
-        }
-        const { model, thinkingLevel, ...change } = definitionAgent(
-          definition,
-          base,
-          host.modelRuntime,
-          backup,
+          // A new conversation starts on the default model and thinking level; an existing one keeps those chosen in
+          // it, so a refresh changes them only where the definition pins them.
+          const base = { ...main, ...(await hostDefault(host)) }
+          await reconfigure(
+            host,
+            tx,
+            id,
+            definition,
+            base,
+            host.modelRuntime,
+            created !== undefined,
+          )
+          await configure(tx, id, { cwd: host.projectRoot })
+          Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
+          // A standing agent keeps its `@name`: no automatic title, summary or reply activity.
+          await conversations.setAutomaticSummaries(tx, id, false)
+          await conversations.setStanding(tx, id, true)
+          setMark(await tx.doc(Marks, ROOT_CONVERSATION_ID), definition)
+          // Only a new conversation starts: a refresh reconfigures one that already runs.
+          if (created) await started(host, tx, created, name, 'standing')
+          return { id }
+        }, ctx)
+      if ('missing' in result) {
+        await pruneRetired(ctx)
+        throw new Error(
+          `Unknown standing agent @${name}. Standing agents: ${result.missing.join(', ') || 'none'}`,
         )
-        await configure(tx, id, { ...change, cwd: host.projectRoot })
-        // A refresh that keeps the model and level keeps who set them: a pick stays the user's.
-        if (
-          created ||
-          model?.provider !== base.model?.provider ||
-          model?.modelId !== base.model?.modelId ||
-          (thinkingLevel ?? undefined) !== base.thinkingLevel
-        )
-          await models.setModel(tx, id, {
-            type: 'start',
-            model: model ?? null,
-            thinkingLevel,
-            family: definitionFamily(definition, { model }),
-          })
-        Object.assign(await tx.doc(host.metadata, id), { label: 'agent', title: `@${name}` })
-        // A standing agent keeps its `@name`: no automatic title, summary or reply activity.
-        await conversations.setAutomaticSummaries(tx, id, false)
-        await conversations.setStanding(tx, id, true)
-        const profile = await tx.doc(Profile, id)
-        profile.definition = name
-        if (definition.skills) profile.skills = [...definition.skills]
-        else delete profile.skills
-        setMark(await tx.doc(Marks, ROOT_CONVERSATION_ID), definition)
-        // Only a new conversation starts: a refresh reconfigures one that already runs.
-        if (created) await started(host, tx, created, name, 'standing')
-        return id
-      }, ctx)
+      }
+      return result.id
     },
   }
   host.implement(SubagentsApi, service)

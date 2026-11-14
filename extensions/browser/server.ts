@@ -101,6 +101,11 @@ const untilTimeoutMs = 300_000
 /** How long closing a context, or the browser after it, may take before it counts as wedged. */
 const closeTimeoutMs = 5_000
 /**
+ * How long the shared browser may go unused before it closes; the next call launches a fresh one, in about a second.
+ * Idle Chromium trees held 370-513 MiB for over a day on a host that must keep 3 GB free (#273712).
+ */
+const idleCloseMs = 5 * 60_000
+/**
  * Extra time for an operation Playwright times itself (click, fill, press, waitFor, goto, screenshot): its own timeout
  * error, which says what it waited for (no match, hidden, covered), then arrives before the backstop's bare one.
  */
@@ -213,8 +218,9 @@ async function failure(cause: unknown, page: Page, png: string | undefined) {
 
 export default function browserExtension(host: ExtensionHost) {
   const state = host.resource('browser', () => {
-    const resource: { launched?: Promise<Browser>; browser?: Browser } = {}
+    const resource: { launched?: Promise<Browser>; browser?: Browser; idle?: NodeJS.Timeout } = {}
     host.onClose(async () => {
+      clearTimeout(resource.idle)
       if (resource.launched) await (await resource.launched).close()
     })
     return resource
@@ -477,8 +483,11 @@ export default function browserExtension(host: ExtensionHost) {
     const outcomes: string[] = []
     let isolated: BrowserContext | undefined
     const stepMs = args.timeoutMs ?? stepTimeoutMs
+    // Launching the shared browser and opening this call's page are not steps: a short timeoutMs must not fail them
+    // (a cold launch under load took seconds, and a 1 s call failed before its first step).
+    const setupMs = Math.max(stepMs, stepTimeoutMs)
     const totalMs = 4 * stepMs + waits
-    const deadline = Date.now() + totalMs
+    let deadline = Infinity
     /** `work` within one step's limit (plus a wait it asks for) and what is left of the call's. */
     const guard = <T>(work: Promise<T>, extraMs = 0) => {
       const left = deadline - Date.now()
@@ -520,9 +529,11 @@ export default function browserExtension(host: ExtensionHost) {
           })
         state.launched = launched
       }
-      const browser = await guard(state.launched)
+      const browser = await within(setupMs, state.launched)
+      clearTimeout(state.idle)
       context.abortSignal?.throwIfAborted()
-      isolated = await guard(
+      isolated = await within(
+        setupMs,
         browser.newContext({
           viewport: { width: args.width ?? 1440, height: args.height ?? 900 },
           // Ultimate pages follow the system light or dark; dark unless the call asks for light.
@@ -541,7 +552,8 @@ export default function browserExtension(host: ExtensionHost) {
         reported.add(target)
         outcomes.push(`Blocked ${request.url()}: ${reason}`)
       })
-      const page = await guard(isolated.newPage())
+      const page = await within(setupMs, isolated.newPage())
+      deadline = Date.now() + totalMs
       page.setDefaultTimeout(stepMs)
       page.setDefaultNavigationTimeout(stepMs)
       context.abortSignal?.throwIfAborted()
@@ -635,7 +647,22 @@ export default function browserExtension(host: ExtensionHost) {
       context.abortSignal?.removeEventListener('abort', abort)
       await close(isolated)
       proxy?.close()
+      closeWhenIdle()
     }
+  }
+
+  /** Closes the shared browser once no call has used it for `idleCloseMs`; a call still holding a context keeps it, and re-arms the timer when it ends. */
+  function closeWhenIdle() {
+    clearTimeout(state.idle)
+    state.idle = setTimeout(() => {
+      const browser = state.browser
+      if (!browser || browser.contexts().length > 0) return
+      state.launched = undefined
+      state.browser = undefined
+      void within(closeTimeoutMs, browser.close()).catch((reason: unknown) =>
+        host.notice(`Closing the idle browser failed: ${String(reason)}`),
+      )
+    }, idleCloseMs).unref()
   }
 
   /** Closes a call's context within a bounded time; a context that won't close takes the shared browser with it, so the next call launches a fresh one. */
