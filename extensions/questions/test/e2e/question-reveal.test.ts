@@ -178,8 +178,47 @@ it('brings the question card to the top of the view below the pinned strip', asy
   for (const { id } of asked) {
     await page.locator(`[data-todo-question="${id}"] button`).click()
     if (id === asked[1].id) {
-      await until(async () => !!(await measure(page, id)), 5_000)
+      // Wait until the reveal actually begins scrolling the card into the top of the viewport, while the image is still held.
+      let before = 0
+      await until(async () => {
+        const at = await measure(page, id)
+        if (!at || at.card >= 400) return false
+        const height = await page.evaluate((message) => {
+          const row = document
+            .querySelector(`[data-message-outgoing="${message}"]`)
+            ?.closest('[data-entry-id]')
+          const img = row?.querySelector('img[src="/late-diagram.svg"]') as HTMLImageElement | null
+          if (!row || !img || img.complete) return undefined
+          return row.getBoundingClientRect().height
+        }, id)
+        if (height === undefined) return false
+        before = height
+        return true
+      }, 5_000)
       releaseImage()
+      // Confirm the delayed image loaded and actually grew the row above the card before checking final placement.
+      await until(
+        () =>
+          page.evaluate(
+            ({ message, prior }) => {
+              const row = document
+                .querySelector(`[data-message-outgoing="${message}"]`)
+                ?.closest('[data-entry-id]')
+              const img = row?.querySelector(
+                'img[src="/late-diagram.svg"]',
+              ) as HTMLImageElement | null
+              return (
+                !!row &&
+                !!img &&
+                img.complete &&
+                img.naturalHeight === 140 &&
+                row.getBoundingClientRect().height - prior >= 100
+              )
+            },
+            { message: id, prior: before },
+          ),
+        5_000,
+      )
     }
     expect(await drift(page, id)).toBeLessThan(4)
   }
