@@ -1,6 +1,7 @@
 /**
- * Parsers for the Linux `/proc` files Ultimate reads, one per file, over their text: RAM admission (`lib/memory.ts`),
- * CPU measurement (`lib/cpu.ts`), job scopes (`lib/job-scope.ts`) and the Machine dashboard read through these.
+ * Parsers for the Linux `/proc` files the fork's readers use, one per file, over their text: RAM admission
+ * (`lib/memory.ts`), CPU measurement (`lib/cpu.ts`), job scopes (`lib/job-scope.ts`) and the Machine dashboard read
+ * through these. Upstream's `lib/process-group.ts` keeps its own read of a process's start time.
  */
 import { readdir, readFile } from 'node:fs/promises'
 
