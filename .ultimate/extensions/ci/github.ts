@@ -171,6 +171,10 @@ export const runsOf = async (
     )
   ).workflow_runs
 
+/** A run as it is now: one call, for a poll. */
+export const runOf = (cwd: string, repo: string, id: number, tries?: number) =>
+  call<Run>(cwd, repo, `/repos/${repo}/actions/runs/${id}`, tries)
+
 /** A run as it is now, with its jobs. */
 export async function runState(cwd: string, repo: string, id: number, tries?: number) {
   const { jobs } = await call<{ jobs: Job[] }>(
@@ -179,8 +183,7 @@ export async function runState(cwd: string, repo: string, id: number, tries?: nu
     `/repos/${repo}/actions/runs/${id}/jobs`,
     tries,
   )
-  const run = await call<Run>(cwd, repo, `/repos/${repo}/actions/runs/${id}`, tries)
-  return { run, jobs }
+  return { run: await runOf(cwd, repo, id, tries), jobs }
 }
 
 /** How long after GitHub finished it a passed run of a commit stands in for the lander's gate (#205147). */

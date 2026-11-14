@@ -1,8 +1,8 @@
 /**
  * The `ci` tool: the full CI of a committed tip, in the background, on the PC runner when this machine has a `pc` remote
  * (`pc.ts`), else on the fork's GitHub Actions. The call returns at once; a durable task runs the suites on the PC, or
- * pushes `ci/<sha>-<task>`, looks at the run until it ends and deletes the ref, then wakes the calling conversation once
- * with a `ci.result` card. A PC that gives no verdict hands over to GitHub. It never runs the suites on this machine: an
+ * pushes `ci/<sha>-<task>` (or waits for a run of the commit already under way), looks at the run until it ends and
+ * deletes the ref, then wakes the calling conversation once with a `ci.result` card. A PC that gives no verdict hands over to GitHub. It never runs the suites on this machine: an
  * unreachable GitHub is a result too.
  */
 import { obj } from '@earendil-works/pi-schema'
@@ -20,6 +20,7 @@ import {
   jobResult,
   pollMs,
   repository,
+  runOf,
   runsOf,
   runState,
   runVerdict,
@@ -33,7 +34,7 @@ import type { Suite } from './pc.ts'
 const REMOTE = 'fork'
 /** A pushed ref whose run has not appeared by then, or a GitHub that fails this long, ends the task. */
 const PATIENCE_MS = 5 * 60_000
-/** A run still not finished this long after its push (stuck in a queue) ends the task too. */
+/** A run still not finished this long after its push or the start of the wait (stuck in a queue) ends the task too. */
 const RUN_LIMIT_MS = 60 * 60_000
 /** A PC run not finished by then hands over to GitHub. */
 const PC_LIMIT_MS = 30 * 60_000
@@ -41,7 +42,8 @@ const PC_LIMIT_MS = 30 * 60_000
 type Input = { to: number; cwd: string; sha: string }
 /**
  * `pc`: why the PC runner gave no verdict, once it was tried; GitHub runs it then, and the card says why. `run`: the run
- * of the commit already under way that `poll` waits for, from `pushed` on, instead of pushing its own ref.
+ * of the commit already under way that `poll` waits for instead of pushing its own ref; `pushed` is then when the wait
+ * began.
  */
 type Checkpoint =
   | { phase: 'start'; pc?: string }
@@ -256,10 +258,13 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
         let next
         try {
           const repo = await repository(cwd, REMOTE)
-          const looked = watched === undefined ? undefined : await runState(cwd, repo, watched, 1)
-          const run = looked?.run ?? (await runsOf(cwd, repo, sha, ref, 1))[0]
+          // One call a poll either way; the jobs are read once the run has ended.
+          const run =
+            watched === undefined
+              ? (await runsOf(cwd, repo, sha, ref, 1))[0]
+              : await runOf(cwd, repo, watched, 1)
           if (run?.status === 'completed') {
-            const state = looked ?? (await runState(cwd, repo, run.id))
+            const state = await runState(cwd, repo, run.id)
             const { conclusion, seconds, failures, notStarted } = await runVerdict(
               cwd,
               repo,
