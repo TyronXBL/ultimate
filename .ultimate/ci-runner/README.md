@@ -22,8 +22,8 @@ The code is in `.ultimate/extensions/ci/pc.ts`.
 - **The distro:** a dedicated WSL2 distro, `ultimate-ci`. Windows programs, the Windows drive and sudo are off in it.
 - **The network:** the Windows Tailscale client plus mirrored networking.
 - **sshd** listens on port 2222. A Hyper-V firewall rule admits only the VPS's tailnet address.
-- **The key:** the VPS's key can run only `ultimate-ci`. That script either receives commits into `~/ci.git`, or runs
-  `check`, `test` or `test:e2e` for one commit.
+- **The key:** the VPS's key can run only `ultimate-ci`. That script receives commits into `~/ci.git`, runs
+  `check`, `test` or `test:e2e` for one commit, or runs an ad-hoc `job` command on a snapshot commit.
 - **No secrets** live on the PC; it never needs GitHub access.
 
 Know what "only test runs" means: a test run executes the commit's code. So the VPS can run any code as the
@@ -223,3 +223,20 @@ time ssh ultimate-ci run $(git rev-parse HEAD) test test:e2e
 ```
 
 To take the PC out of the pipeline, run `git -C /opt/ultimate remote remove pc`.
+
+## Ad-hoc background jobs (`job`)
+
+Read-only background jobs on the VPS (such as `pnpm check:changed` or targeted `vitest` runs) can also run on the PC
+first via `ssh my-pc job <sha> <base64-cmd>`, falling back to the VPS when the PC gives no result.
+
+1. The VPS snapshots the worktree (including tracked edits and non-secret, non-ignored untracked files up to 5 MB)
+   without touching the local index or `HEAD`, and pushes it to `refs/heads/job/<sha>` in `~/ci.git`.
+2. `ultimate-ci job` acquires `run.lock` (shared with `run`; busy returns exit 75 so the VPS runs locally), checks out
+   `<sha>` in a fresh worktree, and installs with `pnpm install --frozen-lockfile --prefer-offline --ignore-scripts`.
+3. It decodes the command and runs it in its own session (`setsid bash -c`), streaming output back with
+   `ultimate-ci: alive` heartbeats every 10 s and ending with `ultimate-ci: job exit <code> setup <s> s run <s> s cpu <s> s`.
+   If the client disconnects, the job's process group is killed and the worktree is swept.
+
+**Trust:** `job` runs repository code on `my-pc` under the same trust boundary as `run`—inside the locked-down distro as
+the unprivileged `ci` user, with no secrets on the PC and no outbound network filter. The VPS-side runner fails closed
+before snapshotting if any untracked file looks like a secret or exceeds 5 MB, and forwards no environment variables.

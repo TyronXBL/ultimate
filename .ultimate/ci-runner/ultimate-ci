@@ -4,9 +4,13 @@
 #
 #   git-receive-pack 'ci.git'   receive commits into ~/ci.git (`git push pc …` from the VPS)
 #   run <sha> <suite>…          test <sha> in a fresh worktree; suites: check, test, test:e2e, in the order given
+#   job <sha> <base64-cmd>      run a single bash -c command for <sha> in a fresh worktree (#281756)
 #
-# Exit: 0 every suite passed; 1 a suite failed; 2 refused; 75 no verdict now (busy, unknown commit, install failed or
-# timed out, a missing tool).
+# Exit:
+#   0   every suite passed (run) or job finished and emitted its marker line (job)
+#   1   a suite failed (run)
+#   2   refused (grammar or invalid command)
+#   75  no verdict now (busy, unknown commit, install failed or timed out, a missing tool)
 set -uo pipefail
 
 repo=$HOME/ci.git
@@ -21,32 +25,70 @@ refuse() {
 if [[ $command == "git-receive-pack 'ci.git'" ]]; then
   exec git-receive-pack "$repo"
 fi
-[[ $command =~ ^run\ [0-9a-f]{40}(\ (check|test|test:e2e))+$ ]] || refuse "${command:-no command}"
-read -r -a words <<<"$command"
-sha=${words[1]}
-suites=("${words[@]:2}")
 
-# One run at a time: a second one gets no verdict at once and goes to GitHub.
+mode=
+if [[ $command =~ ^run\ [0-9a-f]{40}(\ (check|test|test:e2e))+$ ]]; then
+  mode=run
+  read -r -a words <<<"$command"
+  sha=${words[1]}
+  suites=("${words[@]:2}")
+elif [[ $command =~ ^job\ [0-9a-f]{40}\ [A-Za-z0-9+/=]+$ ]]; then
+  mode=job
+  read -r -a words <<<"$command"
+  sha=${words[1]}
+  job_cmd=$(printf '%s' "${words[2]}" | base64 -d 2>/dev/null) || refuse "invalid base64"
+  [[ -n $job_cmd ]] || refuse "empty job command"
+else
+  refuse "${command:-no command}"
+fi
+
+# One run or job at a time: a second one gets no verdict at once.
 exec 9>"$HOME/run.lock"
 flock -n 9 || {
   say "busy with another run"
   exit 75
 }
 
-# Holding the lock, no other run is under way: sweep what stopped or refused runs left (worktrees, `run/` refs).
+# Holding the lock, no other run is under way: sweep what stopped or refused runs left (worktrees, `run/` and `job/` refs).
 sweep() {
+  local keep=${1:-none}
   for dir in "$HOME"/runs/*; do
     [[ -e $dir ]] && git -C "$repo" worktree remove --force "$dir" 2>/dev/null
   done
   rm -rf "$HOME/runs"
   git -C "$repo" worktree prune
-  git -C "$repo" for-each-ref --format='%(refname)' refs/heads/run/ | while read -r ref; do
-    [[ $ref == "refs/heads/run/$1" ]] || git -C "$repo" update-ref -d "$ref"
+  git -C "$repo" for-each-ref --format='%(refname)' refs/heads/run/ refs/heads/job/ | while read -r ref; do
+    [[ $ref == "$keep" ]] || git -C "$repo" update-ref -d "$ref"
   done
 }
-sweep "$sha"
+
+job_pid=
+swept=0
+cleanup() {
+  if [[ -n $job_pid ]]; then
+    kill -TERM -- -"$job_pid" 2>/dev/null || true
+    for _ in 1 2 3; do
+      kill -0 -- -"$job_pid" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL -- -"$job_pid" 2>/dev/null || true
+    wait "$job_pid" 2>/dev/null || true
+    job_pid=
+  fi
+  if [[ $swept -eq 0 ]]; then
+    swept=1
+    sweep none
+  fi
+}
+
+sweep "refs/heads/$mode/$sha"
 work=$HOME/runs/$sha
-trap 'sweep none' EXIT
+trap cleanup EXIT
+trap 'cleanup; exit 143' TERM HUP INT
+# A bash script killed by SIGPIPE runs no EXIT trap unless PIPE is trapped explicitly (#281756).
+trap 'cleanup; exit 141' PIPE
+
+setup_start=$SECONDS
 git -C "$repo" worktree add -q --detach "$work" "$sha" || {
   say "no commit $sha in $repo"
   exit 75
@@ -54,23 +96,87 @@ git -C "$repo" worktree add -q --detach "$work" "$sha" || {
 cd "$work" || exit 75
 
 say "installing dependencies"
-timeout --kill-after=10 600 pnpm install --frozen-lockfile --prefer-offline || {
+install_args=(--frozen-lockfile --prefer-offline)
+[[ $mode == job ]] && install_args+=(--ignore-scripts)
+timeout --kill-after=10 600 pnpm install "${install_args[@]}" || {
   say "pnpm install failed or ran past 600 s"
   exit 75
 }
-for suite in "${suites[@]}"; do
-  say "$suite started"
-  start=$SECONDS
-  timeout --kill-after=10 900 pnpm "$suite"
-  code=$?
-  if [[ $code -eq 0 ]]; then
-    say "$suite passed in $((SECONDS - start)) s"
-  elif [[ $code -eq 126 || $code -eq 127 ]]; then
-    say "$suite could not start a tool (exit $code)"
-    exit 75
-  else
-    [[ $code -eq 124 ]] && say "$suite ran past 900 s and was stopped"
-    say "$suite failed in $((SECONDS - start)) s"
-    exit 1
+
+if [[ $mode == run ]]; then
+  for suite in "${suites[@]}"; do
+    say "$suite started"
+    start=$SECONDS
+    timeout --kill-after=10 900 pnpm "$suite"
+    code=$?
+    if [[ $code -eq 0 ]]; then
+      say "$suite passed in $((SECONDS - start)) s"
+    elif [[ $code -eq 126 || $code -eq 127 ]]; then
+      say "$suite could not start a tool (exit $code)"
+      exit 75
+    else
+      [[ $code -eq 124 ]] && say "$suite ran past 900 s and was stopped"
+      say "$suite failed in $((SECONDS - start)) s"
+      exit 1
+    fi
+  done
+  exit 0
+fi
+
+setup_s=$((SECONDS - setup_start))
+
+parse_ms() {
+  local val=$1 m s whole frac
+  m=${val%%m*}
+  s=${val#*m}
+  s=${s%s}
+  whole=${s%%.*}
+  frac=${s#*.}
+  frac=${frac}000
+  frac=${frac:0:3}
+  echo $((10#$m * 60000 + 10#$whole * 1000 + 10#$frac))
+}
+
+read_cpu_ms() {
+  local f=$1 _l1 u s
+  {
+    read -r _l1
+    read -r u s
+  } <"$f"
+  echo $(($(parse_ms "$u") + $(parse_ms "$s")))
+}
+
+# `times` must run in the current shell (redirected to a file, never `$(times)`) so RUSAGE_CHILDREN is not reset (#281756).
+times_file=$HOME/runs/.times
+times >"$times_file"
+cpu_before=$(read_cpu_ms "$times_file")
+run_start=$SECONDS
+
+setsid bash -c "$job_cmd" 2>&1 &
+job_pid=$!
+
+while true; do
+  sleep 10 &
+  sleep_pid=$!
+  wait -n "$job_pid" "$sleep_pid" 2>/dev/null || true
+  if ! kill -0 "$job_pid" 2>/dev/null; then
+    kill "$sleep_pid" 2>/dev/null || true
+    wait "$sleep_pid" 2>/dev/null || true
+    break
   fi
+  say "alive" || {
+    cleanup
+    exit 141
+  }
 done
+
+wait "$job_pid"
+job_code=$?
+job_pid=
+run_s=$((SECONDS - run_start))
+times >"$times_file"
+cpu_after=$(read_cpu_ms "$times_file")
+cpu_s=$(((cpu_after - cpu_before + 500) / 1000))
+
+say "job exit $job_code setup $setup_s s run $run_s s cpu $cpu_s s"
+exit 0
