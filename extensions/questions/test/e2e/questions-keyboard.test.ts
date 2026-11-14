@@ -7,8 +7,8 @@ import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { JsonValue } from '@earendil-works/chord/json'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
-import type { Browser } from 'playwright-core'
-import { afterAll, expect, it } from 'vitest'
+import type { Browser, Page } from 'playwright-core'
+import { afterAll, afterEach, expect, it } from 'vitest'
 import { launchBrowser } from '../../../browser/server.ts'
 import { Messages } from '../../../messages/api.ts'
 import { context } from '../../../../server/harness.ts'
@@ -48,6 +48,12 @@ const questions: JsonValue[] = [
 const cleanup: (() => Promise<void>)[] = []
 afterAll(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close()
+})
+// Each test's page goes with the test: the held-answer test throttles its page's CPU, which Chromium does by keeping
+// that renderer's main thread busy, so left open it took most of a core from the next test's page load.
+const pages: Page[] = []
+afterEach(async () => {
+  for (const page of pages.splice(0)) await page.close()
 })
 
 let server: Awaited<ReturnType<typeof fauxServer>>
@@ -107,9 +113,7 @@ async function openCard() {
   const asked = (await ask())!
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
-  cleanup.push(() => page.close())
-  // Fake timers, running until a test pauses them.
-  await page.clock.install()
+  pages.push(page)
   await page.goto(`${server.url}/?conversation=${ultimate}`)
   const card = page.locator(`[data-questions-card="message:${asked.id}"]`)
   await card.locator('fieldset').nth(2).waitFor()
@@ -164,6 +168,7 @@ it('answers a decisions card with letters, arrows and Enter', async () => {
   await page.keyboard.insertText('And soon.')
   // The undo window stays open until this test's Enter: with the page's timers paused it cannot run out by itself
   // first, however late a busy runner gets here. A second ahead, not more, as in transcript-rows.test.ts.
+  await page.clock.install()
   await page.clock.pauseAt(Date.now() + 1000)
   await page.keyboard.press('Enter')
   // The undo bar fills by itself, as an animation of its own, without relying on a @starting-style transition. Asked
