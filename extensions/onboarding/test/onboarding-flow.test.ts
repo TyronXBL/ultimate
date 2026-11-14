@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -8,31 +8,14 @@ import {
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import type { ConversationId, JsonObject } from '@earendil-works/pi-durable'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { expect, it } from 'vitest'
 import { Memory } from '../../lineage/memory.ts'
 import { Messages } from '../../messages/api.ts'
 import { Owner } from '../../models/set-model.ts'
 import { Tally } from '../../lineage/server.ts'
 import { Starts } from '../server.ts'
 import { context } from '../../../server/harness.ts'
-import {
-  fauxServer,
-  post,
-  removeTemp,
-  temp,
-  trimmedSourceCopy,
-  until,
-} from '../../../test/helpers.ts'
-
-let ultimateRoot: string
-let copyParent: string
-beforeAll(async () => {
-  copyParent = await temp('ultimate-onboarding-source-')
-  ultimateRoot = await trimmedSourceCopy(copyParent, [])
-})
-afterAll(async () => {
-  await removeTemp(copyParent)
-})
+import { fauxServer, post, removeTemp, temp, until } from '../../../test/helpers.ts'
 
 const text = (content: unknown) =>
   typeof content === 'string'
@@ -106,7 +89,7 @@ it('onboards once per root with facts, choices, reading, first memories and a co
   await writeFile(join(project, 'README.md'), '# Sample\nA fresh project with no Git.\n')
   await writeFile(join(project, '.ultimate/settings.json'), '{}')
   const server = await fauxServer({
-    ultimateRoot,
+    ultimateRoot: resolve('.'),
     projectRoot: project,
     userHome: home,
     home: join(home, 'state'),
@@ -224,7 +207,7 @@ it("starts the first branch on Get ready's model and thinking level, not on the 
   const project = join(home, 'project')
   await mkdir(project, { recursive: true })
   const server = await fauxServer({
-    ultimateRoot,
+    ultimateRoot: resolve('.'),
     projectRoot: project,
     userHome: home,
     home: join(home, 'state'),
