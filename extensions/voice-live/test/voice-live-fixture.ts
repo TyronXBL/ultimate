@@ -1,5 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, vi } from 'vitest'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
@@ -20,11 +20,30 @@ beforeAll(async () => {
     path,
     (await readFile(path, 'utf8')).replace('openai-codex/gpt-6-luna', 'faux/faux-1'),
   )
+  await settleProbe(ultimateRoot)
   await writeFile(
     join(ultimateRoot, '.ultimate/settings.json'),
     JSON.stringify({ summaryModel: 'unavailable/test', extensions: { enable: ['voice-live'] } }),
   )
 })
+// Settles a question through Messages under a tool call's receipt, as the interrupted first run of `voice_answer` did.
+async function settleProbe(root: string) {
+  const dir = join(root, 'extensions/settle-probe')
+  await mkdir(dir, { recursive: true })
+  await writeFile(
+    join(dir, 'server.ts'),
+    `import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import { MessagesApi } from ${JSON.stringify(resolve('extensions/messages/api.ts'))}
+export const actions = {
+  settle: ({ message, text, call }, { host }) =>
+    text === undefined
+      ? host.need(MessagesApi).dismiss(message, BACKGROUND_CONTEXT, undefined, call)
+      : host.need(MessagesApi).answer(message, text, BACKGROUND_CONTEXT, undefined, call),
+}
+export default { name: 'settle-probe' }
+`,
+  )
+}
 afterAll(async () => {
   await Promise.all(servers.map((s) => s.close()))
 })

@@ -1,38 +1,27 @@
-/** Projects in the browser: every Ultimate project on this machine and the user's remotes, for the title bar's switcher. Browser-safe. */
+/** Projects in the browser: the Ultimate instances running on this machine, for the rail. Browser-safe. */
 import { actionRef } from '../../shared/extension-api.ts'
 
-/** A project on this machine: one opened before (it has a home in `~/.ultimate/projects`), or this one. */
-export type LocalProject = {
+/** One running instance: its project's name, its loopback URL, and its live state when it answered. */
+export type RunningProject = {
   name: string
-  /** Its folder; absent for a home whose `project.json` is missing. */
-  root?: string
-  /** This server's project. */
+  url: string
+  /** The instance this page shows. */
   current: boolean
-  /** Its loopback URL while its supervisor runs. */
-  url?: string
-  /** Its Tailscale Serve address while it runs and publishes itself there. */
-  tailnet?: string
-  /** When anyone last wrote to one of its top-level conversations, ms since epoch. */
-  activeAt?: number
+  /**
+   * Its `origin` on GitHub, `<owner>/<repo>` as GitHub spells it, with its visibility when `gh` knew it; absent off
+   * GitHub and until the first read finished.
+   */
+  repo?: { name: string; url: string; visibility?: 'public' | 'private' | 'internal' }
+  /** Conversations running a turn now; absent when its `status` did not answer. */
+  busy?: number
+  /** Messages waiting on the user's answer; absent when its `status` did not answer. */
+  questions?: number
+  /** Its HTTPS port on the tailnet, when Tailscale registered one: where a page opened over the tailnet reaches it. */
+  tailnetPort?: number
 }
 
-/** An instance the user named in the `remotes` user setting: another machine's project at its URL. */
-export type RemoteProject = { machine: string; name: string; url: string }
+/** No arguments → every running instance on this machine, this one included, in project order. */
+export const ListAction = actionRef<null, RunningProject[]>('projects', 'list')
 
-/** No arguments → this machine's projects (this one first, then by name) and the user's remotes. */
-export const ListAction = actionRef<null, { projects: LocalProject[]; remotes: RemoteProject[] }>(
-  'projects',
-  'list',
-  { global: true },
-)
-
-/**
- * Starts Ultimate in `root`, an absolute folder (`~/` is the user's home), and resolves once it runs: a project opened
- * before or a new one. Resolves at once for a project that already runs; refuses this server's own project. A missing
- * folder resolves `{ missing }` with the path it would create; `create: true` makes it first (`mkdir -p`), never inside
- * this Ultimate's checkout or `~/.ultimate`.
- */
-export const StartAction = actionRef<
-  { root: string; create?: boolean },
-  LocalProject | { missing: string }
->('projects', 'start')
+/** `{ pinned? }` → whether the rail stays open, shared by every instance on this machine; `pinned` sets it first. */
+export const PinAction = actionRef<{ pinned?: boolean }, { pinned: boolean }>('projects', 'pin')

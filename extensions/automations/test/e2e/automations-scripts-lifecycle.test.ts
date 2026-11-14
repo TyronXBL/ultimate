@@ -9,7 +9,7 @@ import type { Automation, AutomationListItem } from '../../types.ts'
 import { requestChapter } from '../../../../lib/chapters.ts'
 import { context } from '../../../../server/harness.ts'
 import { eventHost, fauxServer, until } from '../../../../test/helpers.ts'
-import { tracked, fixture, create, writeRun, call } from './automations-scripts-fixture.ts'
+import { tracked, failed, fixture, create, writeRun, call } from './automations-scripts-fixture.ts'
 
 /** A recurring project automation committed in `root`'s `.ultimate/automations/<slug>/`. */
 async function committed(root: string, slug: string, script: string) {
@@ -302,6 +302,7 @@ it('creates a project automation in the checkout with a committed manifest', asy
     script: { state: 'writing' },
   })
 
+  await failed(app, sub.script!.conversationId)
   await app.extensions.invoke(
     'automations',
     'update',

@@ -11,7 +11,7 @@ import { exitOf, pidOf, runConversation } from '../../state.ts'
 import type { Automation } from '../../types.ts'
 import { context } from '../../../../server/harness.ts'
 import { fauxServer, until } from '../../../../test/helpers.ts'
-import { tracked, fixture, writeRun, call } from './automations-scripts-fixture.ts'
+import { tracked, failed, fixture, writeRun, call } from './automations-scripts-fixture.ts'
 
 it('starts a prompt run from script FIRE with its payload', async () => {
   const { app, folder } = await fixture()
@@ -161,17 +161,7 @@ it('delivers FIRE once, investigates exits only in the owning agent, recovers, a
     once: false,
   })) as Automation
   await script(recurring.id, 'echo FIRE tick; exit 0')
-  // Its brief's turn must be over first: this script exits at once, and a failure delivered while that turn runs waits as
-  // a follow-up, which the turn's failure here (no scripted answer) keeps queued. Faster definition reads (#222319)
-  // made that order the usual one; it is the line 158 timeout of #185880.
-  await until(
-    async () =>
-      (await entries(recurring.script!.conversationId, 'automations.writing')).length === 1,
-  )
-  await (await app.harness.conversation(
-    recurring.script!.conversationId as ConversationId,
-    context,
-  ))!.waitForIdle(context)
+  await failed(app, recurring.script!.conversationId)
   await invoke('resume', { id: recurring.id })
   await until(
     async () =>

@@ -205,7 +205,7 @@ function TodoRow({
           title={`${ticked ? 'Done' : 'Added'} ${new Date(at).toLocaleString()}`}
         >
           {ticked && todo.owner === 'ultimate' ? '@ultimate · ' : ''}
-          {age}
+          {todo.id} · {age}
         </time>
       </label>
       {start && !ticked ? (

@@ -890,7 +890,7 @@ export function createLander(
               ...setupCommands(projectSettings).map((command) =>
                 // Only a bare install with flags: one that names a package, runs a script (`install-test`) or is
                 // chained with another command keeps its need.
-                installed && /^\s*pnpm (install|i)(\s+--?[\w-]+(=\S+)?)*\s*$/.test(command)
+                installed && /^\s*pnpm (install|i)(\s+--?[\w-]+(=[\w.,/:@-]+)?)*\s*$/.test(command)
                   ? 0
                   : commandNeedMiB(command),
               ),

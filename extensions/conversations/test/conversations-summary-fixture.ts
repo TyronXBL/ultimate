@@ -234,15 +234,11 @@ export async function launch({
       const prepared = await prepareFauxServer(options)
       const base = prepared.host.registry.snapshot().extension('conversations')!
       install(prepared.host.registry, base)
-      const reopened = { ...prepared, ...(await prepared.go()) }
+      // go() returns the opened harness, whose close() would replace the server's and leave Vite running.
+      const reopened = { ...prepared, ...(await prepared.go()), close: () => prepared.close() }
       baseConversations.set(reopened, base)
       server = reopened
       conversation = (await server.harness.conversation(conversationId as ConversationId, context))!
-      const close = server.close.bind(server)
-      server.close = async () => {
-        await server.vite.watcher.close()
-        await close()
-      }
       servers.push(server)
     },
   }
