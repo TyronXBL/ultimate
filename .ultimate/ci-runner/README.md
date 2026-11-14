@@ -23,14 +23,14 @@ The code is in `.ultimate/extensions/ci/pc.ts`.
 - **The network:** the Windows Tailscale client plus mirrored networking.
 - **sshd** listens on port 2222. A Hyper-V firewall rule admits only the VPS's tailnet address.
 - **The key:** the VPS's key can run only `ultimate-ci`. That script receives commits into `~/ci.git`, runs
-  `check`, `test` or `test:e2e` for one commit, or runs an ad-hoc `job` command on a snapshot commit.
+  `check`, `test` or `test:e2e` for one commit, or runs one background command on a commit (`job`).
 - **No secrets** live on the PC; it never needs GitHub access.
 
 Know what "only test runs" means: a test run executes the commit's code. So the VPS can run any code as the
 unprivileged `ci` user inside the distro. What contains it is the locked-down distro, not the forced command. A run
 may take up to 15 minutes for the lander and 30 minutes for the `ci` tool; after that, GitHub runs it.
 
-That code can also reach your LAN and the tailnet: no outbound filter limits the `ci` user.
+That code can also reach your LAN and the tailnet, until the `ci` user is fenced in ("Background jobs on the PC").
 
 ## Who does what
 
@@ -224,20 +224,98 @@ time ssh ultimate-ci run $(git rev-parse HEAD) test test:e2e
 
 To take the PC out of the pipeline, run `git -C /opt/ultimate remote remove pc`.
 
-## Ad-hoc background jobs (`job`)
+## Background jobs on the PC
 
-Read-only background jobs on the VPS (such as `pnpm check:changed` or targeted `vitest` runs) can also run on the PC
-first via `ssh my-pc job <sha> <base64-cmd>`, falling back to the VPS when the PC gives no result.
+The PC can also run the VPS's read-only background commands first (`pnpm check:changed`, a test file), so the VPS
+keeps its CPU; the VPS runs them itself whenever the PC gives no result (off, busy, lost half-way). The core side is
+`extensions/background/README.md` ("A project's remote runner"); this project's runner is
+`.ultimate/scripts/remote-job.ts`, and `remoteJobs.commands` in `.ultimate/settings.json` lists what it may run.
 
-1. The VPS snapshots the worktree (including tracked edits and non-secret, non-ignored untracked files up to 5 MB)
-   without touching the local index or `HEAD`, and pushes it to `refs/heads/job/<sha>` in `~/ci.git` (along with
-   `refs/heads/main` when present, so `pnpm check:changed` and `scripts/tests-for.ts` can diff against `main`).
-2. `ultimate-ci job` acquires `run.lock` (shared with `run`; busy returns exit 75 so the VPS runs locally), checks out
-   `<sha>` in a fresh worktree, and installs with `pnpm install --frozen-lockfile --prefer-offline --ignore-scripts`.
-3. It decodes the command and runs it in its own session (`setsid bash -c`), streaming output back with
-   `ultimate-ci: alive` heartbeats every 10 s and ending with `ultimate-ci: job exit <code> setup <s> s run <s> s cpu <s> s`.
-   If the client disconnects, the job's process group is killed and the worktree is swept.
+A job goes like this:
 
-**Trust:** `job` runs repository code on `my-pc` under the same trust boundary as `run`—inside the locked-down distro as
-the unprivileged `ci` user, with no secrets on the PC and no outbound network filter. The VPS-side runner fails closed
-before snapshotting if any untracked file looks like a secret or exceeds 5 MB, and forwards no environment variables.
+1. The runner on the VPS makes a commit of the checkout as it is (tracked edits and new files that git does not
+   ignore), without touching the checkout, its index or `HEAD`. It stops, and the command runs on the VPS, when a new
+   file looks like a secret (`.env`, a key, `.npmrc`) or is larger than 5 MB. Nothing else leaves the VPS: no
+   environment, no ignored files.
+2. It pushes that commit to `refs/heads/job/<sha>` in the PC's `~/ci.git`, and `main` with it: `pnpm check:changed`
+   and `scripts/tests-for.ts` compare against `main`.
+3. `ssh my-pc job <sha> <base64 command>` takes `run.lock`, so the PC runs one test run or one job at a time (a busy PC
+   answers at once and the VPS runs the command). It checks the commit out in a fresh worktree, installs with
+   `pnpm install --frozen-lockfile --prefer-offline --ignore-scripts` and runs the command in a session of its own.
+4. The output streams back, with an `ultimate-ci: alive` line every 10 s; when the VPS stops listening, the job's
+   whole process group is stopped and the worktree removed. The last line,
+   `ultimate-ci: job exit <code> setup <s> s run <s> s cpu <s> s`, is the result; without it the VPS runs the command.
+
+Turn it on with `"remoteJobs": { "host": "my-pc" }` in the VPS's `~/.ultimate/settings.json`, after the two steps below;
+remove the key to turn it off.
+
+### Install the new runner script 🐧
+
+The `job` verb is in [`ultimate-ci`](ultimate-ci); install it again as in step 5. @ultimate sends the commit that holds
+it and its checksum, so it can be taken from the PC's own `~/ci.git`:
+
+```bash
+git -C /home/ci/ci.git show <commit>:.ultimate/ci-runner/ultimate-ci > /root/ultimate-ci
+sha256sum /root/ultimate-ci          # must match what @ultimate sent
+install -o root -g root -m 755 /root/ultimate-ci /usr/local/bin/ultimate-ci
+```
+
+### Fence the runner user in 🐧
+
+A job runs code from an uncommitted checkout as `ci`, more often than a test run does. Two fences keep it to itself;
+@ultimate checks both afterwards with a probe run as `ci`.
+
+Your home: `ci` must not be able to read it.
+
+```bash
+chmod 750 /home/<you>
+sudo -u ci ls /home/<you>            # must fail: Permission denied
+```
+
+Your network: `ci` may reach the internet (the package registry) and nothing on your LAN or tailnet. This is an
+nftables table of its own, beside whatever firewall the PC runs. `/etc/nftables.d/ultimate-ci.nft`:
+
+```
+table inet ultimate_ci
+delete table inet ultimate_ci
+table inet ultimate_ci {
+  chain output {
+    type filter hook output priority filter; policy accept;
+    meta skuid != "ci" accept
+    oifname "lo" accept
+    # Answers on the VPS's own ssh connection; `ci` opens none of its own to the tailnet.
+    ct state established,related accept
+    # Only when /etc/resolv.conf names a resolver in these ranges: allow that one address, port 53 only.
+    # ip daddr 100.100.100.100 udp dport 53 accept
+    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } reject
+    # LAN hosts with public IPv6 addresses cannot be listed, and the registry answers over IPv4.
+    meta nfproto ipv6 reject
+  }
+}
+```
+
+`/etc/systemd/system/ultimate-ci-fence.service` loads it at every boot:
+
+```ini
+[Unit]
+Description=Keep the ci user off the LAN and the tailnet
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nft -f /etc/nftables.d/ultimate-ci.nft
+ExecStop=/usr/bin/nft delete table inet ultimate_ci
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now ultimate-ci-fence.service
+nft list table inet ultimate_ci
+```
+
+What stays true: a job runs any code as `ci`, so the forced command is no sandbox; these two fences and the user
+without sudo are. `ci` can still reach the internet, and reads whatever on the PC is readable by everyone.
