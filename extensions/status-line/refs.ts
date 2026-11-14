@@ -34,4 +34,10 @@ export type TreeSpend = { agents: Record<string, OwnSpend> }
  * No arguments → each top-level conversation's tree spend that has any, by conversation id; null until the server has
  * read every conversation's usage.
  */
-export const TreesAction = actionRef<null, Record<string, TreeSpend> | null>('status-line', 'trees')
+export const TreesAction = actionRef<null, Record<string, TreeSpend> | null>(
+  'status-line',
+  'trees',
+  {
+    global: true,
+  },
+)

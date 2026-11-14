@@ -2,16 +2,15 @@
  * What a branch and each of its agents cost: a quiet chip for the tree and a figure for each agent, each with a card on
  * hover (or a tap) that breaks it down by agent, token kind and model.
  */
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useRef, useState } from 'react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import {
-  api,
   cn,
   formatTokens,
+  useAction,
   useConversation,
   useConversations,
   useConversationSummary,
-  useNow,
   useUltimate,
   useViewport,
 } from '@/sdk'
@@ -19,82 +18,43 @@ import { add, empty, kinds } from './context.ts'
 import { TreesAction } from './refs.ts'
 import type { OwnSpend, Spend, TreeSpend } from './refs.ts'
 
-let trees: Record<string, TreeSpend> | undefined
-/** Each conversation's tree top in `trees`, worked out on first use after a read. */
-let tops: Map<number, string> | undefined
-let readAt = 0
-let reading = false
-let again = false
-/** The running conversations the last read was asked for, shared by every chip. */
-let seen: string | undefined
-const listeners = new Set<() => void>()
+type Trees = Record<string, TreeSpend>
 
-/**
- * Read every tree's spend, one read for every chip. A call during a read reads once more after it, so a run that ends
- * while a read is under way is never left out.
- */
-function read() {
-  if (reading) {
-    again = true
-    return
-  }
-  reading = true
-  api
-    .action(TreesAction)
-    .then((next) => {
-      // Null while the server is still reading every conversation's usage.
-      if (!next) again = true
-      else {
-        trees = next
-        tops = undefined
-        for (const listener of listeners) listener()
-      }
-    })
-    // The last numbers stay; the next run start or end reads again.
-    .catch((error: unknown) => console.warn('Spend', error))
-    .finally(() => {
-      reading = false
-      readAt = Date.now()
-      if (!again) return
-      again = false
-      setTimeout(read, trees ? 0 : 2000)
-    })
-}
-
-const subscribe = (listener: () => void) => {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-const topOf = (id: number) => {
-  if (!trees) return undefined
-  if (!tops) {
-    tops = new Map()
+/** Each read's conversations by id with their tree's top, worked out on first use. */
+const tops = new WeakMap<Trees, Map<number, string>>()
+const topOf = (trees: Trees, id: number) => {
+  let map = tops.get(trees)
+  if (!map) {
+    map = new Map()
     for (const [top, tree] of Object.entries(trees))
-      for (const agent of Object.keys(tree.agents)) tops.set(Number(agent), top)
+      for (const agent of Object.keys(tree.agents)) map.set(Number(agent), top)
+    tops.set(trees, map)
   }
-  return tops.get(id)
+  return map.get(id)
 }
 
 /**
- * Every tree's spend, read again when any conversation starts or ends a run, and every 15 seconds while one runs,
- * since every model call of a run adds to it.
+ * Every tree's spend, one read for every chip: read again when any conversation starts or ends a run, and every 15
+ * seconds while one runs, since every model call of a run adds to it.
  */
 function useTrees() {
   const running = useConversations()
     .filter((conversation) => conversation.busy)
     .map((conversation) => conversation.id)
     .join(',')
-  const now = useNow(15_000, running !== '')
-  useEffect(() => {
-    if (running === seen && trees) return
-    seen = running
-    read()
-  }, [running])
-  useEffect(() => {
-    if (Date.now() - readAt >= 10_000) read()
-  }, [now])
-  return useSyncExternalStore(subscribe, () => trees)
+  // Null while the server is still reading every conversation's usage: ask again shortly.
+  const [waiting, setWaiting] = useState(false)
+  const { data } = useAction(TreesAction, null, {
+    on: running,
+    every: waiting ? 2000 : running ? 15_000 : undefined,
+    // The last numbers stay; the next run start or end reads again.
+    onError: (error) => console.warn('Spend', error),
+  })
+  if ((data === null) !== waiting) setWaiting(data === null)
+  // A null answer keeps the numbers shown before it.
+  const last = useRef<Trees>(undefined)
+  if (data) last.current = data
+  return last.current
 }
 
 const tokensOf = (spend: Spend) => spend.input + spend.output + spend.cacheRead + spend.cacheWrite
@@ -394,7 +354,7 @@ function SpendChip({ id, tree, className }: { id: number; tree: TreeSpend; class
  */
 export function useAgentSpend(id: number | undefined) {
   const all = useTrees()
-  const top = id === undefined ? undefined : topOf(id)
+  const top = id === undefined || !all ? undefined : topOf(all, id)
   const tree = top === undefined ? undefined : all?.[top]
   const agent = tree?.agents[String(id)]
   if (id === undefined || !tree || !agent || !Object.keys(agent.models).length) return undefined

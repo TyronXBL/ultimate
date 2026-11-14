@@ -9,7 +9,7 @@ import type { StreamdownProps } from 'streamdown'
 import { MessageResponse } from '@/components/ai/message'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, cn, useStore } from '@/sdk'
-import { openFile, reachedTarget } from './link.tsx'
+import { addressOf, openFile, reachedTarget, targetOf } from './link.tsx'
 import { ReadAction } from './refs.ts'
 import type { FileContent } from './refs.ts'
 
@@ -225,12 +225,8 @@ export function Markdown({
     if (!found) return url
     if (node.tagName === 'img' && key === 'src') return images?.get(found.path) ?? ''
     if (key !== 'href') return url
-    const hash = found.hash.slice(1)
-    const params = new URLSearchParams({ files: found.path })
-    if (conversation !== undefined) params.set('scope', String(conversation))
-    const line = /^L(\d+)/.exec(hash)?.[1]
-    if (line) params.set('line', line)
-    return `?${params}`
+    const line = /^L(\d+)/.exec(found.hash.slice(1))?.[1]
+    return `?${addressOf({ path: found.path, conversation, ...(line && { line: Number(line) }) })}`
   }
   return (
     <div
@@ -253,14 +249,8 @@ export function Markdown({
         if (!href?.startsWith('?files=')) return
         event.preventDefault()
         event.stopPropagation()
-        const params = new URLSearchParams(href)
-        const scope = Number(params.get('scope'))
-        const line = Number(params.get('line'))
-        openFile({
-          path: params.get('files') ?? '',
-          ...(scope > 0 && { conversation: scope }),
-          ...(line > 0 && { line }),
-        })
+        const at = targetOf(new URLSearchParams(href))
+        if (at) openFile(at)
       }}
     >
       <article
