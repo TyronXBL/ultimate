@@ -2,8 +2,8 @@
  * The `ci` tool: the full CI of a committed tip, in the background, on the PC runner when this machine has a `pc` remote
  * (`pc.ts`), else on the fork's GitHub Actions. The call returns at once; a durable task runs the suites on the PC, or
  * pushes `ci/<sha>-<task>` (or waits for a run of the commit already under way), looks at the run until it ends and
- * deletes the ref, then wakes the calling conversation once with a `ci.result` card. A PC that gives no verdict hands over to GitHub. It never runs the suites on this machine: an
- * unreachable GitHub is a result too.
+ * deletes the ref, then wakes the calling conversation once with a `ci.result` card. A PC that gives no verdict hands
+ * over to GitHub. It never runs the suites on this machine: an unreachable GitHub is a result too.
  */
 import { obj } from '@earendil-works/pi-schema'
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable'
