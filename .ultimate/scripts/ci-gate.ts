@@ -23,7 +23,6 @@ import {
 } from '../../lib/slot.ts'
 import type { SlotClaim } from '../../lib/slot.ts'
 import {
-  failuresOf,
   gatePlan,
   git,
   jobResult,
@@ -32,6 +31,7 @@ import {
   reusable,
   runsOf,
   runState,
+  runVerdict,
   secretsIn,
   Unreachable,
 } from '../extensions/ci/github.ts'
@@ -60,19 +60,19 @@ const REUSED = 'lander-reused: '
 
 /**
  * What earlier runs of `sha` decide: `reused` when a recent pass stands in (its origin printed); else why the suites
- * run, with `wait` when a run of it is under way. One try each: GitHub failing here only means nothing is reused, and
- * must not stall the gate past the lander's two minutes without output.
+ * run, with the run to `wait` for when one of it is under way. One try each: GitHub failing here only means nothing is
+ * reused, and must not stall the gate past the lander's two minutes without output.
  */
 async function earlier(
   sha: string,
-): Promise<{ reused: true } | { reused: false; why: string; wait?: true }> {
+): Promise<{ reused: true } | { reused: false; why: string; wait?: Run }> {
   try {
     const repo = await repository(cwd, remote)
     const plan = gatePlan(await runsOf(cwd, repo, sha, undefined, 1), sha)
     if (plan.kind === 'wait')
       return {
         reused: false,
-        wait: true,
+        wait: plan.run,
         why: `waited for the run under way, ${plan.run.html_url}`,
       }
     if (plan.kind === 'fresh') return { reused: false, why: plan.why }
@@ -88,12 +88,12 @@ async function earlier(
   }
 }
 
-/** Run the suites of `sha` on GitHub Actions, or wait for its run under way; `why` they run, for the last line. */
-async function gate(repo: string, sha: string, why: string) {
+/** Run the suites of `sha` on GitHub Actions or wait for `waiting`, its run under way; `why` they run, for the last line. */
+async function gate(repo: string, sha: string, why: string, waiting?: Run) {
   const poll = await pollMs(cwd, repo)
-  const before = await runsOf(cwd, repo, sha)
+  const before = waiting ? [] : await runsOf(cwd, repo, sha)
   // A run still going (the branch's own, a resumed lander) is waited for; else a push of a new ref starts one.
-  let run: Run | undefined = before.find((candidate) => candidate.status !== 'completed')
+  let run = waiting ?? before.find((candidate) => candidate.status !== 'completed')
   const refs: string[] = []
   if (!run) {
     const runs = before.length
@@ -129,11 +129,11 @@ async function gate(repo: string, sha: string, why: string) {
           log(
             `  ${job.name}: ${job.conclusion} in ${job.seconds === undefined ? '-' : `${job.seconds} s`}`,
           )
-        if (run.conclusion === 'success') {
+        const { conclusion, failures, notStarted } = await runVerdict(cwd, repo, run, state.jobs)
+        if (conclusion === 'success') {
           log(`ran fresh (${why}): GitHub Actions passed ${sha.slice(0, 7)}, ${run.html_url}`)
           return 0
         }
-        const { failures, notStarted } = await failuresOf(cwd, repo, state.jobs)
         if (notStarted)
           throw new Unreachable(`GitHub Actions did not start the jobs: ${notStarted}`)
         // Vitest titles a failure with its test, `file > name`; the message's first line is the error.
@@ -254,7 +254,7 @@ async function main() {
   const pc = found.wait ? undefined : await onPc(sha, found.why)
   if (pc !== undefined) return pc
   try {
-    return await gate(await repository(cwd, remote), sha, found.why)
+    return await gate(await repository(cwd, remote), sha, found.why, found.wait)
   } catch (error) {
     if (!(error instanceof Unreachable)) throw error
     console.log(

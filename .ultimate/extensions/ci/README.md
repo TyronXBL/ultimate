@@ -14,8 +14,10 @@ stashes and cleans nothing. A durable `ci.run` task then:
 2. with a `pc` remote, runs `check`, `test` and `test:e2e` on the PC (`pc.ts`, set up as in
    `.ultimate/ci-runner/README.md`). Its pass or fail is the result, named `on <host>` on the card. A PC that gives no
    verdict (unreachable, busy, install failed) hands over to the steps below at once, and the card says why;
-3. reports at once when the commit already passed CI on GitHub;
-4. pushes `fork:ci/<sha>-t<task>` (apart from the gate's `ci/<sha>[-n]`), which starts `.github/workflows/ci.yml`;
+3. decides by the lander gate's rule (`gatePlan` in `github.ts`) what the commit's runs on GitHub mean: it reports at
+   once when the commit passed and no run of it ended any other way, and waits for a run of it still under way instead
+   of pushing a second one;
+4. else pushes `fork:ci/<sha>-t<task>` (apart from the gate's `ci/<sha>[-n]`), which starts `.github/workflows/ci.yml`;
 5. looks at the run every 20 s, or every 3 min without a stored credential (60 unauthenticated calls an hour are the
    whole machine's), until it ends, no run started within 5 minutes, it has not finished an hour after the push
    (`timeout`), or GitHub has failed for 5 minutes (`unreachable`). A run whose jobs GitHub did not start (the
