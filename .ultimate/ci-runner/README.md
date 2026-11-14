@@ -234,8 +234,8 @@ keeps its CPU; the VPS runs them itself whenever the PC gives no result (off, bu
 A job goes like this:
 
 1. The runner on the VPS makes a commit of the checkout as it is (tracked edits and new files that git does not
-   ignore), without touching the checkout, its index or `HEAD`. It stops, and the command runs on the VPS, when a new
-   file looks like a secret (`.env`, a key, `.npmrc`) or is larger than 5 MB, or when the command starts in a
+   ignore), without touching the checkout, its index or `HEAD`. It stops, and the command runs on the VPS, when a file
+   that is new against `HEAD`, staged or not, looks like a secret (`.env`, a key, `.npmrc`) or is larger than 5 MB, or when the command starts in a
    subfolder. Nothing else of the VPS goes along: no environment, no ignored files.
 2. It pushes that commit to `refs/heads/job/<sha>` in the PC's `~/ci.git`, and `main` with it: `pnpm check:changed`
    and `scripts/tests-for.ts` compare against `main`. The commit has the checkout's `HEAD` as its parent, so the push

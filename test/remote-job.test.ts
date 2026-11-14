@@ -13,7 +13,7 @@ it.each([
     `pnpm test:e2e test/e2e/a.test.ts -t 'stays at the $bottom' | grep -E "✓|×|FAIL" | head -n 5`,
     true,
   ],
-  ['pnpm check; pnpm test test/a.test.ts || pnpm test test/a.test.ts', true],
+  ['pnpm check; pnpm test test/a.test.ts || pnpm test extensions/*/test/a.test.ts', true],
   ['pnpm check | grep -v -e warning -e note -A 2 | wc -l', true],
   // Not the project's invocations: an unlisted program or script, a listed one only as a prefix of another word.
   ['pnpm fix', false],
@@ -44,6 +44,9 @@ it.each([
   ['pnpm check | grep -f/etc/passwd', false],
   ['pnpm check | grep error package.json', false],
   ['pnpm check | tail -n 5 package.json', false],
+  ['pnpm check | head -n 5 123', false],
+  ['pnpm check | grep *', false],
+  ['pnpm check | constructor', false],
   ['pnpm check | sort -o out.txt', false],
   ['pnpm check | wc -l --files0-from=list', false],
 ])('a command runs remotely only when it is made of the listed invocations: %s', (command, ok) => {

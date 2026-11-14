@@ -67,19 +67,6 @@ async function main() {
   if (await git(cwd, ['rev-parse', '--show-prefix']))
     failNoResult(statusPath, 'the command starts in a subfolder of the checkout')
 
-  // Fail closed before snapshotting if any untracked file looks like a secret or is larger than 5 MB.
-  const untrackedRaw = await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z'], {
-    trim: false,
-  })
-  for (const file of untrackedRaw.split('\0')) {
-    if (!file) continue
-    if (looksLikeSecret(file)) failNoResult(statusPath, `untracked ${file} looks like a secret`)
-    const stat = lstatSync(path.join(cwd, file))
-    if (stat.isFile() && stat.size > MAX_UNTRACKED_BYTES) {
-      failNoResult(statusPath, `untracked ${file} is larger than 5 MB`)
-    }
-  }
-
   const transferStart = performance.now()
   const realIndexRel = await git(cwd, ['rev-parse', '--git-path', 'index'])
   const realIndex = path.resolve(cwd, realIndexRel)
@@ -99,17 +86,33 @@ async function main() {
   process.once('SIGTERM', onSignal)
   process.once('SIGINT', onSignal)
 
-  let sha: string
+  let sha: string | undefined
+  /** Why nothing is sent: a file the snapshot would add that must not leave this machine. */
+  let refused: string | undefined
   try {
     if (existsSync(realIndex)) copyFileSync(realIndex, tempIndex)
     const snapshotEnv: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tempIndex }
     await git(cwd, ['add', '-A'], { env: snapshotEnv })
-    const tree = await git(cwd, ['write-tree'], { env: snapshotEnv })
+    // Fail closed on every file the snapshot adds to HEAD, untracked or already staged (review of #281756: a staged
+    // file is not among `git ls-files --others`): one that looks like a secret or is larger than 5 MB stops it.
+    const added = await git(
+      cwd,
+      ['diff', '--cached', '--name-only', '-z', '--diff-filter=A', 'HEAD'],
+      { env: snapshotEnv, trim: false },
+    )
+    for (const file of added.split('\0').filter(Boolean)) {
+      const stat = lstatSync(path.join(cwd, file))
+      if (looksLikeSecret(file)) refused = `new file ${file} looks like a secret`
+      else if (stat.isFile() && stat.size > MAX_UNTRACKED_BYTES)
+        refused = `new file ${file} is larger than 5 MB`
+      if (refused) break
+    }
+    const tree = refused ? undefined : await git(cwd, ['write-tree'], { env: snapshotEnv })
     const headTree = await git(cwd, ['rev-parse', 'HEAD^{tree}'])
     const headSha = await git(cwd, ['rev-parse', 'HEAD'])
     if (tree === headTree) {
       sha = headSha
-    } else {
+    } else if (tree) {
       sha = await git(cwd, ['commit-tree', tree, '-p', headSha, '-m', 'remote job snapshot'], {
         env: {
           ...process.env,
@@ -125,6 +128,7 @@ async function main() {
     process.removeListener('SIGINT', onSignal)
     cleanupTempIndex()
   }
+  if (!sha) failNoResult(statusPath, refused ?? 'the checkout could not be snapshotted')
 
   // `scripts/changes.ts` (used by `pnpm check:changed` and `scripts/tests-for.ts`) runs `git merge-base HEAD main`,
   // so push local `main` alongside the snapshot when the repo has it (#281756).

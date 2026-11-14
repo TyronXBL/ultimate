@@ -59,33 +59,43 @@ export async function remoteRunner(
     : undefined
 }
 
-const count = /^[-+]?\d+$/
+/** `tail` and `head`: `-40`, `-n40` or `-n 40` (`-c` alike), each number with its option, so none is a file operand. */
+function lines(args: string[]) {
+  for (let at = 0; at < args.length; at++) {
+    if (/^-\d+$|^-[nc][-+]?\d+$/.test(args[at])) continue
+    if (/^-[nc]$/.test(args[at]) && /^[-+]?\d+$/.test(args[at + 1] ?? '')) at++
+    else return false
+  }
+  return true
+}
+/** `grep`: flags, context and count options with their number, and patterns: one bare, or each after `-e`. */
+function grep(args: string[]) {
+  let patterns = 0
+  let named = false
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at]
+    if (/^-[EFGPivcnqwxoah]+$/.test(arg) || /^-[ABCm]\d+$/.test(arg)) continue
+    if (/^-[ABCm]$/.test(arg) && /^\d+$/.test(args[at + 1] ?? '')) at++
+    else if (arg === '-e' && at + 1 < args.length) {
+      named = true
+      at++
+    } else if (!arg.startsWith('-')) patterns++
+    else return false
+  }
+  return named ? patterns === 0 : patterns === 1
+}
 /**
  * Programs that only filter a command's output, allowed after a pipe, each with the arguments that keep it one: it
  * reads its input from the pipe and nothing else, and writes nowhere. So no file operand, no option that names a file
  * (`grep -f`, `sort -o`) or a program, and `sort`, `uniq` and `cut` are left out rather than have their options listed.
+ * A map, so no inherited name (`constructor`) counts as a filter.
  */
-const FILTERS: Record<string, (args: string[]) => boolean> = {
-  tail: (args) => args.every((arg) => /^-[nc]$|^-[nc][-+]?\d+$/.test(arg) || count.test(arg)),
-  head: (args) => FILTERS.tail(args),
-  wc: (args) => args.every((arg) => /^-[lwcm]+$/.test(arg)),
-  // Flags, context and count options with their number, and patterns: one bare, or each after `-e`.
-  grep(args) {
-    let patterns = 0
-    let named = false
-    for (let at = 0; at < args.length; at++) {
-      const arg = args[at]
-      if (/^-[EFGPivcnqwxoah]+$/.test(arg) || /^-[ABCm]\d+$/.test(arg)) continue
-      if (/^-[ABCm]$/.test(arg) && /^\d+$/.test(args[at + 1] ?? '')) at++
-      else if (arg === '-e' && at + 1 < args.length) {
-        named = true
-        at++
-      } else if (!arg.startsWith('-')) patterns++
-      else return false
-    }
-    return named ? patterns === 0 : patterns === 1
-  },
-}
+const FILTERS = new Map<string, (args: string[]) => boolean>([
+  ['tail', lines],
+  ['head', lines],
+  ['wc', (args) => args.every((arg) => /^-[lwcm]+$/.test(arg))],
+  ['grep', grep],
+])
 /** A value that names something outside the checkout: an absolute path, the home folder or a parent folder. */
 const OUTSIDE = /^~|(^|[=:,])\/|(^|\/)\.\.(\/|$)/
 /** Whether `word` names something outside the checkout, also as the value attached to a short option (`-c/etc/x`). */
@@ -95,7 +105,8 @@ const outside = (word: string) =>
 /**
  * `command` as pipelines of stages of words, quotes removed; undefined when it uses shell the grammar leaves out. The
  * grammar is what a copy of the checkout runs the same way: words, quotes without expansion, `&&`, `||`, `;`, pipes and
- * `2>&1`. No variable, substitution, redirect, group, escape, comment, background `&` or line break.
+ * `2>&1`. No variable, substitution, redirect, group, escape, comment, background `&` or line break, and after a pipe
+ * no unquoted glob: it would expand into file names for a filter to read.
  */
 function parse(command: string) {
   const pipelines: string[][][] = [[[]]]
@@ -126,6 +137,7 @@ function parse(command: string) {
       end()
       pipelines.at(-1)!.push([])
     } else if ('$`(){}<>&\\\n#'.includes(char)) return undefined
+    else if (pipelines.at(-1)!.length > 1 && '*?['.includes(char)) return undefined
     else word = (word ?? '') + char
   }
   end()
@@ -150,7 +162,7 @@ export function remoteCommand(command: string, cwd: string, commands: string[]) 
   const ok = pipelines.every(
     ([first, ...filters]) =>
       allowed.some((words) => words.every((part, index) => first[index] === part)) &&
-      filters.every(([program, ...args]) => FILTERS[program]?.(args)) &&
+      filters.every(([program, ...args]) => FILTERS.get(program)?.(args)) &&
       [first, ...filters].every((words) => !words.some(outside)),
   )
   return ok ? there : undefined
