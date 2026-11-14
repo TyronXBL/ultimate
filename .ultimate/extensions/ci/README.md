@@ -35,17 +35,23 @@ A failed lookup leaves that out and delivers the result as it is.
 Aborting the task (its conversation concluded; Stop leaves it running) deletes the ref too and wakes nobody; a ref that stays behind then goes to
 the host's error report. It never runs the suites on this machine.
 
-The lander's gate, `.ultimate/scripts/ci-gate.ts`, first looks for a pass it may reuse (#205147): a GitHub run of
+The lander's gate, `.ultimate/scripts/ci-gate.ts`, is this project's only lander check (#273712): it decides which of
+`pnpm check`, `pnpm audit --audit-level high`, `pnpm test` and `pnpm test:e2e` still have to run, and its last line
+names what was covered and on which runner. It first looks for a pass it may reuse (#205147): a GitHub run of
 exactly the commit it checks that passed, finished on GitHub at most 6 hours ago (`REUSE_MS`), with no run of that
-commit that failed or was cancelled (`gatePlan`, `reusable` in `github.ts`). A run in progress is never a pass: the
-gate waits for it rather than testing the commit again on the PC. This lookup tries GitHub once per call. A
+commit that failed or was cancelled (`gatePlan`, `reusable` in `github.ts`). Such a run's first shard ran the check and
+the audit too, so nothing runs here. A run in progress is never a pass: the gate waits for it, and runs nothing here
+or on the PC. This lookup tries GitHub once per call. A
 reuse prints a `lander-reused:` line with the run's origin (runner, URL, commit, finish time, duration), which the
 lander records as a `reused` check on the landing card; otherwise the gate's last line says why it ran fresh ("tip CI
-had failed: <url>", "no CI run of <sha>", the pass's age). Then it tries the same PC (`test`, `test:e2e`) and uses the
-same `github.ts`. When GitHub gives no verdict (unreachable, or jobs not started for billing) it runs `pnpm test` and
-`pnpm test:e2e` on this machine instead, each as a job of the machine's heavy-work queue once its turn comes and the
-RAM floor admits it (`lib/slot.ts`; RAM short at the head of the line fails the gate after 10 min),
-with a `CI GATE FALLBACK` banner naming why. `github.ts` holds the secret scan, the remote's repository
+had failed: <url>", "no CI run of <sha>", the pass's age). With no run to reuse or wait for, it runs the audit here
+(light, at once), then asks the same PC for `check`, `test` and `test:e2e`, whose verdict is final; without a PC or a
+verdict from it, it runs `pnpm check` here, failing before any push, then pushes to GitHub Actions through the same
+`github.ts`. When GitHub gives no verdict (unreachable, or jobs not started for billing) it runs on this machine
+whichever of the audit and the check has not run yet, then `pnpm test` and `pnpm test:e2e`. The check and the suites
+run here as jobs of the machine's heavy-work queue once their turn comes and the RAM floor admits them
+(`lib/slot.ts`; RAM short at the head of the line fails the gate after 10 min); the fallback prints a
+`CI GATE FALLBACK` banner naming why. `github.ts` holds the secret scan, the remote's repository
 and the Actions API, authenticated with the token Git's credential helper stores for the fork (`git credential fill`,
 never prompting). The token goes only into request headers and is masked in any error text.
 

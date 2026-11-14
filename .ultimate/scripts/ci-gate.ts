@@ -1,11 +1,17 @@
-// The lander's test gate. A recent GitHub pass of exactly the checked-out commit stands in for the suites (#205147,
-// `gatePlan` and `reusable` in github.ts); its origin goes on a `lander-reused:` line, which the landing card shows.
-// Otherwise, with a `pc` remote it first runs `pnpm test` and `pnpm test:e2e` on that PC
-// (`.ultimate/extensions/ci/pc.ts`); when the PC gives no verdict (unreachable, busy), it pushes the checked-out commit
-// to `<remote>:ci/<sha>`, waits for its GitHub Actions run and exits with its result. When GitHub gives no verdict
-// either (unreachable, or Actions refused to start the jobs for billing) it runs the suites here instead, each as a job
-// of the machine's heavy-work queue (`lib/slot.ts`) once its turn comes and the RAM floor admits it, and says so.
-// The API calls carry the remote's stored Git credential when there is one (`.ultimate/extensions/ci/github.ts`).
+// The lander's only check (#273712): it decides what still has to run of `pnpm check`, `pnpm audit --audit-level high`,
+// `pnpm test` and `pnpm test:e2e`, the four CI's workflow runs, and its last line names what was covered and where.
+// - A recent GitHub pass of exactly the checked-out commit stands in for all four (#205147, `gatePlan` and `reusable`
+//   in github.ts); its origin goes on a `lander-reused:` line, which the landing card shows.
+// - A GitHub run of it under way covers all four too: the gate waits for it and runs nothing here.
+// - Otherwise it runs the audit here first, then with a `pc` remote asks that PC for check, test and test:e2e
+//   (`.ultimate/extensions/ci/pc.ts`), whose verdict is final. Without a PC, or when it gives no verdict (unreachable,
+//   busy), it runs `pnpm check` here, then pushes the commit to `<remote>:ci/<sha>`, waits for its GitHub Actions run and
+//   exits with its result.
+// - When GitHub gives no verdict (unreachable, or Actions refused to start the jobs for billing) it runs here whichever
+//   of the audit and check has not run yet, then the suites, and says so.
+// `pnpm check` and the suites run here as jobs of the machine's heavy-work queue (`lib/slot.ts`) once their turn comes
+// and the RAM floor admits them; the light audit runs at once. The API calls carry the remote's stored Git credential
+// when there is one (`.ultimate/extensions/ci/github.ts`).
 //
 // Usage, in the checkout to test: node .ultimate/scripts/ci-gate.ts [remote]   (default remote: fork)
 // CI_GATE_API overrides the API base URL (default https://api.github.com).
@@ -39,23 +45,37 @@ import {
 } from '../extensions/ci/github.ts'
 import type { Run } from '../extensions/ci/github.ts'
 import { pcHost, runOnPc } from '../extensions/ci/pc.ts'
+import type { Suite } from '../extensions/ci/pc.ts'
 
 const remote = process.argv[2] ?? 'fork'
 const cwd = process.cwd()
 /** How long a pushed commit may wait for its run to appear. */
 const APPEAR_MS = 5 * 60_000
+/** What runs here before a runner when nothing covers it, with the time limits it had as lander checks of its own. */
+const HERE = {
+  audit: { command: ['pnpm', 'audit', '--audit-level', 'high'], limitMs: 120_000 },
+  check: { command: ['pnpm', 'check'], limitMs: 300_000 },
+}
+type Here = keyof typeof HERE
 const LOCAL = [
   ['pnpm', 'test'],
   ['pnpm', 'test:e2e'],
 ]
 const LOCAL_TIMEOUT_MS = 600_000
-/** How long the PC may take before GitHub runs it instead, within the lander's 30 min for this check. */
+/** What the PC runs: all but the audit, which ran here before it. */
+const PC_SUITES: Suite[] = ['check', 'test', 'test:e2e']
+/** Everything a pass covers: a GitHub run's first shard runs check and audit beside its tests (`.github/workflows/ci.yml`). */
+const ALL = ['check', 'audit', 'test', 'test:e2e']
+/** How long the PC may take before GitHub runs it instead, within the lander's 37 min for this check. */
 const PC_TIMEOUT_MS = 15 * 60_000
 /** How long a local suite at the head of the heavy-work queue waits for the RAM floor to admit it before the gate fails. */
 const RAM_WAIT_MS = 10 * 60_000
 
 const log = (line: string) => console.log(`ci-gate: ${line}`)
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
+/** `a, b and c`. */
+const listed = (names: string[]) =>
+  names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 
 /** The line the lander reads a reused pass from (extensions/workspaces/README.md). */
 const REUSED = 'lander-reused: '
@@ -83,15 +103,20 @@ async function earlier(
     if (!verdict.origin) return { reused: false, why: verdict.why }
     const age = Math.round((Date.now() - verdict.origin.completedAt) / 60_000)
     console.log(`${REUSED}${JSON.stringify(verdict.origin)}`)
-    log(`reused: ${sha.slice(0, 7)} passed CI ${age} min ago, ${plan.run.html_url}`)
+    log(
+      `reused: ${verdict.origin.runner} passed ${listed(ALL)} for ${sha.slice(0, 7)} ${age} min ago, ${plan.run.html_url}`,
+    )
     return { reused: true }
   } catch (error) {
     return { reused: false, why: `earlier CI runs unreadable: ${(error as Error).message}` }
   }
 }
 
-/** Run the suites of `sha` on GitHub Actions or wait for `waiting`, its run under way; `why` they run, for the last line. */
-async function gate(repo: string, sha: string, why: string, waiting?: Run) {
+/**
+ * Run the suites of `sha` on GitHub Actions or wait for `waiting`, its run under way; `why` they run and what passed
+ * `here` before, for the last line.
+ */
+async function gate(repo: string, sha: string, why: string, here: Here[], waiting?: Run) {
   const poll = await pollMs(cwd, repo)
   const before = waiting ? [] : await runsOf(cwd, repo, sha)
   // A run still going (the branch's own, a resumed lander) is waited for; else a push of a new ref starts one.
@@ -133,14 +158,19 @@ async function gate(repo: string, sha: string, why: string, waiting?: Run) {
           )
         const { conclusion, failures, notStarted } = await runVerdict(cwd, repo, run, state.jobs)
         if (conclusion === 'success') {
-          log(`ran fresh (${why}): GitHub Actions passed ${sha.slice(0, 7)}, ${run.html_url}`)
+          log(
+            `ran fresh (${why}): GitHub Actions passed ${listed(ALL)} for ${sha.slice(0, 7)}, ${run.html_url}${here.length ? `; ${listed(here)} passed here first` : ''}`,
+          )
           return 0
         }
         if (notStarted)
           throw new Unreachable(`GitHub Actions did not start the jobs: ${notStarted}`)
         // Vitest titles a failure with its test, `file > name`; the message's first line is the error.
         for (const failure of failures) console.log(`FAIL ${failure.title}\n  ${failure.message}`)
-        log(`CI ${run.conclusion} for ${sha.slice(0, 7)}: ${run.html_url}`)
+        const failedJobs = state.jobs.filter((job) => job.conclusion === 'failure')
+        log(
+          `GitHub Actions ${run.conclusion}${failedJobs.length ? ` in ${listed(failedJobs.map((job) => job.name))}` : ''} for ${sha.slice(0, 7)}: ${run.html_url}`,
+        )
         return 1
       }
       await sleep(poll)
@@ -161,12 +191,12 @@ async function gate(repo: string, sha: string, why: string, waiting?: Run) {
 async function onPc(sha: string, why: string) {
   const host = await pcHost(cwd)
   if (!host) return undefined
-  log(`running test and test:e2e on ${host}`)
+  log(`running ${listed(PC_SUITES)} on ${host}`)
   const run = await runOnPc(
     cwd,
     host,
     sha,
-    ['test', 'test:e2e'],
+    PC_SUITES,
     (line) => console.log(line),
     AbortSignal.timeout(PC_TIMEOUT_MS),
   )
@@ -176,11 +206,16 @@ async function onPc(sha: string, why: string) {
   }
   for (const job of run.jobs) log(`  ${job.name}: ${job.conclusion} in ${job.seconds} s on ${host}`)
   if (run.outcome === 'passed') {
-    log(`ran fresh (${why}): ${host} passed ${sha.slice(0, 7)} in ${run.seconds} s`)
+    log(
+      `ran fresh (${why}): ${host} passed ${listed(PC_SUITES)} for ${sha.slice(0, 7)} in ${run.seconds} s; audit passed here`,
+    )
     return 0
   }
   for (const failure of run.failures) console.log(`FAIL ${failure.title}\n  ${failure.message}`)
-  log(`${host} failed ${sha.slice(0, 7)} in ${run.seconds} s`)
+  const failed = run.jobs.filter((job) => job.conclusion === 'failure').map((job) => job.name)
+  log(
+    `${host} failed ${failed.length ? listed(failed) : listed(PC_SUITES)} for ${sha.slice(0, 7)} in ${run.seconds} s`,
+  )
   return 1
 }
 
@@ -218,30 +253,44 @@ async function admitted(command: string[]) {
   }
 }
 
-/** Run `command` in its own process group, stopped with it after the time limit; resolves its exit code. */
-async function local(command: string[]) {
+/** Run `command` once the heavy-work queue admits it, as `spawnLocal` does; 1 when RAM never admitted it. */
+async function local(command: string[], limitMs = LOCAL_TIMEOUT_MS) {
   const release = await admitted(command)
   if (!release) return 1
   try {
-    return await spawnLocal(command)
+    return await spawnLocal(command, limitMs)
   } finally {
     await release()
   }
 }
-function spawnLocal(command: string[]) {
+/**
+ * Run `command` in its own process group, stopped with it after `limitMs`; resolves its exit code, after a line naming
+ * the failure when it failed.
+ */
+function spawnLocal(command: string[], limitMs: number) {
   return new Promise<number>((done) => {
-    log(`running ${command.join(' ')} locally (limit ${LOCAL_TIMEOUT_MS / 1000} s)`)
+    log(`running ${command.join(' ')} locally (limit ${limitMs / 1000} s)`)
     const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true })
     const timer = setTimeout(() => {
-      log(`${command.join(' ')} ran past ${LOCAL_TIMEOUT_MS / 1000} s; stopping it`)
+      log(`${command.join(' ')} ran past ${limitMs / 1000} s; stopping it`)
       process.kill(-child.pid!, 'SIGKILL')
-    }, LOCAL_TIMEOUT_MS)
-    child.on('exit', (code) => {
+    }, limitMs)
+    child.on('exit', (code, signal) => {
       clearTimeout(timer)
+      if (code !== 0)
+        log(
+          `${command.join(' ')} failed on this machine (${code === null ? signal : `exit ${code}`})`,
+        )
       done(code ?? 1)
     })
   })
 }
+
+/** Run `name` here: the check in the heavy-work queue, the light audit at once. */
+const runHere = (name: Here) =>
+  name === 'check'
+    ? local(HERE.check.command, HERE.check.limitMs)
+    : spawnLocal(HERE.audit.command, HERE.audit.limitMs)
 
 async function main() {
   const sha = await git(cwd, ['rev-parse', 'HEAD'])
@@ -253,28 +302,44 @@ async function main() {
   }
   const found = await earlier(sha)
   if (found.reused) return 0
-  // A run of this commit under way is waited for, not tested a second time on the PC.
-  const pc = found.wait ? undefined : await onPc(sha, found.why)
-  if (pc !== undefined) return pc
+  /** What passed on this machine, in the order it ran. */
+  const here: Here[] = []
+  // A run of this commit under way covers the audit and check too, and is not tested a second time on the PC.
+  if (!found.wait) {
+    const audit = await runHere('audit')
+    if (audit !== 0) return audit
+    here.push('audit')
+    const pc = await onPc(sha, found.why)
+    if (pc !== undefined) return pc
+    // The check fails here in a minute rather than after a push and a GitHub run.
+    const check = await runHere('check')
+    if (check !== 0) return check
+    here.push('check')
+  }
   try {
-    return await gate(await repository(cwd, remote), sha, found.why, found.wait)
+    return await gate(await repository(cwd, remote), sha, found.why, here, found.wait)
   } catch (error) {
     if (!(error instanceof Unreachable)) throw error
+    const missing = (['audit', 'check'] as const).filter((name) => !here.includes(name))
     console.log(
       [
         '',
         '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!',
         `!! CI GATE FALLBACK: ${error.message}`,
-        '!! GitHub gave no verdict; running the test suites on this machine instead.',
+        `!! GitHub gave no verdict; running ${listed([...missing, 'test', 'test:e2e'])} on this machine instead.`,
         '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!',
         '',
       ].join('\n'),
     )
+    for (const name of missing) {
+      const code = await runHere(name)
+      if (code !== 0) return code
+    }
     for (const command of LOCAL) {
       const code = await local(command)
       if (code !== 0) return code
     }
-    log(`FALLBACK: local suites passed (CI was not used; ${found.why})`)
+    log(`FALLBACK: ${listed(ALL)} passed on this machine (CI was not used; ${found.why})`)
     return 0
   }
 }
