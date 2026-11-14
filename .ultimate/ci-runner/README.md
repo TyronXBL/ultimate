@@ -1,8 +1,8 @@
 # PC runner
 
 A Windows PC on the tailnet runs the test suites first, before GitHub Actions. It runs them for the lander's gate
-(`.ultimate/scripts/ci-gate.ts`, `pnpm test` then `pnpm test:e2e`) and for the `ci` tool (`pnpm check`, `pnpm test`,
-then `pnpm test:e2e`). The suites run one after the other, and the PC runs one run at a time.
+(`.ultimate/scripts/ci-gate.ts`) and for the `ci` tool, both `pnpm check`, `pnpm test`, then `pnpm test:e2e`. The
+suites run one after the other, and the PC runs one run at a time.
 
 A run goes like this:
 

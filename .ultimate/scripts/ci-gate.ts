@@ -1,5 +1,6 @@
 // The lander's only check (#273712): it decides what still has to run of `pnpm check`, `pnpm audit --audit-level high`,
-// `pnpm test` and `pnpm test:e2e`, the four CI's workflow runs, and its last line names what was covered and where.
+// `pnpm test` and `pnpm test:e2e`, the four that CI's workflow runs, and its last line names what was covered and
+// where.
 // - A recent GitHub pass of exactly the checked-out commit stands in for all four (#205147, `gatePlan` and `reusable`
 //   in github.ts); its origin goes on a `lander-reused:` line, which the landing card shows.
 // - A GitHub run of it under way covers all four too: the gate waits for it and runs nothing here.
@@ -201,7 +202,7 @@ async function onPc(sha: string, why: string) {
     AbortSignal.timeout(PC_TIMEOUT_MS),
   )
   if (run.outcome === 'unavailable') {
-    log(`${run.reason}; GitHub Actions runs it instead`)
+    log(`${run.reason}; pnpm check runs here, then GitHub Actions runs it instead`)
     return undefined
   }
   for (const job of run.jobs) log(`  ${job.name}: ${job.conclusion} in ${job.seconds} s on ${host}`)
@@ -214,7 +215,7 @@ async function onPc(sha: string, why: string) {
   for (const failure of run.failures) console.log(`FAIL ${failure.title}\n  ${failure.message}`)
   const failed = run.jobs.filter((job) => job.conclusion === 'failure').map((job) => job.name)
   log(
-    `${host} failed ${failed.length ? listed(failed) : listed(PC_SUITES)} for ${sha.slice(0, 7)} in ${run.seconds} s`,
+    `${host} failed ${failed.length ? `${listed(failed)} for ` : ''}${sha.slice(0, 7)} in ${run.seconds} s`,
   )
   return 1
 }
@@ -264,6 +265,22 @@ async function local(command: string[], limitMs = LOCAL_TIMEOUT_MS) {
   }
 }
 /**
+ * The local command under way. It runs in its own process group, so the lander stopping the gate's group (a stall, its
+ * time limit, a cancelled landing) would leave it running, a 2 GB `pnpm check` with no place in the queue: the gate
+ * stops it before it goes (review of #273712).
+ */
+let running: number | undefined
+for (const signal of ['SIGTERM', 'SIGINT'] as const)
+  process.on(signal, () => {
+    try {
+      if (running !== undefined) process.kill(-running, 'SIGKILL')
+    } catch {
+      // It ended by itself in this moment: nothing is left to stop.
+    }
+    process.exit(1)
+  })
+
+/**
  * Run `command` in its own process group, stopped with it after `limitMs`; resolves its exit code, after a line naming
  * the failure when it failed.
  */
@@ -271,12 +288,14 @@ function spawnLocal(command: string[], limitMs: number) {
   return new Promise<number>((done) => {
     log(`running ${command.join(' ')} locally (limit ${limitMs / 1000} s)`)
     const child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true })
+    running = child.pid
     const timer = setTimeout(() => {
       log(`${command.join(' ')} ran past ${limitMs / 1000} s; stopping it`)
       process.kill(-child.pid!, 'SIGKILL')
     }, limitMs)
     child.on('exit', (code, signal) => {
       clearTimeout(timer)
+      running = undefined
       if (code !== 0)
         log(
           `${command.join(' ')} failed on this machine (${code === null ? signal : `exit ${code}`})`,

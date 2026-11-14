@@ -887,7 +887,10 @@ export function createLander(
             const need = Math.max(
               0,
               ...setupCommands(projectSettings).map((command) =>
-                installed && /\bpnpm (install|i)\b/.test(command) ? 0 : commandNeedMiB(command),
+                // Only an install on its own: one chained with another command keeps that command's need.
+                installed && /^\s*pnpm (install|i)\b[^;&|]*$/.test(command)
+                  ? 0
+                  : commandNeedMiB(command),
               ),
               ...needs,
             )
