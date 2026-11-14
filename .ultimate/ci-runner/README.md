@@ -264,14 +264,14 @@ install -o root -g root -m 755 /root/ultimate-ci /usr/local/bin/ultimate-ci
 
 ### Fence the runner user in 🐧
 
-A job runs code from an uncommitted checkout as `ci`, more often than a test run does. Two fences keep it to itself.
-@ultimate checks both afterwards, before it turns jobs on, with [`fence-probe.sh`](fence-probe.sh) run as `ci` through
-the runner (its header has the command): it fails while `ci` can read another home or reach the LAN or the tailnet.
+A job runs code from an uncommitted checkout as `ci`, more often than a test run does. Two fences keep it to itself,
+and [`fence-probe.sh`](fence-probe.sh) checks both: it fails while the user running it can enter another home or
+reach the LAN's gateway or a service on the tailnet.
 
-Your home: `ci` must not be able to read it.
+Your home: `ci` must not be able to enter it.
 
 ```bash
-chmod 750 /home/<you>
+chmod 750 /home/<you>                # 711 is not enough: files in it are read by their path
 sudo -u ci ls /home/<you>            # must fail: Permission denied
 ```
 
@@ -290,9 +290,9 @@ table inet ultimate_ci {
     ct state established,related accept
     # Only when /etc/resolv.conf names a resolver in these ranges: allow that one address, port 53 only.
     # ip daddr 100.100.100.100 udp dport 53 accept
-    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } reject
+    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } counter reject
     # LAN hosts with public IPv6 addresses cannot be listed, and the registry answers over IPv4.
-    meta nfproto ipv6 reject
+    meta nfproto ipv6 counter reject
   }
 }
 ```
@@ -319,6 +319,21 @@ WantedBy=multi-user.target
 systemctl daemon-reload && systemctl enable --now ultimate-ci-fence.service
 nft list table inet ultimate_ci
 ```
+
+Then prove it. A connection that fails shows a fence only when the same connection opens without one, so run the probe
+as yourself first, with a tailnet service that answers (the VPS's own HTTPS address and port): it must fail, naming
+what it reached. As `ci` it must end with `ok`, and the two `counter`s above must have counted packets:
+
+```bash
+git -C /home/ci/ci.git show <commit>:.ultimate/ci-runner/fence-probe.sh > /tmp/fence-probe.sh
+bash /tmp/fence-probe.sh <tailnet address> <port>               # as you: FAILED, "can be reached"
+sudo -u ci bash /tmp/fence-probe.sh <tailnet address> <port>    # as ci: ok
+nft list table inet ultimate_ci                                 # packets counted on the reject rules
+```
+
+If your run reaches nothing on the LAN's gateway either (no open port, no ping), the LAN lines prove nothing: tell
+@ultimate, which then asks for a LAN address that answers. @ultimate runs the same probe as `ci` through the runner
+(the command is in the script's header) before it turns jobs on.
 
 What stays true: a job runs any code as `ci`, so the forced command is no sandbox; these two fences and the user
 without sudo are. `ci` can still reach the internet, and reads whatever on the PC is readable by everyone.
