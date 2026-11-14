@@ -264,8 +264,9 @@ install -o root -g root -m 755 /root/ultimate-ci /usr/local/bin/ultimate-ci
 
 ### Fence the runner user in 🐧
 
-A job runs code from an uncommitted checkout as `ci`, more often than a test run does. Two fences keep it to itself;
-@ultimate checks both afterwards with a probe run as `ci`.
+A job runs code from an uncommitted checkout as `ci`, more often than a test run does. Two fences keep it to itself.
+@ultimate checks both afterwards, before it turns jobs on, with [`fence-probe.sh`](fence-probe.sh) run as `ci` through
+the runner (its header has the command): it fails while `ci` can read another home or reach the LAN or the tailnet.
 
 Your home: `ci` must not be able to read it.
 
