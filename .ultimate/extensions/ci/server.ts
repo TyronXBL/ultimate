@@ -15,13 +15,14 @@ import { WorkspacesApi } from '../../../extensions/workspaces/api.ts'
 import { liveTasks } from '../../../lib/tasks.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import {
-  failuresOf,
+  gatePlan,
   git,
   jobResult,
   pollMs,
   repository,
   runsOf,
   runState,
+  runVerdict,
   secretsIn,
 } from './github.ts'
 import type { CiResult, Failure } from './refs.ts'
@@ -38,11 +39,14 @@ const RUN_LIMIT_MS = 60 * 60_000
 const PC_LIMIT_MS = 30 * 60_000
 
 type Input = { to: number; cwd: string; sha: string }
-/** `pc`: why the PC runner gave no verdict, once it was tried; GitHub runs it then, and the card says why. */
+/**
+ * `pc`: why the PC runner gave no verdict, once it was tried; GitHub runs it then, and the card says why. `run`: the run
+ * of the commit already under way that `poll` waits for, from `pushed` on, instead of pushing its own ref.
+ */
 type Checkpoint =
   | { phase: 'start'; pc?: string }
   | { phase: 'pc'; host: string }
-  | { phase: 'poll'; ref: string; pushed: number; failing?: number; pc?: string }
+  | { phase: 'poll'; ref: string; pushed: number; failing?: number; pc?: string; run?: number }
   | { phase: 'deliver'; result: CiResult }
 
 /**
@@ -141,9 +145,8 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
           // The PC goes first, before any GitHub call: it needs no GitHub at all.
           const host = leaks.length || pc !== undefined ? undefined : await pcHost(cwd)
           const repo = leaks.length || host ? '' : await repository(cwd, REMOTE)
-          const passed = repo
-            ? (await runsOf(cwd, repo, sha)).find((run) => run.conclusion === 'success')
-            : undefined
+          // The gate's own rule: a run under way is waited for, a pass counts only when no run of the commit failed.
+          const plan = repo ? gatePlan(await runsOf(cwd, repo, sha), sha) : undefined
           if (leaks.length)
             next = deliver({
               sha,
@@ -152,14 +155,14 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
               jobs: [],
               failures: [],
             })
-          else if (passed) {
+          else if (plan?.kind === 'reuse') {
             // A rerun after a crash may find the run its own push started: its ref goes too.
             const left = await drop(cwd, ref)
             next = deliver({
               sha,
               conclusion: 'success',
-              url: passed.html_url,
-              jobs: (await runState(cwd, repo, passed.id)).jobs.map(jobResult),
+              url: plan.run.html_url,
+              jobs: (await runState(cwd, repo, plan.run.id)).jobs.map(jobResult),
               failures: [],
               reason: [handedOver(pc), left ?? 'this commit already passed CI']
                 .filter(Boolean)
@@ -168,12 +171,15 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
           } else if (host)
             next = { status: 'running' as const, checkpoint: { phase: 'pc' as const, host } }
           else {
-            await git(cwd, ['push', '-q', REMOTE, `${sha}:refs/heads/${ref}`])
+            // A run under way is waited for, not pushed again; after a crash it may be the one this task's push started,
+            // whose ref `poll` deletes at the end.
+            const run = plan?.kind === 'wait' ? { run: plan.run.id } : undefined
+            if (!run) await git(cwd, ['push', '-q', REMOTE, `${sha}:refs/heads/${ref}`])
             const pushed = runtime.now()
             next = {
               status: 'sleeping' as const,
               until: pushed + (await pollMs(cwd, repo)),
-              checkpoint: { phase: 'poll' as const, ref, pushed, ...(pc ? { pc } : {}) },
+              checkpoint: { phase: 'poll' as const, ref, pushed, ...run, ...(pc ? { pc } : {}) },
             }
           }
         } catch (error) {
@@ -233,49 +239,43 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
       // Only reads GitHub until the run ends; deleting the ref twice is harmless.
       poll: async (task, runtime, ctx) => {
         const { cwd, sha } = task.input
-        const { ref, pushed, failing, pc } = task.state.checkpoint
+        const { failing, ...checkpoint } = task.state.checkpoint
+        const { ref, pushed, pc, run: watched } = checkpoint
         const now = runtime.now()
         const end = async (result: Omit<CiResult, 'sha' | 'ref'>) => {
           const left = await drop(cwd, ref)
           const reason = [handedOver(pc), result.reason, left].filter(Boolean).join('; ')
-          return deliver({ sha, ref, ...result, ...(reason ? { reason } : {}) })
+          // A run waited for ran on another ref than the task's own, which it never pushed.
+          return deliver({
+            sha,
+            ...(watched === undefined ? { ref } : {}),
+            ...result,
+            ...(reason ? { reason } : {}),
+          })
         }
         let next
         try {
           const repo = await repository(cwd, REMOTE)
-          const run = (await runsOf(cwd, repo, sha, ref, 1))[0]
+          const looked = watched === undefined ? undefined : await runState(cwd, repo, watched, 1)
+          const run = looked?.run ?? (await runsOf(cwd, repo, sha, ref, 1))[0]
           if (run?.status === 'completed') {
-            const state = await runState(cwd, repo, run.id)
-            const verdict =
-              state.run.conclusion === 'success'
-                ? undefined
-                : await failuresOf(cwd, repo, state.jobs)
-            const failures = verdict?.failures ?? []
-            const notStarted = verdict?.notStarted
+            const state = looked ?? (await runState(cwd, repo, run.id))
+            const { conclusion, seconds, failures, notStarted } = await runVerdict(
+              cwd,
+              repo,
+              state.run,
+              state.jobs,
+            )
             if (failures.length) await attachEarlier(extension, task.input.to, failures, ctx)
-            const ends = state.jobs.flatMap((job) =>
-              job.completed_at ? [Date.parse(job.completed_at)] : [],
-            )
-            const starts = state.jobs.flatMap((job) =>
-              job.started_at ? [Date.parse(job.started_at)] : [],
-            )
             next = await end({
               url: state.run.html_url,
-              conclusion: notStarted
-                ? 'no-run'
-                : state.run.conclusion === 'success'
-                  ? 'success'
-                  : state.run.conclusion === 'cancelled'
-                    ? 'cancelled'
-                    : 'failure',
+              conclusion,
               ...(notStarted
                 ? {
                     reason: `GitHub Actions did not start the jobs, so nothing was tested: ${notStarted}`,
                   }
                 : {}),
-              ...(starts.length && ends.length
-                ? { seconds: Math.round((Math.max(...ends) - Math.min(...starts)) / 1000) }
-                : {}),
+              ...(seconds === undefined ? {} : { seconds }),
               jobs: state.jobs.map(jobResult),
               failures,
             })
@@ -290,7 +290,7 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
             next = await end({
               ...(run ? { url: run.html_url } : {}),
               conclusion: 'timeout',
-              reason: `the run had not finished 60 min after the push`,
+              reason: `the run had not finished 60 min after ${watched === undefined ? 'the push' : 'the wait began'}`,
               jobs: [],
               failures: [],
             })
@@ -298,7 +298,7 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
             next = {
               status: 'sleeping' as const,
               until: now + (await pollMs(cwd, repo)),
-              checkpoint: { phase: 'poll' as const, ref, pushed, ...(pc ? { pc } : {}) },
+              checkpoint,
             }
         } catch (error) {
           const since = failing ?? now
@@ -313,13 +313,7 @@ function createCiRun(extension: Pick<ExtensionHost, 'need'>) {
             next = {
               status: 'sleeping' as const,
               until: now + 60_000,
-              checkpoint: {
-                phase: 'poll' as const,
-                ref,
-                pushed,
-                failing: since,
-                ...(pc ? { pc } : {}),
-              },
+              checkpoint: { ...checkpoint, failing: since },
             }
         }
         await runtime.commit(() => next, ctx)
