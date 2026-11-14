@@ -171,16 +171,16 @@ it('answers a decisions card with letters, arrows and Enter', async () => {
   await page.clock.install()
   await page.clock.pauseAt(Date.now() + 1000)
   await page.keyboard.press('Enter')
-  // The undo bar fills by itself, from empty to full: half-way through its animation it is half as wide as its track.
+  // The undo bar fills by itself, from empty to full: a quarter into its animation it is a quarter as wide as its track.
   // Set on the animation, not waited for: the bar's width after a 500 ms wait was anything on a busy runner.
   const bar = card.locator('[data-countdown]')
   const filled = await bar.evaluate((node) => {
     const [filling] = node.getAnimations()
     filling.pause()
-    filling.currentTime = Number(filling.effect!.getComputedTiming().duration) / 2
+    filling.currentTime = Number(filling.effect!.getComputedTiming().duration) / 4
     return node.getBoundingClientRect().width / node.parentElement!.getBoundingClientRect().width
   })
-  expect(filled).toBeCloseTo(0.5, 1)
+  expect(filled).toBeCloseTo(0.25, 1)
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   await page.keyboard.press('Enter')
   await page.clock.resume()
