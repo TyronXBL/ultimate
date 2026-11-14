@@ -2,7 +2,7 @@
  * What a branch and each of its agents cost: a quiet chip for the tree and a figure for each agent, each with a card on
  * hover (or a tap) that breaks it down by agent, token kind and model.
  */
-import { useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import {
   cn,
@@ -34,6 +34,12 @@ const topOf = (trees: Trees, id: number) => {
 }
 
 /**
+ * The last answer that held numbers, one for every chip as the read is: a null answer keeps them, also for a chip that
+ * mounts while the read holds null (a reinstalled server reading usage again, or one whose read of it failed).
+ */
+let last: Trees | undefined
+
+/**
  * Every tree's spend, one read for every chip: read again when any conversation starts or ends a run, and every 15
  * seconds while one runs, since every model call of a run adds to it.
  */
@@ -44,17 +50,19 @@ function useTrees() {
     .join(',')
   // Null while the server is still reading every conversation's usage: ask again shortly.
   const [waiting, setWaiting] = useState(false)
-  const { data } = useAction(TreesAction, null, {
+  const { data, error: failed } = useAction(TreesAction, null, {
     on: running,
     every: waiting ? 2000 : running ? 15_000 : undefined,
     // The last numbers stay; the next run start or end reads again.
     onError: (error) => console.warn('Spend', error),
   })
-  if ((data === null) !== waiting) setWaiting(data === null)
-  // A null answer keeps the numbers shown before it.
-  const last = useRef<Trees>(undefined)
-  if (data) last.current = data
-  return last.current
+  // Only a settled null: after a failed read the next run start or end reads again, with no retry every 2 s.
+  const unread = data === null && !failed
+  if (unread !== waiting) setWaiting(unread)
+  useEffect(() => {
+    if (data) last = data
+  }, [data])
+  return data ?? last
 }
 
 const tokensOf = (spend: Spend) => spend.input + spend.output + spend.cacheRead + spend.cacheWrite
