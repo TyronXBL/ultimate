@@ -95,9 +95,10 @@ async function main() {
     await git(cwd, ['add', '-A'], { env: snapshotEnv })
     // Fail closed on every file the snapshot adds to HEAD, untracked or already staged (review of #281756: a staged
     // file is not among `git ls-files --others`): one that looks like a secret or is larger than 5 MB stops it.
+    // Without rename detection: a new file that resembles a deleted one would count as renamed, not added.
     const added = await git(
       cwd,
-      ['diff', '--cached', '--name-only', '-z', '--diff-filter=A', 'HEAD'],
+      ['diff', '--cached', '--name-only', '-z', '--no-renames', '--diff-filter=A', 'HEAD'],
       { env: snapshotEnv, trim: false },
     )
     for (const file of added.split('\0').filter(Boolean)) {
