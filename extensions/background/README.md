@@ -50,10 +50,11 @@ takes two settings: `remoteJobs.host` in `~/.ultimate/settings.json` names the m
 }
 ```
 
-A command goes to the runner when it is made only of those invocations (`remoteEligible`): each pipeline starts with
-one of them, whole words; `&&`, `||`, `;`, quotes and `2>&1` are allowed, and pipes into `tail`, `head`, `grep`, `cut`,
-`sort`, `uniq` or `wc`. A variable, a substitution, a redirect, an absolute path, `~` or `..` keeps it here: the other
-machine has a copy of the checkout and nothing else of this one. Only read-only commands belong in the list, since
+A command goes to the runner when it is made only of those invocations (`remoteCommand`): each pipeline starts with
+one of them, whole words; `&&`, `||`, `;`, quotes and `2>&1` are allowed, and pipes into `tail`, `head`, `grep` or `wc`
+with options that read the pipe only (no file to read or write). A variable, a substitution, a redirect, an absolute
+path, `~` or `..` keeps it here: the other machine has a copy of the checkout and nothing else of this one. A leading
+`cd <the job's folder> &&` is left out of what the runner gets. Only read-only commands belong in the list, since
 nothing the command writes there comes back.
 
 The task starts the runner instead of the command, under the same leader, in the job's folder, with
@@ -61,8 +62,8 @@ The task starts the runner instead of the command, under the same leader, in the
 (it sends the checkout and relays the output into the log), so it starts at once and takes no place in the heavy-work
 queue. Before it exits it writes one JSON object to the status file:
 
-- `{"ran": true, "transferSeconds": 1.4, "setupSeconds": 6, "cpuSeconds": 31}` and exits with the command's exit code:
-  that is the result;
+- `{"ran": true, "transferSeconds": 1.4, "setupSeconds": 6, "runSeconds": 14, "cpuSeconds": 31}` and exits with the
+  command's exit code: that is the result;
 - `{"ran": false, "reason": "busy with another run"}`, no file, or a runner that was lost: no result, and the same
   task runs the command here, through the queue like any other. This machine never depends on the other one.
 

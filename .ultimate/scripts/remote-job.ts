@@ -63,6 +63,10 @@ async function main() {
     )
   }
 
+  // The PC runs the command at the top of its copy: one started in a subfolder here would run somewhere else there.
+  if (await git(cwd, ['rev-parse', '--show-prefix']))
+    failNoResult(statusPath, 'the command starts in a subfolder of the checkout')
+
   // Fail closed before snapshotting if any untracked file looks like a secret or is larger than 5 MB.
   const untrackedRaw = await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z'], {
     trim: false,
@@ -189,12 +193,13 @@ async function main() {
 
   if (marker) {
     process.stdout.write(
-      `remote-job: ran on ${host} (transfer ${transferSeconds} s, setup ${marker.setupSeconds} s, cpu ${marker.cpuSeconds} s)\n`,
+      `remote-job: ran on ${host} in ${marker.runSeconds} s (transfer ${transferSeconds} s, setup ${marker.setupSeconds} s, cpu ${marker.cpuSeconds} s)\n`,
     )
     writeStatus(statusPath, {
       ran: true,
       transferSeconds,
       setupSeconds: marker.setupSeconds,
+      runSeconds: marker.runSeconds,
       cpuSeconds: marker.cpuSeconds,
     })
     process.exit(marker.exitCode)

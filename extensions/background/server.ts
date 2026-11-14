@@ -59,7 +59,7 @@ import {
 } from '../../lib/slot.ts'
 import type { SlotClaim, SlotLimits } from '../../lib/slot.ts'
 import { describeOom, jobScope, readUsage, shellWords } from '../../lib/job-scope.ts'
-import { readRemoteStatus, REMOTE_ENV, remoteEligible, remoteRunner } from '../../lib/remote-job.ts'
+import { readRemoteStatus, REMOTE_ENV, remoteCommand, remoteRunner } from '../../lib/remote-job.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { liveTasks } from '../../lib/tasks.ts'
 import { describeWhere } from './where.ts'
@@ -280,12 +280,13 @@ function createRun(
     // The project's remote runner first, once: it only sends the checkout and relays the output, so it starts at once,
     // outside the queue and RAM admission. A command back from it (`unavailable`) runs here like any other.
     const remote = checkpoint.phase === 'start' && !unavailable ? await runner() : undefined
-    if (remote && remoteEligible(task.input.command, task.input.cwd, remote.commands)) {
+    const there = remote && remoteCommand(task.input.command, task.input.cwd, remote.commands)
+    if (remote && there) {
       await rm(files.remote, { force: true })
       const began = runtime.now()
       const pid = start(remote.runner, '', {
         [REMOTE_ENV.host]: remote.host,
-        [REMOTE_ENV.command]: task.input.command,
+        [REMOTE_ENV.command]: there,
         [REMOTE_ENV.status]: files.remote,
       })
       await runtime.commit(
@@ -432,6 +433,7 @@ function createRun(
             timings: {
               transferSeconds: status.transferSeconds,
               setupSeconds: status.setupSeconds,
+              runSeconds: status.runSeconds,
               cpuSeconds: status.cpuSeconds,
             },
           }),
@@ -660,7 +662,7 @@ export default function backgroundExtension(
           const remote = await remoteRunner(host.userHome, await host.projectSettings())
           /** The host of the project's remote runner, when it tries this command first. */
           const sent =
-            remote && remoteEligible(args.command, cwd, remote.commands) ? remote.host : undefined
+            remote && remoteCommand(args.command, cwd, remote.commands) ? remote.host : undefined
           // Looked at before the task exists, so neither its place in line nor its admission counts against it.
           const peek =
             !sent && queues(need, limits)

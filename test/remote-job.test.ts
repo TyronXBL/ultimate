@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { remoteEligible } from '../lib/remote-job.ts'
+import { remoteCommand } from '../lib/remote-job.ts'
 
 const cwd = '/work/my-app'
 const commands = ['pnpm check', 'pnpm test', 'pnpm test:e2e', 'pnpm vitest run']
@@ -10,10 +10,11 @@ it.each([
   ['pnpm test test/a.test.ts extensions/b/', true],
   ['pnpm check && pnpm vitest run test/a.test.ts 2>&1 | tail -40', true],
   [
-    `cd ${cwd} && pnpm test:e2e test/e2e/a.test.ts -t 'stays at the $bottom' | grep -E "✓|×|FAIL"`,
+    `pnpm test:e2e test/e2e/a.test.ts -t 'stays at the $bottom' | grep -E "✓|×|FAIL" | head -n 5`,
     true,
   ],
   ['pnpm check; pnpm test test/a.test.ts || pnpm test test/a.test.ts', true],
+  ['pnpm check | grep -v -e warning -e note -A 2 | wc -l', true],
   // Not the project's invocations: an unlisted program or script, a listed one only as a prefix of another word.
   ['pnpm fix', false],
   ['pnpm testing', false],
@@ -37,7 +38,20 @@ it.each([
   ['pnpm vitest run --config=/tmp/vitest.config.ts', false],
   ['pnpm test ~/a.test.ts', false],
   ['pnpm test ../other/a.test.ts', false],
+  ['pnpm vitest run -c/etc/vitest.config.ts', false],
+  // A filter reads the pipe only: no file to read or write, by operand or by option.
   ['pnpm check | grep -f /etc/passwd', false],
+  ['pnpm check | grep -f/etc/passwd', false],
+  ['pnpm check | grep error package.json', false],
+  ['pnpm check | tail -n 5 package.json', false],
+  ['pnpm check | sort -o out.txt', false],
+  ['pnpm check | wc -l --files0-from=list', false],
 ])('a command runs remotely only when it is made of the listed invocations: %s', (command, ok) => {
-  expect(remoteEligible(command, cwd, commands)).toBe(ok)
+  expect(remoteCommand(command, cwd, commands)).toBe(ok ? command : undefined)
+})
+
+it("leaves a leading cd into the job's own folder out of what runs remotely: the copy lives elsewhere", () => {
+  expect(remoteCommand(`cd ${cwd} && pnpm check | tail -5`, cwd, commands)).toBe(
+    'pnpm check | tail -5',
+  )
 })

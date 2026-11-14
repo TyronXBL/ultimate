@@ -50,6 +50,8 @@ flock -n 9 || {
 }
 
 # Holding the lock, no other run is under way: sweep what stopped or refused runs left (worktrees, `run/` and `job/` refs).
+# A ref another client pushed a moment ago may go with them: its commit stays in the repository (unreferenced objects
+# are kept for two weeks), and the worktree below is made from the commit's id, not the ref (proven once, #281756).
 sweep() {
   local keep=${1:-none}
   for dir in "$HOME"/runs/*; do

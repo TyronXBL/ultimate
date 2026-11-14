@@ -443,7 +443,7 @@ it("runs a listed command on the project's remote runner first, here when that g
       'case "$ULTIMATE_REMOTE_COMMAND" in',
       `  *busy*) echo '{"ran":false,"reason":"busy with another run"}' > "$ULTIMATE_REMOTE_STATUS"; exit 75;;`,
       'esac',
-      `echo '{"ran":true,"transferSeconds":1.5,"setupSeconds":6,"cpuSeconds":31}' > "$ULTIMATE_REMOTE_STATUS"`,
+      `echo '{"ran":true,"transferSeconds":1.5,"setupSeconds":6,"runSeconds":14,"cpuSeconds":31}' > "$ULTIMATE_REMOTE_STATUS"`,
       'exit 3',
     ].join('\n'),
   )
@@ -465,7 +465,7 @@ it("runs a listed command on the project's remote runner first, here when that g
     where: {
       kind: 'remote',
       host: 'my-pc',
-      timings: { transferSeconds: 1.5, setupSeconds: 6, cpuSeconds: 31 },
+      timings: { transferSeconds: 1.5, setupSeconds: 6, runSeconds: 14, cpuSeconds: 31 },
     },
     tail: 'runner for my-pc: echo there\n',
   })
@@ -480,7 +480,7 @@ it("runs a listed command on the project's remote runner first, here when that g
   // The agent reads where each ran, in the tool's answer and in the result.
   const transcript = await a.transcript()
   expect(transcript).toContain('Sent to my-pc first')
-  expect(transcript).toContain('Ran on my-pc: 31 s of CPU there')
+  expect(transcript).toContain('Ran on my-pc in 14 s: 31 s of CPU there')
   expect(transcript).toContain('Ran here: my-pc gave no result (busy with another run).')
 })
 

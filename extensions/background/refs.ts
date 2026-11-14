@@ -1,13 +1,19 @@
 /**
  * Where a command ran, on a machine whose project has a remote runner (`lib/remote-job.ts`): on the runner's host, with
- * what getting it there cost and the CPU time it used there (`timings`, absent when it ran out of time there); here,
+ * how long it ran, what getting it there cost and the CPU time it used there (`timings`, absent when it ran out of time
+ * there); here,
  * because the project does not run that command remotely; or here after the runner gave no result, and why.
  */
 export type RanWhere =
   | {
       kind: 'remote'
       host: string
-      timings?: { transferSeconds: number; setupSeconds: number; cpuSeconds: number }
+      timings?: {
+        transferSeconds: number
+        setupSeconds: number
+        runSeconds: number
+        cpuSeconds: number
+      }
     }
   | { kind: 'here' }
   | { kind: 'here-after'; host: string; reason: string }

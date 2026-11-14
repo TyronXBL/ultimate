@@ -24,11 +24,17 @@ export type RemoteRunner = { host: string; runner: string; commands: string[] }
 
 /**
  * What a runner says before it exits. `ran`: the command ran there and the runner exited with its exit code;
- * `transferSeconds` getting the checkout there, `setupSeconds` preparing it there (dependencies), `cpuSeconds` the CPU
- * time the command used there. Otherwise why it did not: off, busy, lost half-way.
+ * `transferSeconds` getting the checkout there, `setupSeconds` preparing it there (dependencies), `runSeconds` the
+ * command itself and `cpuSeconds` the CPU time it used there. Otherwise why it did not: off, busy, lost half-way.
  */
 export type RemoteStatus =
-  | { ran: true; transferSeconds: number; setupSeconds: number; cpuSeconds: number }
+  | {
+      ran: true
+      transferSeconds: number
+      setupSeconds: number
+      runSeconds: number
+      cpuSeconds: number
+    }
   | { ran: false; reason: string }
 
 const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : '')
@@ -53,10 +59,38 @@ export async function remoteRunner(
     : undefined
 }
 
-/** Programs that only filter a command's output: allowed after a pipe. */
-const FILTERS = new Set(['tail', 'head', 'grep', 'cut', 'sort', 'uniq', 'wc'])
-/** A word that names something outside the checkout: an absolute path, the home folder or a parent folder. */
+const count = /^[-+]?\d+$/
+/**
+ * Programs that only filter a command's output, allowed after a pipe, each with the arguments that keep it one: it
+ * reads its input from the pipe and nothing else, and writes nowhere. So no file operand, no option that names a file
+ * (`grep -f`, `sort -o`) or a program, and `sort`, `uniq` and `cut` are left out rather than have their options listed.
+ */
+const FILTERS: Record<string, (args: string[]) => boolean> = {
+  tail: (args) => args.every((arg) => /^-[nc]$|^-[nc][-+]?\d+$/.test(arg) || count.test(arg)),
+  head: (args) => FILTERS.tail(args),
+  wc: (args) => args.every((arg) => /^-[lwcm]+$/.test(arg)),
+  // Flags, context and count options with their number, and patterns: one bare, or each after `-e`.
+  grep(args) {
+    let patterns = 0
+    let named = false
+    for (let at = 0; at < args.length; at++) {
+      const arg = args[at]
+      if (/^-[EFGPivcnqwxoah]+$/.test(arg) || /^-[ABCm]\d+$/.test(arg)) continue
+      if (/^-[ABCm]$/.test(arg) && /^\d+$/.test(args[at + 1] ?? '')) at++
+      else if (arg === '-e' && at + 1 < args.length) {
+        named = true
+        at++
+      } else if (!arg.startsWith('-')) patterns++
+      else return false
+    }
+    return named ? patterns === 0 : patterns === 1
+  },
+}
+/** A value that names something outside the checkout: an absolute path, the home folder or a parent folder. */
 const OUTSIDE = /^~|(^|[=:,])\/|(^|\/)\.\.(\/|$)/
+/** Whether `word` names something outside the checkout, also as the value attached to a short option (`-c/etc/x`). */
+const outside = (word: string) =>
+  OUTSIDE.test(word) || (/^-[^-]/.test(word) && OUTSIDE.test(word.slice(2)))
 
 /**
  * `command` as pipelines of stages of words, quotes removed; undefined when it uses shell the grammar leaves out. The
@@ -99,24 +133,27 @@ function parse(command: string) {
 }
 
 /**
- * Whether the runner may run `command`, started in `cwd`: every pipeline starts with one of the project's `commands`
- * (whole words: `pnpm test` does not cover `pnpm test:e2e`), pipes only into output filters, and no word names anything
- * outside the checkout. A leading `cd <cwd> &&` is the checkout itself. Judged by its text on purpose: the other
- * machine has a copy of the checkout and nothing else of this one, so a command that names nothing else runs there as
- * it would here, and anything the grammar does not cover runs here.
+ * `command`, started in `cwd`, as the runner may run it in its copy of the checkout, or undefined when it may not:
+ * every pipeline starts with one of the project's `commands` (whole words: `pnpm test` does not cover
+ * `pnpm test:e2e`), pipes only into output filters, and no word names anything outside the checkout. A leading
+ * `cd <cwd> &&` is the checkout itself and is left out: the copy lives somewhere else. Judged by its text on purpose:
+ * the other machine has a copy of the checkout and nothing else of this one, so a command that names nothing else runs
+ * there as it would here, and anything the grammar does not cover runs here.
  */
-export function remoteEligible(command: string, cwd: string, commands: string[]) {
+export function remoteCommand(command: string, cwd: string, commands: string[]) {
   const own = `cd ${cwd} && `
   const trimmed = command.trim()
-  const pipelines = parse(trimmed.startsWith(own) ? trimmed.slice(own.length) : trimmed)
-  if (!pipelines) return false
+  const there = trimmed.startsWith(own) ? trimmed.slice(own.length) : trimmed
+  const pipelines = parse(there)
+  if (!pipelines) return undefined
   const allowed = commands.map((entry) => entry.trim().split(/\s+/))
-  return pipelines.every(
+  const ok = pipelines.every(
     ([first, ...filters]) =>
       allowed.some((words) => words.every((part, index) => first[index] === part)) &&
-      filters.every((words) => FILTERS.has(words[0])) &&
-      [first, ...filters].every((words) => !words.some((part) => OUTSIDE.test(part))),
+      filters.every(([program, ...args]) => FILTERS[program]?.(args)) &&
+      [first, ...filters].every((words) => !words.some(outside)),
   )
+  return ok ? there : undefined
 }
 
 /** The status a runner left in `file`; undefined when it left none that reads as one. */
@@ -124,10 +161,10 @@ export async function readRemoteStatus(file: string): Promise<RemoteStatus | und
   try {
     const value = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>
     if (value.ran === false) return { ran: false, reason: text(value.reason) || 'no reason given' }
-    const seconds = [value.transferSeconds, value.setupSeconds, value.cpuSeconds]
+    const seconds = [value.transferSeconds, value.setupSeconds, value.runSeconds, value.cpuSeconds]
     if (value.ran !== true || !seconds.every((item) => Number.isFinite(item))) return undefined
-    const [transferSeconds, setupSeconds, cpuSeconds] = seconds as number[]
-    return { ran: true, transferSeconds, setupSeconds, cpuSeconds }
+    const [transferSeconds, setupSeconds, runSeconds, cpuSeconds] = seconds as number[]
+    return { ran: true, transferSeconds, setupSeconds, runSeconds, cpuSeconds }
   } catch {
     // No file (the runner was stopped or crashed before writing it) or not JSON: no result either way.
     return undefined

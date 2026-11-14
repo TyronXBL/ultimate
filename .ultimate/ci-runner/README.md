@@ -235,10 +235,12 @@ A job goes like this:
 
 1. The runner on the VPS makes a commit of the checkout as it is (tracked edits and new files that git does not
    ignore), without touching the checkout, its index or `HEAD`. It stops, and the command runs on the VPS, when a new
-   file looks like a secret (`.env`, a key, `.npmrc`) or is larger than 5 MB. Nothing else leaves the VPS: no
-   environment, no ignored files.
+   file looks like a secret (`.env`, a key, `.npmrc`) or is larger than 5 MB, or when the command starts in a
+   subfolder. Nothing else of the VPS goes along: no environment, no ignored files.
 2. It pushes that commit to `refs/heads/job/<sha>` in the PC's `~/ci.git`, and `main` with it: `pnpm check:changed`
-   and `scripts/tests-for.ts` compare against `main`.
+   and `scripts/tests-for.ts` compare against `main`. The commit has the checkout's `HEAD` as its parent, so the push
+   carries the branch's commits too, as a test run's push does: the PC holds the repository's history, not only the
+   files of one job.
 3. `ssh my-pc job <sha> <base64 command>` takes `run.lock`, so the PC runs one test run or one job at a time (a busy PC
    answers at once and the VPS runs the command). It checks the commit out in a fresh worktree, installs with
    `pnpm install --frozen-lockfile --prefer-offline --ignore-scripts` and runs the command in a session of its own.
