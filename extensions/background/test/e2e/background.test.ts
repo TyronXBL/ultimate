@@ -23,12 +23,22 @@ import codingTools from '../../../coding-tools/server.ts'
 import { writeJson } from '../../../../lib/json-file.ts'
 import { readSlot } from '../../../../lib/slot.ts'
 
-/** The machine's load as the heavy-work queue reads it: idle, so a busy test machine never holds a job back. */
-const machine = vi.hoisted(() => ({ load: { load: 0, cores: 6, pressure: 0 } }))
-vi.mock('../../../../lib/cpu.ts', async (original) => ({
-  ...(await original<typeof import('../../../../lib/cpu.ts')>()),
-  machineLoad: async () => machine.load,
+/**
+ * The machine as the heavy-work queue reads it. `load`: idle, so a busy test machine never holds a job back. `cpuMs`: the
+ * CPU time every measured command has used so far, while a test scripts it instead of burning cores; else measured.
+ */
+const machine = vi.hoisted(() => ({
+  load: { load: 0, cores: 6, pressure: 0 },
+  cpuMs: undefined as (() => number) | undefined,
 }))
+vi.mock('../../../../lib/cpu.ts', async (original) => {
+  const actual = await original<typeof import('../../../../lib/cpu.ts')>()
+  return {
+    ...actual,
+    machineLoad: async () => machine.load,
+    sessionCpuMs: async (sid: number) => machine.cpuMs?.() ?? actual.sessionCpuMs(sid),
+  }
+})
 import { temp, until } from '../../../../test/helpers.ts'
 
 const run = promisify(execFile)
@@ -387,9 +397,13 @@ it('ends a command that turns heavy without a place while every place is taken, 
   const log = join(shared, 'order')
   // Measured, with one place; the machine reads idle here (`machine`), so places alone decide.
   const a = await project('a', { cpu: { maxLoadPerCore: 1 }, heavyWork: { maxJobs: 1 } })
-  // Above a core takes more than one loop.
-  const loops = Array.from({ length: 3 }, () => `bash -c 'while :; do :; done' &`).join(' ')
-  const late = `echo late-start >> ${log}; until [ -f ${join(shared, 'burn')} ]; do sleep 0.1; done; ${loops} wait`
+  // Its CPU time is scripted: idle, then two cores from `burning` on. Three real busy loops were measured above a core
+  // only while the machine left them one: beside a CI shard's other workers they fell to a core or less between two
+  // looks, each of which starts the 20 s over, and the test timed out (#260340, #261309). The measuring of a real
+  // session is cpu-session.test.ts's.
+  let burning: number | undefined
+  machine.cpuMs = () => (burning === undefined ? 0 : 2 * (performance.now() - burning))
+  const late = `echo late-start >> ${log}; sleep 600`
   try {
     await a.run(late)
     await until(async () => (await lines(log)).includes('late-start'))
@@ -397,7 +411,7 @@ it('ends a command that turns heavy without a place while every place is taken, 
     await until(async () => (await readSlot()).queue.entries.length === 0, 60_000)
     await a.run(heavy(log, 'hold', { hold: join(shared, 'go') }))
     await until(async () => (await lines(log)).includes('hold-start'))
-    await writeFile(join(shared, 'burn'), '')
+    burning = performance.now()
     await until(async () => (await a.results()).length === 1, 90_000)
     const [stopped] = await a.results()
     expect(stopped).toMatchObject({ command: late, outcome: 'stopped' })
@@ -406,6 +420,7 @@ it('ends a command that turns heavy without a place while every place is taken, 
   } finally {
     // Whatever happened, nothing of it holds the queue the next tests share.
     await a.caller.abort(context, { background: true })
+    machine.cpuMs = undefined
   }
   // Its rules take that long: a 20 s probation, then 20 s above a core, and the looks between (44 s here, more on CI).
 }, 180_000)
