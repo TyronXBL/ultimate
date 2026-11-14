@@ -1,397 +1,376 @@
-import { ExternalLinkIcon, FolderOpenIcon, LoaderCircleIcon } from 'lucide-react'
-import { useState } from 'react'
-import type { SubmitEvent } from 'react'
-import { Shimmer } from '@/components/ai/shimmer'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+// The project switcher (`shell.rail`): every Ultimate running on this machine as a colour swatch at the window's left edge.
+// Hover opens it over the app with names, repositories and ports; pin keeps it open beside the app. A row is a link to that
+// instance's `/`, which opens its @ultimate. It steps aside for any other extension that fills `shell.rail`.
+import { PinIcon, PinOffIcon } from 'lucide-react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   api,
   cn,
   defineWebExtension,
-  errorMessage,
-  formatAgo,
-  ProjectChip,
-  shortenPath,
+  prettyName,
   useAction,
-  useConversations,
-  useDialog,
-  useSystem,
-  useUltimate,
+  useExtensions,
+  useViewport,
 } from '@/sdk'
-import { loopback, refetchPreviews, show, usePreviews, useShown } from '../instance/ui.tsx'
-import type { Preview } from '../instance/ui.tsx'
-import { ListAction, StartAction } from './refs.ts'
-import type { LocalProject } from './refs.ts'
+import { ProjectSwatch, RepoLabel, stemOf } from '../sidebar/ui.tsx'
+import { shownPort, target } from './links.ts'
+import { ListAction, PinAction } from './refs.ts'
+import type { RunningProject } from './refs.ts'
 
-const openFolder = 'projects.open'
-
-/**
- * Where this window goes to reach a running project: on a loopback page its port on this page's host (so
- * `ultimate.localhost` stays), elsewhere its tailnet address. A reason when it has none reachable from here.
- */
-function address(project: LocalProject): { href: string } | { reason: string } | undefined {
-  if (!project.url) return undefined
-  if (!loopback)
-    return project.tailnet ? { href: project.tailnet } : { reason: 'Only on this machine' }
-  const url = new URL(location.origin)
-  url.port = new URL(project.url).port
-  return { href: url.href }
-}
+const RAIL = 56
+const WIDE = 272
+/** Live state every 4 s while the page is visible; the shared pin every 30 s. */
+const LIVE = 4_000
+const PIN = 30_000
 
 /**
- * Starts the project in `root`, making its folder first with `create`, and goes there. What to show when it does not:
- * the folder that is missing, or the message when the start fails or the project is not reachable.
+ * The project this tab is navigating to. The old page stays until the new one paints, which takes seconds while the
+ * target builds its bundle, so the rail marks the target and a bar runs along the top. A page restored by Back from the
+ * browser's cache clears it, and so does a navigation stopped on this page, after 15 s.
  */
-async function start(
-  root: string,
-  create = false,
-): Promise<{ missing: string } | string | undefined> {
-  try {
-    const started = await api.action(StartAction, { root, create })
-    if ('missing' in started) return started
-    const target = address(started)
-    if (target && 'href' in target) {
-      location.assign(target.href)
-      return undefined
-    }
-    return 'It runs now, but only on this machine.'
-  } catch (error) {
-    return errorMessage(error)
-  }
+let opening: string | undefined
+let expiry: ReturnType<typeof setTimeout> | undefined
+const listeners = new Set<() => void>()
+const setOpening = (url: string | undefined) => {
+  opening = url
+  clearTimeout(expiry)
+  if (url) expiry = setTimeout(() => setOpening(undefined), 15_000)
+  for (const listener of listeners) listener()
 }
-
-const port = (url: string) => {
-  const value = new URL(url).port
-  return value && `:${value}`
+const subscribe = (listener: () => void) => {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
 }
+const useOpening = () => useSyncExternalStore(subscribe, () => opening)
+if (typeof window !== 'undefined') window.addEventListener('pageshow', () => setOpening(undefined))
 
-const sectionLabel =
-  'px-2 pt-1 pb-1.5 font-mono text-[10.5px] font-normal tracking-wider text-muted-foreground uppercase'
-const item = 'gap-2 py-1.5'
-const meta = 'shrink-0 font-mono text-[11px] text-muted-foreground'
-
-function Separator() {
-  return <div className="-mx-1 my-1 h-px bg-border/70" role="separator" />
-}
-
-/** A project's status as a dot: running (green), stopped (hollow), or running out of reach (grey). */
-function Dot({ state }: { state: 'running' | 'stopped' | 'off' | 'preview' }) {
+/** A thin brand bar across the top of the window while this tab navigates to another project. */
+function OpeningBar() {
+  if (!useOpening()) return null
   return (
-    <span
-      className={cn(
-        'size-1.5 shrink-0 rounded-full',
-        state === 'running' && 'bg-success',
-        state === 'preview' && 'bg-brand',
-        state === 'off' && 'bg-muted-foreground/40',
-        state === 'stopped' && 'ring-1 ring-muted-foreground/60 ring-inset',
-      )}
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0.5 animate-sweep bg-brand/30 bg-size-[300%_100%] bg-no-repeat bg-[linear-gradient(90deg,transparent_30%,var(--color-brand)_50%,transparent_70%)]"
     />
   )
 }
 
-/**
- * The title bar's project chip as the menu for every Ultimate this window can show: this machine's projects (a running
- * one opens in this window, a stopped one starts first), "Open folder…", the previews `instance` runs (loopback pages
- * only, shown in its frame) and the user's other machines (new tab). The lists refresh when it opens.
- */
-function Switcher() {
-  const projects = useAction(ListAction, null, { onError: () => {} })
-  const shown = useShown()?.preview
-  const all = usePreviews()
-  const previews = (loopback && all?.filter((preview) => preview.running)) || []
-  const conversations = useConversations()
-  const system = useSystem()
-  const { open } = useUltimate()
-  const [starting, setStarting] = useState<{ root: string; error?: string }>()
-  const title = (preview: Preview) =>
-    conversations.find((conversation) => conversation.id === preview.conversationId)?.title
-  const local = projects.data?.projects ?? []
-  const remotes = projects.data?.remotes ?? []
-  const startable = local.some((project) => !project.current && !project.url && project.root)
-  const begin = async (root: string) => {
-    setStarting({ root })
-    const error = await start(root)
-    if (error)
-      setStarting({
-        root,
-        error: typeof error === 'string' ? error : `No folder at ${error.missing}`,
-      })
-    await projects.refetch()
-  }
-
-  const row = (project: LocalProject) => {
-    const target = address(project)
-    const busy = starting?.root === project.root ? starting : undefined
-    const here = project.current && !shown
-    const select = (event: Event) => {
-      if (project.current) show(undefined)
-      else if (target && 'href' in target) location.assign(target.href)
-      else if (project.root) {
-        // Starting takes up to a minute: the menu stays open to show it.
-        event.preventDefault()
-        // oxlint-disable-next-line typescript/no-floating-promises -- begin shows failures in the row and never rejects.
-        if (!busy || busy.error) void begin(project.root)
-      }
+/** Calls `refetch` every `every` ms while the page is visible, and when it becomes visible; never while `off`. */
+function usePoll(refetch: () => Promise<unknown>, every: number, off = false) {
+  useEffect(() => {
+    if (off) return undefined
+    const visible = () => {
+      if (document.visibilityState !== 'visible') return
+      // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
+      void refetch()
     }
-    const off = target && 'reason' in target
-    const dead = !project.url && !project.root
-    return (
-      <div key={project.root ?? project.name}>
-        <DropdownMenuItem
-          className={item}
-          data-project={project.name}
-          disabled={!!off || dead || (!!starting && !starting.error && !busy)}
-          onSelect={select}
-          title={project.root && shortenPath(project.root, { home: system?.machine.home })}
-        >
-          <Dot state={project.current || project.url ? (off ? 'off' : 'running') : 'stopped'} />
-          <span className={cn('min-w-0 flex-1 truncate text-[13px]', here && 'text-brand')}>
-            {project.name}
-          </span>
-          {project.current ? (
-            <span className={meta}>current</span>
-          ) : target && 'href' in target ? (
-            <span className={meta}>{port(target.href)}</span>
-          ) : off ? (
-            <span className="shrink-0 text-[11.5px] text-muted-foreground">{target.reason}</span>
-          ) : busy && !busy.error ? (
-            <span className="flex shrink-0 items-center gap-1.5 text-[11.5px]">
-              <LoaderCircleIcon className="size-3 text-muted-foreground motion-safe:animate-spin" />
-              <Shimmer>Starting…</Shimmer>
-            </span>
-          ) : project.root ? (
-            <span className="flex shrink-0 items-center gap-2">
-              {project.activeAt && <span className={meta}>{formatAgo(project.activeAt)}</span>}
-              <span className="rounded-sm px-1.5 text-[11.5px] leading-5 text-foreground/80 ring-1 ring-border">
-                {busy?.error ? 'Retry' : 'Start'}
-              </span>
-            </span>
-          ) : (
-            <span className="shrink-0 text-[11.5px] text-muted-foreground">No folder</span>
-          )}
-        </DropdownMenuItem>
-        {busy?.error && (
-          <p className="px-2 pb-1.5 pl-5.5 text-[11.5px] leading-snug wrap-anywhere text-error">
-            {busy.error}
-          </p>
-        )}
-      </div>
-    )
-  }
+    const timer = setInterval(visible, every)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [refetch, every, off])
+}
 
+/** Whether the rail is pinned: one value for every instance on this machine, so a jump keeps the rail as it was. */
+function usePinned(off: boolean) {
+  const shared = useAction(PinAction, {}, { onError: () => {}, enabled: !off })
+  usePoll(shared.refetch, PIN, off)
+  const [pinned, setPinned] = useState<boolean>()
+  const stored = shared.data?.pinned
+  useEffect(() => {
+    if (stored !== undefined) setPinned(stored)
+  }, [stored])
+  const set = (next: boolean) => {
+    setPinned(next)
+    // A failed write leaves this page's value; the next poll brings the file's back.
+    api.action(PinAction, { pinned: next }).catch(() => {})
+  }
+  return [pinned ?? false, set] as const
+}
+
+/** The project's identity under its name: its GitHub repository when known, and its port. */
+function Detail({ project, pending }: { project: RunningProject; pending: boolean }) {
+  if (pending) return <span className="text-brand">opening…</span>
   return (
-    <DropdownMenu
-      modal={false}
-      onOpenChange={(next) => {
-        if (!next) return
-        // oxlint-disable-next-line typescript/no-floating-promises -- useAction resolves undefined rather than rejecting.
-        void projects.refetch()
-        refetchPreviews()
-      }}
-    >
-      <DropdownMenuTrigger asChild>
-        <ProjectChip className={cn(shown && 'bg-brand/10')} menu>
-          {shown ? (
-            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11.5px] text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-brand" />#{shown.conversationId} ·{' '}
-              {port(shown.url)}
-            </span>
-          ) : (
-            previews.length > 0 && (
-              <span className="shrink-0 font-mono text-[11.5px] text-muted-foreground max-md:hidden">
-                {previews.length} {previews.length === 1 ? 'preview' : 'previews'}
-              </span>
-            )
-          )}
-        </ProjectChip>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="w-80 max-w-[calc(100vw-1rem)]"
-        data-projects-menu
-        sideOffset={4}
-      >
-        <DropdownMenuLabel className={sectionLabel}>Projects</DropdownMenuLabel>
-        {local.map(row)}
-        {!projects.data &&
-          (projects.error ? (
-            <p className="px-2 py-1.5 text-[12px] leading-snug text-error">
-              {projects.error.message}
-            </p>
-          ) : (
-            <p className="px-2 py-1.5 text-[12px]">
-              <Shimmer>Looking for projects…</Shimmer>
-            </p>
-          ))}
-        <DropdownMenuItem className={item} onSelect={() => open(openFolder)}>
-          <FolderOpenIcon className="size-3.5" />
-          <span className="flex-1 text-[13px]">New or open folder…</span>
-        </DropdownMenuItem>
-        {startable && (
-          <p className="px-2 pt-0.5 pb-1 text-[11px] leading-snug text-muted-foreground">
-            Starting a project resumes its unfinished work and automations.
-          </p>
-        )}
-        {previews.length > 0 && (
-          <>
-            <Separator />
-            <DropdownMenuLabel className={sectionLabel}>Previews</DropdownMenuLabel>
-            {previews.map((preview) => (
-              <DropdownMenuItem
-                className={item}
-                data-instance={preview.id}
-                key={preview.id}
-                onSelect={() => show(preview)}
-              >
-                <Dot state="preview" />
-                <span
-                  className={cn(
-                    'min-w-0 flex-1 truncate text-[13px]',
-                    shown?.id === preview.id && 'text-brand',
-                  )}
-                >
-                  #{preview.conversationId}
-                  {title(preview) && (
-                    <span className="text-muted-foreground"> {title(preview)}</span>
-                  )}
-                </span>
-                <span className={meta}>{port(preview.url)}</span>
-              </DropdownMenuItem>
-            ))}
-          </>
-        )}
-        {remotes.length > 0 && (
-          <>
-            <Separator />
-            <DropdownMenuLabel className={sectionLabel}>Other machines</DropdownMenuLabel>
-            {remotes.map((remote) => (
-              <DropdownMenuItem
-                className={item}
-                data-remote={remote.url}
-                key={remote.url}
-                onSelect={() => window.open(remote.url, '_blank', 'noreferrer')}
-                title={remote.url}
-              >
-                <span className="min-w-0 flex-1 truncate text-[13px]">
-                  {remote.name}
-                  <span className="text-muted-foreground"> {remote.machine}</span>
-                </span>
-                <ExternalLinkIcon className="size-3" />
-              </DropdownMenuItem>
-            ))}
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      {project.repo && <RepoLabel className="min-w-0" repo={project.repo} />}
+      <span className="shrink-0 text-muted-foreground/50">{shownPort(project, location)}</span>
+    </>
   )
+}
+
+/** What waits in a project, loudest first: questions for the user in amber, else a pulsing dot while it works. */
+function State({ busy, questions }: { busy: boolean; questions: number }) {
+  if (questions > 0)
+    return (
+      <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-amber-400/15 px-1.5 font-mono text-[10px] font-semibold text-amber-700 tabular-nums ring-1 ring-amber-500/30 ring-inset dark:text-amber-300">
+        {questions}
+      </span>
+    )
+  if (busy) return <span className="size-1.5 shrink-0 animate-pulse-dot rounded-full bg-brand" />
+  return null
 }
 
 /**
- * "New or open folder…": a path on this machine, started (or opened when it runs) and switched to. A missing folder
- * asks once to be created.
+ * One project. Collapsed it is its swatch, a segment of the rail's colour column: a family's segments (`first`,
+ * `last`) join into one strip, rounded at its ends, with a gap before the next family.
  */
-function OpenFolder() {
-  const [open, setOpen] = useDialog(openFolder)
+function Row({
+  project,
+  wide,
+  first,
+  last,
+  family,
+}: {
+  project: RunningProject
+  wide: boolean
+  first: boolean
+  last: boolean
+  /** Every running project's folder name, for the shades of a family. */
+  family: readonly string[]
+}) {
+  const here = project.current
+  const pending = useOpening() === project.url
+  const busy = (project.busy ?? 0) > 0
+  const questions = project.questions ?? 0
+  const name = prettyName(project.name)
+  const href = here ? undefined : target(project, location)
+  const unreachable = !here && !href
+  const title = [
+    name,
+    project.repo?.name,
+    shownPort(project, location),
+    unreachable && 'not on the tailnet',
+    questions && `${questions} for you`,
+    busy && 'working',
+    here && 'this tab',
+    pending && 'opening',
+  ]
+    .filter(Boolean)
+    .join(' · ')
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
-      <DialogContent
-        className="grid-cols-[minmax(0,1fr)] gap-0 p-0 sm:max-w-[28rem]"
-        data-projects-open
+    <a
+      aria-current={here ? 'page' : undefined}
+      aria-label={title}
+      className={cn(
+        'group relative mx-1.5 flex h-10 items-center rounded-lg text-left outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+        here || unreachable ? 'cursor-default' : 'cursor-pointer',
+        unreachable && 'opacity-45',
+        wide && (here ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'),
+      )}
+      data-project={project.name}
+      href={href}
+      onClick={(event) => {
+        // A plain click navigates this tab: mark it. Mod-click and middle-click open another tab and leave this one.
+        if (
+          here ||
+          unreachable ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return
+        setOpening(project.url)
+      }}
+      title={title}
+    >
+      {/* The edge bar: the project this tab shows, or the one it is opening; a hint of it on hover. */}
+      <span
+        className={cn(
+          'absolute -left-1.5 w-[3px] rounded-r-full transition-all duration-150',
+          here || pending ? 'h-6 bg-brand' : 'h-0 bg-muted-foreground/60 group-hover:h-3',
+          pending && 'animate-pulse-dot',
+        )}
+      />
+      {/* The swatch's own box: the indicators centre on it with auto margins, never a transform, so they land on whole
+          pixels on the column's axis. A family's inner segments leave a hairline above and below. */}
+      <span
+        className={cn(
+          'flex h-full w-11 shrink-0 justify-center',
+          !first && 'pt-px',
+          !last && 'pb-px',
+        )}
       >
-        {open && <OpenFolderBody onClose={() => setOpen(false)} />}
-      </DialogContent>
-    </Dialog>
+        <span className="relative flex h-full w-5 justify-center">
+          <ProjectSwatch
+            className={cn(
+              'h-full transition-[width,opacity] duration-150',
+              here || pending ? 'w-5' : 'w-3 opacity-70 group-hover:w-4 group-hover:opacity-100',
+              // The project this tab shows: a ring set off from its swatch, clear on a purple one too.
+              here && 'outline-1 outline-offset-2 outline-foreground/45',
+              first ? 'rounded-t-md' : 'rounded-t-[1px]',
+              last ? 'rounded-b-md' : 'rounded-b-[1px]',
+              pending && 'animate-pulse-dot',
+            )}
+            family={family}
+            folder={project.name}
+          />
+          {!wide && questions > 0 && (
+            <span className="absolute inset-0 m-auto flex h-4 w-fit min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-[9.5px] leading-none font-semibold text-black tabular-nums ring-2 ring-sidebar">
+              {questions}
+            </span>
+          )}
+          {!wide && busy && questions === 0 && (
+            <span className="absolute inset-0 m-auto size-2 animate-pulse-dot rounded-full bg-brand ring-2 ring-sidebar" />
+          )}
+        </span>
+      </span>
+      {wide && (
+        <span className="flex min-w-0 flex-1 items-center gap-2 pr-2.5 pl-1.5">
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span
+              className={cn(
+                'truncate text-[13px] leading-5',
+                here ? 'font-semibold text-foreground' : 'text-foreground/85',
+              )}
+            >
+              {name}
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5 font-mono text-[10px] leading-4 text-muted-foreground/80">
+              <Detail pending={pending} project={project} />
+            </span>
+          </span>
+          <State busy={busy} questions={questions} />
+        </span>
+      )}
+    </a>
   )
 }
 
-function OpenFolderBody({ onClose }: { onClose: () => void }) {
-  const [path, setPath] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [failure, setFailure] = useState<string>()
-  // The folder this path would create, once the server found nothing there: the next submit creates it.
-  const [missing, setMissing] = useState<string>()
-  const submit = async (event: SubmitEvent) => {
-    event.preventDefault()
-    if (!path.trim() || busy) return
-    setBusy(true)
-    setFailure(undefined)
-    const error = await start(path.trim(), missing !== undefined)
-    // Gone on success: the window is on its way to the project.
-    if (!error) return
-    if (typeof error === 'string') setFailure(error)
-    else setMissing(error.missing)
-    setBusy(false)
-  }
+/** The rail's shape while the list loads, so it holds its place and width. */
+function RailSkeleton({ wide }: { wide: boolean }) {
   return (
-    <form onSubmit={(event) => void submit(event)}>
-      <div className="space-y-3 px-5 pt-5 pb-4">
-        <DialogTitle className="flex items-center gap-2 text-base">
-          <FolderOpenIcon className="size-4 text-brand" />
-          New or open folder
-        </DialogTitle>
-        <DialogDescription className="text-[13px] leading-relaxed text-muted-foreground">
-          Run Ultimate in a folder on this machine and switch this window to it. A project opened
-          before resumes its unfinished work and automations; a new path becomes a new project.
-        </DialogDescription>
-        <input
-          aria-label="Folder"
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          // oxlint-disable-next-line jsx-a11y/no-autofocus -- the dialog exists to take this one field
-          autoFocus
-          className="h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 font-mono text-[12.5px] outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
-          disabled={busy}
-          onChange={(event) => {
-            setPath(event.target.value)
-            setMissing(undefined)
-          }}
-          placeholder="~/code/my-app"
-          spellCheck={false}
-          value={path}
-        />
-        {missing && (
-          <p
-            className="text-[12px] leading-snug wrap-anywhere text-foreground/80"
-            data-projects-create
-          >
-            Create <span className="font-mono">{missing}</span> and start a new project there?
-          </p>
-        )}
-        {failure && <p className="text-[12px] leading-snug wrap-anywhere text-error">{failure}</p>}
-      </div>
-      <footer className="flex items-center justify-end gap-2 border-t border-border/60 bg-muted/30 px-5 py-3">
-        {busy && (
-          <span className="mr-auto text-[12px]">
-            <Shimmer>Starting, this can take a minute…</Shimmer>
+    <div aria-hidden className="pointer-events-none">
+      {['w-24', 'w-32', 'w-20', 'w-28'].map((name) => (
+        <span className="mx-1.5 flex h-10 items-center" key={name}>
+          <span className="flex h-full w-11 shrink-0 justify-center py-px">
+            <Skeleton className="h-full w-3 rounded-sm bg-sidebar-accent/60" />
           </span>
+          {wide && (
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5 pl-1.5">
+              <Skeleton className={cn('h-2.5 rounded-sm bg-sidebar-accent/60', name)} />
+              <Skeleton className="h-2 w-16 rounded-sm bg-sidebar-accent/40" />
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function Rail() {
+  const viewport = useViewport()
+  // Another extension's rail (a fleet switcher, say) takes the slot: two rails side by side would be one too many.
+  const other = useExtensions().some(
+    (record) => record.name !== 'projects' && record.extension?.slots?.['shell.rail'],
+  )
+  const list = useAction(ListAction, null, { onError: () => {}, enabled: !other })
+  usePoll(list.refetch, LIVE, other)
+  const [hover, setHover] = useState(false)
+  const [pinned, setPinned] = usePinned(other)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const projects = list.data ?? []
+  const loading = !list.data && !list.error
+  // A list that arrives after the skeleton fades in over it; one already there on mount just shows.
+  const waited = useRef(loading).current
+  // On phones, like the shell's other rails; and with only this project running there is nothing to switch to.
+  if (other || viewport === 'phone' || (!loading && projects.length < 2)) return null
+
+  const wide = hover || pinned
+  const family = projects.map((project) => project.name)
+  const questions = projects.reduce((sum, project) => sum + (project.questions ?? 0), 0)
+  const working = projects.filter((project) => (project.busy ?? 0) > 0).length
+
+  return (
+    <div className="relative shrink-0" style={{ width: pinned ? WIDE : RAIL }}>
+      <nav
+        aria-label="Projects"
+        className={cn(
+          'absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width,box-shadow] duration-150 ease-out',
+          hover && !pinned && 'shadow-2xl shadow-black/40',
         )}
-        <Button onClick={onClose} size="sm" type="button" variant="ghost">
-          Cancel
-        </Button>
-        <Button disabled={!path.trim() || busy} size="sm" type="submit">
-          {busy && <LoaderCircleIcon className="motion-safe:animate-spin" />}
-          {missing ? 'Create' : 'Open'}
-        </Button>
-      </footer>
-    </form>
+        onMouseEnter={() => {
+          clearTimeout(timer.current)
+          timer.current = setTimeout(() => setHover(true), 150)
+        }}
+        onMouseLeave={() => {
+          clearTimeout(timer.current)
+          setHover(false)
+        }}
+        // Keyboard: tabbing into the rail opens it like hovering, leaving it closes it.
+        onFocus={() => setHover(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setHover(false)
+        }}
+        style={{ width: wide ? WIDE : RAIL }}
+      >
+        {/* Every horizontal rail line continues an app line: this one the title bar's (h-9, core shell). */}
+        <div className="flex h-9 shrink-0 items-center border-b border-border/70">
+          <span className="flex w-14 shrink-0 justify-center font-mono text-[9px] tracking-[0.2em] text-brand">
+            U
+          </span>
+          {wide && (
+            <>
+              <span className="section-label">Projects</span>
+              <span className="ml-1.5 font-mono text-[11px] text-muted-foreground/60 tabular-nums">
+                {projects.length || ''}
+              </span>
+              <button
+                aria-label={pinned ? 'Unpin the projects rail' : 'Pin the projects rail open'}
+                aria-pressed={pinned}
+                className={cn(
+                  'mr-2 ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+                  pinned ? 'text-foreground' : 'text-muted-foreground/70',
+                )}
+                onClick={() => setPinned(!pinned)}
+                title={pinned ? 'Unpin: open on hover' : 'Pin: keep open beside the app'}
+                type="button"
+              >
+                {pinned ? <PinOffIcon className="size-3.5" /> : <PinIcon className="size-3.5" />}
+              </button>
+            </>
+          )}
+        </div>
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-2 pb-2 [scrollbar-width:none]">
+          {loading && <RailSkeleton wide={wide} />}
+          <div className={cn('flex flex-col', waited && 'animate-fade-in')}>
+            {projects.map((project, index) => {
+              const stem = stemOf(project.name)
+              const first = index === 0 || stemOf(projects[index - 1].name) !== stem
+              const last = stemOf(projects[index + 1]?.name ?? '') !== stem
+              return (
+                <div className={cn(first && index > 0 && 'mt-2')} key={project.url}>
+                  <Row family={family} first={first} last={last} project={project} wide={wide} />
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        {/* Same height and border as the status line beside it (core primitives.tsx), so the two read as one line. */}
+        <div className="flex h-7 shrink-0 items-center border-t border-border/70 font-mono text-[10px] text-muted-foreground/70 md:pointer-coarse:box-content md:pointer-coarse:pb-3">
+          <span className="flex w-14 shrink-0 justify-center">
+            {questions > 0 && <span className="size-1.5 rounded-full bg-amber-400" />}
+          </span>
+          {wide && !loading && (
+            <span className="truncate">
+              <span className={cn(questions > 0 && 'text-amber-700 dark:text-amber-300')}>
+                {questions} for you
+              </span>
+              {` · ${working} working`}
+            </span>
+          )}
+        </div>
+      </nav>
+    </div>
   )
 }
 
 export default defineWebExtension({
-  slots: { 'titlebar.project': [Switcher], overlay: [OpenFolder] },
-  commands: [
-    {
-      id: 'projects.open',
-      title: 'New or open folder…',
-      run: (context) => context.open(openFolder),
-    },
-  ],
+  slots: { 'shell.rail': Rail, overlay: OpeningBar },
 })

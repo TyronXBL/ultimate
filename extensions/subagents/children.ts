@@ -61,6 +61,55 @@ export async function started(
 }
 
 /**
+ * Configure conversation `id` from `definition` over `parent`: its current tools, extensions, instructions and skills,
+ * while the model and thinking chosen in it stay unless the definition pins them. Its cwd stays. `created` says the
+ * conversation was made in this commit, so it has no model owner yet and gets one.
+ */
+export async function reconfigure(
+  host: Pick<ExtensionHost, 'need'>,
+  tx: Tx,
+  id: ConversationId,
+  definition: AgentDefinition,
+  parent: Agent,
+  modelRuntime: ModelRuntime,
+  created = false,
+) {
+  const models = host.need(ModelsApi)
+  const own = await tx.doc(AgentDoc, id)
+  const base = {
+    ...parent,
+    ...(own.model ? { model: own.model } : {}),
+    ...(own.thinkingLevel ? { thinkingLevel: own.thinkingLevel } : {}),
+  }
+  // One running on a backup (extensions/backup) stays on it: backup returns it later.
+  const on = created ? undefined : await models.backup(tx, id)
+  const { model, thinkingLevel, ...change } = definitionAgent(
+    definition,
+    base,
+    modelRuntime,
+    on && { model: on.to, ...(own.thinkingLevel ? { thinking: own.thinkingLevel } : {}) },
+  )
+  await configure(tx, id, change)
+  // A refresh that keeps the model and level keeps who set them: a pick stays the user's.
+  if (
+    created ||
+    model?.provider !== base.model?.provider ||
+    model?.modelId !== base.model?.modelId ||
+    (thinkingLevel ?? undefined) !== base.thinkingLevel
+  )
+    await models.setModel(tx, id, {
+      type: 'start',
+      model: model ?? null,
+      thinkingLevel,
+      family: definitionFamily(definition, { model }),
+    })
+  const profile = await tx.doc(Profile, id)
+  profile.definition = definition.name
+  if (definition.skills) profile.skills = [...definition.skills]
+  else delete profile.skills
+}
+
+/**
  * A conversation configured from a definition (or as a copy of the parent's agent), new or forked at `fork.at`; a
  * definition with `summaries: false` turns its automatic summaries off.
  */

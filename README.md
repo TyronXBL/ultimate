@@ -174,8 +174,9 @@ The building blocks that make it possible:
   as a reply ([Messages](extensions/messages/README.md#other-projects-ultimates)).
 - **Watching:** the `status` action reports an instance's health, failures and extensions in one cheap call
   ([Status](extensions/status/README.md)).
-- **Switching:** the [Projects](extensions/projects/README.md) extension lists this machine's projects in the
-  title bar, opens a running one and starts a stopped or new one.
+- **Switching:** the [Project menu](extensions/project-menu/README.md) extension lists this machine's projects in
+  the title bar, opens a running one and starts a stopped or new one; the [Projects](extensions/projects/README.md)
+  rail at the window's left edge shows every running one with its live state, one click away.
 - **Reaching other machines:** the [Tailscale](extensions/tailscale/README.md) extension serves each instance on
   your tailnet, to your own login only.
 

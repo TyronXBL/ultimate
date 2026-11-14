@@ -624,7 +624,8 @@ it('keeps unmarked Pi input history and makes no metadata writes on an unchanged
     })
     return opened
   }
-  const reopened = { ...prepared, ...(await prepared.go()) }
+  // go() returns the opened harness, whose close() would replace the server's and leave Vite watching the source copy.
+  const reopened = { ...prepared, ...(await prepared.go()), close: () => prepared.close() }
   servers.push(reopened)
   expect(reopened.api.conversations().find((item) => item.id === id)).toMatchObject({
     title: 'Existing parser work',

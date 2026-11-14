@@ -1,12 +1,60 @@
 import { expect, it, vi } from 'vitest'
-import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
+import { defineExtension, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import { context } from '../../../server/harness.ts'
 import { Messages } from '../../messages/api.ts'
+import { trim } from '../../messages/log.ts'
 import { Standing } from '../../subagents/api.ts'
 import { Summaries } from '../../conversations/summary.ts'
 import type { VoiceAnswer, VoiceLine } from '../refs.ts'
 import { post, until } from '../../../test/helpers.ts'
-import { fixture } from './voice-live-fixture.ts'
+import { fixture, servers } from './voice-live-fixture.ts'
+
+type Fixture = Awaited<ReturnType<typeof fixture>>
+const askUser = (f: Fixture, text: string) =>
+  f.server.harness.commit(async (tx) => {
+    const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
+    const id = log.next++
+    log.messages.push({
+      id,
+      from: f.voice,
+      to: 'user',
+      text,
+      at: Date.now(),
+      reply: true,
+      state: 'delivered',
+      questions: [{ ref: '1', text, kind: 'confirm' }],
+    })
+    return id
+  }, context)
+const logOf = async (f: Fixture) =>
+  (await f.server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context))!
+// Fills the log to one past its cap, so `trim` drops only the oldest closed message: the question `id`.
+const trimOut = (f: Fixture, id: number) =>
+  f.server.harness.commit(async (tx) => {
+    const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
+    for (let i = 0; i < 299; i++)
+      log.messages.push({
+        id: log.next++,
+        from: f.voice,
+        to: f.main,
+        text: 'filler',
+        at: Date.now(),
+        reply: false,
+        state: 'delivered',
+      })
+    trim(log.messages)
+    return log.messages.some((m) => m.id === id)
+  }, context)
+// A finished test's server keeps working and slows the next tests; afterAll must not close it a second time.
+const finish = async (f: Fixture) => {
+  servers.splice(servers.indexOf(f.server), 1)
+  await f.server.close()
+}
+const voiceAnswer = (f: Fixture) =>
+  f.server.host.registry
+    .snapshot()
+    .extension('voice-live')!
+    .tools!.find((t) => t.name === 'voice_answer')!
 
 it('answers a connection check itself in the standing Voice conversation, with its relay tools and codemode', async () => {
   const f = await fixture()
@@ -103,22 +151,7 @@ it('announces a branch question that opens during a session and settles exactly 
     (await f.server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context))!.messages
   // Two branch questions are open: the one Voice names is answered, the other stays (#576596: a question that
   // arrived mid-session went unannounced, and a spoken answer only reached a card when exactly one was open).
-  const ask = (text: string) =>
-    f.server.harness.commit(async (tx) => {
-      const log = await tx.doc(Messages, ROOT_CONVERSATION_ID)
-      const id = log.next++
-      log.messages.push({
-        id,
-        from: f.voice,
-        to: 'user',
-        text,
-        at: Date.now(),
-        reply: true,
-        state: 'delivered',
-        questions: [{ ref: '1', text, kind: 'confirm' }],
-      })
-      return id
-    }, context)
+  const ask = (text: string) => askUser(f, text)
   const first = await ask('Ship it?')
   const second = await ask('Rename it?')
   await f.action('asked', { message: second })
@@ -240,3 +273,60 @@ it('shows OpenAI’s own reason when it refuses a session, never a bare HTTP sta
     fetch.mockRestore()
   }
 })
+
+it.each([{ text: '1. yes' }, { dismiss: true }])(
+  'finishes a settlement admitted before the task was interrupted, when it replays %o after the question was trimmed',
+  async (args) => {
+    const f = await fixture()
+    const id = await askUser(f, 'Ship it?')
+    const tool = voiceAnswer(f)
+    let outcome: PromiseSettledResult<unknown> | undefined
+    let admitted: { status: number; data: { result?: number; error?: string } } | undefined
+    let closed: string | undefined
+    let present: boolean | undefined
+    f.server.host.registry.install(
+      defineExtension({
+        ...f.server.host.registry.snapshot().extension('voice-live')!,
+        tools: [
+          {
+            ...tool,
+            execute: async (_input, api, ctx) => {
+              // The first run admitted the settlement, then the process died before it confirmed.
+              const call = { taskId: api.taskId, callId: api.callId }
+              admitted = await post(f.server, '/api/extensions/settle-probe/actions/settle', {
+                args: { message: id, text: (args as { text?: string }).text, call },
+              })
+              closed = (await logOf(f)).messages.find((m) => m.id === id)?.state
+              present = await trimOut(f, id)
+              ;[outcome] = await Promise.allSettled([
+                tool.execute({ message: id, ...args }, api, ctx),
+              ])
+              return { output: [{ type: 'text', text: 'done' }] }
+            },
+          },
+        ],
+      }),
+    )
+    await f.action('heard', { text: `answer message ${id}: 1. yes` })
+    await until(() => outcome !== undefined)
+    expect([admitted?.status, admitted?.data.error]).toEqual([200, undefined])
+    expect(closed).toBe('text' in args ? 'answered' : 'dismissed')
+    expect(present).toBe(false)
+    expect(outcome).toMatchObject({
+      status: 'fulfilled',
+      value: { output: [{ text: expect.stringMatching(/^(Answered|Dismissed)\./) }] },
+    })
+    const log = await logOf(f)
+    expect(log.messages.filter((m) => m.re === id).map((m) => m.id)).toEqual([
+      admitted!.data.result,
+    ])
+    expect(
+      (await f.entries(f.voice)).filter(
+        (e) =>
+          e.kind === 'voice.line' &&
+          /^(Answered|Dismissed) message/.test((e.data as VoiceLine).text),
+      ),
+    ).toHaveLength(1)
+    await finish(f)
+  },
+)
