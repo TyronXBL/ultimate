@@ -306,19 +306,22 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     }
   })
   useLayoutEffect(() => restoreAnchor(), [history])
+  const releaseTail = useEffectEvent(() => {
+    const scroll = scrollRef.current
+    if (!scroll || (held.current && !state.isAtBottom)) return
+    // Release temporary space once it cannot clamp the reader, or they return to the bottom.
+    const gap = rowGap(contentRef.current)
+    const bottom = scroll.scrollHeight - scroll.clientHeight
+    if (scroll.scrollTop <= bottom - tailSpace - gap || scroll.scrollTop >= bottom - 1)
+      setTailSpace(0)
+  })
   useEffect(() => {
     const scroll = scrollRef.current
     if (!scroll || tailSpace === 0) return undefined
-    const releaseTail = () => {
-      // Release temporary space once it cannot clamp the reader, or they return to the bottom.
-      const gap = rowGap(contentRef.current)
-      const bottom = scroll.scrollHeight - scroll.clientHeight
-      if (scroll.scrollTop <= bottom - tailSpace - gap || scroll.scrollTop >= bottom - 1)
-        setTailSpace(0)
-    }
-    scroll.addEventListener('scroll', releaseTail)
+    const onScroll = () => releaseTail()
+    scroll.addEventListener('scroll', onScroll)
     releaseTail()
-    return () => scroll.removeEventListener('scroll', releaseTail)
+    return () => scroll.removeEventListener('scroll', onScroll)
   }, [tailSpace, active, scrollRef, contentRef])
   // Page in earlier history, holding the rows the reader sees in place while the page goes in above them.
   const earlier = useEffectEvent(() =>
@@ -528,10 +531,11 @@ function TranscriptEntries({ pinned }: { pinned: RefObject<HTMLDivElement | null
     cover.current = Math.max(cover.current, pinned.current?.offsetHeight ?? 0)
     const move =
       element.getBoundingClientRect().top - scroll.getBoundingClientRect().top - cover.current
-    // A short row at the end needs room below it to reach the top: tail space, with a row gap more so the reader is not
-    // at the very bottom, where it is released.
+    // A short row at the end needs room below it to reach the top: tail space, with a row gap plus
+    // use-stick-to-bottom's 70px near-bottom threshold so the follow lock does not reacquire and drop the reveal.
     const room = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop
-    if (move > room) setTailSpace(tailSpace + move - room + rowGap(contentRef.current))
+    const pad = rowGap(contentRef.current) + 72
+    if (move + pad > room) setTailSpace(tailSpace + move + pad - room)
     // Through the library's setter, so its scroll handler does not take the move for the reader's.
     // oxlint-disable-next-line react/immutability -- the library's state is its own mutable object; it writes it the same way.
     state.scrollTop += move

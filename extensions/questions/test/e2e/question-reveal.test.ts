@@ -46,7 +46,11 @@ async function setup() {
     if (last.role === 'user' && typeof last.content === 'string' && last.content.startsWith('ask'))
       return fauxAssistantMessage(
         [
-          fauxText(`Here is my assessment. ${'It weighs both ways. '.repeat(20)}`),
+          fauxText(
+            `Here is my assessment. ${'It weighs both ways. '.repeat(20)}${
+              last.content === 'ask last' ? '\n\n![diagram](/late-diagram.svg)' : ''
+            }`,
+          ),
           fauxToolCall('message', {
             to: 'user',
             text: `${last.content}: one decision before I go on.`,
@@ -158,10 +162,25 @@ it('brings the question card to the top of the view below the pinned strip', asy
   const { server, other, asked, browser } = await setup()
   await post(server, '/api/ui', { set: { 'shell.panel': 'todos', 'shell.panelOpen': true } })
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  let releaseImage!: () => void
+  const imageHeld = new Promise<void>((done) => {
+    releaseImage = done
+  })
+  await page.route('**/late-diagram.svg', async (route) => {
+    await imageHeld
+    await route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="140"><rect width="400" height="140" fill="#888"/></svg>',
+    })
+  })
   await page.goto(`${server.url}/?conversation=${other}`)
-  // From another conversation, then within the branch.
+  // From another conversation, then within the branch; the newest question also grows late above its card.
   for (const { id } of asked) {
     await page.locator(`[data-todo-question="${id}"] button`).click()
+    if (id === asked[1].id) {
+      await until(async () => !!(await measure(page, id)), 5_000)
+      releaseImage()
+    }
     expect(await drift(page, id)).toBeLessThan(4)
   }
 })
