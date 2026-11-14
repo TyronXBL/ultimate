@@ -12,6 +12,7 @@ import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/p
 import { git } from '../../lib/git.ts'
 import { needsRestart as restartNeeded } from '../../lib/layers.ts'
 import { liveTasks } from '../../lib/tasks.ts'
+import { lockfileInstalled } from '../../lib/packages.ts'
 import {
   commandNeedMiB,
   describeShort,
@@ -880,9 +881,19 @@ export function createLander(
             const needs = settings.checks.map((group) =>
               [group].flat().reduce((sum, check) => sum + commandNeedMiB(check.command), 0),
             )
+            // A setup install of the lockfile already installed in the checkout has nothing to do and needs no slot:
+            // measured at 3 s, 2 s of CPU and 112 MiB at its peak (#273712). One that changes the lockfile still
+            // claims it.
+            const installed = await lockfileInstalled(path)
             const need = Math.max(
               0,
-              ...setupCommands(projectSettings).map(commandNeedMiB),
+              ...setupCommands(projectSettings).map((command) =>
+                // Only a bare install with flags: one that names a package, runs a script (`install-test`) or is
+                // chained with another command keeps its need.
+                installed && /^\s*pnpm (install|i)(\s+--?[\w-]+(=\S+)?)*\s*$/.test(command)
+                  ? 0
+                  : commandNeedMiB(command),
+              ),
               ...needs,
             )
             const lastHeavy = needs.findLastIndex((groupNeed) => groupNeed > 0)

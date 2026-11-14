@@ -63,10 +63,11 @@ it('a long search neither fails nor delays host writes, and sees them', async ()
     }
     expect(await searching).toEqual([])
     // A scan on this thread would block for the whole search (984 ms of 1.2 s, measured in #214751): no write would
-    // land during it, or each would wait behind it.
+    // land during it, or each would wait behind it. The slowest single write is not held to a time: it is a
+    // synchronous node:sqlite call on this thread, and a busy 2-CPU CI runner paused one for 378 ms (#273712), as it
+    // once paused the loop for 159 ms in a 283 ms search (#265478).
     expect(writes.length).toBeGreaterThan(2)
     expect(writes.toSorted((a, b) => a - b)[writes.length >> 1]).toBeLessThan(20)
-    expect(Math.max(...writes)).toBeLessThan(250)
     // A write the host committed is found by the next search.
     expect(
       await searchChapter(

@@ -12,10 +12,22 @@ const read = (path: string) =>
 /** The lockfile `root` asks for: versions and patch hashes of every package. */
 export const wantedLockfile = (root: string) => read(join(root, 'pnpm-lock.yaml'))
 
+/** The lockfile `root` asks for and the one pnpm last installed there (`node_modules/.pnpm/lock.yaml`). */
+const lockfiles = async (root: string) => ({
+  wanted: await wantedLockfile(root),
+  installed: await read(join(root, 'node_modules/.pnpm/lock.yaml')),
+})
+
 /** Whether `pnpm-lock.yaml` differs from what pnpm last installed (`node_modules/.pnpm/lock.yaml`). */
 export async function installOwed(root: string) {
-  const wanted = await wantedLockfile(root)
-  return wanted !== undefined && wanted !== (await read(join(root, 'node_modules/.pnpm/lock.yaml')))
+  const { wanted, installed } = await lockfiles(root)
+  return wanted !== undefined && wanted !== installed
+}
+
+/** Whether `root` has a `pnpm-lock.yaml` and pnpm last installed exactly it: an install there has nothing to do. */
+export async function lockfileInstalled(root: string) {
+  const { wanted, installed } = await lockfiles(root)
+  return wanted !== undefined && wanted === installed
 }
 
 /**

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { execFile, execFileSync } from 'node:child_process'
@@ -36,6 +36,80 @@ afterEach(async () => {
   delete process.env.CI_GATE_API
   process.env.PATH = searchPath
 })
+
+/**
+ * A committed checkout for the lander's gate, and a `bin` folder for its search path with a `pnpm` that stands in for
+ * every pnpm command (the audit, the check, the suites, the PC's install): it logs `<args> in <folder name>`, read back
+ * by `calls`, and fails the subcommand `failing`.
+ */
+async function gateFixture(root: string, failing?: string) {
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  const log = join(root, 'calls')
+  await writeFile(
+    join(bin, 'pnpm'),
+    [
+      '#!/bin/bash',
+      `echo "$* in $(basename "$PWD")" >> ${log}`,
+      'echo "stub pnpm $1"',
+      ...(failing ? [`[[ $1 == ${failing} ]] && exit 1`] : []),
+      'exit 0',
+    ].join('\n'),
+    { mode: 0o755 },
+  )
+  const checkout = join(root, 'checkout')
+  await mkdir(checkout)
+  await git(checkout, 'init', '-q', '-b', 'main')
+  await writeFile(join(checkout, 'a.txt'), 'a\n')
+  await git(checkout, 'add', '.')
+  await git(checkout, 'commit', '-qm', 'first')
+  const sha = await git(checkout, 'rev-parse', 'HEAD')
+  const calls = async () =>
+    existsSync(log) ? (await readFile(log, 'utf8')).trim().split('\n') : []
+  return { bin, checkout, sha, log, calls }
+}
+
+/** Run the gate in `checkout` with `bin` first on the search path and GitHub's API at `api`: its exit code and output. */
+async function runGate(root: string, checkout: string, bin: string, api?: string) {
+  try {
+    const { stdout } = await run(
+      process.execPath,
+      [join(import.meta.dirname, '../../.ultimate/scripts/ci-gate.ts'), 'fork'],
+      {
+        cwd: checkout,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${searchPath}`,
+          ...(api ? { CI_GATE_API: api } : {}),
+          // No RAM floor in this home: the local suites are admitted at once.
+          HOME: join(root, 'home'),
+        },
+      },
+    )
+    return { code: 0, stdout, last: stdout.trimEnd().split('\n').at(-1) }
+  } catch (error) {
+    const { code, stdout } = error as { code: number; stdout: string }
+    return { code, stdout, last: stdout.trimEnd().split('\n').at(-1) }
+  }
+}
+
+/** The PC: a bare ci.git in its runner's home, reached by an `ssh` in `bin` that runs the real forced command there. */
+async function pcRunner(root: string, bin: string) {
+  const pcHome = join(root, 'pc')
+  await mkdir(pcHome)
+  await git(root, 'init', '-q', '--bare', join(pcHome, 'ci.git'))
+  await writeFile(
+    join(bin, 'ssh'),
+    [
+      '#!/bin/bash',
+      'while [[ $1 == -* ]]; do case $1 in -o|-p|-i) shift 2;; *) shift;; esac; done',
+      'shift',
+      `HOME=${pcHome} SSH_ORIGINAL_COMMAND="$*" exec ${join(import.meta.dirname, '../../.ultimate/ci-runner/ultimate-ci')}`,
+    ].join('\n'),
+    { mode: 0o755 },
+  )
+  return pcHome
+}
 
 const failed: Run = { id: 7, status: 'completed', conclusion: 'failure', html_url: 'https://run/7' }
 it.each<[string, Run[], boolean]>([
@@ -282,30 +356,81 @@ it('refuses an uncommitted checkout instead of testing the HEAD before it', asyn
   ).toBe(false)
 })
 
-it('runs the suites locally when GitHub did not start the jobs for billing, instead of failing the landing', async () => {
+const here = (...commands: string[]) => commands.map((command) => `${command} in checkout`)
+it.each<
+  [
+    string,
+    {
+      underWay: boolean
+      failing?: string
+      /** How the fallback banner starts, when GitHub gave no verdict. */
+      banner?: string
+      calls: string[]
+      code: number
+      last: (sha: string) => string
+    },
+  ]
+>([
+  [
+    'a run of the commit under way whose jobs GitHub did not start for billing: all four here, nothing pushed',
+    {
+      underWay: true,
+      banner:
+        'CI GATE FALLBACK: GitHub Actions did not start the jobs: The job was not started because recent account payments have failed',
+      calls: here('audit --audit-level high', 'check', 'test', 'test:e2e'),
+      code: 0,
+      last: () =>
+        'ci-gate: FALLBACK: check, audit, test and test:e2e passed on this machine (CI was not used; waited for the run under way, https://run/7)',
+    },
+  ],
+  [
+    'no run of the commit, its push refused: the audit and check before the push, after it only the suites',
+    {
+      underWay: false,
+      banner: 'CI GATE FALLBACK: pushing ci/',
+      calls: [...here('audit --audit-level high', 'check'), 'push', ...here('test', 'test:e2e')],
+      code: 0,
+      last: (sha) =>
+        `ci-gate: FALLBACK: check, audit, test and test:e2e passed on this machine (CI was not used; no CI run of ${sha.slice(0, 7)})`,
+    },
+  ],
+  [
+    'no run of the commit and a failing check: the gate fails without a push',
+    {
+      underWay: false,
+      failing: 'check',
+      calls: here('audit --audit-level high', 'check'),
+      code: 1,
+      last: () => 'ci-gate: pnpm check failed on this machine (exit 1)',
+    },
+  ],
+])('runs on this machine what no CI run covers: %s', async (_case, expected) => {
   const root = await temp('ultimate-ci-gate-')
-  const checkout = join(root, 'checkout')
-  await mkdir(checkout)
-  await git(checkout, 'init', '-q', '-b', 'main')
+  const { bin, checkout, sha, log, calls } = await gateFixture(root, expected.failing)
+  // GitHub's git side refuses every push, after noting it among the calls.
+  const github = join(root, 'github')
+  await mkdir(join(github, 'owner'), { recursive: true })
+  await git(root, 'init', '-q', '--bare', join(github, 'owner/ultimate.git'))
   await writeFile(
-    join(checkout, 'package.json'),
-    JSON.stringify({
-      name: 'p',
-      private: true,
-      scripts: { test: 'echo local test', 'test:e2e': 'echo local e2e' },
-    }),
+    join(github, 'owner/ultimate.git/hooks/pre-receive'),
+    `#!/bin/sh\necho push >> ${log}\nexit 1\n`,
+    { mode: 0o755 },
   )
-  await git(checkout, 'add', '.')
-  await git(checkout, 'commit', '-qm', 'first')
   await git(checkout, 'remote', 'add', 'fork', 'https://github.com/owner/ultimate.git')
+  await git(checkout, 'config', `url.${github}/.pushInsteadOf`, 'https://github.com/')
   await git(checkout, 'config', 'credential.helper', `!f() { echo password=${TOKEN}; }; f`)
-  // A run of the commit already under way, whose jobs GitHub refuses to start once the month's minutes are spent.
+  // A run of the commit already under way, whose jobs GitHub refuses to start once the month's minutes are spent; or
+  // no run of it at all.
   const api = createServer((request, response) => {
     const path = new URL(request.url!, 'http://api').pathname
     const ended = { id: 7, status: 'completed', conclusion: 'failure', html_url: 'https://run/7' }
     const body =
       path === '/repos/owner/ultimate/actions/runs'
-        ? { workflow_runs: [{ ...ended, status: 'in_progress', conclusion: null }] }
+        ? {
+            workflow_runs: expected.underWay
+              ? [{ ...ended, status: 'in_progress', conclusion: null }]
+              : [],
+          }
         : path === '/repos/owner/ultimate/actions/runs/7'
           ? ended
           : path === '/repos/owner/ultimate/actions/runs/7/jobs'
@@ -335,37 +460,24 @@ it('runs the suites locally when GitHub did not start the jobs for billing, inst
     response.end(JSON.stringify(body ?? { message: 'Not Found' }))
   })
   await new Promise<void>((done) => api.listen(0, '127.0.0.1', done))
-  const { stdout } = await run(
-    process.execPath,
-    [join(import.meta.dirname, '../../.ultimate/scripts/ci-gate.ts'), 'fork'],
-    {
-      cwd: checkout,
-      env: {
-        ...process.env,
-        CI_GATE_API: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
-        // No RAM floor in this home: the local suites are admitted at once.
-        HOME: join(root, 'home'),
-      },
-    },
+  const gated = await runGate(
+    root,
+    checkout,
+    bin,
+    `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
   )
   api.close()
-  expect(stdout).toContain(
-    'CI GATE FALLBACK: GitHub Actions did not start the jobs: The job was not started because recent account payments have failed',
-  )
-  expect(stdout).toContain('local test')
-  expect(stdout).toContain('local e2e')
-  expect(stdout).toContain('FALLBACK: local suites passed')
-  expect(stdout).not.toContain(TOKEN)
+  const banner = /CI GATE FALLBACK: .*/.exec(gated.stdout)?.[0]
+  expect(banner?.slice(0, expected.banner?.length)).toBe(expected.banner)
+  expect(await calls()).toEqual(expected.calls)
+  expect(gated.code).toBe(expected.code)
+  expect(gated.last).toBe(expected.last(sha))
+  expect(gated.stdout).not.toContain(TOKEN)
 })
 
-it('reuses a recent pass of the exact commit with its origin, without pushing or testing again', async () => {
+it('reuses a recent pass of the exact commit with its origin, without pushing, checking or testing again', async () => {
   const root = await temp('ultimate-ci-reuse-')
-  const checkout = join(root, 'checkout')
-  await mkdir(checkout)
-  await git(checkout, 'init', '-q', '-b', 'main')
-  await writeFile(join(checkout, 'a.txt'), 'a\n')
-  await git(checkout, 'add', '.')
-  await git(checkout, 'commit', '-qm', 'first')
+  const { bin, checkout, sha, calls } = await gateFixture(root)
   // No such host: a push would fail, so the gate can only pass by reusing.
   await git(checkout, 'remote', 'add', 'fork', 'https://github.com/owner/ultimate.git')
   await git(
@@ -375,7 +487,6 @@ it('reuses a recent pass of the exact commit with its origin, without pushing or
     'https://github.com/',
   )
   await git(checkout, 'config', 'credential.helper', `!f() { echo password=${TOKEN}; }; f`)
-  const sha = await git(checkout, 'rev-parse', 'HEAD')
   const finished = Date.now() - 60_000
   const asked: string[] = []
   const api = createServer((request, response) => {
@@ -404,19 +515,14 @@ it('reuses a recent pass of the exact commit with its origin, without pushing or
     response.end(JSON.stringify(body ?? { message: 'Not Found' }))
   })
   await new Promise<void>((done) => api.listen(0, '127.0.0.1', done))
-  const { stdout } = await run(
-    process.execPath,
-    [join(import.meta.dirname, '../../.ultimate/scripts/ci-gate.ts'), 'fork'],
-    {
-      cwd: checkout,
-      env: {
-        ...process.env,
-        CI_GATE_API: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
-        HOME: join(root, 'home'),
-      },
-    },
+  const { code, stdout, last } = await runGate(
+    root,
+    checkout,
+    bin,
+    `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
   )
   api.close()
+  expect(code).toBe(0)
   const line = stdout.split('\n').find((text) => text.startsWith('lander-reused: '))!
   expect(JSON.parse(line.slice('lander-reused: '.length))).toEqual({
     runner: 'GitHub Actions',
@@ -425,29 +531,41 @@ it('reuses a recent pass of the exact commit with its origin, without pushing or
     completedAt: new Date(new Date(finished).toISOString()).getTime(),
     seconds: 198,
   })
-  expect(stdout).toContain(`ci-gate: reused: ${sha.slice(0, 7)} passed CI 1 min ago`)
+  // The pass covered the check and the audit too (CI's first shard): nothing runs here.
+  expect(last).toBe(
+    `ci-gate: reused: GitHub Actions passed check, audit, test and test:e2e for ${sha.slice(0, 7)} 1 min ago, https://run/7`,
+  )
+  expect(await calls()).toEqual([])
   expect(asked[0]).toBe(`/repos/owner/ultimate/actions/runs?head_sha=${sha}&event=push`)
   expect(stdout).not.toContain('pushed ci/')
 })
 
+it('asks the PC for the check and the suites after the audit here, and checks nothing else here', async () => {
+  const root = await temp('ultimate-ci-gate-pc-')
+  const { bin, checkout, sha, calls } = await gateFixture(root)
+  await pcRunner(root, bin)
+  // No fork remote: no earlier run is found and GitHub is never asked.
+  await git(checkout, 'remote', 'add', 'pc', 'my-pc:ci.git')
+  const { code, last } = await runGate(root, checkout, bin)
+  expect(code).toBe(0)
+  expect(await calls()).toEqual([
+    'audit --audit-level high in checkout',
+    ...['install --frozen-lockfile --prefer-offline', 'check', 'test', 'test:e2e'].map(
+      (command) => `${command} in ${sha}`,
+    ),
+  ])
+  expect(last).toMatch(
+    new RegExp(
+      `^ci-gate: ran fresh \\(.+\\): my-pc passed check, test and test:e2e for ${sha.slice(0, 7)} in \\d+ s; audit passed here$`,
+    ),
+  )
+})
+
 it('runs CI on the PC runner first and delivers its failing tests without GitHub', async () => {
   const root = await temp('ultimate-ci-pc-')
-  // The PC: a bare ci.git in its runner's home, reached by an `ssh` that runs the real forced command there.
-  const pcHome = join(root, 'pc')
-  await mkdir(pcHome)
-  await git(root, 'init', '-q', '--bare', join(pcHome, 'ci.git'))
   const bin = join(root, 'bin')
   await mkdir(bin)
-  await writeFile(
-    join(bin, 'ssh'),
-    [
-      '#!/bin/bash',
-      'while [[ $1 == -* ]]; do case $1 in -o|-p|-i) shift 2;; *) shift;; esac; done',
-      'shift',
-      `HOME=${pcHome} SSH_ORIGINAL_COMMAND="$*" exec ${join(import.meta.dirname, '../../.ultimate/ci-runner/ultimate-ci')}`,
-    ].join('\n'),
-  )
-  await chmod(join(bin, 'ssh'), 0o755)
+  const pcHome = await pcRunner(root, bin)
   process.env.PATH = `${bin}:${searchPath}`
   // A project whose `test` suite fails one test the way Vitest reports it; it has no fork remote, so GitHub is never used.
   const checkout = join(root, 'checkout')
