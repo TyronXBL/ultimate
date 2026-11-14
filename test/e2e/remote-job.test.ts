@@ -59,14 +59,15 @@ it('sends a changed checkout, and nothing once a new file looks like a secret: u
   await writeFile(join(dir, 'new.ts'), 'export const one = 1\n')
   expect(await job()).toMatchObject({ status: { ran: false }, sent: true })
   // Untracked.
-  await writeFile(join(dir, '.env'), 'TOKEN=abc\n')
-  expect(await job()).toEqual({
+  const refused = {
     status: { ran: false, reason: 'new file .env looks like a secret' },
     sent: false,
-  })
+  }
+  await writeFile(join(dir, '.env'), 'TOKEN=abc\n')
+  expect(await job()).toEqual(refused)
   // Staged: no longer among the untracked files.
   await git('add', '.env')
-  expect((await job()).sent).toBe(false)
+  expect(await job()).toEqual(refused)
   // With the same content as a tracked file deleted beside it, which git would call a rename, not an addition.
   await git('rm', '-q', '--cached', '.env')
   await rm(join(dir, '.env'))
