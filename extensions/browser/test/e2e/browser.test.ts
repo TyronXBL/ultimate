@@ -71,9 +71,8 @@ it('times out a hung step, closes its page and keeps later calls working', async
     // CI said only that this call was an error, not which.
     expect((await drive([{ eval: 'document.title' }])).text).toContain('Step 1: OK \\"Hang\\"')
     // A busy renderer: the script never settles, and the page answers nothing else either. The step's own limit ends
-    // it, as its message says (the call's is four of them: 20s). No bound on the clock beside it, and no second hang
-    // on a promise that never settles, which the same limit ends and a page that still answers survives: each real
-    // wait here is a fixed part of a test that ran past 60 s on a busy CI shard (`49b8ece`).
+    // it, as its message says (the call's is four of them: 20s). One hang only: each is a fixed real wait in a test
+    // that ran past 60 s on a busy CI shard (`49b8ece`).
     const hung = await drive([{ eval: '1 + 1' }, { eval: 'for (;;) {}' }], 5000)
     expect(hung.text).toContain('Step 1: OK 2')
     expect(hung.text).toContain('Step 2: TimeoutError: eval timed out after 5s')
