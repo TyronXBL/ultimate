@@ -62,25 +62,23 @@ it('times out a hung step, closes its page and keeps later calls working', async
   const api = { output() {} } as unknown as ToolExecutionApi
   const url = 'data:text/html,<title>Hang</title>'
   const drive = async (steps: unknown[], timeoutMs?: number) => {
-    const started = Date.now()
     const result = await browser.execute({ url, steps, screenshot: false, timeoutMs }, api, context)
-    return { result, text: JSON.stringify(result.output), ms: Date.now() - started }
+    return { result, text: JSON.stringify(result.output) }
   }
   try {
     // The step limit also bounds the browser's launch: on a fresh CI runner the first call ran past 5 s before step 1,
-    // so launch the shared browser first with the default limit. 5 s per step leaves a busy 4-CPU shard room to load
-    // the page and still ends the hung step well inside the 15 s bound.
-    expect((await drive([{ eval: 'document.title' }])).result.isError).toBeFalsy()
-    for (const hang of ['new Promise(() => {})', 'for (;;) {}']) {
-      const hung = await drive([{ eval: '1 + 1' }, { eval: hang }], 5000)
-      expect(hung.result.isError).toBe(true)
-      expect(hung.text).toContain('Step 1: OK 2')
-      expect(hung.text).toContain('Step 2: TimeoutError: eval timed out after 5s')
-      expect(hung.ms).toBeLessThan(15_000)
-      const next = await drive([{ eval: 'document.title' }])
-      expect(next.result.isError).toBeFalsy()
-      expect(next.text).toContain('Step 1: OK \\"Hang\\"')
-    }
+    // so launch the shared browser first with the default limit. Its text is what a failure here shows: on `7629d0d`
+    // CI said only that this call was an error, not which.
+    expect((await drive([{ eval: 'document.title' }])).text).toContain('Step 1: OK \\"Hang\\"')
+    // A busy renderer: the script never settles, and the page answers nothing else either. The step's own limit ends
+    // it, as its message says (the call's is four of them: 20s). No bound on the clock beside it, and no second hang
+    // on a promise that never settles, which the same limit ends and a page that still answers survives: each real
+    // wait here is a fixed part of a test that ran past 60 s on a busy CI shard (`49b8ece`).
+    const hung = await drive([{ eval: '1 + 1' }, { eval: 'for (;;) {}' }], 5000)
+    expect(hung.text).toContain('Step 1: OK 2')
+    expect(hung.text).toContain('Step 2: TimeoutError: eval timed out after 5s')
+    expect(hung.result.isError).toBe(true)
+    expect((await drive([{ eval: 'document.title' }])).text).toContain('Step 1: OK \\"Hang\\"')
     // A selector that matches nothing reports Playwright's own error, naming what it waited for, once.
     const missing = await drive([{ click: 'text=Nowhere' }], 2000)
     expect(missing.result.isError).toBe(true)
