@@ -51,8 +51,8 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
         )}
       >
         <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
-          <Icon className={cn('size-3.5', color)} />
-          <span className={color}>{label}</span>
+          <Icon className={cn('size-3.5 shrink-0', color)} />
+          <span className={cn('shrink-0', color)}>{label}</span>
           <span className="text-muted-foreground">{meta}</span>
         </header>
         <div className="space-y-2 px-3 py-2.5">
