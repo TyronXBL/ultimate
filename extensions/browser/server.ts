@@ -101,6 +101,11 @@ const untilTimeoutMs = 300_000
 /** How long closing a context, or the browser after it, may take before it counts as wedged. */
 const closeTimeoutMs = 5_000
 /**
+ * How long the shared browser may go unused before it closes; the next call launches a fresh one, in about a second.
+ * Idle Chromium trees held 370-513 MiB for over a day on a host that must keep 3 GB free (#273712).
+ */
+const idleCloseMs = 5 * 60_000
+/**
  * Extra time for an operation Playwright times itself (click, fill, press, waitFor, goto, screenshot): its own timeout
  * error, which says what it waited for (no match, hidden, covered), then arrives before the backstop's bare one.
  */
@@ -213,8 +218,9 @@ async function failure(cause: unknown, page: Page, png: string | undefined) {
 
 export default function browserExtension(host: ExtensionHost) {
   const state = host.resource('browser', () => {
-    const resource: { launched?: Promise<Browser>; browser?: Browser } = {}
+    const resource: { launched?: Promise<Browser>; browser?: Browser; idle?: NodeJS.Timeout } = {}
     host.onClose(async () => {
+      clearTimeout(resource.idle)
       if (resource.launched) await (await resource.launched).close()
     })
     return resource
@@ -524,6 +530,7 @@ export default function browserExtension(host: ExtensionHost) {
         state.launched = launched
       }
       const browser = await within(setupMs, state.launched)
+      clearTimeout(state.idle)
       context.abortSignal?.throwIfAborted()
       isolated = await within(
         setupMs,
@@ -640,7 +647,22 @@ export default function browserExtension(host: ExtensionHost) {
       context.abortSignal?.removeEventListener('abort', abort)
       await close(isolated)
       proxy?.close()
+      closeWhenIdle()
     }
+  }
+
+  /** Closes the shared browser once no call has used it for `idleCloseMs`; a call still holding a context keeps it, and re-arms the timer when it ends. */
+  function closeWhenIdle() {
+    clearTimeout(state.idle)
+    state.idle = setTimeout(() => {
+      const browser = state.browser
+      if (!browser || browser.contexts().length > 0) return
+      state.launched = undefined
+      state.browser = undefined
+      void within(closeTimeoutMs, browser.close()).catch((reason: unknown) =>
+        host.notice(`Closing the idle browser failed: ${String(reason)}`),
+      )
+    }, idleCloseMs).unref()
   }
 
   /** Closes a call's context within a bounded time; a context that won't close takes the shared browser with it, so the next call launches a fresh one. */
