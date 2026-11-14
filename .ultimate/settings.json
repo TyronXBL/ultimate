@@ -29,5 +29,17 @@
       { "command": "node .ultimate/scripts/ci-gate.ts fork", "timeout": 1800 }
     ],
     "push": "fork"
+  },
+  "remoteJobs": {
+    "runner": "node .ultimate/scripts/remote-job.ts",
+    "commands": [
+      "pnpm check",
+      "pnpm check:changed",
+      "pnpm test",
+      "pnpm test:e2e",
+      "pnpm vitest run",
+      "pnpm exec vitest run",
+      "node scripts/tests-for.ts"
+    ]
   }
 }
