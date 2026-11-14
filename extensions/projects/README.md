@@ -1,45 +1,18 @@
-One list of every Ultimate project on this machine, and the way to start a stopped or new one from the title bar.
+A project switcher at the window's left edge: every Ultimate running on this machine, one click away.
 
-## Actions
+## How it works
 
-`list { null }` → `{ projects: LocalProject[]; remotes: RemoteProject[] }` (contract in `refs.ts`). `projects` comes
-from `host.projects()`: every home in `~/.ultimate/projects/` plus this one, with `root` when its `project.json` is
-there, `current` for this server, `url` (`http://127.0.0.1:<port>`) while its supervisor runs, `activeAt` the latest
-write to one of its top-level conversations, and `tailnet` while it runs and publishes itself there: this server's
-own address for the current project, else `https://<dns>:<port>` from the port its project registered in
-`~/.ultimate/tailscale.json`, while the server whose pid starts that entry's owner token runs (the registry keeps a
-project's port after it stops). The current project comes first, then the rest by name. `remotes` is the `remotes` user
-setting (`lib/remote.ts`), `{ machine, name, url }[]`.
+- **Rail** (`shell.rail`, on desktop and tablet; nothing on a phone): one row per running instance, in project order. It shows only while at least two projects run.
+  - Collapsed, the rail is one quiet column of colour, a swatch per project and no letters (`ProjectSwatch` from the sidebar). Ultimate's own family (`ultimate`, `ultimate-eval`, a branch checkout of it) is the brand purple; every other project takes a muted, cool hue (sage, teal, blue; no warm hues, so nothing reads as amber or red, and no violet, which stays Ultimate's), derived from the folder name alone (`colourOf` in the sidebar's `tile.tsx`, small and exported for other overviews), so a project keeps its colour on every instance and in the sidebar's header. Projects sharing a name stem (`ultimate`, `ultimate-eval`, `ultimate-fleet`) take neighbouring shades of one hue, and their adjacent swatches join into one strip with a gap before the next family. Other projects' swatches are slightly faded until hovered; the one this page shows is wider and full colour, ringed, with a brand bar on the edge. The swatch, its amber count and its working dot share the column's vertical axis.
+  - Hovering opens it over the app (272 px); the pin button keeps it open beside the app. Each row then shows the display name (`prettyName`), and under it the GitHub `owner/repo` with a lock when private, and the port. The pin is one value for every instance on this machine (`~/.ultimate/projects-rail.json`), so jumping keeps the rail as it was.
+  - On a page opened over the tailnet a row goes to the host the page came from, on that project's Tailscale port (`tailnetPort`, from the registry `~/.ultimate/tailscale.json`), since a loopback address means nothing there. A project not published on the tailnet shows dimmed, with no link. `links.ts` decides both from the page's host.
+  - A row is a plain link to the instance's `/`, which opens its @ultimate: a click goes there in this tab, mod-click or middle-click opens a new tab, Back returns. The old page stays until the new one paints (seconds while the target builds its web bundle), so a click pulses its swatch, says "opening…" and runs a thin brand bar along the window's top; a page restored by Back clears it.
+  - Live state, polled every 4 s while the tab is visible: an amber count of questions waiting for the user, else a pulsing brand dot while an agent works (questions outrank working; the two never show together). Folded, they sit on the swatch: amber is the only warm colour in the column, so a project waiting on you stands out. The footer sums it up (`1 for you · 2 working`).
+- **Another rail wins:** when any other enabled extension fills `shell.rail` (a fleet switcher of your own, say), this one renders nothing and stops polling, so the window never shows two rails.
 
-`start { root, create? }` → `LocalProject | { missing }`. `root` is an absolute folder, or `~/` for the user's home.
-When nothing is there it resolves `{ missing }` with the absolute path; `create: true` makes that folder first
-(`mkdir -p`, no `git init`: the new project's onboarding offers git), refusing a path inside this Ultimate's checkout,
-its project or `~/.ultimate` (every project's home and worktrees). An existing non-folder is refused. It resolves at once for
-a project that already runs, and otherwise starts Ultimate there and resolves once `list` reports it running,
-polling every 500 ms for up to 60 seconds. With the host's tailscale ready it waits up to 15 seconds more for the
-project's tailnet address, then resolves without one.
-A start that fails reports the tail of the child's log, kept in a file in the system temporary directory. Two starts
-of one folder share the first: the in-flight ones live in `host.resource('projects.starts')`.
+## Files
 
-## Starting a project
-
-Start runs `bin/ultimate.ts <root> --no-open`, the same supervisor a terminal start runs, detached, with `cwd` the
-folder and none of this server's `ULTIMATE_*` variables, so the child never adopts the host's home, port or
-generation. Only folders are started, and never this server's own project. A folder opened for the first time gets
-its home under `~/.ultimate/projects/` like any other, and its `.ultimate/` extensions, agents and settings stay off
-until the user chooses that project's setup. Starting an existing project is resuming it: its unfinished work,
-automations and conversations are as it left them. The child stays in this server's cgroup, under the systemd unit
-here, so stopping the service stops every project it started; start them from a terminal to keep them independent.
-
-## UI
-
-The title bar's project chip becomes one menu:
-
-- **Projects** lists this machine's projects with this one highlighted. A running one opens in this window: at its
-  port on this page's host when the page is on loopback, or at its tailnet address on a page opened from elsewhere.
-  One reachable neither way is disabled with the reason. A stopped one shows **Start**, which starts it and then opens
-  it; a quiet line says that starting resumes its unfinished work and automations.
-- **New or open folder…** (also in ⌘K) takes a path and starts Ultimate there, then opens it. A path with nothing
-  there asks "Create <path> and start a new project there?", and **Create** makes the folder and starts it.
-- **Previews** lists the `instance` previews of this host, on loopback pages only, and shows one in the frame as before.
-- **Other machines** opens the `remotes` in a new tab.
+- `server.ts`
+  - `list`, `{}` → `RunningProject[]` (`refs.ts`): the projects `host.projects()` finds running (their supervisor lock is held by a live process), each with its loopback URL; a branch checkout's name is `<project> #<id>`, so it shows and colours with its project. Each carries its `origin`'s GitHub `repo` (`{name, url, visibility?}`) once known: read in the background on first sight (`git`, then one `gh repo view`) and kept for the process, so a poll never waits on it. This instance's `busy` and `questions` come from its own conversations and open questions; every other instance's from its `status` action over loopback, waiting at most 1.5 s. One that does not answer in time is listed without them.
+  - `pin`, `{ pinned? }` → `{ pinned }`: the shared pin, written first when `pinned` is given.
+- `web.tsx`: the rail and the opening bar.

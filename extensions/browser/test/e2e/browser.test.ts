@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import type { ToolExecutionApi } from '@earendil-works/pi-durable'
 import { expect, it, vi } from 'vitest'
 import { context } from '../../../../server/harness.ts'
-import browserExtension from '../../server.ts'
+import browserExtension, { browserBinary } from '../../server.ts'
 import { chromiumStatus, MINIMUM_CHROMIUM } from '../../chromium-version.ts'
 import type { ExtensionHost } from '../../../../server/extensions.ts'
 import { groupAlive } from '../../../../lib/process-group.ts'
@@ -47,6 +47,13 @@ it('kills a browser that drops its connection and keeps running, without a notic
 
 it('times out a hung step, closes its page and keeps later calls working', async () => {
   const directory = await temp('ultimate-browser-timeout-')
+  // Under load a cold launch outlasted the call's 1 s timeoutMs and failed it before its first step.
+  // A launch slower than timeoutMs keeps that deterministic.
+  const slowChrome = join(directory, 'slow-chrome')
+  await writeFile(slowChrome, `#!/bin/sh\nsleep 1.5\nexec '${await browserBinary()}' "$@"\n`, {
+    mode: 0o755,
+  })
+  vi.stubEnv('ULTIMATE_CHROMIUM', slowChrome)
   const closers: (() => Promise<void>)[] = []
   const notices: string[] = []
   const host = {
@@ -66,16 +73,13 @@ it('times out a hung step, closes its page and keeps later calls working', async
     return { result, text: JSON.stringify(result.output) }
   }
   try {
-    // The step limit also bounds the browser's launch: on a fresh CI runner the first call ran past 5 s before step 1,
-    // so launch the shared browser first with the default limit. Its text is what a failure here shows: on `7629d0d`
-    // CI said only that this call was an error, not which.
-    expect((await drive([{ eval: 'document.title' }])).text).toContain('Step 1: OK \\"Hang\\"')
     // A busy renderer: the script never settles, and the page answers nothing else either. The step's own limit ends
-    // it, as its message says (the call's is four of them: 20s). One hang only: each is a fixed real wait in a test
-    // that ran past 60 s on a busy CI shard (`49b8ece`).
-    const hung = await drive([{ eval: '1 + 1' }, { eval: 'for (;;) {}' }], 5000)
+    // it, as its message says (the call's is four of them: 4s). One hang only: each is a fixed real wait in a test
+    // that ran past 60 s on a busy CI shard (`49b8ece`). This first call also launches the browser, slower than its
+    // limit, and each assertion is on the call's text, so a failure says what the call returned.
+    const hung = await drive([{ eval: '1 + 1' }, { eval: 'for (;;) {}' }], 1000)
     expect(hung.text).toContain('Step 1: OK 2')
-    expect(hung.text).toContain('Step 2: TimeoutError: eval timed out after 5s')
+    expect(hung.text).toContain('Step 2: TimeoutError: eval timed out after 1s')
     expect(hung.result.isError).toBe(true)
     expect((await drive([{ eval: 'document.title' }])).text).toContain('Step 1: OK \\"Hang\\"')
     // A selector that matches nothing reports Playwright's own error, naming what it waited for, once.
@@ -85,6 +89,7 @@ it('times out a hung step, closes its page and keeps later calls working', async
     expect(missing.text).toContain("waiting for locator('text=Nowhere')")
     expect(missing.text.split('Timeout 2000ms exceeded').length).toBe(2)
   } finally {
+    vi.unstubAllEnvs()
     for (const close of closers) await close()
     await removeTemp(directory)
   }

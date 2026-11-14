@@ -1,266 +1,147 @@
-/** Projects: lists this machine's Ultimate projects and starts a stopped or new one through its supervisor. */
-import { spawn } from 'node:child_process'
-import type { ChildProcess } from 'node:child_process'
-import { mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import { setTimeout as sleep } from 'node:timers/promises'
+/**
+ * Projects: the Ultimate instances running on this machine, from the host's project list (`host.projects()`), each
+ * with its live counts from its own `status` action, for the rail's project switcher.
+ */
+import { join } from 'node:path'
+import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineExtension } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
-import { remotes } from '../../lib/remote.ts'
+import { readJson, updateJson } from '../../lib/json-file.ts'
+import { githubRepo, readGithubRepo } from '../../lib/project-identity.ts'
+import type { GithubRepo } from '../../lib/project-identity.ts'
+import { postAction } from '../../lib/remote.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import type { ProjectInfo } from '../../server/project.ts'
-import { TailscaleApi } from '../tailscale/api.ts'
-import { ListAction, StartAction } from './refs.ts'
-import type { LocalProject } from './refs.ts'
+import { MessagesApi } from '../messages/api.ts'
+import { ListAction, PinAction } from './refs.ts'
+import type { RunningProject } from './refs.ts'
 
-/**
- * How long a start waits for the child to report its project running, how much longer for its tailnet address while
- * this server publishes one, and how often it looks.
- */
-const START_DEADLINE = 60_000
-const TAILNET_GRACE = 15_000
-const POLL = 500
+/** How long the list waits for another instance's counts; a slower one shows without them until the next poll. */
+const STATUS_WAIT = 1_500
 
-type ListHost = Pick<ExtensionHost, 'want' | 'userHome' | 'projects'>
-type StartHost = ListHost & Pick<ExtensionHost, 'projectRoot' | 'ultimateRoot' | 'resource'>
+type Counts = { busy: number; questions: number }
 
-/** Whether the process `pid` still runs. */
-function alive(pid: number) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    // EPERM: it runs under another user; anything else (ESRCH) means it is gone.
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-/**
- * Where the tailnet reaches each project root: this server's publication when its tailscale is ready, and the HTTPS
- * port that each project's own `tailscale` extension registered for its folder while the server that claimed it (the
- * pid that starts its owner token) runs. The registry keeps a project's port after it stops, so a reserved port alone
- * says nothing about whether it is served now.
- */
-async function tailnets(host: Pick<ExtensionHost, 'want' | 'userHome'>) {
-  const status = host.want(TailscaleApi)?.status()
-  const published = status?.state === 'ready' ? status.url : undefined
-  if (!published) return { byRoot: new Map<string, string>() }
-  let registry: { ports?: Record<string, { port: number; owner: string }> }
-  try {
-    registry = JSON.parse(await readFile(join(host.userHome, '.ultimate/tailscale.json'), 'utf8'))
-  } catch {
-    // Missing or unreadable, the registry names no address; the projects themselves still list and start.
-    return { published, byRoot: new Map<string, string>() }
-  }
-  const { hostname } = new URL(published)
+/** This instance's counts, as its own `status` action reports them. */
+async function own(host: ExtensionHost): Promise<Counts> {
   return {
-    published,
-    byRoot: new Map(
-      Object.entries(registry.ports ?? {})
-        .filter(([, { owner }]) => alive(Number(owner.split(':')[0])))
-        .map(([root, { port }]) => [root, `https://${hostname}:${port}`]),
-    ),
+    busy: host.conversations().filter((conversation) => conversation.busy).length,
+    questions: (await host.need(MessagesApi).openQuestions(context)).length,
   }
 }
 
-/** When anyone last wrote to one of a project's top-level conversations. */
-function activeAt(conversations: ProjectInfo['conversations']) {
-  return conversations.reduce<number | undefined>((latest, conversation) => {
-    for (const at of [conversation.inputAt, conversation.answerAt])
-      if (at !== undefined && (latest === undefined || at > latest)) latest = at
-    return latest
-  }, undefined)
-}
-
-/** A project as the switcher shows it; the tailnet address of the current one is this server's own. */
-function listed(item: ProjectInfo, addresses: Awaited<ReturnType<typeof tailnets>>): LocalProject {
-  const tailnet =
-    item.current && addresses.published
-      ? addresses.published
-      : item.root
-        ? addresses.byRoot.get(item.root)
-        : undefined
-  const active = activeAt(item.conversations)
-  return {
-    name: item.name,
-    ...(item.root ? { root: item.root } : {}),
-    current: item.current,
-    ...(item.running ? { url: item.running.url } : {}),
-    ...(item.running && tailnet ? { tailnet } : {}),
-    ...(active !== undefined ? { activeAt: active } : {}),
-  }
-}
-
-/** This machine's projects (this one first, then by name) and the user's remotes. */
-export async function list(host: ListHost) {
-  const addresses = await tailnets(host)
-  const projects = (await host.projects()).map((item) => listed(item, addresses))
-  return {
-    projects: projects.toSorted(
-      (a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name),
-    ),
-    remotes: await remotes(host),
-  }
-}
-
-/** The starts in flight, by root, so that a second start of the same project waits for the first. */
-const starts = (host: Pick<ExtensionHost, 'resource'>) =>
-  host.resource('projects.starts', () => new Map<string, Promise<LocalProject>>())
-
-/** Where `path` lands once its existing part is resolved: the real path of its nearest existing ancestor, then the rest. */
-async function landing(path: string): Promise<string> {
-  // A missing path is the answer here: resolve its parent instead (`/` always exists).
-  const real = await realpath(path).catch(() => undefined)
-  return real ?? join(await landing(dirname(path)), basename(path))
+/** Another instance's counts from its `status` action, or nothing when it does not answer in time. */
+async function counts(name: string, url: string, signal: AbortSignal) {
+  const status = (await postAction(
+    { url, label: name },
+    'status',
+    'status',
+    {},
+    AbortSignal.any([signal, AbortSignal.timeout(STATUS_WAIT)]),
+  ).catch(() => {
+    // Down, slow or without the status extension: the rail lists it without live state.
+    return undefined
+  })) as { busy?: unknown; questions?: { count?: unknown } } | undefined
+  const busy = status?.busy
+  const questions = status?.questions?.count
+  return typeof busy === 'number' && typeof questions === 'number' ? { busy, questions } : {}
 }
 
 /**
- * The folder `value` names, absolute (`~/` is the user's home; a relative path is refused), or `missing` with the path
- * to create when nothing is there. With `create` it makes that folder first, never inside this Ultimate's checkout,
- * its project or `~/.ultimate`, which holds every project's home and worktrees.
+ * Each project folder's GitHub repository, once known: read in the background on first sight (`git` here, then one
+ * `gh` call for its visibility) and kept for the process, so a poll never waits on the network.
  */
-async function folder(
-  host: Pick<ExtensionHost, 'userHome' | 'projectRoot' | 'ultimateRoot'>,
-  value: unknown,
-  create: boolean,
-): Promise<{ root: string } | { missing: string }> {
-  if (typeof value !== 'string' || value === '') throw new Error('Name the folder to open')
-  const expanded = value.startsWith('~/') ? join(host.userHome, value.slice(2)) : value
-  if (!isAbsolute(expanded)) throw new Error(`${value} is not an absolute path; use ~/ or /`)
-  const path = resolve(expanded)
-  // A missing folder is the answer here: it is created on request, or reported.
-  const existing = await realpath(path).catch(() => undefined)
-  if (existing) {
-    if (!(await stat(existing)).isDirectory()) throw new Error(`${value} is not a folder`)
-    return { root: existing }
+const repos = new Map<string, GithubRepo | null>()
+const reading = new Set<string>()
+function repoOf(root: string | undefined) {
+  if (!root) return undefined
+  if (!repos.has(root) && !reading.has(root)) {
+    reading.add(root)
+    // oxlint-disable-next-line typescript/no-floating-promises -- neither call rejects: githubRepo settles to undefined, readGithubRepo to the repository without its visibility.
+    void (async () => {
+      const key = await githubRepo(root)
+      repos.set(root, key ? await readGithubRepo(key) : null)
+      reading.delete(root)
+    })()
   }
-  if (!create) return { missing: path }
-  const target = await landing(path)
-  for (const reserved of [host.ultimateRoot, host.projectRoot, join(host.userHome, '.ultimate')]) {
-    const own = await landing(reserved)
-    if (target === own || target.startsWith(own + sep))
-      throw new Error(`Ultimate keeps its own files in ${reserved}; create the project elsewhere`)
-  }
-  await mkdir(path, { recursive: true })
-  return { root: await realpath(path) }
+  return repos.get(root) ?? undefined
 }
 
 /**
- * The child's environment: none of this process's `ULTIMATE_*` identity, which would make it reuse the host's home,
- * port or generation instead of the project's own.
+ * A branch's checkout (`<home>/worktrees/<id>`, as previews run) is named for its project and that conversation,
+ * `ultimate #586869`, as the sidebar heads it, so it shows and colours with its project rather than as a bare number.
  */
-const startEnv = (parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
-  Object.fromEntries(Object.entries(parent).filter(([key]) => !key.startsWith('ULTIMATE_')))
-
-/** What a start that failed reported: the tail of its log. */
-async function logTail(path: string) {
-  const lines = (await readFile(path, 'utf8').catch(() => ''))
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .slice(-10)
-  return lines.length ? lines.join('\n') : 'no output'
+function checkoutName(name: string, root: string | undefined) {
+  const worktree = /\/\.ultimate\/projects\/(.+)-[\da-f]{8}\/worktrees\/(\d+)$/.exec(root ?? '')
+  return worktree ? `${worktree[1]} #${worktree[2]}` : name
 }
 
-/** Start Ultimate in an already checked folder with its supervisor, and resolve once it lists as running. */
-async function launch(host: StartHost, root: string): Promise<LocalProject> {
-  const own = await realpath(host.projectRoot).catch(() => host.projectRoot)
-  if (root === own) throw new Error('This is the project this Ultimate runs; open another folder')
-  const addresses = await tailnets(host)
-  const running = (await host.projects()).find((item) => item.root === root && item.running)
-  if (running) return listed(running, addresses)
-  const log = join(tmpdir(), `ultimate-projects-${basename(root)}-${process.pid}-${Date.now()}.log`)
-  const output = await open(log, 'w')
-  let child: ChildProcess
-  try {
-    child = spawn(
-      process.execPath,
-      [join(host.ultimateRoot, 'bin/ultimate.ts'), root, '--no-open'],
-      {
-        cwd: root,
-        detached: true,
-        stdio: ['ignore', output.fd, output.fd],
-        env: startEnv(process.env),
-      },
-    )
-  } catch (error) {
-    await output.close()
-    throw new Error(`Cannot start Ultimate in ${root}: ${String(error)}`, { cause: error })
-  }
-  // Listen before yielding: an asynchronous spawn error without a listener would crash this server.
-  const ended: { reason?: string } = {}
-  child.on('exit', (code, signal) => {
-    ended.reason ??= signal ?? `exited with code ${code}`
+/** Each project's port on the tailnet by its root, from the registry the tailscale extension keeps. */
+async function tailnetPorts(host: ExtensionHost) {
+  type Registry = { ports?: Record<string, { port?: unknown }> }
+  const registry = await readJson<Registry>(
+    join(host.userHome, '.ultimate', 'tailscale.json'),
+    {},
+  ).catch((): Registry => {
+    // Without a readable registry nothing is published on the tailnet: instances are reached over loopback only.
+    return {}
   })
-  child.on('error', (error) => {
-    ended.reason ??= String(error)
-  })
-  // The supervisor outlives this call and this server; its own log is in the project home once it runs.
-  child.unref()
-  await output.close()
-  const deadline = Date.now() + START_DEADLINE
-  let started: ProjectInfo | undefined
-  while (!started) {
-    if (ended.reason)
-      throw new Error(
-        `Ultimate in ${root} ${ended.reason} before it started:\n${await logTail(log)}`,
-      )
-    if (Date.now() >= deadline)
-      throw new Error(
-        `Ultimate in ${root} did not start within ${START_DEADLINE / 1000} seconds:\n${await logTail(log)}`,
-      )
-    started = (await host.projects()).find((project) => project.root === root && project.running)
-    if (!started) await sleep(POLL)
-  }
-  // A new folder publishes on the tailnet a moment after it runs; without that it still opens on this machine.
-  const grace = Date.now() + TAILNET_GRACE
-  for (;;) {
-    const live = (await host.projects()).find((project) => project.root === root && project.running)
-    if (ended.reason || !live)
-      throw new Error(
-        `Ultimate in ${root} ${ended.reason ?? 'stopped'} right after it started:\n${await logTail(log)}`,
-      )
-    const now = await tailnets(host)
-    if (!now.published || now.byRoot.has(root) || Date.now() >= grace) return listed(live, now)
-    await sleep(POLL)
-  }
+  const ports: Record<string, number> = {}
+  for (const [root, entry] of Object.entries(registry.ports ?? {}))
+    if (typeof entry?.port === 'number') ports[root] = entry.port
+  return ports
 }
 
-/**
- * Start Ultimate in `root` (`~/` is the user's home), sharing a start already in flight for the same folder. A missing
- * folder is created with `create`, and otherwise reported as `missing`.
- */
-export async function startProject(
-  host: StartHost,
-  root: unknown,
-  create = false,
-): Promise<LocalProject | { missing: string }> {
-  const found = await folder(host, root, create)
-  if ('missing' in found) return found
-  const path = found.root
-  const pending = starts(host)
-  const shared = pending.get(path)
-  if (shared) return shared
-  const promise = launch(host, path)
-  pending.set(path, promise)
-  const settled = () => {
-    pending.delete(path)
-  }
-  // Both outcomes settle the same way: the next start of this folder runs again.
-  void promise.then(settled, settled)
-  return promise
+export async function list(host: ExtensionHost, signal: AbortSignal): Promise<RunningProject[]> {
+  const tailnet = await tailnetPorts(host)
+  return Promise.all(
+    (await host.projects()).flatMap(({ name, root, running, current }) => {
+      // This server answers whether or not a supervisor wrote its port into the lock (a preview's has none).
+      const url = current ? host.system().process.url : running?.url
+      if (!url) return []
+      return [
+        (async () => {
+          const repo = repoOf(root)
+          return {
+            name: checkoutName(name, root),
+            url,
+            current,
+            ...(repo && { repo: { name: repo.name, url: repo.url, visibility: repo.visibility } }),
+            ...(root && tailnet[root] ? { tailnetPort: tailnet[root] } : {}),
+            ...(current ? await own(host) : await counts(name, url, signal)),
+          }
+        })(),
+      ]
+    }),
+  )
 }
 
-export default function projectsExtension(host: Pick<ExtensionHost, 'want'>) {
-  // Tailscale is optional and resolved where it is called; declared here so the catalogue lists it.
-  host.want(TailscaleApi)
+/** The rail's pin, one file for every instance on this machine, so jumping keeps the rail as it was. */
+const pinPath = (host: ExtensionHost) => join(host.userHome, '.ultimate', 'projects-rail.json')
+const readPin = async (path: string) => {
+  const value = await readJson<{ pinned?: unknown }>(path, {})
+  return { pinned: value.pinned === true }
+}
+
+export default function projects(host: ExtensionHost) {
+  // Resolved where it is called; declared here so the catalogue lists it.
+  host.need(MessagesApi)
   return defineExtension({ name: 'projects' })
 }
 
+/** The rail polls both: the trace counts their repeats instead of writing each. */
+export const pollActions = ['list', 'pin']
+
 export const actions = {
-  list: implementAction(ListAction, (_args, { host }) => list(host)),
-  start: implementAction(StartAction, async (args, { host }) => {
-    const named = args && typeof args === 'object' && !Array.isArray(args) ? args : {}
-    return startProject(host, named.root, named.create === true)
+  list: implementAction(ListAction, (_args, { host, signal }) => list(host, signal)),
+  pin: implementAction(PinAction, async (args, { host }) => {
+    const pinned =
+      args && typeof args === 'object' && !Array.isArray(args) ? args.pinned : undefined
+    if (pinned !== undefined && typeof pinned !== 'boolean')
+      throw new Error('pinned must be a boolean')
+    const path = pinPath(host)
+    if (pinned !== undefined)
+      await updateJson(path, readPin, (value) => {
+        value.pinned = pinned
+      })
+    return readPin(path)
   }),
 }

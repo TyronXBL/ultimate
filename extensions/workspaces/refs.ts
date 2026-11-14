@@ -6,6 +6,7 @@ import { actionRef, docRef } from '../../shared/extension-api.ts'
 import { defineEvent } from '../../shared/events.ts'
 import type {
   FailingTest,
+  GithubRepo,
   Unchecked,
   WorkspaceDisk,
   WorkspaceIndex,
@@ -60,6 +61,9 @@ export const IsolationAction = actionRef<null, Isolation>('workspaces', 'isolati
 })
 /** No arguments → `github.com/<owner>/<repo>` of the project's `origin`, or null off GitHub. */
 export const GithubAction = actionRef<null, string | null>('workspaces', 'github')
+export type { GithubRepo }
+/** No arguments → the repository landings go to on GitHub with its visibility, or null off GitHub. */
+export const RepoAction = actionRef<null, GithubRepo | null>('workspaces', 'repo')
 
 export type LandedData = {
   /** The submission's id in the lander's queue. */

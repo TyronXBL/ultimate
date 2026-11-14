@@ -1,9 +1,10 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { afterEach } from 'vitest'
+import { LiveDoc, type ConversationId } from '@earendil-works/pi-durable'
 import type { Automation } from '../../types.ts'
 import { context } from '../../../../server/harness.ts'
-import { fauxServer, temp } from '../../../../test/helpers.ts'
+import { fauxServer, temp, until } from '../../../../test/helpers.ts'
 
 type Server = Awaited<ReturnType<typeof fauxServer>>
 /** The test's server, closed when it ends; a test that reopens one tracks the new server here. */
@@ -51,6 +52,17 @@ export async function writeRun(folder: string, script: string) {
   await mkdir(join(folder, 'state'), { recursive: true })
   await writeFile(join(folder, 'run'), `#!/bin/sh\n${script}\n`)
   await chmod(join(folder, 'run'), 0o700)
+}
+/**
+ * Waits until a watcher's first run has failed. These tests queue no model answers, so it fails; an input that arrives
+ * while it still runs waits behind the failure for another input and never starts (Pi's default `afterFailedRun`).
+ * Without this wait, the next delivery depended on how fast earlier commits ran (#587482: PR #161 made them slower).
+ */
+export async function failed(app: Server, id: number | undefined) {
+  await until(async () => {
+    const live = await app.harness.snapshot(LiveDoc, id as ConversationId, context)
+    return live?.run === undefined && live?.runFailure !== undefined
+  })
 }
 export function call(app: Server, action: string, id: string) {
   return app.extensions.invoke('automations', action, { id }, new AbortController().signal)
