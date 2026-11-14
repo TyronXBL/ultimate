@@ -54,10 +54,11 @@ const primaries = {
   'down-results': { engines: ['github'], down: ['yahoo', 'brave'] },
 }
 
-// primary, key, cap (true: used up), Tavily, outcome, fallback, Tavily calls, results shown, cause in the text
+// primary, key (unreadable: a broken secret store), cap (true: used up), Tavily, outcome, fallback, Tavily calls,
+// results shown, cause in the text
 const table: [
   keyof typeof primaries,
-  boolean,
+  boolean | 'unreadable',
   boolean | 'corrupt',
   'ok' | 'empty' | 'error',
   string,
@@ -68,6 +69,17 @@ const table: [
 ][] = [
   ['results', false, false, 'error', 'good', undefined, 0, 1, undefined],
   ['empty', false, false, 'error', 'unknown-empty', 'not-configured', 0, 0, 'not configured'],
+  [
+    'empty',
+    'unreadable',
+    false,
+    'ok',
+    'unknown-empty',
+    'secrets-unreadable',
+    0,
+    0,
+    'secret store could not be read',
+  ],
   ['empty', true, false, 'ok', 'fallback', 'answered', 1, 10, undefined],
   ['empty', true, false, 'empty', 'empty', 'no-results', 1, 0, undefined],
   ['empty', true, false, 'error', 'unknown-empty', 'failed', 1, 0, 'HTTP 503'],
@@ -99,7 +111,9 @@ it.each(table)(
     const userHome = await temp()
     homes.push(userHome)
     await mkdir(join(userHome, '.ultimate'))
-    if (key) await writeSecret(userHome, 'TAVILY_API_KEY', 'test-key')
+    if (key === 'unreadable')
+      await writeFile(join(userHome, '.ultimate/secrets.json'), 'invalid', { mode: 0o600 })
+    else if (key) await writeSecret(userHome, 'TAVILY_API_KEY', 'test-key')
     if (cap === 'corrupt')
       await writeFile(join(userHome, '.ultimate/tavily-budget.sqlite'), 'invalid')
     if (cap === true) {
