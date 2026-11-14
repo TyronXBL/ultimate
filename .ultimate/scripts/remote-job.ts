@@ -28,25 +28,15 @@ function looksLikeSecret(filePath: string): boolean {
 async function git(
   cwd: string,
   args: string[],
-  env: NodeJS.ProcessEnv = process.env,
+  options: { env?: NodeJS.ProcessEnv; trim?: boolean } = {},
 ): Promise<string> {
   const { stdout } = await execFileAsync('git', args, {
     cwd,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...env, GIT_TERMINAL_PROMPT: '0' },
+    env: { ...(options.env ?? process.env), GIT_TERMINAL_PROMPT: '0' },
   })
-  return stdout.trim()
-}
-
-async function gitRaw(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-  })
-  return stdout
+  return options.trim === false ? stdout : stdout.trim()
 }
 
 function writeStatus(statusPath: string, payload: Record<string, unknown>) {
@@ -74,7 +64,9 @@ async function main() {
   }
 
   // Fail closed before snapshotting if any untracked file looks like a secret or is larger than 5 MB.
-  const untrackedRaw = await gitRaw(cwd, ['ls-files', '--others', '--exclude-standard', '-z'])
+  const untrackedRaw = await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z'], {
+    trim: false,
+  })
   for (const file of untrackedRaw.split('\0')) {
     if (!file) continue
     if (looksLikeSecret(file)) failNoResult(statusPath, `untracked ${file} looks like a secret`)
@@ -107,19 +99,21 @@ async function main() {
   try {
     if (existsSync(realIndex)) copyFileSync(realIndex, tempIndex)
     const snapshotEnv: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tempIndex }
-    await git(cwd, ['add', '-A'], snapshotEnv)
-    const tree = await git(cwd, ['write-tree'], snapshotEnv)
+    await git(cwd, ['add', '-A'], { env: snapshotEnv })
+    const tree = await git(cwd, ['write-tree'], { env: snapshotEnv })
     const headTree = await git(cwd, ['rev-parse', 'HEAD^{tree}'])
     const headSha = await git(cwd, ['rev-parse', 'HEAD'])
     if (tree === headTree) {
       sha = headSha
     } else {
       sha = await git(cwd, ['commit-tree', tree, '-p', headSha, '-m', 'remote job snapshot'], {
-        ...process.env,
-        GIT_AUTHOR_NAME: 'Ultimate',
-        GIT_AUTHOR_EMAIL: 'ultimate@example.com',
-        GIT_COMMITTER_NAME: 'Ultimate',
-        GIT_COMMITTER_EMAIL: 'ultimate@example.com',
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Ultimate',
+          GIT_AUTHOR_EMAIL: 'ultimate@example.com',
+          GIT_COMMITTER_NAME: 'Ultimate',
+          GIT_COMMITTER_EMAIL: 'ultimate@example.com',
+        },
       })
     }
   } finally {
@@ -128,8 +122,20 @@ async function main() {
     cleanupTempIndex()
   }
 
+  // `scripts/changes.ts` (used by `pnpm check:changed` and `scripts/tests-for.ts`) runs `git merge-base HEAD main`,
+  // so push local `main` alongside the snapshot when the repo has it (#281756).
+  const hasMain = await git(cwd, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).then(
+    () => true,
+    // Repo has no local `main` branch (e.g. a standalone fixture); skip pushing it.
+    () => false,
+  )
+  const pushRefs = [
+    `${sha}:refs/heads/job/${sha}`,
+    ...(hasMain ? ['+refs/heads/main:refs/heads/main'] : []),
+  ]
+
   try {
-    await execFileAsync('git', ['push', '-q', `${host}:ci.git`, `${sha}:refs/heads/job/${sha}`], {
+    await execFileAsync('git', ['push', '-q', `${host}:ci.git`, ...pushRefs], {
       cwd,
       timeout: PUSH_TIMEOUT_MS,
       killSignal: 'SIGKILL',

@@ -230,7 +230,8 @@ Read-only background jobs on the VPS (such as `pnpm check:changed` or targeted `
 first via `ssh my-pc job <sha> <base64-cmd>`, falling back to the VPS when the PC gives no result.
 
 1. The VPS snapshots the worktree (including tracked edits and non-secret, non-ignored untracked files up to 5 MB)
-   without touching the local index or `HEAD`, and pushes it to `refs/heads/job/<sha>` in `~/ci.git`.
+   without touching the local index or `HEAD`, and pushes it to `refs/heads/job/<sha>` in `~/ci.git` (along with
+   `refs/heads/main` when present, so `pnpm check:changed` and `scripts/tests-for.ts` can diff against `main`).
 2. `ultimate-ci job` acquires `run.lock` (shared with `run`; busy returns exit 75 so the VPS runs locally), checks out
    `<sha>` in a fresh worktree, and installs with `pnpm install --frozen-lockfile --prefer-offline --ignore-scripts`.
 3. It decodes the command and runs it in its own session (`setsid bash -c`), streaming output back with
