@@ -17,8 +17,10 @@ import {
   describeWait,
   enterSlot,
   keepHeld,
+  releaseSlot,
   SLOT_POLL_MS,
   slotLimits,
+  slotWait,
   thisProcess,
 } from '../../lib/slot.ts'
 import type { SlotClaim } from '../../lib/slot.ts'
@@ -196,19 +198,20 @@ async function admitted(command: string[]) {
     label: command.join(' '),
     from: `the lander's CI gate in ${basename(cwd)}`,
   }
-  let ramSince: number | undefined
-  let pressureSince: number | undefined
+  let waited: { ramSince?: number; pressureSince?: number } = {}
   for (let polls = 0; ; polls++) {
+    const { pressureSince } = waited
     const entered = await enterSlot(claim, { limits, need, pressureSince, start: thisProcess })
     if (entered.kind === 'started') return keepHeld(claim)
-    ramSince = entered.kind === 'ram' ? (ramSince ?? Date.now()) : undefined
-    pressureSince = entered.kind === 'cpu' ? entered.pressureSince : undefined
-    if (ramSince !== undefined && Date.now() - ramSince > RAM_WAIT_MS) {
+    const wait = slotWait(entered, waited, Date.now(), RAM_WAIT_MS)
+    if (wait.kind === 'gave-up') {
+      await releaseSlot(claim.id)
       log(
         `not enough RAM for ${command.join(' ')} after ${RAM_WAIT_MS / 60_000} min: ${describeWait(entered)}`,
       )
       return undefined
     }
+    waited = wait.waited
     // A line a minute: the lander stops a check after 2 min without output.
     if (polls % (60_000 / SLOT_POLL_MS) === 0) log(`${command.join(' ')}: ${describeWait(entered)}`)
     await sleep(SLOT_POLL_MS)
