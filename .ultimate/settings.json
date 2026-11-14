@@ -23,11 +23,7 @@
     }
   },
   "lander": {
-    "checks": [
-      { "command": "pnpm check", "timeout": 300 },
-      { "command": "pnpm audit --audit-level high", "timeout": 120 },
-      { "command": "node .ultimate/scripts/ci-gate.ts fork", "timeout": 1800 }
-    ],
+    "checks": [{ "command": "node .ultimate/scripts/ci-gate.ts fork", "timeout": 2220 }],
     "push": "fork"
   }
 }
