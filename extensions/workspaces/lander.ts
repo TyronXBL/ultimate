@@ -888,7 +888,7 @@ export function createLander(
               0,
               ...setupCommands(projectSettings).map((command) =>
                 // Only an install on its own: one chained with another command keeps that command's need.
-                installed && /^\s*pnpm (install|i)\b[^;&|]*$/.test(command)
+                installed && /^\s*pnpm (install|i)\b[^;&|\n`$]*$/.test(command)
                   ? 0
                   : commandNeedMiB(command),
               ),
