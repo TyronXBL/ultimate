@@ -59,21 +59,37 @@ import {
 } from '../../lib/slot.ts'
 import type { SlotClaim, SlotLimits } from '../../lib/slot.ts'
 import { describeOom, jobScope, readUsage, shellWords } from '../../lib/job-scope.ts'
+import { readRemoteStatus, REMOTE_ENV, remoteEligible, remoteRunner } from '../../lib/remote-job.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { liveTasks } from '../../lib/tasks.ts'
-import type { BackgroundResult } from './refs.ts'
+import { describeWhere } from './where.ts'
+import type { BackgroundResult, RanWhere } from './refs.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import type { UnderwaySource } from '../conversations/api.ts'
 
 type Input = { to: number; cwd: string; command: string; timeout: number; home: string }
+/** The project's remote runner on `host` gave no result for this command (`reason`), so it runs here. */
+type Unavailable = { host: string; reason: string }
 type Checkpoint =
-  | { phase: 'start' }
+  | { phase: 'start'; unavailable?: Unavailable }
+  /**
+   * The project's remote runner (`lib/remote-job.ts`) runs it on `host`: a light process here, outside the queue. It ends
+   * in a result when the runner says the command ran, and back at `start` with `unavailable` when it says anything else.
+   */
+  | { phase: 'remote'; pid: number; began: number; host: string }
   /**
    * Waits since `since`: a queued command in line, `ramSince` since it is next but RAM is short, `pressureSince` since it
    * is next but waits for load the queue does not cause; a light one for RAM above the floor. `waiting` says why, for
    * the Tasks panel.
    */
-  | { phase: 'wait'; since: number; ramSince?: number; pressureSince?: number; waiting?: string }
+  | {
+      phase: 'wait'
+      since: number
+      ramSince?: number
+      pressureSince?: number
+      waiting?: string
+      unavailable?: Unavailable
+    }
   /**
    * Runs; a queued command is in the queue as `identity` (its leader's start time), after `queued` ms in line. A heavy
    * one holds the slot; an unknown one (its text names nothing heavy) holds it as `observed` says. `forced` says it
@@ -91,6 +107,7 @@ type Checkpoint =
         /** Why the queue ends it: decided and recorded at one look, done at the next. */
         stopping?: string
       }
+      unavailable?: Unavailable
     }
   | { phase: 'deliver'; result: BackgroundResult }
 
@@ -122,6 +139,7 @@ const paths = (task: { id: number; input: Input }) => {
     log: `${base}.log`,
     status: `${base}.status`,
     usage: `${base}.usage`,
+    remote: `${base}.remote`,
   }
 }
 /** The exit code the leader recorded, or undefined while it has not. */
@@ -186,8 +204,26 @@ const slotId = (task: { id: number; input: Input }) => `${task.input.home}:backg
 /** Whether a command goes through the heavy-work queue: a heavy one, or any with CPU admission on. */
 const queues = (need: number, limits: SlotLimits) => need > 0 || limits.cpu !== undefined
 
-function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'>) {
+/**
+ * Stop a command's whole group through the pid file that proves it ours, which goes with it; what it returns goes on the
+ * card. A leader killed from outside proves nothing any more, and a group id may since name another group: nothing is
+ * signalled, the card says so.
+ */
+const stopJob = (pid: number, pidFile: string, queued: boolean) =>
+  stopGroup(pid, { pidFile }).then(
+    async () =>
+      groupAlive(pid)
+        ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
+        : await survivors(pid, queued),
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  )
+
+function createRun(
+  host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot' | 'projectSettings'>,
+) {
   const from = (to: number) => `#${to} in ${basename(host.projectRoot)}`
+  /** This machine's remote runner for the project, when it has one. */
+  const runner = async () => remoteRunner(host.userHome, await host.projectSettings())
   const claimOf = (task: { id: number; input: Input }, at: number): SlotClaim => ({
     id: slotId(task),
     kind: commandNeedMiB(task.input.command) ? 'heavy' : 'unknown',
@@ -214,29 +250,54 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     const left = await readPidFile(files.pid)
     if (left) await stopGroup(left, { pidFile: files.pid })
     const scope = await jobScope(need, files.usage)
-    const spawn = () => {
-      const group = spawnGroup(
-        'nice',
-        ['-n', '10', '/bin/sh', '-c', leader(shellWords(scope ?? []))],
-        {
-          cwd: task.input.cwd,
-          pidFile: files.pid,
-          env: {
-            ...process.env,
-            BACKGROUND_COMMAND: task.input.command,
-            BACKGROUND_LOG: files.log,
-            BACKGROUND_STATUS: files.status,
-            // What it starts belongs to its place: a nested heavy job never queues behind it.
-            ...(queues(need, limits) && { [SLOT_ENV]: slotId(task) }),
-          },
+    /** Start `command` under a leader, in `scoped` (a job scope as shell words, or none), with `env` added. */
+    const start = (command: string, scoped: string, env: Record<string, string>) => {
+      const group = spawnGroup('nice', ['-n', '10', '/bin/sh', '-c', leader(scoped)], {
+        cwd: task.input.cwd,
+        pidFile: files.pid,
+        env: {
+          ...process.env,
+          BACKGROUND_COMMAND: command,
+          BACKGROUND_LOG: files.log,
+          BACKGROUND_STATUS: files.status,
+          ...env,
         },
-      )
+      })
       if (!group.child.pid) throw new Error('Could not start the background command')
       return group.child.pid
     }
+    const spawn = () =>
+      start(
+        task.input.command,
+        shellWords(scope ?? []),
+        // What it starts belongs to its place: a nested heavy job never queues behind it.
+        queues(need, limits) ? { [SLOT_ENV]: slotId(task) } : {},
+      )
+    const { unavailable } = checkpoint
     await mkdir(join(task.input.home, 'background'), { recursive: true })
     await rm(files.status, { force: true })
     await rm(files.usage, { force: true })
+    // The project's remote runner first, once: it only sends the checkout and relays the output, so it starts at once,
+    // outside the queue and RAM admission. A command back from it (`unavailable`) runs here like any other.
+    const remote = checkpoint.phase === 'start' && !unavailable ? await runner() : undefined
+    if (remote && remoteEligible(task.input.command, task.input.cwd, remote.commands)) {
+      await rm(files.remote, { force: true })
+      const began = runtime.now()
+      const pid = start(remote.runner, '', {
+        [REMOTE_ENV.host]: remote.host,
+        [REMOTE_ENV.command]: task.input.command,
+        [REMOTE_ENV.status]: files.remote,
+      })
+      await runtime.commit(
+        () => ({
+          status: 'sleeping',
+          until: began + pollMs(0),
+          checkpoint: { phase: 'remote', pid, began, host: remote.host },
+        }),
+        ctx,
+      )
+      return
+    }
     const notStarted = async (waited: number, note: string) =>
       deliver({
         command: task.input.command,
@@ -256,13 +317,23 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         ? {
             status: 'sleeping' as const,
             until: now + pollMs(0),
-            checkpoint: { phase: 'poll' as const, pid: spawn(), began: now },
+            checkpoint: {
+              phase: 'poll' as const,
+              pid: spawn(),
+              began: now,
+              ...(unavailable && { unavailable }),
+            },
           }
         : now - since < RAM_WAIT_MS
           ? {
               status: 'sleeping' as const,
               until: now + RAM_POLL_MS,
-              checkpoint: { phase: 'wait' as const, since, waiting: describeShort(short) },
+              checkpoint: {
+                phase: 'wait' as const,
+                since,
+                waiting: describeShort(short),
+                ...(unavailable && { unavailable }),
+              },
             }
           : await notStarted(now - since, `Not enough RAM: ${describeShort(short)}.`)
       await runtime.commit(() => next, ctx)
@@ -300,6 +371,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
               forced: `It ${describeForced(entered.forced)}.`,
             }),
           },
+          ...(unavailable && { unavailable }),
         },
       }
     else {
@@ -319,6 +391,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             since,
             ...wait.waited,
             waiting: describeWait(entered, now),
+            ...(unavailable && { unavailable }),
           },
         }
     }
@@ -331,21 +404,74 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
     phases: {
       start: begin,
       wait: begin,
-      poll: async (task, runtime, ctx) => {
-        const { pid, began, slot } = task.state.checkpoint
+      remote: async (task, runtime, ctx) => {
+        const { pid, began, host: on } = task.state.checkpoint
         const files = paths(task)
-        /**
-         * Stop the whole group through the pid file that proves it ours, which goes with it. A leader killed from outside
-         * proves nothing any more, and a group id may since name another group: nothing is signalled, the card says so.
-         */
-        const stop = () =>
-          stopGroup(pid, { pidFile: files.pid }).then(
-            async () =>
-              groupAlive(pid)
-                ? `Its leader was stopped from outside, so group ${pid} was not stopped; check what still runs in it with ps -eo pid,pgid,lstart,args before stopping anything.`
-                : await survivors(pid, slot !== undefined),
-            (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        const now = runtime.now()
+        const code = await exitCode(files.status)
+        const late = code === undefined && now - began >= task.input.timeout * 1000
+        if (code === undefined && !late && groupAlive(pid)) {
+          await runtime.commit(
+            () => ({
+              status: 'sleeping',
+              until: now + pollMs(now - began),
+              checkpoint: task.state.checkpoint,
+            }),
+            ctx,
           )
+          return
+        }
+        // The runner ended, ran out of time or was lost: what is left of its group stops before anything else starts.
+        const note = await stopJob(pid, files.pid, false)
+        const status = late ? undefined : await readRemoteStatus(files.remote)
+        const ran = status?.ran && code !== undefined
+        const where: RanWhere = {
+          kind: 'remote',
+          host: on,
+          ...(status?.ran && {
+            timings: {
+              transferSeconds: status.transferSeconds,
+              setupSeconds: status.setupSeconds,
+              cpuSeconds: status.cpuSeconds,
+            },
+          }),
+        }
+        // Only a runner that says the command ran gives its result; the time limit is the command's, used up there.
+        // Anything else is no result, and the command runs here: nothing it did there reached this machine.
+        const next =
+          ran || late
+            ? deliver({
+                command: task.input.command,
+                cwd: task.input.cwd,
+                outcome: ran ? 'finished' : 'timeout',
+                exitCode: ran ? code : null,
+                seconds: Math.round((now - began) / 1000),
+                where,
+                tail: await tail(files.log),
+                log: files.log,
+                ...(note && { note }),
+              })
+            : {
+                status: 'running' as const,
+                checkpoint: {
+                  phase: 'start' as const,
+                  unavailable: {
+                    host: on,
+                    reason:
+                      status && !status.ran
+                        ? status.reason
+                        : code === undefined
+                          ? 'its runner here was lost'
+                          : `its runner here ended without a status (exit ${code})`,
+                  },
+                },
+              }
+        await runtime.commit(() => next, ctx)
+      },
+      poll: async (task, runtime, ctx) => {
+        const { pid, began, slot, unavailable } = task.state.checkpoint
+        const files = paths(task)
+        const stop = () => stopJob(pid, files.pid, slot !== undefined)
         const result = async (
           outcome: BackgroundResult['outcome'],
           code: number | null,
@@ -353,6 +479,12 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         ) => {
           const usage = await readUsage(files.usage, commandNeedMiB(task.input.command))
           const notes = [slot?.forced, usage?.oomKilled && describeOom(usage), note].filter(Boolean)
+          // Said only where the project has a remote runner: elsewhere every command runs here.
+          const where: RanWhere | undefined = unavailable
+            ? { kind: 'here-after', ...unavailable }
+            : (await runner())
+              ? { kind: 'here' }
+              : undefined
           return deliver({
             command: task.input.command,
             cwd: task.input.cwd,
@@ -361,6 +493,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             seconds: Math.round((runtime.now() - began) / 1000),
             ...(slot && { queued: Math.round(slot.queued / 1000) }),
             ...(usage && { usage }),
+            ...(where && { where }),
             tail: await tail(files.log),
             log: files.log,
             ...(notes.length && { note: notes.join('\n') }),
@@ -418,6 +551,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
                   observed,
                   stopping: `The heavy-work queue ended it: it used more than a core without a place in the queue (it gave its place back after ${LIGHT_FOR_MS / 60_000} min idle, or was light at first) while every place was taken. Partial output is above; files it was writing may be incomplete. Run it again with the same call: it waits in line for a place.`,
                 },
+                ...(unavailable && { unavailable }),
               },
             }
           } else {
@@ -440,6 +574,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
                 pid,
                 began,
                 ...(slot && { slot: { ...slot, ...(observed && { observed }) } }),
+                ...(unavailable && { unavailable }),
               },
             }
           }
@@ -464,7 +599,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
               await host.need(ConversationsApi).resultIn(tx, to, {
                 type: 'input',
                 requestId: `background.result:${task.id}`,
-                content: `Background command ${ended}: ${result.command}${result.log ? `\nFull log: ${result.log}` : ''}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
+                content: `Background command ${ended}: ${result.command}${result.where ? `\n${describeWhere(result.where)}` : ''}${result.log ? `\nFull log: ${result.log}` : ''}${result.note ? `\n${result.note}` : ''}${result.tail ? `\n${result.tail}` : ''}`,
                 entry: { kind: 'background.result', data: result },
                 whenBusy: 'steer',
               }),
@@ -487,7 +622,10 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
 }
 
 export default function backgroundExtension(
-  host: Pick<ExtensionHost, 'projectRoot' | 'home' | 'userHome' | 'need' | 'onOpen' | 'onClose'>,
+  host: Pick<
+    ExtensionHost,
+    'projectRoot' | 'home' | 'userHome' | 'need' | 'onOpen' | 'onClose' | 'projectSettings'
+  >,
 ) {
   const Run = createRun(host)
   // On open, not at setup: on boot this facet loads before conversations provides the registry.
@@ -503,7 +641,7 @@ export default function backgroundExtension(
       defineTool({
         name: 'background',
         description:
-          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. A heavy command (tests, checks, installs, builds, a server) queues machine-wide for the heavy-work slot (up to the machine limit of heavy jobs at once, default one) and starts by itself in order once a place is free and RAM allows; the answer says its place and what it waits for. Returns immediately; its result card (exit code, duration, the last 40 lines of output and the full log path) steers your current run after its tool round, or wakes you when idle. Never sleep or poll for it. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup.',
+          'Run a local shell command (a covering test file, a build, any long command) in the background, niced, in the directory bash runs in. A heavy command (tests, checks, installs, builds, a server) queues machine-wide for the heavy-work slot (up to the machine limit of heavy jobs at once, default one) and starts by itself in order once a place is free and RAM allows; the answer says its place and what it waits for. Returns immediately; its result card (exit code, duration, the last 40 lines of output and the full log path) steers your current run after its tool round, or wakes you when idle. Never sleep or poll for it. The command keeps running across your turns and Stop; concluding the conversation stops it. Use it instead of waiting on a long bash call or a hand-rolled nohup. Where the project has a remote runner, a command made only of the check and test invocations the project lists runs on that machine first, and here if it gives no result; the result card says where it ran.',
         parameters: obj({
           command: str(),
           timeout: opt(
@@ -519,13 +657,20 @@ export default function backgroundExtension(
           const cwd = (await api.agent(ctx)).cwd ?? host.projectRoot
           const need = commandNeedMiB(args.command)
           const limits = await slotLimits(host.userHome)
+          const remote = await remoteRunner(host.userHome, await host.projectSettings())
+          /** The host of the project's remote runner, when it tries this command first. */
+          const sent =
+            remote && remoteEligible(args.command, cwd, remote.commands) ? remote.host : undefined
           // Looked at before the task exists, so neither its place in line nor its admission counts against it.
-          const peek = queues(need, limits)
-            ? await peekEntry({ id: '', at: Date.now() }, { limits, need })
-            : undefined
-          const short = peek
-            ? peek.kind === 'ram' && peek.short
-            : await checkRam(limits.floor, need)
+          const peek =
+            !sent && queues(need, limits)
+              ? await peekEntry({ id: '', at: Date.now() }, { limits, need })
+              : undefined
+          const short = sent
+            ? undefined
+            : peek
+              ? peek.kind === 'ram' && peek.short
+              : await checkRam(limits.floor, need)
           await api.commit(
             (tx) =>
               tx.createTask(
@@ -548,8 +693,9 @@ export default function backgroundExtension(
           const { warning } = await heavyJobsSetting(host.userHome)
           const after = `Its result steers you or wakes you once; keep working or end your turn, never sleep or poll for it.${warning ? ` ${warning}` : ''}`
           const measured = `Its command names nothing known to be heavy, so it takes a place in the heavy-work queue and is measured for its first ${PROBATION_MS / 1000} s: above one core it counts as heavy and keeps the place until it ends or calms down, otherwise it gives the place back and runs on as light.`
-          const text =
-            peek?.kind === 'waiting'
+          const text = sent
+            ? `Sent to ${sent} first: the project runs this command on its remote runner, on a copy of ${cwd} as it is now. If ${sent} gives no result (off, busy, lost half-way), the command runs here instead, through the heavy-work queue like any other; the result card says where it ran. ${after}`
+            : peek?.kind === 'waiting'
               ? `Queued, ${describeWait(peek)}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
               : peek?.kind === 'cpu'
                 ? `Queued: ${describeWait({ ...peek, pressureSince: undefined })}. It starts in ${cwd} by itself once the load falls; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`

@@ -34,6 +34,44 @@ line waits for load too. A command the list does not know starts on probation: t
 each look, its answer says it is being measured, and it holds the slot while it uses more than a core. A start that
 waited out load the queue did not cause says so on its result card.
 
+## A project's remote runner
+
+A project may run some of its commands on another machine first, so this one keeps its CPU (`lib/remote-job.ts`). It
+takes two settings: `remoteJobs.host` in `~/.ultimate/settings.json` names the machine (this machine's switch), and
+`remoteJobs` in the trusted project's `.ultimate/settings.json` names the project's `runner` (a command line) and the
+`commands` it may run there:
+
+```json
+{
+  "remoteJobs": {
+    "runner": "node .ultimate/scripts/remote-job.ts",
+    "commands": ["pnpm check", "pnpm test"]
+  }
+}
+```
+
+A command goes to the runner when it is made only of those invocations (`remoteEligible`): each pipeline starts with
+one of them, whole words; `&&`, `||`, `;`, quotes and `2>&1` are allowed, and pipes into `tail`, `head`, `grep`, `cut`,
+`sort`, `uniq` or `wc`. A variable, a substitution, a redirect, an absolute path, `~` or `..` keeps it here: the other
+machine has a copy of the checkout and nothing else of this one. Only read-only commands belong in the list, since
+nothing the command writes there comes back.
+
+The task starts the runner instead of the command, under the same leader, in the job's folder, with
+`ULTIMATE_REMOTE_HOST`, `ULTIMATE_REMOTE_COMMAND` and `ULTIMATE_REMOTE_STATUS` set. The runner is a light process here
+(it sends the checkout and relays the output into the log), so it starts at once and takes no place in the heavy-work
+queue. Before it exits it writes one JSON object to the status file:
+
+- `{"ran": true, "transferSeconds": 1.4, "setupSeconds": 6, "cpuSeconds": 31}` and exits with the command's exit code:
+  that is the result;
+- `{"ran": false, "reason": "busy with another run"}`, no file, or a runner that was lost: no result, and the same
+  task runs the command here, through the queue like any other. This machine never depends on the other one.
+
+The time limit counts for the attempt there and again for the run here; one that runs out of time there is `timeout`
+and is not run again. The tool's answer says the command was sent ("Sent to my-pc first"); the result, to the agent
+and on the card, says where it ran: on the runner's host with its timings, here because the project does not run that
+command remotely, or here after the host gave no result, and why (`RanWhere` in `refs.ts`). Without a runner on this
+machine nothing is said: every command runs here.
+
 The shell, not the host, writes the log and the code, so a command keeps running through a host restart and its
 result still arrives. The command keeps running across the caller's turns and its Stop button; concluding the
 conversation aborts the task, which stops the command's group and wakes nobody.

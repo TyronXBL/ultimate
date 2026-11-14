@@ -12,6 +12,7 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
+import type { JsonObject } from '@earendil-works/pi-durable'
 import { context, prepareHarness } from '../../../../server/harness.ts'
 import type { OpenHost } from '../../../../server/harness.ts'
 import backgroundExtension from '../../server.ts'
@@ -72,6 +73,7 @@ it('runs in the background and delivers one result; concluding its owner kills t
       need,
       onOpen: () => {},
       onClose: () => {},
+      projectSettings: async () => ({}),
     }),
   )
   prepared.faux!.setResponses([
@@ -128,6 +130,7 @@ it('leaves a note for a conversation concluded while its command ran, starting n
       need,
       onOpen: () => {},
       onClose: () => {},
+      projectSettings: async () => ({}),
     }),
   )
   prepared.faux!.setResponses([
@@ -184,6 +187,7 @@ it('waits for RAM below the floor and starts once the floor allows it', async ()
       need,
       onOpen: () => {},
       onClose: () => {},
+      projectSettings: async () => ({}),
     }),
   )
   prepared.faux!.setResponses([
@@ -223,6 +227,7 @@ it('steers the calling run and wakes an interruptible wait when the command fini
       need,
       onOpen: () => {},
       onClose: () => {},
+      projectSettings: async () => ({}),
     }),
   )
   prepared.registry.install(
@@ -266,9 +271,10 @@ it('steers the calling run and wakes an interruptible wait when the command fini
 /**
  * A project of its own, as another branch's or another project's host on the same machine: its root conversation runs
  * each `RUN <command>` input as a background command. Every project of a test file shares the file's TMPDIR, so their
- * heavy commands share one heavy-work queue.
+ * heavy commands share one heavy-work queue. `settings` are the machine's (user settings), `projectSettings` the
+ * project's own.
  */
-async function project(name: string, settings?: object) {
+async function project(name: string, settings?: object, projectSettings: JsonObject = {}) {
   const root = await temp(`ultimate-background-${name}-`)
   if (settings) await writeJson(join(root, 'user/.ultimate/settings.json'), settings)
   const prepared = await prepareHarness({
@@ -285,6 +291,7 @@ async function project(name: string, settings?: object) {
       need,
       onOpen: () => {},
       onClose: () => {},
+      projectSettings: async () => projectSettings,
     }),
   )
   const route: FauxResponseFactory = (transcript) => {
@@ -424,6 +431,58 @@ it('ends a command that turns heavy without a place while every place is taken, 
   }
   // Its rules take that long: a 20 s probation, then 20 s above a core, and the looks between (44 s here, more on CI).
 }, 180_000)
+
+it("runs a listed command on the project's remote runner first, here when that gives no result, and says where", async () => {
+  const scripts = await temp('ultimate-background-runner-')
+  // A stand-in for a project's runner: it "runs" the command elsewhere and exits with 3, or says the machine is busy.
+  const runner = join(scripts, 'runner.sh')
+  await writeFile(
+    runner,
+    [
+      'echo "runner for $ULTIMATE_REMOTE_HOST: $ULTIMATE_REMOTE_COMMAND"',
+      'case "$ULTIMATE_REMOTE_COMMAND" in',
+      `  *busy*) echo '{"ran":false,"reason":"busy with another run"}' > "$ULTIMATE_REMOTE_STATUS"; exit 75;;`,
+      'esac',
+      `echo '{"ran":true,"transferSeconds":1.5,"setupSeconds":6,"cpuSeconds":31}' > "$ULTIMATE_REMOTE_STATUS"`,
+      'exit 3',
+    ].join('\n'),
+  )
+  const a = await project(
+    'remote',
+    { remoteJobs: { host: 'my-pc' } },
+    { remoteJobs: { runner: `sh ${runner}`, commands: ['echo'] } },
+  )
+  for (const [index, command] of ['echo there', 'echo busy here', 'printf unlisted'].entries()) {
+    await a.run(command)
+    await until(async () => (await a.results()).length === index + 1)
+  }
+  const results = await a.results()
+  const of = (command: string) => results.find((result) => result.command === command)
+  // It ran there: the runner's exit code and timings, and nothing of the command ran here.
+  expect(of('echo there')).toMatchObject({
+    outcome: 'finished',
+    exitCode: 3,
+    where: {
+      kind: 'remote',
+      host: 'my-pc',
+      timings: { transferSeconds: 1.5, setupSeconds: 6, cpuSeconds: 31 },
+    },
+    tail: 'runner for my-pc: echo there\n',
+  })
+  // No result there: the same command ran here, after the runner's output in the same log.
+  expect(of('echo busy here')).toMatchObject({
+    outcome: 'finished',
+    exitCode: 0,
+    where: { kind: 'here-after', host: 'my-pc', reason: 'busy with another run' },
+    tail: 'runner for my-pc: echo busy here\nbusy here\n',
+  })
+  expect(of('printf unlisted')).toMatchObject({ exitCode: 0, where: { kind: 'here' } })
+  // The agent reads where each ran, in the tool's answer and in the result.
+  const transcript = await a.transcript()
+  expect(transcript).toContain('Sent to my-pc first')
+  expect(transcript).toContain('Ran on my-pc: 31 s of CPU there')
+  expect(transcript).toContain('Ran here: my-pc gave no result (busy with another run).')
+})
 
 it('keeps a running and a waiting heavy command through a restart: each runs once, in order', async () => {
   const shared = await temp('ultimate-background-queue-')

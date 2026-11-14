@@ -38,6 +38,10 @@ checks, previews and heavy bash commands wait or are refused while they would ta
 jobs at once, in order), which runs with or without the floor.
 `heavyWork.maxJobs` (user settings only, a whole number, default 1) is how many heavy jobs the heavy-work queue runs at
 once on this machine; a change applies at the next look, without a restart.
+`remoteJobs.host` (user settings only, an ssh host name, off by default) is the machine a project's remote runner runs
+background commands on, and `remoteJobs.runner` with `remoteJobs.commands` (project settings only) are that project's
+runner and the read-only invocations it runs there first; a command runs here when either is missing, when it is not
+made of those invocations, or when the runner gives no result; see `extensions/background/README.md`.
 `cpu.maxLoadPerCore` (user settings only, a number, off by default; Linux only) turns on CPU admission: jobs start only
 while the one-minute load is below this times the core count, and commands whose text names nothing heavy are measured
 and queue as heavy once they use more than a core; see `extensions/memory/README.md`.

@@ -2,7 +2,8 @@ import { cn } from 'cn'
 import { CheckIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
 import { Card, defineWebExtension, Fold } from '@/sdk'
 import type { EntryRecord } from '@/sdk'
-import type { BackgroundResult } from './refs.ts'
+import { describeWhere } from './where.ts'
+import type { BackgroundResult, RanWhere } from './refs.ts'
 
 const labels = {
   finished: 'Command finished',
@@ -12,6 +13,13 @@ const labels = {
   stopped: 'Command stopped by the heavy-work queue',
 } as const
 const mib = (value: number) => (value < 1024 ? `${value} MiB` : `${(value / 1024).toFixed(1)} GiB`)
+/** Where it ran, in a few words for the summary line; the card's body says the rest. */
+const place = (where: RanWhere) =>
+  where.kind === 'remote'
+    ? `on ${where.host}`
+    : where.kind === 'here'
+      ? 'here'
+      : `here, ${where.host} unavailable`
 function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const result = entry.data as BackgroundResult
   // A parent may exit 0 after the kernel killed one of its children at the limit: that is a failure too.
@@ -24,7 +32,7 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
   const meta =
     result.outcome === 'not-started'
       ? `waited ${result.seconds}s`
-      : `${result.queued ? `queued ${result.queued}s · ` : ''}exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s${usage ?? ''}`
+      : `${result.queued ? `queued ${result.queued}s · ` : ''}exit ${result.exitCode ?? 'unknown'} · ${result.seconds}s${usage ?? ''}${result.where ? ` · ${place(result.where)}` : ''}`
   return (
     <Fold
       card={entry.id}
@@ -53,6 +61,9 @@ function BackgroundResultCard({ entry }: { entry: EntryRecord }) {
             {result.cwd}
             {result.log && ` · ${result.log}`}
           </p>
+          {result.where && (
+            <p className="break-words text-muted-foreground">{describeWhere(result.where)}</p>
+          )}
           {result.note && <p className="break-words text-warning">{result.note}</p>}
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-muted-foreground">
             {result.tail || '(no output)'}
