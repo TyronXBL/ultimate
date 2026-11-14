@@ -1,9 +1,13 @@
 /**
  * How one run of a lander check settles into its result. A check may reuse an earlier pass of exactly the commit it
  * checks instead of testing again (the project's CI gate does, #205147): it then prints a `REUSED` line naming that
- * run, and the landing card shows it beside the checks that ran.
+ * run, and the landing card shows it beside the checks that ran. A landing that runs no check says why: none are
+ * configured, or the project's own checks are declared but its setup is not trusted.
  */
-import type { LanderCheck, Reused } from './types.ts'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { ExtensionHost } from '../../server/extensions.ts'
+import type { LanderCheck, Reused, Unchecked } from './types.ts'
 
 /** A check prints this, then one JSON object (`Reused`), when it passed by reusing an earlier run of the same commit. */
 export const REUSED = 'lander-reused: '
@@ -12,6 +16,7 @@ export const REUSED = 'lander-reused: '
 export type CheckRun = { failure?: string; summary?: string; reused?: string }
 
 const short = (sha: string) => sha.slice(0, 7)
+export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 
 /** The origin a reuse line names, or undefined when it does not name a complete one. */
 function originOf(line: string): Reused | undefined {
@@ -75,3 +80,57 @@ export function settleCheck(
 /** "GitHub Actions passed 1a2b3c4 in 198 s, finished <time>: <url>": a reused pass's origin, for reports and cards. */
 export const reusedText = (reused: Reused, time: (at: number) => string) =>
   `${reused.runner} passed ${short(reused.sha)} in ${reused.seconds} s, finished ${time(reused.completedAt)}: ${reused.url}`
+
+/**
+ * The checks the project's own `.ultimate/settings.json` declares, counted from its text: an untrusted file is parsed,
+ * never run. `error` when it exists but does not parse.
+ */
+async function declaredChecks(projectRoot: string): Promise<{ count: number } | { error: string }> {
+  let settings: unknown
+  try {
+    settings = JSON.parse(await readFile(join(projectRoot, '.ultimate/settings.json'), 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { count: 0 }
+    return { error: String(error) }
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings))
+    return { error: 'Project settings must be a JSON object' }
+  const checks = (settings as { lander?: { checks?: unknown } }).lander?.checks
+  return { count: Array.isArray(checks) ? checks.flat().length : 0 }
+}
+/**
+ * Why `settings` run no checks, or undefined when they run some. Trust gates running a project's checks: an untrusted
+ * project's declared checks are counted for the warning, never run. A trusted project whose settings do not parse
+ * throws instead of landing unchecked.
+ */
+export async function uncheckedReason(
+  host: Pick<ExtensionHost, 'projectRoot' | 'projectSetup'>,
+  settings: { checks: unknown[] },
+): Promise<Unchecked | undefined> {
+  if (settings.checks.length) return undefined
+  const [{ decision }, declared] = await Promise.all([
+    host.projectSetup(),
+    declaredChecks(host.projectRoot),
+  ])
+  if (decision === true && 'error' in declared)
+    throw new Error(
+      `.ultimate/settings.json does not parse, so its lander checks cannot run: ${declared.error}`,
+    )
+  if (decision === true || ('count' in declared && !declared.count)) return { reason: 'none' }
+  // Settings that do not parse may still declare checks: what they declare is unknown, never "none".
+  return {
+    reason: 'untrusted',
+    ...('count' in declared ? { declared: declared.count } : {}),
+    decision: decision === false ? 'declined' : 'undecided',
+  }
+}
+/** The report's line about a landing no check ran on, for the submitter and whoever started it. */
+export const uncheckedLine = (unchecked: Unchecked) =>
+  unchecked.reason === 'none'
+    ? 'Unchecked: no lander checks are configured, so none ran.'
+    : `Unchecked: ${unchecked.declared === undefined ? '.ultimate/settings.json does not parse, so its lander checks are unknown, and' : `.ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but`} none ran: this project's own setup was ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
+/** The lander step that says no checks run, in place of the checks. */
+export const uncheckedStep = (unchecked: Unchecked) =>
+  unchecked.reason === 'none'
+    ? 'no checks configured'
+    : `skipped ${unchecked.declared === undefined ? 'declared checks' : plural(unchecked.declared, 'declared check')}: project setup ${unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`
