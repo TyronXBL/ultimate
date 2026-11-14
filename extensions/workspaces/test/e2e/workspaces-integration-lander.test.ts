@@ -14,7 +14,7 @@ import { CheckRan } from '../../api.ts'
 import lineage, { startBranch } from '../../../lineage/server.ts'
 import { concludeIn } from '../../../conversations/server.ts'
 import { seedTally, until } from '../../../../test/helpers.ts'
-import { enterSlot, peekSlot, releaseSlot, thisProcess } from '../../../../lib/slot.ts'
+import { enterSlot, peekEntry, releaseSlot, thisProcess } from '../../../../lib/slot.ts'
 import {
   repository,
   fixture,
@@ -516,7 +516,9 @@ it('waits in the heavy-work queue for its heavy checks and lets the slot go befo
   await light.started()
   // The heavy check ran, and the light one runs with the slot free for the next job in line.
   await access(ran)
-  expect(await peekSlot({ id: 'next-job', at: Date.now() })).toEqual({ kind: 'next' })
+  expect(
+    await peekEntry({ id: 'next-job', at: Date.now() }, { limits: start.limits, need: 0 }),
+  ).toEqual({ kind: 'free' })
   await light.release()
   const [report] = await submitted(f, id)
   expect(report).toContain('landed as')

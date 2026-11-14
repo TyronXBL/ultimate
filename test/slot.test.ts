@@ -5,17 +5,19 @@ import {
   enterSlot,
   heavySlot,
   holdSlot,
+  peekEntry,
   readSlot,
   reclaimSlot,
   releaseSlot,
   SETTLE_MS,
   slotStep,
   slotTurn,
+  slotWait,
   thisProcess,
   WAIT_TTL_MS,
 } from '../lib/slot.ts'
 import type { SlotClaim, SlotEntry, SlotEvent, SlotQueue } from '../lib/slot.ts'
-import { stateDir } from '../lib/memory.ts'
+import { RAM_WAIT_MS, stateDir } from '../lib/memory.ts'
 import { temp } from './helpers.ts'
 
 /** The machine's load as the queue reads it: idle unless a test says otherwise. */
@@ -290,6 +292,71 @@ it.each<[string, SlotQueue, SlotClaim, ReturnType<typeof slotTurn>, number?]>([
   expect(slotTurn(line, asking, 1000, limit)).toEqual(turn)
 })
 
+const short = { kind: 'floor' as const, available: 3000, need: 1024, floor: 3072 }
+const gate = {
+  kind: 'wait' as const,
+  load: 9,
+  cores: 6,
+  pressure: 0,
+  below: { load: 6, pressure: 20 },
+  settling: false,
+}
+it.each<
+  [
+    string,
+    Parameters<typeof slotWait>[0],
+    { ramSince?: number },
+    ReturnType<typeof slotWait>,
+    number?,
+  ]
+>([
+  [
+    'RAM short at the head of the line: its wait for RAM starts',
+    { kind: 'ram', short },
+    {},
+    { kind: 'wait', waited: { ramSince: 5000 } },
+  ],
+  [
+    'RAM still short: it waits on from when that started',
+    { kind: 'ram', short },
+    { ramSince: 1000 },
+    { kind: 'wait', waited: { ramSince: 1000 } },
+  ],
+  [
+    'RAM short for the whole limit: it gives up',
+    { kind: 'ram', short },
+    { ramSince: 5000 - RAM_WAIT_MS },
+    { kind: 'gave-up', short },
+  ],
+  [
+    "a caller's own limit: the CI gate gives up after 10 min",
+    { kind: 'ram', short },
+    { ramSince: 5000 - 600_000 },
+    { kind: 'gave-up', short },
+    600_000,
+  ],
+  [
+    'load the queue does not cause: it keeps since when it waits for that, and its RAM wait ends',
+    { kind: 'cpu', gate, pressureSince: 2000 },
+    { ramSince: 1000 },
+    { kind: 'wait', waited: { pressureSince: 2000 } },
+  ],
+  [
+    'load of running queue jobs: no clock',
+    { kind: 'cpu', gate, pressureSince: undefined },
+    {},
+    { kind: 'wait', waited: {} },
+  ],
+  [
+    'behind another job again: its RAM wait ends',
+    { kind: 'waiting', turn: { kind: 'behind', holders: [running('b')], ahead: [], limit: 1 } },
+    { ramSince: 1000 },
+    { kind: 'wait', waited: {} },
+  ],
+])('wait: %s', (_name, entered, prior, result, limit) => {
+  expect(slotWait(entered, prior, 5000, limit)).toEqual(result)
+})
+
 const limits = (max = 1, floor?: number) => ({ floor, cpu: undefined, max })
 const enter = (parent: string, asking: SlotClaim, queued = true, max = 1, floor?: number) =>
   enterSlot(asking, {
@@ -305,6 +372,13 @@ it('runs two at a time with two places: the third waits in order, a finished one
   const two = (asking: SlotClaim, floor?: number) => enter(parent, asking, true, 2, floor)
   expect(await two(claim('first', 100))).toMatchObject({ kind: 'started' })
   // RAM is admitted per job: a second never starts into the floor, however many places are free.
+  expect(
+    await peekEntry(claim('second', 200), {
+      limits: limits(2, Number.MAX_SAFE_INTEGER),
+      need: 1024,
+      parent,
+    }),
+  ).toMatchObject({ kind: 'ram' })
   expect(await two(claim('second', 200), Number.MAX_SAFE_INTEGER)).toMatchObject({ kind: 'ram' })
   expect(await two(claim('second', 200))).toMatchObject({ kind: 'started' })
   expect(await two(claim('fourth', 400))).toMatchObject({ kind: 'waiting' })
@@ -336,7 +410,15 @@ it('runs two at a time with two places: the third waits in order, a finished one
 
 it('grants the slot one job at a time, in the order the jobs asked', async () => {
   const parent = await temp('ultimate-slot-')
+  const peek = (asking: SlotClaim) => peekEntry(asking, { limits: limits(), need: 1024, parent })
+  // A peek neither starts nor joins the line.
+  expect(await peek(claim('first', 100))).toEqual({ kind: 'free' })
+  expect((await readSlot(parent)).queue.entries).toEqual([])
   expect(await enter(parent, claim('first', 100))).toMatchObject({ kind: 'started' })
+  expect(await peek(claim('early', 50))).toMatchObject({
+    kind: 'waiting',
+    turn: { holders: [{ id: 'first' }], ahead: [] },
+  })
   expect(await enter(parent, claim('third', 300))).toMatchObject({
     kind: 'waiting',
     turn: { kind: 'behind' },
@@ -445,6 +527,13 @@ it('takes turns with jobs it does not know: one measured at a time, a heavy one 
 it('waits for load it does not cause, then starts anyway and says so', async () => {
   const parent = await temp('ultimate-slot-')
   machine.load = { load: 9, cores: 6, pressure: 0 }
+  expect(
+    await peekEntry(claim('heavy'), {
+      limits: { floor: undefined, cpu: 1, max: 1 },
+      need: 0,
+      parent,
+    }),
+  ).toMatchObject({ kind: 'cpu', gate: { kind: 'wait', load: 9 } })
   expect(await look(parent, claim('heavy'))).toMatchObject({
     kind: 'cpu',
     pressureSince: expect.any(Number),

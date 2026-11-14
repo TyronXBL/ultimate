@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { SlotEntry, SlotQueue } from '../../../lib/slot.ts'
+import type { SlotEntry, SlotPeek, SlotQueue } from '../../../lib/slot.ts'
 import { queueView } from '../queue.ts'
 import type { QueueFacts } from '../queue.ts'
 
@@ -22,7 +22,7 @@ const waiting = (n: number, label: string): SlotEntry => ({
   state: 'waiting',
   seen: 9000,
 })
-const facts: QueueFacts = { now: 10_000, places: 2, usage: new Map() }
+const facts: QueueFacts = { places: 2, usage: new Map() }
 const reasons = (queue: SlotQueue, more: Partial<QueueFacts> = {}) =>
   queueView(queue, { ...facts, ...more }).map((job) =>
     job.state === 'waiting' ? [job.position, job.reason] : [job.state, job.label],
@@ -59,15 +59,24 @@ describe('queueView', () => {
       settling: false,
     }
     const cap = { kind: 'cap' as const, used: 5400, high: 5632, need: 1024 }
-    const first = (more: Partial<QueueFacts>, settleUntil?: number) =>
-      reasons({ ...queue, ...(settleUntil && { settleUntil }) }, more)[1]
-    expect(first({ gate, short: cap }, 40_000)).toEqual([1, { kind: 'settling', until: 40_000 }])
-    expect(first({ gate, short: cap })).toEqual([
+    // Its own look (`peekEntry`), which takes them in `enterSlot`'s order.
+    const first = (head: SlotPeek) => reasons(queue, { head })[1]
+    expect(first({ kind: 'waiting', turn: { kind: 'settling', until: 40_000 } })).toEqual([
+      1,
+      { kind: 'settling', until: 40_000 },
+    ])
+    expect(first({ kind: 'cpu', gate, pressureSince: undefined })).toEqual([
       1,
       { kind: 'cpu', load: 7.2, cores: 6, pressure: 31, belowLoad: 6, belowPressure: 20 },
     ])
     // Review of #231847: a gate that waits only for a fresh job's load to show says so.
-    expect(first({ gate: { ...gate, load: 3, pressure: 4, settling: true } })).toEqual([
+    expect(
+      first({
+        kind: 'cpu',
+        gate: { ...gate, load: 3, pressure: 4, settling: true },
+        pressureSince: undefined,
+      }),
+    ).toEqual([
       1,
       {
         kind: 'cpu',
@@ -79,15 +88,14 @@ describe('queueView', () => {
         settling: true,
       },
     ])
-    expect(first({ short: cap })).toEqual([
+    expect(first({ kind: 'ram', short: cap })).toEqual([
       1,
       { kind: 'cap', usedMiB: 5400, highMiB: 5632, needMiB: 1024 },
     ])
-    expect(first({ short: { kind: 'floor', available: 3500, need: 1536, floor: 3072 } })).toEqual([
-      1,
-      { kind: 'ram', availableMiB: 3500, needMiB: 1536, floorMiB: 3072 },
-    ])
-    expect(first({ gate: { kind: 'go' } })).toEqual([1, { kind: 'next' }])
+    expect(
+      first({ kind: 'ram', short: { kind: 'floor', available: 3500, need: 1536, floor: 3072 } }),
+    ).toEqual([1, { kind: 'ram', availableMiB: 3500, needMiB: 1536, floorMiB: 3072 }])
+    expect(first({ kind: 'free' })).toEqual([1, { kind: 'next' }])
   })
 
   test('a job on probation holds a place until it is measured, with its live usage', () => {

@@ -23,7 +23,6 @@ import {
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
 import {
-  describeLoad,
   heavyNow,
   sessionCpuMs,
   holdsSlot,
@@ -42,22 +41,23 @@ import {
   stopGroup,
 } from '../../lib/process-group.ts'
 import {
+  describeForced,
   describeWait,
   enterSlot,
   heavySlot,
   heavyJobsSetting,
   holdSlot,
   maxHeavyJobs,
+  peekEntry,
   reclaimSlot,
-  peekGate,
-  peekSlot,
   slotLimits,
   releaseSlot,
   SLOT_ENV,
   SLOT_POLL_MS,
   slotLabel,
+  slotWait,
 } from '../../lib/slot.ts'
-import type { SlotClaim } from '../../lib/slot.ts'
+import type { SlotClaim, SlotLimits } from '../../lib/slot.ts'
 import { describeOom, jobScope, readUsage, shellWords } from '../../lib/job-scope.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { liveTasks } from '../../lib/tasks.ts'
@@ -183,6 +183,8 @@ const pollMs = (elapsed: number) => Math.min(15_000, Math.max(3000, elapsed / 10
 
 /** The queue's id of a task's command: unique on the machine, the same across restarts. */
 const slotId = (task: { id: number; input: Input }) => `${task.input.home}:background:${task.id}`
+/** Whether a command goes through the heavy-work queue: a heavy one, or any with CPU admission on. */
+const queues = (need: number, limits: SlotLimits) => need > 0 || limits.cpu !== undefined
 
 function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'>) {
   const from = (to: number) => `#${to} in ${basename(host.projectRoot)}`
@@ -225,7 +227,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
             BACKGROUND_LOG: files.log,
             BACKGROUND_STATUS: files.status,
             // What it starts belongs to its place: a nested heavy job never queues behind it.
-            ...((need > 0 || limits.cpu !== undefined) && { [SLOT_ENV]: slotId(task) }),
+            ...(queues(need, limits) && { [SLOT_ENV]: slotId(task) }),
           },
         },
       )
@@ -248,7 +250,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
         note: `${note} Stop something, then start it again:\n${listUsers(await memoryUsers())}`,
       })
     const now = runtime.now()
-    if (!need && limits.cpu === undefined) {
+    if (!queues(need, limits)) {
       const short = left ? undefined : await admitRam(limits.floor, 0)
       const next = !short
         ? {
@@ -295,26 +297,18 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
               observed: need ? heavyNow(now) : measuring(now),
             }),
             ...(entered.forced && {
-              forced: `It started under pressure (${describeLoad(entered.forced)}) after ${Math.round(entered.forced.waited / 60_000)} min waiting for load the heavy-work queue did not cause.`,
+              forced: `It ${describeForced(entered.forced)}.`,
             }),
           },
         },
       }
     else {
-      // RAM short at the head of the line gives up after `RAM_WAIT_MS`, so the line behind it moves on; the line itself
-      // has no limit.
-      const ramSince =
-        entered.kind === 'ram'
-          ? checkpoint.phase === 'wait'
-            ? (checkpoint.ramSince ?? now)
-            : now
-          : undefined
-      const pressureSince = entered.kind === 'cpu' ? entered.pressureSince : undefined
-      if (entered.kind === 'ram' && now - ramSince! >= RAM_WAIT_MS) {
+      const wait = slotWait(entered, checkpoint.phase === 'wait' ? checkpoint : {}, now)
+      if (wait.kind === 'gave-up') {
         await releaseSlot(claim.id)
         next = await notStarted(
           now - since,
-          `Not enough RAM after ${RAM_WAIT_MS / 60_000} min at the head of the heavy-work queue: ${describeShort(entered.short)}.`,
+          `Not enough RAM after ${RAM_WAIT_MS / 60_000} min at the head of the heavy-work queue: ${describeShort(wait.short)}.`,
         )
       } else
         next = {
@@ -323,8 +317,7 @@ function createRun(host: Pick<ExtensionHost, 'userHome' | 'need' | 'projectRoot'
           checkpoint: {
             phase: 'wait' as const,
             since,
-            ...(ramSince !== undefined && { ramSince }),
-            ...(pressureSince !== undefined && { pressureSince }),
+            ...wait.waited,
             waiting: describeWait(entered, now),
           },
         }
@@ -526,14 +519,13 @@ export default function backgroundExtension(
           const cwd = (await api.agent(ctx)).cwd ?? host.projectRoot
           const need = commandNeedMiB(args.command)
           const limits = await slotLimits(host.userHome)
-          const queued = need > 0 || limits.cpu !== undefined
           // Looked at before the task exists, so neither its place in line nor its admission counts against it.
-          const turn = queued ? await peekSlot({ id: '', at: Date.now() }, limits.max) : undefined
-          const gate = turn?.kind === 'next' ? await peekGate(limits) : undefined
-          const short =
-            (turn?.kind === 'next' && gate?.kind !== 'wait') || !queued
-              ? await checkRam(limits.floor, need)
-              : undefined
+          const peek = queues(need, limits)
+            ? await peekEntry({ id: '', at: Date.now() }, { limits, need })
+            : undefined
+          const short = peek
+            ? peek.kind === 'ram' && peek.short
+            : await checkRam(limits.floor, need)
           await api.commit(
             (tx) =>
               tx.createTask(
@@ -557,17 +549,17 @@ export default function backgroundExtension(
           const after = `Its result steers you or wakes you once; keep working or end your turn, never sleep or poll for it.${warning ? ` ${warning}` : ''}`
           const measured = `Its command names nothing known to be heavy, so it takes a place in the heavy-work queue and is measured for its first ${PROBATION_MS / 1000} s: above one core it counts as heavy and keeps the place until it ends or calms down, otherwise it gives the place back and runs on as light.`
           const text =
-            turn && turn.kind !== 'next'
-              ? `Queued, ${describeWait({ kind: 'waiting', turn })}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
-              : gate?.kind === 'wait'
-                ? `Queued: ${describeWait({ kind: 'cpu', gate, pressureSince: undefined })}. It starts in ${cwd} by itself once the load falls; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
-                : short && need
-                  ? `Queued: next in line for the heavy-work slot, waiting for memory: ${describeShort(short)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
+            peek?.kind === 'waiting'
+              ? `Queued, ${describeWait(peek)}. It starts in ${cwd} by itself, in order, once the slot is free; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
+              : peek?.kind === 'cpu'
+                ? `Queued: ${describeWait({ ...peek, pressureSince: undefined })}. It starts in ${cwd} by itself once the load falls; it shows in the Tasks panel while it waits.${need ? '' : ` ${measured}`} ${after}`
+                : peek?.kind === 'ram' && need
+                  ? `Queued: ${describeWait(peek)}. It starts in ${cwd} by itself once enough is free, or gives up after ${RAM_WAIT_MS / 60_000} min. ${after}`
                   : short
                     ? `Waiting for RAM: ${describeShort(short)}. It starts in ${cwd} once enough is free, looking every ${RAM_POLL_MS / 1000} s for up to ${RAM_WAIT_MS / 60_000} min. ${after}`
                     : need
                       ? `Starting in the background in ${cwd}: the heavy-work slot is free, unless a job that asked at the same moment takes it first, and then this one waits its turn by itself. ${after}`
-                      : queued
+                      : peek
                         ? `Starting in the background in ${cwd}. ${measured} ${after}`
                         : `Started in the background in ${cwd}. ${after}`
           return { output: [{ type: 'text', text }] }

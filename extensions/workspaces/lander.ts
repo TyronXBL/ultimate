@@ -12,7 +12,6 @@ import type { ConversationDocToken, ConversationId, Tx } from '@earendil-works/p
 import { git } from '../../lib/git.ts'
 import { needsRestart as restartNeeded } from '../../lib/layers.ts'
 import { liveTasks } from '../../lib/tasks.ts'
-import { describeLoad } from '../../lib/cpu.ts'
 import {
   commandNeedMiB,
   describeShort,
@@ -21,6 +20,7 @@ import {
   RAM_WAIT_MS,
 } from '../../lib/memory.ts'
 import {
+  describeForced,
   describeWait,
   enterSlot,
   keepHeld,
@@ -30,6 +30,7 @@ import {
   SLOT_TMPDIR_ENV,
   heavyJobsSetting,
   slotLimits,
+  slotWait,
   thisProcess,
 } from '../../lib/slot.ts'
 import { runGroup, sweepPidFiles } from '../../lib/process-group.ts'
@@ -907,13 +908,11 @@ export function createLander(
                 start: thisProcess,
               })
               if (entered.kind !== 'started') {
-                const ramFrom = entered.kind === 'ram' ? (ramSince ?? now) : undefined
-                // Only load the queue does not cause counts towards starting anyway (#227574).
-                const pressureFrom = entered.kind === 'cpu' ? entered.pressureSince : undefined
-                if (entered.kind === 'ram' && now - ramFrom! >= RAM_WAIT_MS) {
+                const wait = slotWait(entered, { ramSince }, now)
+                if (wait.kind === 'gave-up') {
                   await releaseSlot(claim.id)
                   return await fail(
-                    `not enough RAM for the checks after waiting ${RAM_WAIT_MS / 60_000} min at the head of the heavy-work queue: ${describeShort(entered.short)}`,
+                    `not enough RAM for the checks after waiting ${RAM_WAIT_MS / 60_000} min at the head of the heavy-work queue: ${describeShort(wait.short)}`,
                     listUsers(await memoryUsers()),
                     'Stop what uses RAM, then submit again.',
                   )
@@ -921,7 +920,7 @@ export function createLander(
                 // Logged when it starts waiting, and again when the wait turns into one for RAM or for CPU.
                 if (
                   slotSince === undefined ||
-                  (ramFrom !== undefined && ramSince === undefined) ||
+                  (wait.waited.ramSince !== undefined && ramSince === undefined) ||
                   (entered.kind === 'cpu' && cpuSince === undefined)
                 )
                   await step(`waiting: ${describeWait(entered, now)}`)
@@ -935,9 +934,8 @@ export function createLander(
                       attempt,
                       ...(pushRetried ? { pushRetried } : {}),
                       slotSince: slotSince ?? now,
-                      ...(ramFrom !== undefined ? { ramSince: ramFrom } : {}),
                       ...(entered.kind === 'cpu' ? { cpuSince: cpuSince ?? now } : {}),
-                      ...(pressureFrom !== undefined ? { pressureSince: pressureFrom } : {}),
+                      ...wait.waited,
                     },
                   }),
                   context,
@@ -946,10 +944,7 @@ export function createLander(
               release = keepHeld(claim)
               const { warning } = await heavyJobsSetting(host.userHome)
               if (warning) await warn(warning)
-              if (entered.forced)
-                await step(
-                  `started under pressure (${describeLoad(entered.forced)}) after ${Math.round(entered.forced.waited / 60_000)} min waiting for load the heavy-work queue did not cause`,
-                )
+              if (entered.forced) await step(describeForced(entered.forced))
             }
             // Setup prepares the merged revision, for example installs its lockfile.
             await step('setting up')

@@ -1,18 +1,11 @@
 /**
  * The heavy-work queue as the dashboard shows it: the jobs that hold a place, then the line in order, each waiter with
  * why it waits. It reads the queue through `lib/slot.ts`'s own reader (`readSlot`), the line's order and the reasons
- * through the admission's own derivations (`peekGate`, `checkRam`), never the file.
+ * through the admission's own derivations (`order`, `peekEntry`), never the file.
  */
-import type { CpuGate } from '../../lib/cpu.ts'
-import type { RamShort } from '../../lib/memory.ts'
-import type { SlotEntry, SlotQueue } from '../../lib/slot.ts'
+import { holding, order } from '../../lib/slot.ts'
+import type { SlotPeek, SlotQueue } from '../../lib/slot.ts'
 import type { QueueJob, WaitReason } from './refs.ts'
-
-type Holding = Extract<SlotEntry, { state: 'running' | 'measuring' }>
-const holding = (entry: SlotEntry): entry is Holding => entry.state !== 'waiting'
-/** The line's order, as `lib/slot.ts` keeps it: who asked first, then by id. */
-const order = (a: SlotEntry, b: SlotEntry) =>
-  a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
 /** "#202077 in ultimate", "the landing of #12 in my-app" → its project and conversation. */
 export function fromOf(from: string) {
@@ -25,25 +18,23 @@ export const holdersOf = (queue: SlotQueue) => queue.entries.filter(holding)
 
 /** What the first waiter meets when a place is free, each from its admission. */
 export type QueueFacts = {
-  now: number
   /** How many heavy jobs run at once (`heavyWork.maxJobs`). */
   places: number
-  /** The load gate it would meet (`peekGate`). */
-  gate?: CpuGate
-  /** What memory it falls short by, under the floor or the service's cap (`checkRam`). */
-  short?: RamShort
+  /** What its own look would give it (`peekEntry`), taken only while a place is free. */
+  head?: SlotPeek
   /** CPU and memory of a holder's processes, by its job id. */
   usage: Map<string, { cpu: number; rssMiB: number }>
 }
 
 /** Why the first waiter has not started: the queue settling, every place taken, then CPU and memory admission. */
-function headReason(queue: SlotQueue, held: number, facts: QueueFacts): WaitReason {
-  // In `slotTurn`'s order: every place taken, then the queue settling.
-  if (held >= facts.places) return { kind: 'full', running: held, places: facts.places }
-  if (queue.settleUntil !== undefined && queue.settleUntil > facts.now)
-    return { kind: 'settling', until: queue.settleUntil }
-  if (facts.gate?.kind === 'wait') {
-    const { load, cores, pressure, below, settling } = facts.gate
+function headReason(held: number, { head, places }: QueueFacts): WaitReason {
+  // No look while every place is taken, or one that found them taken since.
+  if (!head || head.kind === 'waiting')
+    return head?.turn.kind === 'settling'
+      ? { kind: 'settling', until: head.turn.until }
+      : { kind: 'full', running: held, places }
+  if (head.kind === 'cpu') {
+    const { load, cores, pressure, below, settling } = head.gate
     return {
       kind: 'cpu',
       load,
@@ -54,8 +45,9 @@ function headReason(queue: SlotQueue, held: number, facts: QueueFacts): WaitReas
       ...(settling && { settling: true }),
     }
   }
-  const short = facts.short
-  if (short?.kind === 'floor')
+  if (head.kind === 'free') return { kind: 'next' }
+  const { short } = head
+  if (short.kind === 'floor')
     return {
       kind: 'ram',
       availableMiB: short.available,
@@ -63,15 +55,13 @@ function headReason(queue: SlotQueue, held: number, facts: QueueFacts): WaitReas
       floorMiB: short.floor,
       ...(short.reserved && { reservedMiB: short.reserved }),
     }
-  if (short?.kind === 'cap')
-    return {
-      kind: 'cap',
-      usedMiB: short.used,
-      highMiB: short.high,
-      needMiB: short.need,
-      ...(short.reserved && { reservedMiB: short.reserved }),
-    }
-  return { kind: 'next' }
+  return {
+    kind: 'cap',
+    usedMiB: short.used,
+    highMiB: short.high,
+    needMiB: short.need,
+    ...(short.reserved && { reservedMiB: short.reserved }),
+  }
 }
 
 /** The queue, holders first, then the waiters in order with their reasons. */
@@ -108,7 +98,7 @@ export function queueView(queue: SlotQueue, facts: QueueFacts): QueueJob[] {
     reason:
       index > 0
         ? { kind: 'behind', label: waiters[index - 1].label, from: waiters[index - 1].from }
-        : headReason(queue, holders.length, facts),
+        : headReason(holders.length, facts),
   }))
   return [...held, ...waiting]
 }

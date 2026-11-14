@@ -8,10 +8,9 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { readFile, readlink, statfs } from 'node:fs/promises'
 import { availableParallelism, loadavg, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { checkRam, commandNeedMiB } from '../../lib/memory.ts'
+import { commandNeedMiB } from '../../lib/memory.ts'
 import type { MemoryCap } from '../../lib/memory.ts'
-import { peekGate, queueTmpdir, readSlot, slotLimits } from '../../lib/slot.ts'
-import type { SlotLimits } from '../../lib/slot.ts'
+import { order, peekEntry, readSlot, slotLimits } from '../../lib/slot.ts'
 import { argvOf, cpuByKind, homeOf, owners, programOf } from './owners.ts'
 import type { OwnerContext, Proc, Top } from './owners.ts'
 import { fromOf, holdersOf, queueView } from './queue.ts'
@@ -225,18 +224,6 @@ async function namesOf(tops: Iterable<Top>, homes: Map<string, string>) {
   return homes
 }
 
-/**
- * What the first waiter meets while a place is free, each from its own admission: the load gate (`peekGate`) and memory
- * under the floor and the service's cap (`checkRam`).
- */
-async function headFacts(label: string, limits: SlotLimits) {
-  const [gate, short] = await Promise.all([
-    peekGate(limits),
-    checkRam(limits.floor, commandNeedMiB(label), queueTmpdir()),
-  ])
-  return { gate, ...(short && { short }) }
-}
-
 /** How many owners the state lists; the rest add up in `more`. */
 const LISTED = 12
 
@@ -302,13 +289,12 @@ export async function look(
   const all = owners(procs, tops, { homes, jobs })
   const cores = availableParallelism()
   const load = Math.round(loadavg()[0] * 100) / 100
-  // The first waiter's own reasons, read only while a place is free for it.
-  const first = waiting.toSorted((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))[0]
-  const head = first && holders.length < limits.max ? await headFacts(first.label, limits) : {}
+  // The first waiter's own look, taken only while a place is free for it.
+  const first = waiting.toSorted(order)[0]
+  const free = first && holders.length < limits.max
   const queue = queueView(slot, {
-    now,
     places: limits.max,
-    ...head,
+    head: free ? await peekEntry(first, { limits, need: commandNeedMiB(first.label) }) : undefined,
     usage: new Map(
       all
         .filter((owner): owner is Owner & { job: string } => owner.job !== undefined)
