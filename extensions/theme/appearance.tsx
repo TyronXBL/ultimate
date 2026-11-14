@@ -22,7 +22,16 @@ import { Switch } from '@/components/ui/switch'
 import { api, cn, errorMessage, useDialog, useDocOf, useStore, useUltimate } from '@/sdk'
 import { CODE_FONTS, UI_FONTS } from './fonts.ts'
 import type { Font } from './fonts.ts'
-import { DEFAULT_CHOICE, parseChoice, PRESETS, resolveTheme } from './palette.ts'
+import {
+  DEFAULT_CHOICE,
+  DEFAULT_TINT,
+  hexOfToken,
+  MAX_TINT,
+  parseChoice,
+  PRESETS,
+  resolveTheme,
+  ULTIMATE_HUE,
+} from './palette.ts'
 import type { Polarity } from './palette.ts'
 import { SetAction, ThemeDoc } from './refs.ts'
 import type { ThemeChoice } from './refs.ts'
@@ -76,22 +85,6 @@ const dropUnsaved = () => {
 /** Drop the draft once the saved choice caught up with it. */
 export const settleDraft = (saved: ThemeChoice) => {
   if (draft && sameChoice(draft, saved)) setDraft(undefined)
-}
-
-const ULTIMATE_HUE = 270
-const DEFAULT_TINT = 0.004
-const MAX_TINT = 0.04
-
-// A CSS colour as `#rrggbb`, read back from a one-pixel canvas.
-let paint: CanvasRenderingContext2D | null | undefined
-function hexOf(css: string) {
-  paint ??= document.createElement('canvas').getContext('2d', { willReadFrequently: true })
-  if (!paint) return '#000000'
-  paint.fillStyle = '#000000'
-  paint.fillStyle = css
-  paint.fillRect(0, 0, 1, 1)
-  const [r, g, b] = paint.getImageData(0, 0, 1, 1).data
-  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`
 }
 
 // Whether a font family is installed: it renders a sample at another width than a generic fallback does.
@@ -339,7 +332,8 @@ function CustomControls({
   const polarity = useStore((state) => state.ui.theme)
   const hue = choice.hue ?? ULTIMATE_HUE
   const tint = choice.tint ?? DEFAULT_TINT
-  const accent = choice.accent ?? hexOf(resolveTheme({ preset: 'ultimate' }, polarity).vars.brand)
+  const accent =
+    choice.accent ?? hexOfToken(resolveTheme({ preset: 'ultimate' }, polarity).vars.brand)
   return (
     <div className="mt-3 grid gap-2.5 rounded-md border border-border/70 bg-card/60 p-2.5">
       <Field label="Accent">
@@ -397,6 +391,23 @@ function Field({ label, value, children }: { label: string; value?: string; chil
   )
 }
 
+/**
+ * A ref for an input whose native `change` event calls `commit` with its value: it fires on release or when a picker
+ * closes, where React's `onChange` fires on every move.
+ */
+function useNativeChange(commit: (value: string) => void) {
+  const ref = useRef<HTMLInputElement>(null)
+  const changed = useEffectEvent(() => {
+    if (ref.current) commit(ref.current.value)
+  })
+  useEffect(() => {
+    const input = ref.current
+    input?.addEventListener('change', changed)
+    return () => input?.removeEventListener('change', changed)
+  }, [])
+  return ref
+}
+
 /** A range on a coloured track; the native `change` event, fired on release, saves. */
 function Slider({
   label,
@@ -417,13 +428,7 @@ function Slider({
   onDraft: (value: number) => void
   onCommit: (value: number) => void
 }) {
-  const ref = useRef<HTMLInputElement>(null)
-  const commit = useEffectEvent(() => onCommit(Number(ref.current?.value)))
-  useEffect(() => {
-    const input = ref.current
-    input?.addEventListener('change', commit)
-    return () => input?.removeEventListener('change', commit)
-  }, [])
+  const ref = useNativeChange((input) => onCommit(Number(input)))
   return (
     <input
       aria-label={label}
@@ -457,17 +462,9 @@ function ColorInput({
   onDraft: (value: string) => void
   onCommit: (value: string) => void
 }) {
-  const ref = useRef<HTMLInputElement>(null)
+  const ref = useNativeChange(onCommit)
   const [text, setText] = useState(value)
   useEffect(() => setText(value), [value])
-  const commit = useEffectEvent(() => {
-    if (ref.current) onCommit(ref.current.value)
-  })
-  useEffect(() => {
-    const input = ref.current
-    input?.addEventListener('change', commit)
-    return () => input?.removeEventListener('change', commit)
-  }, [])
   const typed = () => {
     const hex = text.trim().toLowerCase().replace(/^#?/, '#')
     if (/^#[0-9a-f]{6}$/.test(hex)) {

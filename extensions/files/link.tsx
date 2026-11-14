@@ -19,8 +19,16 @@ const notify = () => {
   for (const listener of listeners) listener()
 }
 
-function fromAddress(): FileTarget | undefined {
-  const params = new URL(location.href).searchParams
+/** The address `?files=<path>&scope=<id>&line=<n>` that opens `at`, as params. */
+export function addressOf(at: FileTarget) {
+  const params = new URLSearchParams({ files: at.path })
+  if (at.conversation !== undefined) params.set('scope', String(at.conversation))
+  if (at.line !== undefined) params.set('line', String(at.line))
+  return params
+}
+
+/** The file an address's params ask for (`addressOf` read back), if they ask for one. */
+export function targetOf(params: URLSearchParams): FileTarget | undefined {
   const path = params.get('files')
   if (!path) return undefined
   const conversation = Number(params.get('scope'))
@@ -33,7 +41,7 @@ function fromAddress(): FileTarget | undefined {
 }
 
 // A file someone asked for and the link has not shown yet: the page's `?files=` first, then `openFile` calls.
-let requested = fromAddress()
+let requested = targetOf(new URL(location.href).searchParams)
 // The line the surface should scroll to, until it has.
 let target: number | undefined
 
@@ -74,13 +82,14 @@ export function FilesLink() {
   useEffect(() => {
     if (requested !== undefined) return
     const url = new URL(location.href)
-    const path = surface === 'files' ? (shown.path ?? null) : null
-    const scope =
-      path === null || shown.conversation === undefined ? null : String(shown.conversation)
-    if (url.searchParams.get('files') === path && url.searchParams.get('scope') === scope) return
+    const at =
+      surface === 'files' && shown.path !== undefined
+        ? addressOf({ path: shown.path, conversation: shown.conversation })
+        : new URLSearchParams()
+    const same = (name: string) => url.searchParams.get(name) === at.get(name)
+    if (same('files') && same('scope')) return
     for (const name of ['files', 'scope', 'line']) url.searchParams.delete(name)
-    if (path !== null) url.searchParams.set('files', path)
-    if (scope !== null) url.searchParams.set('scope', scope)
+    for (const [name, value] of at) url.searchParams.set(name, value)
     history.replaceState(history.state, '', url)
   }, [surface, shown])
   return null

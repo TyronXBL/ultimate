@@ -1,5 +1,4 @@
 import { GaugeIcon } from 'lucide-react'
-import { useEffect } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { api, cn, defineWebExtension, formatAgo, useAction, useNow } from '@/sdk'
 import { chipOf, NEAR } from './chip.ts'
@@ -120,13 +119,10 @@ function Chip() {
     StateAction,
     {},
     // A failed poll keeps the last state; the next one asks again.
-    { onError: () => {} },
+    { every: 60_000, onError: () => {} },
   )
+  // The reset countdowns and ages in the popover.
   const now = useNow(60_000)
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [now, refetch])
   const readFresh = (open: boolean) => {
     if (!open) return
     api

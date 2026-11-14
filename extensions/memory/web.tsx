@@ -1,7 +1,6 @@
 import { MemoryStickIcon } from 'lucide-react'
-import { useEffect } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn, defineWebExtension, useAction, useNow } from '@/sdk'
+import { cn, defineWebExtension, useAction } from '@/sdk'
 import { StateAction } from './refs.ts'
 import type { MemoryState } from './refs.ts'
 
@@ -41,17 +40,12 @@ function Users({ state }: { state: MemoryState }) {
  * amber. The popover lists the largest process groups this Ultimate started, so the user sees what to stop.
  */
 function Chip() {
-  const { data: state, refetch } = useAction(
+  const { data: state } = useAction(
     StateAction,
     null,
     // A failed poll keeps the last state; the next one asks again.
-    { onError: () => {} },
+    { every: 15_000, onError: () => {} },
   )
-  const now = useNow(15_000)
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [now, refetch])
   if (!state?.near || state.floor === undefined || state.available === undefined) return null
   const below = state.available < state.floor
   return (

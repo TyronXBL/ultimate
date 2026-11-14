@@ -17,7 +17,8 @@ export type Pick = { model: string; thinking?: string }
 /** One agent of the sheet: what it runs on without a setup, and where it sits in the list. */
 export type AgentRow = { name: string; base: Pick; under?: string; more?: boolean }
 
-const levels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+/** Pi's thinking levels. */
+export const allLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 export const encode = (pick: Pick) =>
   pick.thinking ? `${pick.model}:${pick.thinking}` : pick.model
@@ -26,7 +27,9 @@ export const encode = (pick: Pick) =>
 export function decode(value: string): Pick {
   const at = value.lastIndexOf(':')
   const level = at > 0 ? value.slice(at + 1) : ''
-  return levels.has(level) ? { model: value.slice(0, at), thinking: level } : { model: value }
+  return allLevels.includes(level)
+    ? { model: value.slice(0, at), thinking: level }
+    : { model: value }
 }
 
 export const modelId = (model: string) => model.slice(model.indexOf('/') + 1)
@@ -73,9 +76,9 @@ function rowsOf(discovery: Discovery): AgentRow[] {
 }
 
 /** The agents a setup can name, each with what it runs on today; undefined while loading. */
-export function useAgentRows(enabled = true) {
-  const { data, refetch } = useAction(DefinitionsAction, null, { enabled })
-  return { rows: data ? rowsOf(data) : undefined, refetch }
+export function useAgentRows() {
+  const { data } = useAction(DefinitionsAction, null)
+  return { rows: data ? rowsOf(data) : undefined }
 }
 
 /** Only the agents `agents` sets to something other than what they run on today, and only agents the sheet lists. */
@@ -179,5 +182,5 @@ export function useChoices(rows: readonly AgentRow[] | undefined, setup: Agents)
   const current = [...list.filter((choice) => choice.saved), ...list].find((choice) =>
     sameAgents(choice.agents, setup),
   )
-  return { choices: list, current, presets: presets.data?.presets, refetch: presets.refetch }
+  return { choices: list, current, refetch: presets.refetch }
 }
