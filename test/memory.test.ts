@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { admitRam, availableMiB, commandNeedMiB, memoryFloor, ramShort } from '../lib/memory.ts'
 import { writeJson } from '../lib/json-file.ts'
+import { heldMiB } from '../lib/proc.ts'
 import { temp } from './helpers.ts'
 
 it.each([
@@ -59,6 +60,26 @@ it.each<[string, Parameters<typeof ramShort>, ReturnType<typeof ramShort>]>([
   ],
 ])('cap: %s', (_name, args, short) => {
   expect(ramShort(...args)).toEqual(short)
+})
+
+it('counts no cache against the cap: the file cache ended jobs left in their slice admits a 2.2 GiB check (#298279)', () => {
+  // 2026-11-14 15:11 UTC: the slice's `memory.current` was 2,472 MiB, file 2,360 MiB and anon 0, with 10,168 MiB
+  // available; the service held 1,409 MiB beside its file cache. The split between the lists was not recorded: the
+  // refusal's "3.4 of 5.5 GiB in use" says most of the cache was on the active one.
+  const mib = 2 ** 20
+  const stat = [
+    'anon 0',
+    `file ${2360 * mib}`,
+    `kernel ${112 * mib}`,
+    'shmem 0',
+    `inactive_file ${300 * mib}`,
+    `active_file ${2060 * mib}`,
+    `slab_reclaimable ${95 * mib}`,
+    `slab_unreclaimable ${5 * mib}`,
+  ].join('\n')
+  const jobs = heldMiB(2472, stat)
+  expect(jobs).toBe(17)
+  expect(ramShort({ available: 10_168, cap: cap(1409, jobs) }, 2200, 3072)).toBeUndefined()
 })
 
 it('reserves what it admits, so concurrent starters cannot both pass on the same RAM', async () => {

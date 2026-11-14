@@ -15,7 +15,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readJson, writeJson } from './json-file.ts'
 import { JOBS_SLICE } from './job-scope.ts'
-import { avg10, cgroupPath, parseMeminfo, parseStatus, processTable } from './proc.ts'
+import { avg10, cgroupPath, heldMiB, parseMeminfo, parseStatus, processTable } from './proc.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /** About what a preview or a scratch server needs: a booted Ultimate with its web build. */
@@ -69,11 +69,11 @@ export function commandNeedMiB(command: string) {
 /**
  * The soft memory cap of the cgroup Ultimate runs in (`memory.high` of the nearest one up with a finite one, in MiB),
  * what that cgroup uses of it and its memory pressure (`some` and `full` avg10, percent). Every host on the machine and
- * all they start share it (a systemd service cap), so a job that fits in RAM may still not fit under it. `used` is its
- * working set, `memory.current` less the inactive file cache the kernel drops first (on 2026-11-12 about 1 GiB of
- * 3.7), so idle cache never keeps a job out. `jobs` is the working set of the jobs' own slice (`lib/job-scope.ts`),
- * outside the service: admission counts it against the cap too, which keeps hosts and jobs together within the budget
- * the cap was sized for (5.5 GiB, with about 2 GiB outside the service and the 3 GB floor beside it, #231847).
+ * all they start share it (a systemd service cap), so a job that fits in RAM may still not fit under it. `used` is what
+ * it holds that the kernel cannot drop (`cgroupHeld`), so cache never keeps a job out. `jobs` is the same of the jobs' own
+ * slice (`lib/job-scope.ts`), outside the service: admission counts it against the cap too, which keeps hosts and jobs
+ * together within the budget the cap was sized for (5.5 GiB, with about 2 GiB outside the service and the 3 GB floor
+ * beside it, #231847).
  */
 export type MemoryCap = {
   used: number
@@ -252,14 +252,21 @@ async function ownCgroup() {
 
 const mib = (text: string) =>
   /^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined
-/** The working set of the cgroup at `dir` in MiB: `memory.current` less its inactive file cache. */
-async function workingSet(dir: string) {
+/**
+ * What the cgroup at `dir` holds that the kernel cannot drop (`heldMiB`). Anonymous memory stays, whose growth past
+ * the cap is the reclaim to keep out of (#227574).
+ *
+ * #298279: a job's file cache stays charged to the jobs' slice after its scope ends, and nothing reclaims it there
+ * (the slice has no limit of its own). On 2026-11-14 the slice held 2,472 MiB, 2,360 of it file cache and none
+ * anonymous, and a count that left out only the inactive file cache kept a `pnpm fix` waiting 30 min under a cap
+ * "3.4 of 5.5 GiB in use", with 10 GiB of RAM available.
+ */
+async function cgroupHeld(dir: string) {
   const [current, stat] = await Promise.all([
     readFile(join(dir, 'memory.current'), 'utf8').then(mib),
     readFile(join(dir, 'memory.stat'), 'utf8'),
   ])
-  const inactive = Number(/^inactive_file (\d+)$/m.exec(stat)?.[1] ?? 0) / 2 ** 20
-  return current === undefined ? undefined : Math.round(current - inactive)
+  return current === undefined ? undefined : heldMiB(current, stat)
 }
 
 /**
@@ -278,12 +285,12 @@ export async function memoryCap(): Promise<MemoryCap | undefined> {
       ),
     )
     if (high !== undefined) {
-      // The jobs' slice counts once: a capped cgroup that contains it already counts it in its own working set.
+      // The jobs' slice counts once: a capped cgroup that contains it already counts it in its own figure.
       const outside = at !== '/' && !JOBS_SLICE.startsWith(`${at}/`)
       const [used, jobs, pressure] = await Promise.all([
-        workingSet(dir),
+        cgroupHeld(dir),
         outside
-          ? workingSet(join('/sys/fs/cgroup', JOBS_SLICE)).catch(
+          ? cgroupHeld(join('/sys/fs/cgroup', JOBS_SLICE)).catch(
               // No slice: no job has run in one since it was last emptied and removed, or jobs get no scopes here.
               () => 0,
             )

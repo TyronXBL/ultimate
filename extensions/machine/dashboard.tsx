@@ -474,7 +474,7 @@ function Resources({ state, samples }: { state: MachineState; samples: Sample[] 
                   fill: true,
                 },
               ]}
-              title="Service memory"
+              title="Service and job memory"
             />
           )}
           <Chart

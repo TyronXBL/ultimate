@@ -127,7 +127,8 @@ export type Sample = {
   stall: { cpu: number; io: number; memory: number }
   /**
    * The service this host runs in, when its memory is capped (every project's host and what it starts, under systemd):
-   * its working set as admission counts it (`memoryCap`) and its memory stall share (`some`, %).
+   * what admission counts against the cap (`memoryCap`: what the service and its jobs hold that the kernel cannot
+   * drop, no cache) and the service's memory stall share (`some`, %).
    */
   cgroup?: { usedMiB: number; stall: number }
   /** Jobs holding the slot, and waiting for it. */

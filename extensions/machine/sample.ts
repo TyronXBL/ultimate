@@ -311,7 +311,7 @@ export async function look(
       availableMiB: mem.availableMiB,
       swapUsedMiB: mem.swapUsedMiB,
       stall,
-      ...(cap && { cgroup: { usedMiB: cap.used, stall: cap.pressure.some } }),
+      ...(cap && { cgroup: { usedMiB: cap.used + cap.jobs, stall: cap.pressure.some } }),
       running: holders.length,
       waiting: waiting.length,
     },

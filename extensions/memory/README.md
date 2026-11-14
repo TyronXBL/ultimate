@@ -21,7 +21,8 @@ so two starters never both pass on the same free RAM.
 
 Each starter estimates its job's need with `lib/memory.ts` and starts it only when available RAM minus that need
 stays at or above the floor and, where Ultimate's cgroup or an ancestor has a soft cap (`memory.high`, a systemd
-`MemoryHigh=`), the cgroup's working set (`memory.current` less inactive file cache) plus that need stays under it:
+`MemoryHigh=`), what that cgroup and the jobs' slice hold that the kernel cannot drop (`memory.current` less file
+cache and reclaimable slab, so cache a finished job left behind keeps nothing out) plus that need stays under it:
 the same locked step, the same one-minute reservations, counted against both. Every host on the machine and all they
 start share that cap, so RAM can be free while the service is full; on 2026-11-12 at 01:23 UTC two `pnpm check` runs
 filled the 5632 MiB cap with 5.1 GB of RAM still available, and the kernel's reclaim (memory pressure 80 %, swap full)

@@ -27,10 +27,12 @@ alarm: a small swap stays full for days on a healthy machine.
   argument values; other users' processes show by program name.
 - **Resources**: `/proc/loadavg`, `/proc/meminfo`, `statfs` of `$TMPDIR` and `/tmp` (a RAM file system is marked),
   the stall shares in `/proc/pressure/{cpu,io,memory}`, and the service's memory against its soft cap with its stall
-  share, as admission reads them (`readSlot`'s `memory`, from `memoryCap`). Under systemd that cgroup holds
-  every project's host and everything they start: at its soft cap the kernel reclaims and re-reads pages of all of
-  them, so the machine crawls while `MemAvailable`, and the RAM floor, still show gigabytes free. The chip and the
-  header call it out from 256 MiB below the cap or 20 % memory stall.
+  share, as admission reads them (`readSlot`'s `memory`, from `memoryCap`). The chart shows the figure admission
+  decides on: what the service and the jobs' slice hold that the kernel cannot drop, without file cache or
+  reclaimable slab. Under systemd that cgroup holds every project's host and everything they start: at its soft cap
+  the kernel reclaims and re-reads pages of all of them, so the machine crawls while `MemAvailable`, and the RAM
+  floor, still show gigabytes free. The chip and the header call it out when the service alone holds that much to
+  within 256 MiB of the cap, or from 20 % memory stall.
 
 ## Cost and history
 

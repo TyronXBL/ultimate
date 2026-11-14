@@ -1,5 +1,5 @@
 /**
- * Parsers for the Linux `/proc` files the fork's readers use, one per file, over their text: RAM admission
+ * Parsers for the Linux `/proc` and cgroup files the fork's readers use, one per file, over their text: RAM admission
  * (`lib/memory.ts`), CPU measurement (`lib/cpu.ts`), job scopes (`lib/job-scope.ts`) and the Machine dashboard read
  * through these. Upstream's `lib/process-group.ts` keeps its own read of a process's start time.
  */
@@ -77,6 +77,17 @@ export async function processTable<T>(file: string, parse: (text: string, pid: n
 /** `avg10` of a pressure file's `some` or `full` line (`/proc/pressure/*`, a cgroup's `*.pressure`), in %; 0 when absent. */
 export const avg10 = (text: string, line: 'some' | 'full') =>
   Number(new RegExp(`^${line} avg10=([\\d.]+)`, 'm').exec(text)?.[1] ?? 0)
+
+/**
+ * What a cgroup holds that the kernel cannot drop without swapping, in MiB: its `memory.current` (`currentMiB`) less,
+ * from its `memory.stat`, the file cache on both LRU lists and the reclaimable slab (dentries, inodes), which
+ * `MemAvailable` counts as available too. Anonymous memory stays, and tmpfs with it: it is on the anonymous lists.
+ */
+export function heldMiB(currentMiB: number, stat: string) {
+  const field = (name: string) => Number(new RegExp(`^${name} (\\d+)$`, 'm').exec(stat)?.[1] ?? 0)
+  const dropped = field('active_file') + field('inactive_file') + field('slab_reclaimable')
+  return Math.max(0, Math.round(currentMiB - dropped / 2 ** 20))
+}
 
 /** The cgroup v2 path in a `/proc/<pid>/cgroup` ("0::/path", among v1 lines on a hybrid system); undefined without one. */
 export const cgroupPath = (text: string) => /^0::(\/.*)$/m.exec(text)?.[1]
