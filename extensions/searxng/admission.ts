@@ -5,10 +5,12 @@ import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { identify } from '../../lib/process-group.ts'
 
-/** Retry SQLite's short write locks without blocking the event loop. */
+/**
+ * Retry SQLite's short write locks without blocking the event loop. The first try runs even when `signal` is
+ * aborted: the Tavily budget's first schema write must not be skipped (#229140); callers check it themselves.
+ */
 async function write<T>(action: () => T, signal?: AbortSignal): Promise<T> {
   for (;;) {
-    signal?.throwIfAborted()
     try {
       return action()
     } catch (error) {
@@ -20,6 +22,21 @@ async function write<T>(action: () => T, signal?: AbortSignal): Promise<T> {
       await sleep(100, undefined, { signal })
     }
   }
+}
+
+/** `action` in one immediate transaction, committed when it returns, retried while another writer holds the lock. */
+export function transaction<T>(db: DatabaseSync, action: () => T, signal?: AbortSignal) {
+  return write(() => {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = action()
+      db.exec('COMMIT')
+      return result
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }, signal)
 }
 
 /** Admit at most two searches across hosts. SQLite serializes claims and releases after a crash. */
@@ -37,6 +54,7 @@ export async function admitSearch(
     throw new Error('Cannot identify the search process.')
   }
   try {
+    signal?.throwIfAborted()
     await write(
       () =>
         db.exec(
@@ -46,10 +64,9 @@ export async function admitSearch(
     )
     for (;;) {
       signal?.throwIfAborted()
-      const entered = await write(() => {
-        let claimed = false
-        db.exec('BEGIN IMMEDIATE')
-        try {
+      const entered = await transaction(
+        db,
+        () => {
           const rows = db.prepare('SELECT id, pid, identity FROM holders').all() as {
             id: string
             pid: number
@@ -60,17 +77,12 @@ export async function admitSearch(
               db.prepare('DELETE FROM holders WHERE id = ?').run(row.id)
           }
           const count = db.prepare('SELECT count(*) AS n FROM holders').get() as { n: number }
-          if (count.n < 2) {
-            db.prepare('INSERT INTO holders VALUES (?, ?, ?)').run(id, process.pid, identity)
-            claimed = true
-          }
-          db.exec('COMMIT')
-          return claimed
-        } catch (error) {
-          db.exec('ROLLBACK')
-          throw error
-        }
-      }, signal)
+          if (count.n >= 2) return false
+          db.prepare('INSERT INTO holders VALUES (?, ?, ?)').run(id, process.pid, identity)
+          return true
+        },
+        signal,
+      )
       if (entered) {
         return async () => {
           try {

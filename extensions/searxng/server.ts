@@ -43,6 +43,88 @@ type SearchResult = {
   engine: string | null
 }
 type UnresponsiveEngine = { engine: string; message: string }
+type Unanswered =
+  | 'secrets-unreadable'
+  | 'not-configured'
+  | 'cap-reached'
+  | 'budget-unavailable'
+  | 'failed'
+/** What the Tavily fallback did; its kind is the `fallback` detail, for the weekly count. */
+type Fallback =
+  | { kind: 'answered'; results: SearchResult[]; reservation: number }
+  | { kind: 'no-results' }
+  | { kind: Unanswered; reason: string }
+
+/** A timeout of `ms`, and the signal that aborts on it or on the caller's `signal`. */
+function deadline(signal: AbortSignal | undefined, ms: number) {
+  const timeout = AbortSignal.timeout(ms)
+  return { timeout, signal: signal ? AbortSignal.any([signal, timeout]) : timeout }
+}
+
+/** web_search's details and text from SearXNG's answer, whether its web engines were all down, and the fallback. */
+function searchAnswer(
+  args: { query: string; count?: number },
+  primary: { results: SearchResult[]; unresponsive: UnresponsiveEngine[] },
+  down: boolean,
+  fallback: Fallback | undefined,
+): { text: string; details: JsonObject } {
+  const { unresponsive } = primary
+  const engines = unresponsive.map((engine) => `${engine.engine}: ${engine.message}`).join('; ')
+  const found = primary.results.length > 0
+  if (fallback && 'reason' in fallback && down && !found) {
+    const text = `Web search is down: every SearXNG web engine failed (${engines}). ${fallback.reason}`
+    return {
+      text,
+      details: {
+        status: 'error',
+        outcome: 'outage',
+        error: text,
+        httpStatus: null,
+        unresponsive,
+        fallback: fallback.kind,
+      },
+    }
+  }
+  const results = fallback?.kind === 'answered' ? fallback.results : primary.results
+  const kind = fallback?.kind
+  const own = found ? (unresponsive.length ? 'partial' : 'good') : 'unknown-empty'
+  const outcome = kind === 'answered' ? 'fallback' : kind === 'no-results' && !found ? 'empty' : own
+  const others = '\n\nEvery SearXNG web engine failed; these results come from the other engines.'
+  const fallbackNote = !fallback
+    ? ''
+    : fallback.kind === 'answered'
+      ? `\n\nResults from Tavily (fallback ${fallback.reservation}/${TAVILY_CAP.toLocaleString('en')} this month); SearXNG category and time filters do not apply.${(args.count ?? 10) > 20 ? ' Tavily returns at most 20 results.' : ''}`
+      : fallback.kind === 'no-results'
+        ? // Tavily answered: a real empty result, whatever SearXNG's web engines did.
+          found
+          ? `${others} Tavily (the fallback) found nothing.`
+          : '\n\nTavily (the fallback) found nothing either.'
+        : found
+          ? `${others} ${fallback.reason}`
+          : `\n\n${fallback.reason} SearXNG does not report whether its engines answered, so this may be a real empty result or engines silently skipped.`
+  const shown = results.slice(0, args.count ?? 10)
+  const note = unresponsive.length
+    ? `\n\nNote: ${unresponsive.length} upstream ${unresponsive.length === 1 ? 'engine was' : 'engines were'} unresponsive (${engines}); the result set may be incomplete.`
+    : ''
+  const list = shown
+    .map(
+      (result, index) =>
+        `${index + 1}. ${result.title || result.url}\nURL: ${result.url}${result.publishedDate ? `\nPublished: ${result.publishedDate}` : ''}\n${result.snippet}`,
+    )
+    .join('\n\n---\n\n')
+  return {
+    text: shown.length
+      ? `Found ${shown.length} results for: ${args.query}\n\n${list}${note}${fallbackNote}`
+      : `No results for: ${args.query}${note}${fallbackNote}`,
+    details: {
+      status: 'success',
+      outcome,
+      results: shown,
+      unresponsive,
+      ...(fallback && { fallback: fallback.kind }),
+    },
+  }
+}
 
 /** A fault worth a clear tool error; `status` is the remote HTTP answer when there was one; `notify` marks the configuration and connectivity faults worth one process-local notice. */
 class WebError extends Error {
@@ -391,8 +473,7 @@ export default function searxng(host: ExtensionHost) {
     url.searchParams.set('format', 'json')
     if (options.categories) url.searchParams.set('categories', options.categories)
     if (options.time_range) url.searchParams.set('time_range', options.time_range)
-    const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
-    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
+    const { timeout, signal } = deadline(options.signal, SEARCH_TIMEOUT_MS)
     let response: Response
     try {
       response = await globalThis.fetch(url, { headers: { accept: 'application/json' }, signal })
@@ -439,8 +520,7 @@ export default function searxng(host: ExtensionHost) {
     if (!unresponsive.length || /(?:^|\s)[!@]/.test(query)) return false
     try {
       const base = await searxngUrl(host)
-      const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
-      const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
+      const { signal } = deadline(options.signal, SEARCH_TIMEOUT_MS)
       const response = await globalThis.fetch(`${base}/config`, { signal })
       if (!response.ok) return false
       const config = (await response.json()) as { engines?: unknown }
@@ -474,8 +554,7 @@ export default function searxng(host: ExtensionHost) {
   }
 
   async function tavily(query: string, key: string, signal?: AbortSignal): Promise<SearchResult[]> {
-    const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+    const { timeout, signal: combined } = deadline(signal, SEARCH_TIMEOUT_MS)
     let response: Response
     try {
       response = await globalThis.fetch('https://api.tavily.com/search', {
@@ -517,9 +596,49 @@ export default function searxng(host: ExtensionHost) {
     })
   }
 
+  /** Ask Tavily in SearXNG's place, within the monthly budget; a reservation is spent before the call. */
+  async function tavilyFallback(query: string, signal?: AbortSignal): Promise<Fallback> {
+    // An unreadable store reads as null, told apart from a missing key.
+    const key = await readSecret(host.userHome, 'TAVILY_API_KEY').catch(() => null)
+    if (key === null)
+      return {
+        kind: 'secrets-unreadable',
+        reason: 'Tavily fallback: the secret store could not be read.',
+      }
+    if (!key) {
+      const reason =
+        'Tavily fallback is not configured; add TAVILY_API_KEY in the Secrets panel (⌘K → Secrets).'
+      if (!missingKey.sent) {
+        missingKey.sent = true
+        host.notice(reason)
+      }
+      return { kind: 'not-configured', reason }
+    }
+    // A search cancelled by now must not spend a counted call.
+    signal?.throwIfAborted()
+    // An unreadable counter is reported as budget-unavailable below; no request is sent.
+    const reservation = await reserveSearch(stateHome, signal).catch(() => undefined)
+    signal?.throwIfAborted()
+    if (reservation === undefined)
+      return {
+        kind: 'budget-unavailable',
+        reason: `Tavily fallback: its call counter in ${stateHome}/.ultimate/tavily-budget.sqlite is unreadable, so no request was sent.`,
+      }
+    if (reservation === null)
+      return {
+        kind: 'cap-reached',
+        reason: `Tavily fallback: the monthly limit of ${TAVILY_CAP.toLocaleString('en')} calls is used up until the 1st (UTC).`,
+      }
+    try {
+      const results = await tavily(query, key, signal)
+      return results.length ? { kind: 'answered', results, reservation } : { kind: 'no-results' }
+    } catch (error) {
+      return { kind: 'failed', reason: `Tavily fallback failed: ${(error as Error).message}` }
+    }
+  }
+
   async function read(address: string, signal?: AbortSignal) {
-    const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+    const { timeout, signal: combined } = deadline(signal, FETCH_TIMEOUT_MS)
     let url = fetchable(address)
     /** A failed request or body read as the tool reports it: cancelled, timed out, refused or unreachable. */
     const failed = (error: unknown) => {
@@ -654,8 +773,6 @@ export default function searxng(host: ExtensionHost) {
               categories: args.categories,
               time_range: args.time_range,
             })
-            let { results } = primary
-            const { unresponsive } = primary
             const down = await allWebDown(
               args.query,
               {
@@ -666,118 +783,15 @@ export default function searxng(host: ExtensionHost) {
               primary,
             )
             context.abortSignal?.throwIfAborted()
-            let outcome = results.length
-              ? unresponsive.length
-                ? 'partial'
-                : 'good'
-              : 'unknown-empty'
-            /** What the Tavily fallback did, for the weekly count; absent when it was not needed. */
-            let fallback: string | undefined
-            let fallbackNote = ''
-            if (!results.length || down) {
-              let reason = ''
-              let key: string | undefined
-              try {
-                key = await readSecret(host.userHome, 'TAVILY_API_KEY')
-              } catch {
-                fallback = 'secrets-unreadable'
-                reason = 'Tavily fallback: the secret store could not be read.'
-              }
-              if (!key && !reason) {
-                fallback = 'not-configured'
-                reason =
-                  'Tavily fallback is not configured; add TAVILY_API_KEY in the Secrets panel (⌘K → Secrets).'
-                if (!missingKey.sent) {
-                  missingKey.sent = true
-                  host.notice(reason)
-                }
-              }
-              if (key) {
-                let reservation: number | null | undefined
-                // A search cancelled by now must not spend a counted call.
-                context.abortSignal?.throwIfAborted()
-                try {
-                  reservation = await reserveSearch(stateHome, context.abortSignal)
-                  if (reservation === null) {
-                    fallback = 'cap-reached'
-                    reason = `Tavily fallback: the monthly limit of ${TAVILY_CAP.toLocaleString('en')} calls is used up until the 1st (UTC).`
-                  }
-                } catch {
-                  fallback = 'budget-unavailable'
-                  reason = `Tavily fallback: its call counter in ${stateHome}/.ultimate/tavily-budget.sqlite is unreadable, so no request was sent.`
-                }
-                context.abortSignal?.throwIfAborted()
-                if (reservation) {
-                  try {
-                    const found = await tavily(args.query, key, context.abortSignal)
-                    if (found.length) {
-                      results = found
-                      outcome = 'fallback'
-                      fallback = 'answered'
-                      fallbackNote = `\n\nResults from Tavily (fallback ${reservation}/${TAVILY_CAP.toLocaleString('en')} this month); SearXNG category and time filters do not apply.${(args.count ?? 10) > 20 ? ' Tavily returns at most 20 results.' : ''}`
-                    } else {
-                      // Tavily answered: a real empty result, whatever SearXNG's web engines did.
-                      fallback = 'no-results'
-                      if (results.length)
-                        fallbackNote =
-                          '\n\nEvery SearXNG web engine failed; these results come from the other engines. Tavily (the fallback) found nothing.'
-                      else {
-                        outcome = 'empty'
-                        fallbackNote = '\n\nTavily (the fallback) found nothing either.'
-                      }
-                    }
-                  } catch (error) {
-                    context.abortSignal?.throwIfAborted()
-                    fallback = 'failed'
-                    reason = `Tavily fallback failed: ${(error as Error).message}`
-                  }
-                }
-              }
-              context.abortSignal?.throwIfAborted()
-              if (reason && down && !results.length) {
-                const text = `Web search is down: every SearXNG web engine failed (${unresponsive.map((engine) => `${engine.engine}: ${engine.message}`).join('; ')}). ${reason}`
-                await api.details(
-                  {
-                    status: 'error',
-                    outcome: 'outage',
-                    error: text,
-                    httpStatus: null,
-                    unresponsive,
-                    fallback: fallback ?? null,
-                  },
-                  context,
-                )
-                return { isError: true, output: [{ type: 'text', text: truncateToolOutput(text) }] }
-              }
-              if (reason)
-                fallbackNote = results.length
-                  ? `\n\nEvery SearXNG web engine failed; these results come from the other engines. ${reason}`
-                  : `\n\n${reason} SearXNG does not report whether its engines answered, so this may be a real empty result or engines silently skipped.`
-            }
-            const shown = results.slice(0, args.count ?? 10)
-            await api.details(
-              {
-                status: 'success',
-                outcome,
-                results: shown,
-                unresponsive,
-                ...(fallback && { fallback }),
-              },
-              context,
-            )
-            const note = unresponsive.length
-              ? `\n\nNote: ${unresponsive.length} upstream ${unresponsive.length === 1 ? 'engine was' : 'engines were'} unresponsive (${unresponsive.map((engine) => `${engine.engine}: ${engine.message}`).join('; ')}); the result set may be incomplete.`
-              : ''
-            const list = shown
-              .map(
-                (result, index) =>
-                  `${index + 1}. ${result.title || result.url}\nURL: ${result.url}${result.publishedDate ? `\nPublished: ${result.publishedDate}` : ''}\n${result.snippet}`,
-              )
-              .join('\n\n---\n\n')
-            const text = shown.length
-              ? `Found ${shown.length} results for: ${args.query}\n\n${list}${note}${fallbackNote}`
-              : `No results for: ${args.query}${note}${fallbackNote}`
-            return { output: [{ type: 'text', text: truncateToolOutput(text) }] }
+            const fallback =
+              !primary.results.length || down
+                ? await tavilyFallback(args.query, context.abortSignal)
+                : undefined
+            context.abortSignal?.throwIfAborted()
+            const answer = searchAnswer(args, primary, down, fallback)
+            await api.details(answer.details, context)
+            const output = [{ type: 'text' as const, text: truncateToolOutput(answer.text) }]
+            return answer.details.status === 'error' ? { isError: true, output } : { output }
           } catch (error) {
             return failure(error, 'web_search failed.', (value) =>
               api.details(
