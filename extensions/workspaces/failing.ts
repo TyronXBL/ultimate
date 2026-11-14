@@ -6,13 +6,14 @@
 import { stripVTControlCharacters } from 'node:util'
 import type { Context } from '@earendil-works/chord/context'
 import type { ConversationId, Cursor, Harness } from '@earendil-works/pi-durable'
-import type { FailingTest, LanderEntry } from './types.ts'
+import type { ExtensionHost } from '../../server/extensions.ts'
+import type { FailingTest, LanderEntry, WorkspaceIndex } from './types.ts'
 
 /**
  * The tests a check's output names on Vitest's `FAIL` lines, as `<file> > … > <test>` (a file alone when the file
  * failed). Lines that name no file, such as a failed CI job or an unhandled error, are left out.
  */
-export function failedTests(output: string) {
+function failedTests(output: string) {
   const tests = new Set<string>()
   for (const line of stripVTControlCharacters(output).split('\n')) {
     const match = /^\s*FAIL\s+(.+)$/.exec(line)
@@ -98,4 +99,34 @@ export async function failingTests(
       b.landings[0].at - a.landings[0].at,
   )
   return result.slice(0, options.limit)
+}
+
+/** The tests `output` names as failed that also failed at other branches' landings, read before the commit. */
+export async function repeatedFailures(
+  host: Pick<ExtensionHost, 'harness' | 'notice'>,
+  index: () => Promise<Readonly<WorkspaceIndex> | undefined>,
+  except: number,
+  output = '',
+  context: Context,
+) {
+  const tests = failedTests(output)
+  if (!tests.length) return []
+  try {
+    const current = await index()
+    const found = await failingTests(
+      host.harness(),
+      Object.values(current?.landerConversations ?? {}),
+      { tests, except, limit: 5 },
+      context,
+    )
+    return found.map((item) => ({
+      test: item.test,
+      landings: item.landings.length,
+      branches: item.branches.slice(0, 5),
+    }))
+  } catch (error) {
+    // The failure is the report; without the history it only lacks the hint, so the lander goes on.
+    host.notice(`Reading earlier landing failures failed: ${String(error)}`)
+    return []
+  }
 }

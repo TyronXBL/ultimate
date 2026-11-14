@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync } from 'node:fs'
-import { mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 import { copyJson } from '@earendil-works/chord/json'
@@ -41,8 +41,16 @@ import { CheckRan, SubmissionFailed, SubmissionLanded } from './api.ts'
 import { advance, type QueueEvent } from './queue.ts'
 import { setup, setupCommands } from './setup.ts'
 import { advanceWorkspace } from './state.ts'
-import { REUSED, reusedText, settleCheck } from './check.ts'
-import { failedTests, failingTests } from './failing.ts'
+import {
+  plural,
+  REUSED,
+  reusedText,
+  settleCheck,
+  uncheckedLine,
+  uncheckedReason,
+  uncheckedStep,
+} from './check.ts'
+import { repeatedFailures } from './failing.ts'
 import { addCheckout, treePath } from './tree.ts'
 import type {
   Landed,
@@ -187,7 +195,6 @@ export const limitsFor = (check: Check, limits: CheckLimits): CheckLimits =>
     : { stall: Math.min(limits.stall, check.timeout), total: check.timeout }
 /** Lines naming failed tests (vitest's `FAIL`, `×` and `✗` marks), kept from a check's whole output. */
 const failedLine = /^\s*(FAIL|×|✗)\s/
-const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 const seconds = (value: number) => (value < 60 ? `${value} s` : `${+(value / 60).toFixed(1)} min`)
 
 /** Where running checks record their process groups, so a host that crashed mid-check stops them on its next open. */
@@ -334,59 +341,6 @@ export const landerSettings = async (host: Pick<Host, 'projectSettings'>): Promi
     ...(lander?.push && !process.env.ULTIMATE_PREVIEW_BRANCH ? { push: lander.push } : {}),
   }
 }
-/**
- * The checks the project's own `.ultimate/settings.json` declares, counted from its text: an untrusted file is parsed,
- * never run. `error` when it exists but does not parse.
- */
-async function declaredChecks(projectRoot: string): Promise<{ count: number } | { error: string }> {
-  let settings: unknown
-  try {
-    settings = JSON.parse(await readFile(join(projectRoot, '.ultimate/settings.json'), 'utf8'))
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { count: 0 }
-    return { error: String(error) }
-  }
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings))
-    return { error: 'Project settings must be a JSON object' }
-  const checks = (settings as { lander?: { checks?: unknown } }).lander?.checks
-  return { count: Array.isArray(checks) ? checks.flat().length : 0 }
-}
-/**
- * Why `settings` run no checks, or undefined when they run some. Trust gates running a project's checks: an untrusted
- * project's declared checks are counted for the warning, never run. A trusted project whose settings do not parse
- * throws instead of landing unchecked.
- */
-async function uncheckedReason(
-  host: Pick<Host, 'projectRoot' | 'projectSetup'>,
-  settings: Settings,
-): Promise<Unchecked | undefined> {
-  if (settings.checks.length) return undefined
-  const [{ decision }, declared] = await Promise.all([
-    host.projectSetup(),
-    declaredChecks(host.projectRoot),
-  ])
-  if (decision === true && 'error' in declared)
-    throw new Error(
-      `.ultimate/settings.json does not parse, so its lander checks cannot run: ${declared.error}`,
-    )
-  if (decision === true || ('count' in declared && !declared.count)) return { reason: 'none' }
-  // Settings that do not parse may still declare checks: what they declare is unknown, never "none".
-  return {
-    reason: 'untrusted',
-    ...('count' in declared ? { declared: declared.count } : {}),
-    decision: decision === false ? 'declined' : 'undecided',
-  }
-}
-/** The report's line about a landing no check ran on, for the submitter and whoever started it. */
-const uncheckedLine = (unchecked: Unchecked) =>
-  unchecked.reason === 'none'
-    ? 'Unchecked: no lander checks are configured, so none ran.'
-    : `Unchecked: ${unchecked.declared === undefined ? '.ultimate/settings.json does not parse, so its lander checks are unknown, and' : `.ultimate/settings.json declares ${plural(unchecked.declared, 'lander check')}, but`} none ran: this project's own setup was ${unchecked.decision === 'declined' ? 'declined' : 'not chosen yet'}, and only a trusted setup runs its commands. To run them, the user chooses "This project's setup" in the Extensions panel.`
-/** The lander step that says no checks run, in place of the checks. */
-const uncheckedStep = (unchecked: Unchecked) =>
-  unchecked.reason === 'none'
-    ? 'no checks configured'
-    : `skipped ${unchecked.declared === undefined ? 'declared checks' : plural(unchecked.declared, 'declared check')}: project setup ${unchecked.decision === 'declined' ? 'declined' : 'not chosen'}`
 export const contains = (cwd: string, ancestor: string, descendant: string) =>
   git(cwd, 'merge-base', '--is-ancestor', ancestor, descendant).then(
     () => true,
@@ -697,7 +651,13 @@ export function createLander(
               ...landedOutcome(landed),
               ...facts,
             })
-          const repeats = await repeated(output)
+          const repeats = await repeatedFailures(
+            host,
+            () => runtime.snapshot(Workspaces, ROOT_CONVERSATION_ID, context),
+            entry.conversationId,
+            output,
+            context,
+          )
           return finish(
             [
               `was not landed: ${detail}`,
@@ -713,29 +673,6 @@ export function createLander(
             ].join('\n'),
             { outcome: 'failed', ...facts, ...(repeats.length ? { repeats } : {}) },
           )
-        }
-        /** The tests `output` names as failed that also failed at other branches' landings, read before the commit. */
-        const repeated = async (output = '') => {
-          const tests = failedTests(output)
-          if (!tests.length) return []
-          try {
-            const current = await runtime.snapshot(Workspaces, ROOT_CONVERSATION_ID, context)
-            const found = await failingTests(
-              host.harness(),
-              Object.values(current?.landerConversations ?? {}),
-              { tests, except: entry.conversationId, limit: 5 },
-              context,
-            )
-            return found.map((item) => ({
-              test: item.test,
-              landings: item.landings.length,
-              branches: item.branches.slice(0, 5),
-            }))
-          } catch (error) {
-            // The failure is the report; without the history it only lacks the hint, so the lander goes on.
-            host.notice(`Reading earlier landing failures failed: ${String(error)}`)
-            return []
-          }
         }
         const retry = (retried = pushRetried) =>
           runtime.commit(
