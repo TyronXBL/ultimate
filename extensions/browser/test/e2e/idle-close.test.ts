@@ -13,12 +13,13 @@ import { removeTemp, temp, until } from '../../../../test/helpers.ts'
 it('closes the shared browser after it idles, and the next call launches a fresh one', async () => {
   const directory = await temp('ultimate-browser-idle-')
   const closers: (() => Promise<void>)[] = []
+  const notices: string[] = []
   const host = {
     home: join(directory, 'home'),
     projectRoot: directory,
     resource: <T>(_name: string, create: () => T) => create(),
     onClose: (close: () => Promise<void>) => closers.push(close),
-    notice() {},
+    notice: (message: string) => notices.push(message),
     system: () => ({ process: { url: 'http://127.0.0.1:1/' } }),
     implement() {},
   } as unknown as ExtensionHost
@@ -47,6 +48,8 @@ it('closes the shared browser after it idles, and the next call launches a fresh
     await until(() => !groupAlive(pid))
     expect((await drive()).isError).toBeFalsy()
     expect(launch).toHaveBeenCalledTimes(2)
+    // A normal idle close and relaunch say nothing.
+    expect(notices).toEqual([])
   } finally {
     vi.useRealTimers()
     launch.mockRestore()
