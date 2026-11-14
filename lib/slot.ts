@@ -32,7 +32,16 @@ import {
 } from './cpu.ts'
 import type { CpuGate } from './cpu.ts'
 import { readJson, writeJson } from './json-file.ts'
-import { admitIn, describeShort, locked, memoryCap, memoryFloor, stateDir } from './memory.ts'
+import {
+  admitIn,
+  checkRam,
+  describeShort,
+  locked,
+  memoryCap,
+  memoryFloor,
+  RAM_WAIT_MS,
+  stateDir,
+} from './memory.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 import type { RamShort } from './memory.ts'
 import { identify } from './process-group.ts'
@@ -99,7 +108,8 @@ export const SLOT_TMPDIR_ENV = 'ULTIMATE_SLOT_TMPDIR'
 /** Where the machine's queue lives for this process. */
 export const queueTmpdir = () => process.env[SLOT_TMPDIR_ENV] ?? tmpdir()
 
-const order = (a: Pick<SlotClaim, 'at' | 'id'>, b: Pick<SlotClaim, 'at' | 'id'>) =>
+/** The line's order: who asked first, then by id. */
+export const order = (a: Pick<SlotClaim, 'at' | 'id'>, b: Pick<SlotClaim, 'at' | 'id'>) =>
   a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 const claimOf = ({ id, kind, at, label, from }: SlotClaim): SlotClaim => ({
   id,
@@ -108,7 +118,7 @@ const claimOf = ({ id, kind, at, label, from }: SlotClaim): SlotClaim => ({
   label,
   from,
 })
-const holding = (entry: SlotEntry): entry is Holding => entry.state !== 'waiting'
+export const holding = (entry: SlotEntry): entry is Holding => entry.state !== 'waiting'
 
 /** The queue after `event`. A late `wait` never takes the slot from a job that holds it. */
 export function slotStep(queue: SlotQueue, event: SlotEvent): SlotQueue {
@@ -212,10 +222,11 @@ export function slotTurn(
   return { kind: 'next' }
 }
 
+type Forced = Extract<CpuGate, { kind: 'forced' }>
 /** What a look at the queue gave a job. */
 type SlotEntered =
   /** It holds the slot: `start` ran under the lock; `forced` when it started under load it waited out in vain. */
-  | { kind: 'started'; holder: SlotHolder; forced?: Extract<CpuGate, { kind: 'forced' }> }
+  | { kind: 'started'; holder: SlotHolder; forced?: Forced }
   /** It waits: behind other jobs, or for the queue to settle. */
   | { kind: 'waiting'; turn: Exclude<SlotTurn, { kind: 'next' }> }
   /** Its turn, but RAM would drop below the floor. */
@@ -226,6 +237,8 @@ type SlotEntered =
    * job starts anyway.
    */
   | { kind: 'cpu'; gate: Extract<CpuGate, { kind: 'wait' }>; pressureSince: number | undefined }
+/** What a look would give a job without joining the line (`peekEntry`): `enterSlot`'s answer, `free` where it starts. */
+export type SlotPeek = Exclude<SlotEntered, { kind: 'started' }> | { kind: 'free'; forced?: Forced }
 
 /**
  * Folders this process saw a queue file in: one missing there later was removed. Only a process that saw it can tell a
@@ -269,33 +282,40 @@ async function update<T>(
   })
 }
 
-/** The load gate for job `id` at the head of `queue` (`cpuGate`), `pressureSince` its outside wait. */
-async function gateFor(
+/** `enterSlot`'s decision for `claim` in the expired `queue`: its turn, the load gate, then RAM (`short`). */
+async function admission(
   queue: SlotQueue,
-  id: string,
+  claim: Pick<SlotClaim, 'id' | 'at'>,
   now: number,
   limits: SlotLimits,
-  pressureSince: number,
-) {
-  const held = queue.entries.filter((entry) => entry.id !== id).filter(holding)
-  return cpuGate(await machineLoad(), limits.cpu, now, {
+  short: () => Promise<RamShort | undefined>,
+  pressureSince = now,
+): Promise<SlotPeek> {
+  const turn = slotTurn(queue, claim, now, limits.max)
+  if (turn.kind !== 'next') return { kind: 'waiting', turn }
+  const held = queue.entries.filter((entry) => entry.id !== claim.id).filter(holding)
+  const outside = held.length === 0
+  const gate = cpuGate(await machineLoad(), limits.cpu, now, {
     running: held.length,
     settled: held.every((entry) => now - entry.since >= LOAD_SHOWS_MS),
-    ...(held.length === 0 && { outsideSince: pressureSince }),
+    ...(outside && { outsideSince: pressureSince }),
   })
+  if (gate.kind === 'wait')
+    return { kind: 'cpu', gate, pressureSince: outside ? pressureSince : undefined }
+  const ram = await short()
+  if (ram) return { kind: 'ram', short: ram }
+  return { kind: 'free', ...(gate.kind === 'forced' && { forced: gate }) }
 }
 
-/** The load gate a job at the head of the line would meet now, without joining it: for a tool's answer. */
-export function peekGate(limits: SlotLimits, parent = queueTmpdir()) {
-  return update<CpuGate>(parent, async (queue, now) => [
+/** What `enterSlot` would give `claim` now, without joining the line, reserving RAM or starting. */
+export function peekEntry(
+  claim: Pick<SlotClaim, 'id' | 'at'>,
+  { limits, need, parent = queueTmpdir() }: { limits: SlotLimits; need: number; parent?: string },
+) {
+  return update<SlotPeek>(parent, async (queue, now) => [
     queue,
-    await gateFor(queue, '', now, limits, now),
+    await admission(queue, claim, now, limits, () => checkRam(limits.floor, need, parent)),
   ])
-}
-
-/** Where `claim` would stand now, with `limit` heavy jobs at once, without joining the line. */
-export function peekSlot(claim: Pick<SlotClaim, 'id' | 'at'>, limit = 1, parent = queueTmpdir()) {
-  return update<SlotTurn>(parent, async (queue, now) => [queue, slotTurn(queue, claim, now, limit)])
 }
 
 /** The queue now, expired: who holds a place (`running`, `measuring`) and who waits, for a reader that shows it. */
@@ -365,28 +385,37 @@ export async function enterSlot(
   const { limits, need, start, queue: joins = true, parent = queueTmpdir() } = options
   if (process.env[SLOT_ENV]) return { kind: 'started', holder: await start() }
   return update<SlotEntered>(parent, async (queue, now, dir) => {
-    const turn = slotTurn(queue, claim, now, limits.max)
-    const wait = (result: SlotEntered): [SlotQueue, SlotEntered] => [
-      joins ? slotStep(queue, { type: 'wait', claim, now }) : queue,
-      result,
-    ]
-    if (turn.kind !== 'next') return wait({ kind: 'waiting', turn })
-    const outside = !queue.entries.some((entry) => entry.id !== claim.id && holding(entry))
-    const gate = await gateFor(queue, claim.id, now, limits, options.pressureSince ?? now)
-    if (gate.kind === 'wait')
-      return wait({
-        kind: 'cpu',
-        gate,
-        pressureSince: outside ? (options.pressureSince ?? now) : undefined,
-      })
-    const short = await admitIn(dir, limits.floor, need)
-    if (short) return wait({ kind: 'ram', short })
+    const ram = () => admitIn(dir, limits.floor, need)
+    const found = await admission(queue, claim, now, limits, ram, options.pressureSince)
+    if (found.kind !== 'free')
+      return [joins ? slotStep(queue, { type: 'wait', claim, now }) : queue, found]
     const holder = await start()
     return [
       slotStep(queue, { type: 'start', claim, holder, now }),
-      { kind: 'started', holder, ...(gate.kind === 'forced' && { forced: gate }) },
+      { kind: 'started', holder, ...(found.forced && { forced: found.forced }) },
     ]
   })
+}
+
+type SlotWaited = { ramSince?: number; pressureSince?: number }
+/**
+ * After a look that did not start: the clocks its owner keeps for the next look, or `gave-up` once RAM stayed short at
+ * the head of the line for `limitMs`, so the line behind it moves on. Pure: the owner releases and reports.
+ */
+export function slotWait(
+  entered: Exclude<SlotEntered, { kind: 'started' }>,
+  prior: { ramSince?: number },
+  now: number,
+  limitMs = RAM_WAIT_MS,
+): { kind: 'wait'; waited: SlotWaited } | { kind: 'gave-up'; short: RamShort } {
+  if (entered.kind === 'ram') {
+    const ramSince = prior.ramSince ?? now
+    if (now - ramSince >= limitMs) return { kind: 'gave-up', short: entered.short }
+    return { kind: 'wait', waited: { ramSince } }
+  }
+  // Only load the queue does not cause counts towards starting anyway (#227574).
+  const pressureSince = entered.kind === 'cpu' ? entered.pressureSince : undefined
+  return { kind: 'wait', waited: pressureSince === undefined ? {} : { pressureSince } }
 }
 
 /**
@@ -491,6 +520,10 @@ export function describeWait(entered: Exclude<SlotEntered, { kind: 'started' }>,
       : ''
   return `${ordinal(turn.ahead.length + 1)} in line for the heavy-work slot, ${taken}behind ${describeBehind(turn, now)}`
 }
+
+/** A start under load waited out in vain: "started under pressure (load 9 on 6 cores, CPU pressure 30 %) after 30 min …". */
+export const describeForced = (forced: Forced) =>
+  `started under pressure (${describeLoad(forced)}) after ${Math.round(forced.waited / 60_000)} min waiting for load the heavy-work queue did not cause`
 
 /** The jobs a job waits behind: "`pnpm check` from #12 in my-app (running 3 min); `pnpm test` from #14 in my-app (waiting)". */
 export function describeBehind(turn: Extract<SlotTurn, { kind: 'behind' }>, now = Date.now()) {

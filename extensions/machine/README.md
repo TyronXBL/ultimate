@@ -14,8 +14,8 @@ alarm: a small swap stays full for days on a healthy machine.
   the `heavyWork.maxJobs` places (running; `measuring` while an unknown command is on probation; running and marked
   measured heavy when the queue did not know its command), then the waiters in the order they asked (`queue.ts`). A
   waiter waits behind the one ahead of it; the first waits for the queue to settle, for a place ("2 of 2 heavy jobs
-  running"), for CPU (the load gate, `peekGate`), for memory under the floor or the service's cap (`checkRam`), or
-  starts at its next look. Every Ultimate and preview on the machine shares the queue, so other projects' jobs show
+  running"), for CPU (the load gate), for memory under the floor or the service's cap, or starts at its next look:
+  what its own look would give it now (`peekEntry`). Every Ultimate and preview on the machine shares the queue, so other projects' jobs show
   too, named by project; this project's link to their conversations. A job that ended (done, failed or stopped for
   turning heavy without a place) leaves the queue: its outcome is on its own background card, not here.
 - **Who uses the machine** from `/proc/<pid>/stat` (CPU, RSS, parent, process group) and, once per process, the command
