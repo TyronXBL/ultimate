@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { availableParallelism } from 'node:os'
 import { basename, join } from 'node:path'
+import { cgroupPath } from './proc.ts'
 
 const uid = process.getuid?.()
 const manager = `/user.slice/user-${uid}.slice/user@${uid}.service`
@@ -21,9 +22,6 @@ export const JOBS_SLICE = `${manager}/ultimate.slice/ultimate-jobs.slice`
  */
 const jobMemoryMiB = (need: number) => Math.max(4096, 2 * need)
 
-/** Its cgroup path, from the first line of `/proc/<pid>/cgroup` in cgroup v2 ("0::/path"). */
-const cgroupOf = (text: string) => /^0::(\/.*)$/m.exec(text)?.[1]
-
 /** Whether jobs get a scope: on Linux with the user's systemd manager running, found by its private socket. */
 const scopes = () =>
   process.platform === 'linux' &&
@@ -34,7 +32,7 @@ const scopes = () =>
  * the system manager's (a CI runner's agent), which the user manager cannot bind to.
  */
 async function ownService() {
-  const own = cgroupOf(
+  const own = cgroupPath(
     await readFile('/proc/self/cgroup', 'utf8').catch(
       // A user manager runs, so this is Linux; a read failing here leaves the scope unbound.
       () => '',

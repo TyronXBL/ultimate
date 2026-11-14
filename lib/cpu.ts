@@ -9,9 +9,10 @@
  * Playwright audits run from plain bash all counted as light by their command text and ran beside the queue's own
  * heavy job: load 27.6–36 on 6 cores, swap full. Each threshold below names the evidence it comes from; tune from there.
  */
-import { readdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { availableParallelism, loadavg } from 'node:os'
 import type { JsonObject } from '@earendil-works/pi-durable'
+import { avg10, parseStat, processTable } from './proc.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /**
@@ -84,13 +85,12 @@ export type MachineLoad = { load: number; cores: number; pressure: number }
 export const machineLoad = async (): Promise<MachineLoad> => ({
   load: loadavg()[0],
   cores: availableParallelism(),
-  pressure: Number(
-    /^some avg10=([\d.]+)/.exec(
-      await readFile('/proc/pressure/cpu', 'utf8').catch(
-        // No pressure stall information (not Linux, or a kernel without it): the load alone decides.
-        () => '',
-      ),
-    )?.[1] ?? 0,
+  pressure: avg10(
+    await readFile('/proc/pressure/cpu', 'utf8').catch(
+      // No pressure stall information (not Linux, or a kernel without it): the load alone decides.
+      () => '',
+    ),
+    'some',
   ),
 })
 
@@ -256,39 +256,17 @@ export const holdsSlot = (observation: Observation) =>
 
 /** Linux's clock tick, `getconf CLK_TCK`: 100 on every architecture Node runs on there. */
 const TICK_MS = 10
-type Stat = { pid: number; sid: number; ticks: number }
 /**
  * Every process's session and CPU time (its own and its reaped children's, in ticks); empty where there is no /proc.
  * By session, not process group: `timeout`, which agents wrap long commands in, moves its command into a group of its
  * own (#227574: `timeout 900 node .data/audit/C-flow.mjs dark &`), while only `setsid` leaves the session that a
  * background command's leader and a bash call's shell each start (both are spawned detached, so with `setsid`).
  */
-async function stats() {
-  const names = await readdir('/proc').catch(
-    // No /proc: not Linux, so nothing is measured.
-    () => [],
-  )
-  const read = await Promise.all(
-    names
-      .filter((name) => /^\d+$/.test(name))
-      .map((name) =>
-        readFile(`/proc/${name}/stat`, 'utf8').then(
-          (stat): Stat => {
-            // After the name, which may hold spaces: state, ppid, pgrp, session, …, utime (14), stime, cutime, cstime (17).
-            const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
-            return {
-              pid: Number(name),
-              sid: Number(fields[3]),
-              ticks: fields.slice(11, 15).reduce((sum, field) => sum + Number(field), 0),
-            }
-          },
-          // The process ended between the listing and the read.
-          () => undefined,
-        ),
-      ),
-  )
-  return read.filter((stat) => stat !== undefined)
-}
+const stats = () =>
+  processTable('stat', (text, pid) => {
+    const stat = parseStat(text)
+    return { pid, sid: stat.session, ticks: stat.ticks + stat.childTicks }
+  })
 
 /** The CPU time session `sid` used so far, in ms; undefined once nothing of it is left. */
 export async function sessionCpuMs(sid: number) {
