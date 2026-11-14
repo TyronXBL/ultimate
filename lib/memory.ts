@@ -8,13 +8,14 @@
  * lock for every starter on the machine (previews share `TMPDIR` with their host), and each admitted job reserves its
  * need for a minute, until its own allocations show in `MemAvailable`, so two starters never both pass on the same RAM.
  */
-import { lstat, mkdir, open, readdir, readFile, readlink, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, readlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { JsonObject } from '@earendil-works/pi-durable'
 import { readJson, writeJson } from './json-file.ts'
 import { JOBS_SLICE } from './job-scope.ts'
+import { avg10, cgroupPath, parseMeminfo, parseStatus, processTable } from './proc.ts'
 import { readSettings, userSettingsPath } from './settings.ts'
 
 /** About what a preview or a scratch server needs: a booted Ultimate with its web build. */
@@ -46,8 +47,8 @@ export async function availableMiB(meminfo = '/proc/meminfo') {
     // No /proc/meminfo: not Linux, so nothing is gated.
     () => '',
   )
-  const kib = /^MemAvailable:\s+(\d+) kB$/m.exec(text)?.[1]
-  return kib === undefined ? undefined : Math.floor(Number(kib) / 1024)
+  const kib = parseMeminfo(text).MemAvailable
+  return kib === undefined ? undefined : Math.floor(kib / 1024)
 }
 
 /**
@@ -241,12 +242,12 @@ export const describeShort = (short: RamShort) =>
 
 /** The cgroup (v2) path of this process, e.g. `/user.slice/…/ultimate.service`; undefined where there is none. */
 async function ownCgroup() {
-  return /^0::(\/.*)$/m.exec(
+  return cgroupPath(
     await readFile('/proc/self/cgroup', 'utf8').catch(
       // Not Linux: no cgroup.
       () => '',
     ),
-  )?.[1]
+  )
 }
 
 const mib = (text: string) =>
@@ -292,14 +293,12 @@ export async function memoryCap(): Promise<MemoryCap | undefined> {
           () => '',
         ),
       ])
-      const avg10 = (line: string) =>
-        Number(new RegExp(`^${line} avg10=([\\d.]+)`, 'm').exec(pressure)?.[1] ?? 0)
       if (used === undefined) return undefined
       return {
         used,
         jobs: jobs ?? 0,
         high,
-        pressure: { some: avg10('some'), full: avg10('full') },
+        pressure: { some: avg10(pressure, 'some'), full: avg10(pressure, 'full') },
       }
     }
     if (at === '/') return undefined
@@ -312,7 +311,7 @@ export async function cgroupMemory() {
   if (!path) return undefined
   const read = (name: string) =>
     readFile(join('/sys/fs/cgroup', path, name), 'utf8').then(
-      (text) => (/^\d+$/.test(text.trim()) ? Math.round(Number(text) / 2 ** 20) : undefined),
+      mib,
       // No memory controller for this cgroup.
       () => undefined,
     )
@@ -337,32 +336,9 @@ export type MemoryUser = {
   cwd?: string
 }
 
-type Proc = { pid: number; ppid: number; pgid: number; rssKiB: number }
-const field = (status: string, name: string) =>
-  Number(new RegExp(`^${name}:\\s+(\\d+)`, 'm').exec(status)?.[1] ?? 0)
-async function processes() {
-  const names = await readdir('/proc').catch(
-    // No /proc: not Linux.
-    () => [],
-  )
-  const read = await Promise.all(
-    names
-      .filter((name) => /^\d+$/.test(name))
-      .map((name) =>
-        readFile(`/proc/${name}/status`, 'utf8').then(
-          (status): Proc => ({
-            pid: Number(name),
-            ppid: field(status, 'PPid'),
-            pgid: field(status, 'NSpgid'),
-            rssKiB: field(status, 'VmRSS'),
-          }),
-          // The process ended between the listing and the read.
-          () => undefined,
-        ),
-      ),
-  )
-  return read.filter((proc) => proc !== undefined)
-}
+/** From `/status`, not `/stat`: its `VmRSS` comes in KiB where `/stat` counts pages, whose size only `getconf` knows. */
+const processes = () => processTable('status', (text, pid) => ({ pid, ...parseStatus(text) }))
+type Proc = Awaited<ReturnType<typeof processes>>[number]
 /** Shown command: the program's name, then its arguments, at most 100 characters. */
 async function commandOf(pid: number) {
   const argv = (
@@ -378,12 +354,12 @@ async function commandOf(pid: number) {
   return text.length > 100 ? `${text.slice(0, 99)}…` : text
 }
 /**
- * The process groups of `root` and everything it started, by RSS, the largest `limit`: previews, scratch servers,
+ * The process groups of `root` and everything it started, by RSS, the largest eight: previews, scratch servers,
  * background commands and test runs. A group is named by its topmost process, and by `names` (by group id) when there.
  */
 export async function memoryUsers(
   root = process.pid,
-  { limit = 8, names = new Map<number, string>() } = {},
+  { names = new Map<number, string>() } = {},
 ): Promise<MemoryUser[]> {
   const all = await processes()
   const children = Map.groupBy(all, (proc) => proc.ppid)
@@ -401,7 +377,7 @@ export async function memoryUsers(
       rssKiB: members.reduce((sum, proc) => sum + proc.rssKiB, 0),
     }))
     .toSorted((a, b) => b.rssKiB - a.rssKiB)
-    .slice(0, limit)
+    .slice(0, 8)
   return Promise.all(
     groups.map(async ({ members, top, rssKiB }) => ({
       pgid: top.pgid,
