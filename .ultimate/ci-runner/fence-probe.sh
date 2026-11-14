@@ -1,12 +1,13 @@
 #!/bin/bash
 # What a user on the PC can read and reach (README.md here, "Fence the runner user in"):
 #
-#   fence-probe.sh <tailnet address> <port>
+#   fence-probe.sh <tailnet address> <port> [<LAN address> <port>]
 #
-# The address and port are a service on the tailnet that answers other machines, such as the VPS's own HTTPS port. It
-# exits 0 only when the user has no sudo, cannot write the runner script or its key file, cannot enter another user's
-# home, and reaches neither the LAN's gateway nor that tailnet service; 1 while one of them does not hold or could
-# not be tried. It prints states only, never a name or an address.
+# The first address and port are a service on the tailnet that answers other machines, such as the VPS's own HTTPS
+# port; the optional second pair is a service on the LAN, for a LAN whose gateway answers nothing. It exits 0 only
+# when the user has no sudo, cannot write the runner script or its key file, cannot enter another user's home, and
+# reaches neither the LAN's gateway, nor that LAN service, nor the tailnet service; 1 while one of them does not hold
+# or could not be tried. It prints states only, never a name or an address.
 #
 # A connection that fails proves a fence only when the same connection opens without it. So the PC's owner runs the
 # probe first as themselves, where it must fail with "can be reached" lines: those targets answer. Then the VPS runs
@@ -15,8 +16,8 @@
 #   ULTIMATE_REMOTE_HOST=my-pc ULTIMATE_REMOTE_STATUS=$TMPDIR/probe.json \
 #     ULTIMATE_REMOTE_COMMAND='bash .ultimate/ci-runner/fence-probe.sh <tailnet address> <port>' \
 #     node .ultimate/scripts/remote-job.ts
-if [[ $# -ne 2 ]]; then
-  echo "fence-probe: usage: fence-probe.sh <tailnet address> <port>" >&2
+if [[ $# -ne 2 && $# -ne 4 ]]; then
+  echo "fence-probe: usage: fence-probe.sh <tailnet address> <port> [<LAN address> <port>]" >&2
   exit 2
 fi
 failed=()
@@ -62,6 +63,7 @@ else
     say "LAN gateway answers no ping"
   fi
 fi
+[[ $# -eq 4 ]] && unreachable "LAN service" "$3" "$4"
 unreachable "tailnet service" "$1" "$2"
 
 # Installs need the package registry; without it a changed lockfile sends every job back to the VPS.
@@ -78,4 +80,4 @@ if ((${#failed[@]})); then
   )"
   exit 1
 fi
-say "ok: this user enters no other home and reaches neither the LAN gateway nor the tailnet service"
+say "ok: this user enters no other home and reaches neither the LAN nor the tailnet service"

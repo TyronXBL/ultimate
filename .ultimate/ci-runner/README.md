@@ -320,20 +320,25 @@ systemctl daemon-reload && systemctl enable --now ultimate-ci-fence.service
 nft list table inet ultimate_ci
 ```
 
-Then prove it. A connection that fails shows a fence only when the same connection opens without one, so run the probe
-as yourself first, with a tailnet service that answers (the VPS's own HTTPS address and port): it must fail, naming
-what it reached. As `ci` it must end with `ok`, and the two `counter`s above must have counted packets:
+Then prove it, still in the root shell. A connection that fails shows a fence only when the same connection opens
+without one, so the probe runs as your own user first, with a tailnet service that answers (the VPS's own HTTPS
+address and port): it must fail, naming what it reached. As `ci` it must end with `ok`, and the IPv4 reject rule must
+have counted packets during that run (the probe makes no IPv6 connection, so the IPv6 rule's counter stays as it
+is):
 
 ```bash
 git -C /home/ci/ci.git show <commit>:.ultimate/ci-runner/fence-probe.sh > /tmp/fence-probe.sh
-bash /tmp/fence-probe.sh <tailnet address> <port>               # as you: FAILED, "can be reached"
-sudo -u ci bash /tmp/fence-probe.sh <tailnet address> <port>    # as ci: ok
-nft list table inet ultimate_ci                                 # packets counted on the reject rules
+chmod 644 /tmp/fence-probe.sh
+sudo -u <you> bash /tmp/fence-probe.sh <tailnet address> <port>    # as you: FAILED, "can be reached"
+nft list table inet ultimate_ci                                   # note the IPv4 rule's packets
+sudo -u ci bash /tmp/fence-probe.sh <tailnet address> <port>       # as ci: ok
+nft list table inet ultimate_ci                                   # more packets on the IPv4 rule than before
 ```
 
-If your run reaches nothing on the LAN's gateway either (no open port, no ping), the LAN lines prove nothing: tell
-@ultimate, which then asks for a LAN address that answers. @ultimate runs the same probe as `ci` through the runner
-(the command is in the script's header) before it turns jobs on.
+If the run as you reaches nothing on the LAN's gateway (no open port, no ping), its LAN lines prove nothing: add a
+LAN address and port that answer (another machine's web or ssh port) as a third and fourth argument to both runs.
+@ultimate runs the same probe as `ci` through the runner, with the same arguments (the command is in the script's
+header), before it turns jobs on.
 
 What stays true: a job runs any code as `ci`, so the forced command is no sandbox; these two fences and the user
 without sudo are. `ci` can still reach the internet, and reads whatever on the PC is readable by everyone.
