@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -15,6 +16,7 @@ import { context, prepareHarness } from '../../server/harness.ts'
 import type { OpenHost } from '../../server/harness.ts'
 import ciExtension from '../../.ultimate/extensions/ci/server.ts'
 import type { CiResult } from '../../.ultimate/extensions/ci/refs.ts'
+import type { Run } from '../../.ultimate/extensions/ci/github.ts'
 import { resultIn } from '../../extensions/conversations/server.ts'
 import { temp, until as waitFor } from '../helpers.ts'
 
@@ -35,169 +37,201 @@ afterEach(async () => {
   process.env.PATH = searchPath
 })
 
-it('runs CI on the fork in the background and wakes the caller once with the failing tests', async () => {
-  const root = await temp('ultimate-ci-')
-  // GitHub's git side: pushes to the fork's URL go to a local bare repository.
-  const github = join(root, 'github')
-  await mkdir(join(github, 'owner'), { recursive: true })
-  await git(root, 'init', '-q', '--bare', join(github, 'owner/ultimate.git'))
-  const checkout = join(root, 'checkout')
-  await mkdir(checkout)
-  await git(checkout, 'init', '-q', '-b', 'main')
-  await writeFile(join(checkout, 'a.txt'), 'a\n')
-  await git(checkout, 'add', '.')
-  await git(checkout, 'commit', '-qm', 'first')
-  await git(checkout, 'remote', 'add', 'fork', 'https://github.com/owner/ultimate.git')
-  await git(checkout, 'config', `url.${github}/.pushInsteadOf`, 'https://github.com/')
-  await git(
-    checkout,
-    'config',
-    'credential.helper',
-    `!f() { echo username=owner; echo password=${TOKEN}; }; f`,
-  )
-  const sha = await git(checkout, 'rev-parse', 'HEAD')
+const failed: Run = { id: 7, status: 'completed', conclusion: 'failure', html_url: 'https://run/7' }
+it.each<[string, Run[], boolean]>([
+  ['', [], true],
+  // #276750: a pass beside a failure of the commit was reported as "already passed", which the gate then refused.
+  [
+    ' beside an earlier pass and failure of the commit',
+    [
+      { id: 8, status: 'completed', conclusion: 'success', html_url: 'https://run/8' },
+      { id: 9, status: 'completed', conclusion: 'failure', html_url: 'https://run/9' },
+    ],
+    true,
+  ],
+  // #276750: a run of the commit under way (the gate's) got a second, billed run beside it.
+  [
+    ' by waiting for a run of the commit under way, pushing nothing',
+    [{ ...failed, status: 'in_progress', conclusion: null }],
+    false,
+  ],
+])(
+  'runs CI on the fork in the background and wakes the caller once with the failing tests%s',
+  async (_case, earlier, pushes) => {
+    const root = await temp('ultimate-ci-')
+    // GitHub's git side: pushes to the fork's URL go to a local bare repository, which records every ref it receives.
+    const github = join(root, 'github')
+    await mkdir(join(github, 'owner'), { recursive: true })
+    await git(root, 'init', '-q', '--bare', join(github, 'owner/ultimate.git'))
+    const received = join(root, 'received')
+    await writeFile(
+      join(github, 'owner/ultimate.git/hooks/pre-receive'),
+      `#!/bin/sh\ncat >> ${received}\n`,
+      { mode: 0o755 },
+    )
+    const checkout = join(root, 'checkout')
+    await mkdir(checkout)
+    await git(checkout, 'init', '-q', '-b', 'main')
+    await writeFile(join(checkout, 'a.txt'), 'a\n')
+    await git(checkout, 'add', '.')
+    await git(checkout, 'commit', '-qm', 'first')
+    await git(checkout, 'remote', 'add', 'fork', 'https://github.com/owner/ultimate.git')
+    await git(checkout, 'config', `url.${github}/.pushInsteadOf`, 'https://github.com/')
+    await git(
+      checkout,
+      'config',
+      'credential.helper',
+      `!f() { echo username=owner; echo password=${TOKEN}; }; f`,
+    )
+    const sha = await git(checkout, 'rev-parse', 'HEAD')
 
-  // GitHub's API side: a run exists once a ci/ ref was pushed, and it failed with an annotated failing test.
-  const seen: { path: string; authorization?: string }[] = []
-  const api = createServer((request, response) => {
-    seen.push({ path: request.url!, authorization: request.headers.authorization })
-    const path = new URL(request.url!, 'http://api').pathname
-    const pushed =
-      execFileSync('git', ['ls-remote', join(github, 'owner/ultimate.git'), 'refs/heads/ci/*'], {
-        encoding: 'utf8',
-      }) !== ''
-    const body =
-      path === '/repos/owner/ultimate/actions/runs'
-        ? {
-            workflow_runs: pushed
-              ? [{ id: 7, status: 'completed', conclusion: 'failure', html_url: 'https://run/7' }]
-              : [],
-          }
-        : path === '/repos/owner/ultimate/actions/runs/7'
-          ? { id: 7, status: 'completed', conclusion: 'failure', html_url: 'https://run/7' }
-          : path === '/repos/owner/ultimate/actions/runs/7/jobs'
-            ? {
-                jobs: [
-                  {
-                    id: 1,
-                    name: 'check',
-                    conclusion: 'success',
-                    started_at: '2026-01-01T00:00:00Z',
-                    completed_at: '2026-01-01T00:00:20Z',
-                  },
-                  {
-                    id: 2,
-                    name: 'test (1/4)',
-                    conclusion: 'failure',
-                    started_at: '2026-01-01T00:00:05Z',
-                    completed_at: '2026-01-01T00:01:05Z',
-                  },
-                ],
-              }
-            : path === '/repos/owner/ultimate/check-runs/2/annotations'
+    // GitHub's API side: the `earlier` runs of the commit on other refs, and run 7 on the ci/ ref once it was pushed (or
+    // the earlier one under way), which failed with an annotated failing test. Every run has the same jobs.
+    const seen: { path: string; authorization?: string }[] = []
+    const api = createServer((request, response) => {
+      seen.push({ path: request.url!, authorization: request.headers.authorization })
+      const url = new URL(request.url!, 'http://api')
+      const path = url.pathname
+      const pushed =
+        execFileSync('git', ['ls-remote', join(github, 'owner/ultimate.git'), 'refs/heads/ci/*'], {
+          encoding: 'utf8',
+        }) !== ''
+      const id = /^\/repos\/owner\/ultimate\/actions\/runs\/(\d+)(\/jobs)?$/.exec(path)
+      const body =
+        path === '/repos/owner/ultimate/actions/runs'
+          ? {
+              workflow_runs: [
+                ...(pushed ? [failed] : []),
+                ...(url.searchParams.has('branch') ? [] : earlier),
+              ],
+            }
+          : id && !id[2]
+            ? [failed, ...earlier].find((item) => item.id === Number(id[1]))
+            : id
+              ? {
+                  jobs: [
+                    {
+                      id: 1,
+                      name: 'check',
+                      conclusion: 'success',
+                      started_at: '2026-01-01T00:00:00Z',
+                      completed_at: '2026-01-01T00:00:20Z',
+                    },
+                    {
+                      id: 2,
+                      name: 'test (1/4)',
+                      conclusion: 'failure',
+                      started_at: '2026-01-01T00:00:05Z',
+                      completed_at: '2026-01-01T00:01:05Z',
+                    },
+                  ],
+                }
+              : path === '/repos/owner/ultimate/check-runs/2/annotations'
+                ? [
+                    {
+                      path: '.github',
+                      start_line: 1,
+                      message: 'Process completed with exit code 1.',
+                      annotation_level: 'failure',
+                    },
+                    {
+                      path: 'test/a.test.ts',
+                      start_line: 3,
+                      title: 'test/a.test.ts > adds',
+                      message: 'AssertionError: expected 1 to be 2\nmore',
+                      annotation_level: 'failure',
+                    },
+                  ]
+                : undefined
+      response.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(body ?? { message: 'Not Found' }))
+    })
+    await new Promise<void>((done) => api.listen(0, '127.0.0.1', done))
+    process.env.CI_GATE_API = `http://127.0.0.1:${(api.address() as AddressInfo).port}`
+
+    const prepared = await prepareHarness({
+      ultimateRoot: root,
+      userHome: await temp(),
+      home: join(root, 'home'),
+      faux: fauxProvider(),
+    })
+    let opened: OpenHost
+    prepared.registry.install(
+      ciExtension({
+        projectRoot: checkout,
+        harness: () => opened.harness,
+        need: (() => ({
+          get: async () => undefined,
+          resultIn,
+          // The lander's record: the failing test also failed at two landings of another branch.
+          failing: async ({ tests, except }: { tests: string[]; except: number }) =>
+            tests.includes('test/a.test.ts > adds') && except === caller.id
               ? [
                   {
-                    path: '.github',
-                    start_line: 1,
-                    message: 'Process completed with exit code 1.',
-                    annotation_level: 'failure',
-                  },
-                  {
-                    path: 'test/a.test.ts',
-                    start_line: 3,
-                    title: 'test/a.test.ts > adds',
-                    message: 'AssertionError: expected 1 to be 2\nmore',
-                    annotation_level: 'failure',
+                    test: 'test/a.test.ts > adds',
+                    landings: [
+                      { submission: 's2', conversationId: 9, at: 2, sank: true },
+                      { submission: 's1', conversationId: 9, at: 1, sank: false },
+                    ],
+                    branches: [9],
                   },
                 ]
-              : undefined
-    response.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
-    response.end(JSON.stringify(body ?? { message: 'Not Found' }))
-  })
-  await new Promise<void>((done) => api.listen(0, '127.0.0.1', done))
-  process.env.CI_GATE_API = `http://127.0.0.1:${(api.address() as AddressInfo).port}`
+              : [],
+        })) as never,
+        onOpen: () => {},
+        onClose: () => {},
+      }),
+    )
+    prepared.faux!.setResponses([
+      fauxAssistantMessage([fauxToolCall('ci', {})], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([fauxText('Started.')]),
+      fauxAssistantMessage([fauxText('Read the result.')]),
+    ])
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    opened = await prepared.open()
+    hosts.push(opened)
+    const caller = opened.root
+    await caller.submit({ type: 'input', requestId: 'go', content: 'Run CI' }, context)
 
-  const prepared = await prepareHarness({
-    ultimateRoot: root,
-    userHome: await temp(),
-    home: join(root, 'home'),
-    faux: fauxProvider(),
-  })
-  let opened: OpenHost
-  prepared.registry.install(
-    ciExtension({
-      projectRoot: checkout,
-      harness: () => opened.harness,
-      need: (() => ({
-        get: async () => undefined,
-        resultIn,
-        // The lander's record: the failing test also failed at two landings of another branch.
-        failing: async ({ tests, except }: { tests: string[]; except: number }) =>
-          tests.includes('test/a.test.ts > adds') && except === caller.id
-            ? [
-                {
-                  test: 'test/a.test.ts > adds',
-                  landings: [
-                    { submission: 's2', conversationId: 9, at: 2, sank: true },
-                    { submission: 's1', conversationId: 9, at: 1, sank: false },
-                  ],
-                  branches: [9],
-                },
-              ]
-            : [],
-      })) as never,
-      onOpen: () => {},
-      onClose: () => {},
-    }),
-  )
-  prepared.faux!.setResponses([
-    fauxAssistantMessage([fauxToolCall('ci', {})], { stopReason: 'toolUse' }),
-    fauxAssistantMessage([fauxText('Started.')]),
-    fauxAssistantMessage([fauxText('Read the result.')]),
-  ])
-  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
-  opened = await prepared.open()
-  hosts.push(opened)
-  const caller = opened.root
-  await caller.submit({ type: 'input', requestId: 'go', content: 'Run CI' }, context)
-
-  const results = async () =>
-    (await caller.context(context)).entries.filter((entry) => entry.kind === 'ci.result')
-  await until(async () => (await results()).length > 0)
-  await vi.advanceTimersByTimeAsync(120_000)
-  const delivered = await results()
-  expect(delivered).toHaveLength(1)
-  const result = delivered[0].data as CiResult
-  expect(result).toMatchObject({
-    sha,
-    conclusion: 'failure',
-    url: 'https://run/7',
-    seconds: 65,
-    jobs: [
-      { name: 'check', conclusion: 'success', seconds: 20 },
-      { name: 'test (1/4)', conclusion: 'failure', seconds: 60 },
-    ],
-    failures: [
-      {
-        title: 'test/a.test.ts > adds',
-        message: 'AssertionError: expected 1 to be 2',
-        earlier: { landings: 2, branches: [9] },
-      },
-    ],
-  })
-  // The run's ref is deleted once the run ended.
-  expect(
-    await git(checkout, 'ls-remote', join(github, 'owner/ultimate.git'), 'refs/heads/ci/*'),
-  ).toBe('')
-  // The stored credential authenticates every API call and appears nowhere else.
-  expect(seen.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true)
-  const transcript = JSON.stringify((await caller.context(context)).entries)
-  expect(transcript).not.toContain(TOKEN)
-  expect(transcript).toContain(
-    'FAIL test/a.test.ts > adds: AssertionError: expected 1 to be 2 (also failed in 2 earlier landings: #9)',
-  )
-  api.close()
-})
+    const results = async () =>
+      (await caller.context(context)).entries.filter((entry) => entry.kind === 'ci.result')
+    await until(async () => (await results()).length > 0)
+    await vi.advanceTimersByTimeAsync(120_000)
+    const delivered = await results()
+    expect(delivered).toHaveLength(1)
+    const result = delivered[0].data as CiResult
+    expect(result).toMatchObject({
+      sha,
+      conclusion: 'failure',
+      url: 'https://run/7',
+      seconds: 65,
+      jobs: [
+        { name: 'check', conclusion: 'success', seconds: 20 },
+        { name: 'test (1/4)', conclusion: 'failure', seconds: 60 },
+      ],
+      failures: [
+        {
+          title: 'test/a.test.ts > adds',
+          message: 'AssertionError: expected 1 to be 2',
+          earlier: { landings: 2, branches: [9] },
+        },
+      ],
+    })
+    expect(existsSync(received)).toBe(pushes)
+    // The run's ref is deleted once the run ended.
+    expect(
+      await git(checkout, 'ls-remote', join(github, 'owner/ultimate.git'), 'refs/heads/ci/*'),
+    ).toBe('')
+    // The stored credential authenticates every API call and appears nowhere else.
+    expect(seen.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true)
+    const transcript = JSON.stringify((await caller.context(context)).entries)
+    expect(transcript).not.toContain(TOKEN)
+    expect(transcript).toContain(
+      'FAIL test/a.test.ts > adds: AssertionError: expected 1 to be 2 (also failed in 2 earlier landings: #9)',
+    )
+    api.close()
+  },
+)
 
 it('refuses an uncommitted checkout instead of testing the HEAD before it', async () => {
   // #147838, #151003, #156344, #166097: `git commit` and `ci` in one tool round, and CI tested the commit before.

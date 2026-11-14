@@ -5,7 +5,7 @@
  */
 import { execFile } from 'node:child_process'
 import type { Reused } from '../../../extensions/workspaces/api.ts'
-import type { Failure, JobResult } from './refs.ts'
+import type { CiResult, Failure, JobResult } from './refs.ts'
 
 /** The API base; tests point it at a local listener. */
 const api = () => process.env.CI_GATE_API ?? 'https://api.github.com'
@@ -187,9 +187,10 @@ export async function runState(cwd: string, repo: string, id: number, tries?: nu
 export const REUSE_MS = 6 * 60 * 60_000
 
 /**
- * What the lander's gate does with the push runs of the commit it checks, before any runner (#205147): wait for one
- * still under way (in progress is never passed); run fresh when one ended any other way than passed, so a flaky pass
- * cannot hide a failure of that very commit, or when none ran; else weigh reusing the newest pass (`reusable`).
+ * What the lander's gate (before any runner, #205147) and the `ci` tool do with the push runs of the commit they check:
+ * wait for one still under way (in progress is never passed); run fresh when one ended any other way than passed, so a
+ * flaky pass cannot hide a failure of that very commit, or when none ran; else the gate weighs reusing the newest pass
+ * (`reusable`) and the tool reports it.
  */
 export type GatePlan =
   | { kind: 'wait'; run: Run }
@@ -209,6 +210,15 @@ export function gatePlan(runs: Run[], sha: string): GatePlan {
     : { kind: 'fresh', why: `no CI run of ${sha.slice(0, 7)}` }
 }
 
+/** When the last of `jobs` finished on GitHub and the seconds since the first started, when they carry times. */
+function timesOf(jobs: Job[]) {
+  const starts = jobs.flatMap((job) => (job.started_at ? [Date.parse(job.started_at)] : []))
+  const ends = jobs.flatMap((job) => (job.completed_at ? [Date.parse(job.completed_at)] : []))
+  if (!starts.length || !ends.length) return undefined
+  const completedAt = Math.max(...ends)
+  return { completedAt, seconds: Math.round((completedAt - Math.min(...starts)) / 1000) }
+}
+
 /**
  * The origin of passed run `run` of `sha`, from its jobs' times on GitHub, when it finished at most `REUSE_MS` before
  * `now`; else why it runs fresh. A run whose jobs carry no times names no origin and is not reused.
@@ -219,23 +229,16 @@ export function reusable(
   sha: string,
   now: number,
 ): { origin: Reused } | { origin?: undefined; why: string } {
-  const starts = jobs.flatMap((job) => (job.started_at ? [Date.parse(job.started_at)] : []))
-  const ends = jobs.flatMap((job) => (job.completed_at ? [Date.parse(job.completed_at)] : []))
-  if (!starts.length || ends.length < jobs.length)
+  const times = timesOf(jobs)
+  if (!times || jobs.some((job) => !job.completed_at))
     return { why: `the pass of ${sha.slice(0, 7)} has no job times: ${run.html_url}` }
-  const completedAt = Math.max(...ends)
+  const { completedAt, seconds } = times
   if (now - completedAt > REUSE_MS)
     return {
       why: `the pass of ${sha.slice(0, 7)} is ${+((now - completedAt) / 3_600_000).toFixed(1)} h old: ${run.html_url}`,
     }
   return {
-    origin: {
-      runner: 'GitHub Actions',
-      url: run.html_url,
-      sha,
-      completedAt,
-      seconds: Math.round((completedAt - Math.min(...starts)) / 1000),
-    },
+    origin: { runner: 'GitHub Actions', url: run.html_url, sha, completedAt, seconds },
   }
 }
 
@@ -253,7 +256,7 @@ export const jobResult = (job: Job): JobResult => ({
  * and failed is a verdict, so its failures win over another job's refusal. Throws `Unreachable` when annotations
  * cannot be read, since a refused job cannot be told from a failed one without them.
  */
-export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
+async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
   const failures: Failure[] = []
   let notStarted: string | undefined
   for (const job of jobs.filter(
@@ -280,4 +283,23 @@ export async function failuresOf(cwd: string, repo: string, jobs: Job[]) {
     if (!named.length) failures.push({ title: job.name, message: job.conclusion ?? 'failed' })
   }
   return { failures, ...(notStarted && !failures.length ? { notStarted } : {}) }
+}
+
+/**
+ * The verdict of completed run `run` with its `jobs`, for the gate and the `ci` tool alike: `no-run` when GitHub did not
+ * start its jobs (`notStarted`, its reason), else its conclusion, with its failing tests (`failuresOf`) and seconds.
+ */
+export async function runVerdict(cwd: string, repo: string, run: Run, jobs: Job[]) {
+  const passed = run.conclusion === 'success'
+  const { failures, notStarted } = passed
+    ? { failures: [], notStarted: undefined }
+    : await failuresOf(cwd, repo, jobs)
+  const conclusion: CiResult['conclusion'] = notStarted
+    ? 'no-run'
+    : passed
+      ? 'success'
+      : run.conclusion === 'cancelled'
+        ? 'cancelled'
+        : 'failure'
+  return { conclusion, seconds: timesOf(jobs)?.seconds, failures, notStarted }
 }
