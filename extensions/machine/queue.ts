@@ -28,11 +28,11 @@ export type QueueFacts = {
 
 /** Why the first waiter has not started: the queue settling, every place taken, then CPU and memory admission. */
 function headReason(held: number, { head, places }: QueueFacts): WaitReason {
-  // No look while every place is taken, or one that found them taken since.
+  // No look while every place is taken, or one that found them taken since: its own count is the current one.
   if (!head || head.kind === 'waiting')
     return head?.turn.kind === 'settling'
       ? { kind: 'settling', until: head.turn.until }
-      : { kind: 'full', running: held, places }
+      : { kind: 'full', running: head?.turn.holders.length ?? held, places }
   if (head.kind === 'cpu') {
     const { load, cores, pressure, below, settling } = head.gate
     return {
