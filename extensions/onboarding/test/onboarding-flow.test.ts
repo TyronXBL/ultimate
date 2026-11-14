@@ -75,7 +75,8 @@ function onboarding(project: string): FauxResponseFactory {
     if (
       last.role === 'user' &&
       since.some((message) => message.role === 'toolResult' && message.toolName === 'remember') &&
-      !said.startsWith('Reply from')
+      !said.startsWith('Reply from') &&
+      !said.startsWith('Message from')
     )
       return call('branch', { root: 1, prompt: said, isolated: false })
     return fauxAssistantMessage('Waiting.')
